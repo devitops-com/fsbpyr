@@ -145,3 +145,6 @@ deploy/*-ca-key.pem
 .understand-anything/.trash-*/
 .understand-anything/tmp/
 
+
+# fsbpyr spike build outputs
+spikes/.out/

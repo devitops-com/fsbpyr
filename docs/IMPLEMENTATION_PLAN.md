@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: draft v1, 2026-10-06. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.1, 2026-10-06. Phase 0 is complete; findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -59,8 +59,8 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 
   `_Py_InitializeMain` is **not** in the 3.14 public headers, so two-phase init is not
   available. We inject a frozen-module table instead.
-- **[assumption]** CPython consults a user-set `PyImport_FrozenModules` before its own frozen
-  stdlib set. This comes from reading the CPython source and is confirmed in spike S2.
+- **[verified, S2]** CPython consults a user-set `PyImport_FrozenModules` before its own frozen
+  stdlib set.
 - **[verified]** Baseline startup on the dev machine (Intel Core Ultra 9 285, warm cache, p50 of
   40 runs):
 
@@ -89,7 +89,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | # | Decision | Rationale | Rejected alternatives |
 |---|----------|-----------|-----------------------|
 | D1 | The native launcher is written in **C** (about 800 LOC) | libpython is C and needs clang anyway (D2). This gives minimal native work at startup | Rust: adds cargo for code that mostly calls C APIs |
-| D2 | **CPython is statically linked into the launcher** from PBS `pgo+lto-full` (clang/lld ≥ 22, `-flto`, `-Wl,--export-dynamic` so manylinux wheels resolve `Py*` symbols from the executable) | Runtime is directly loadable (manifest Fig. 1). PGO+LTO speed. PBS already handles the static dependencies and the glibc 2.17 baseline | Shared libpython extracted to the cache (extracts the runtime on first run). memfd + dlopen (copies MBs on every start). Building CPython and its dependencies ourselves (large effort) |
+| D2 | **CPython is statically linked into the launcher** from PBS `pgo+lto-full` (clang/lld ≥ 22, `--target=x86_64-unknown-linux-gnu`, `-flto=full`, `-Wl,--export-dynamic` so manylinux wheels resolve `Py*` symbols from the executable). Link inputs: libpython.a, the HACL objects of modules registered in `config.c`, and the static libraries listed in `PYTHON.json` (S1) | Runtime is directly loadable (manifest Fig. 1). PGO+LTO speed. PBS already handles the static dependencies and the glibc 2.17 baseline | Shared libpython extracted to the cache (extracts the runtime on first run). memfd + dlopen (copies MBs on every start). Building CPython and its dependencies ourselves (large effort) |
 | D3 | A **runtime** is: the *stub* (launcher + static CPython, an ELF) + a precompiled *stdlib payload fragment* + `runtime.json`. It is built once per (Python minor, platform, launcher version) and cached | App builds become concatenation: no compiler and no network needed | Compile per app |
 | D4 | **Every fsbpyr binary carries its own runtime.** When `fsbpyr build` targets the same Python minor, it reuses its own stub bytes and the already-compressed stdlib frames from its own executable (`Runtime.from_self()`) | Makes R2/R3 work without a toolchain. Fast builds | — |
 | D5 | **Inputs come from a fresh staging install driven by the project's lock** (§3.6). uv projects: `uv sync --frozen --no-dev --no-editable` into a throwaway staging venv. pip projects: `--target` install from `pylock.toml`, then a pinned requirements file, then `[project.dependencies]` (unlocked, with a warning), plus the project itself installed `--no-deps`. The developer's venv is never read or modified | Reproducible from the lock. No dev dependencies. The project is installed non-editable, so its package data is correct. uv and pip do all resolving and building | Reading the developer's venv (not reproducible, editable installs, dev deps). Our own resolver |
@@ -102,7 +102,9 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D12 | **Sources are kept** by default as separate zstd frames, read only for tracebacks and `inspect`. `--no-source` drops them | Size may grow, startup may not. Gives full tracebacks | — |
 | D13 | **fsbpyr itself** requires Python ≥ 3.14. Its only runtime dependency is `packaging`. zstd comes from the stdlib `compression.zstd`, TOML from `tomllib` | Small self-hosting surface. fsbpyr is pure Python, so self-hosting does not depend on native-extension support | `zstandard` package (a native dependency) |
 | D14 | **Interpreter config in built apps:** isolated (`PYTHON*` env vars ignored), `site_import=0`, `safe_path=1`, UTF-8 mode, `parse_argv=0`, `executable` = realpath of the binary. Debug knobs only through `FSBPYR_*` env vars | Deterministic startup. The app's argv stays untouched | — |
-| D15 | **Deterministic builds:** sorted entries, fixed blob order, no timestamps, single-threaded zstd with fixed parameters. Self-hosting fixed point: stage2 == stage3, byte for byte | The classic compiler-bootstrap check for R2/R3 | — |
+| D15 | **Deterministic builds:** sorted entries, fixed blob order, no timestamps, single-threaded zstd with fixed parameters, canonical bytecode (D16). Self-hosting fixed point: stage2 == stage3, byte for byte | The classic compiler-bootstrap check for R2/R3 | — |
+| D16 | **Canonical bytecode:** every `marshal.dumps` result is rewritten by `fsbpyr/bytecode.py`. Strings are merged by value (interned if any occurrence was), FLAG_REF is set only for nodes that occur ≥ 2 times or are interned strings, refs are renumbered in pre-order, and set elements are sorted canonically | Raw marshal output depends on refcounts and on process-global interning (S3: 561/561 files differ in batch mode, 4 in a "noisy" build process). Canonical output: 0 differences, round-trip equality, same size and load time | Compiling in a clean worker process (still state-dependent). Accepting non-determinism |
+| D17 | **Non-PIE stub** | 0.3 ms faster startup than PIE (4.85 vs 5.16 ms, S1); 59 k relative relocations avoided. ASLR still applies to heap, stack and shared libraries | PIE |
 
 ---
 
@@ -170,7 +172,8 @@ too.
    - Isolated `PyPreConfig` with `utf8_mode=1`.
    - Isolated `PyConfig`: `executable`; `argv` with `parse_argv=0`; `site_import=0`;
      `safe_path=1`; `module_search_paths_set=1` with an empty list; `home`/`prefix` set so
-     getpath does not probe the filesystem; `import_time` from `FSBPYR_IMPORTTIME`.
+     getpath does not probe the filesystem (S2: zero stdlib probes; two `pyvenv.cfg` ENOENT
+     lookups remain, which affect only `sys.prefix`); `import_time` from `FSBPYR_IMPORTTIME`.
    - `run_command = "import _fsbpyr_boot; _fsbpyr_boot.run()"`.
 6. `Py_InitializeFromConfig`. CPython imports `encodings` and `linecache` from our frozen table.
 7. `Py_RunMain` → `_fsbpyr_boot.run()`:
@@ -285,7 +288,8 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
    `__pycache__/` and `*.pyc`. Files not listed in any RECORD (venv scaffolding such as
    `_virtualenv.py`) are not packaged.
 7. **Compile** in-process when the runtime is self; otherwise use the runtime's compile helper
-   (Phase 9). A `SyntaxError` keeps the file as a resource and prints a warning.
+   (Phase 9). Every result is canonicalized (D16). A `SyntaxError` keeps the file as a resource
+   and prints a warning.
 8. **Natives.** Run the ELF analysis, compute closures, check the allowlist and compute the
    generation id.
 9. **Compress** according to the profile. Stdlib frames from the runtime are reused verbatim.
@@ -339,6 +343,7 @@ src/fsbpyr/
   closure.py                staging dist index, Requires-Dist consistency walk, markers (packaging)
   classify.py               RECORD → typed entries
   compile.py                bytecode compile (in-process / compile helper)
+  bytecode.py               canonical marshal rewriter (D16), marshal v5 / CPython 3.14
   elf.py                    ELF64 dynamic-section parser
   natives.py                closures, allowlist, generation id
   payload/format.py         struct layouts and constants (single source of truth)
@@ -396,7 +401,7 @@ cmp build/stage2/fsbpyr build/stage3/fsbpyr    # fixed point: must be identical
 Every phase follows TDD: tests first (RED), implementation (GREEN), refactor, review. Exit
 criteria are automated tests unless noted. Sizes are S, M or L.
 
-### Phase 0 — Spikes (M). Throwaway code in `spikes/`; findings go to `docs/spikes.md`
+### Phase 0 — Spikes (M) — **DONE 2026-10-06**, see `docs/spikes.md`
 
 - **S1 static link.** Install clang-22/lld-22 from apt.llvm.org. Link a minimal launcher against PBS 3.14.8
   `libpython3.14.a`, then:
@@ -421,6 +426,9 @@ criteria are automated tests unless noted. Sizes are S, M or L.
 - `pyproject.toml`, package skeleton, pytest + coverage config, and `ruff` for formatting and
   linting.
 - `payload/format.py`, `writer.py`, `reader.py`, `docs/format.md`.
+- `bytecode.py` (D16), ported from `spikes/s3_marshal/canonical.py`. Tests: round-trip and
+  idempotence over the full stdlib, plus the determinism matrix (clean, batch and noisy
+  process).
 - **Exit:**
   - writer→reader round-trip tests pass
   - identical input produces identical bytes
@@ -493,6 +501,8 @@ criteria are automated tests unless noted. Sizes are S, M or L.
 - `fast` / `balanced` / `compact` (manifest §10). Grouped frames for tiny modules if
   measurement shows a gain. Optional zstd dictionary, kept only if measured as a gain.
 - Benchmark harness (§8) and CI regression gate.
+- Evaluate an opt-in "fast exit" (flush stdio, run atexit, then `_exit`). S2 measured
+  interpreter finalization at about 0.83 ms of a 4.8 ms run.
 - **Exit:** a report is committed in `benchmarks/README.md` and the targets in §8 are met.
 
 ### Phase 8 — Hardening (M)
@@ -598,8 +608,9 @@ Environment variables honored by built apps (never `PYTHON*`):
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | No clang/lld ≥ 22 on the build host | Cannot build runtimes | apt.llvm.org packages; podman image with LLVM 22; fallback: build a PBS non-LTO variant with PBS's own build scripts |
-| Host-linked stub binds to host glibc 2.41 symbols | Binaries need a recent glibc | Phase 9 container link against an old sysroot; report the effective glibc requirement at build time |
-| `marshal` output not deterministic | Fixed-point gate fails | Spike S3; deterministic re-serializer |
+| Host-linked stub binds to host glibc symbols (S1: needs GLIBC_2.38) | Binaries need a recent glibc | Phase 9 container link against an old sysroot; report the effective glibc requirement at build time |
+| `marshal` output not deterministic (confirmed in S3) | Fixed-point gate fails | D16 canonicalizer; required round-trip and determinism tests |
+| Canonicalizer tied to marshal v5 / 3.14 code layout | Breaks on new Python versions | Version check at build time; Phase 9 adds layouts for other versions |
 | Packages that assume real files (`__file__` + `open`, `pkg_resources`) | Runtime failures | `get_data` mapping, FS_REQUIRED materialization, compatibility matrix |
 | Re-exec of `sys.executable` (multiprocessing, subprocess `-m`) | Child runs the app instead of Python | Narrow argv dispatch for multiprocessing. General `-m` is a documented non-goal for v1 |
 | Cache directory on a `noexec` mount | `dlopen` fails | Detect `ST_NOEXEC`, clear error, `FSBPYR_CACHE_DIR` |
