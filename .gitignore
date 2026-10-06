@@ -1,0 +1,147 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.env
+requirements.txt
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.ipynb_checkpoints/
+
+# C
+*.o
+*.obj
+*.elf
+*.exe
+*.out
+*.app
+*.i
+*.s
+*.so
+*.dylib
+*.dll
+*.lib
+*.a
+*.pch
+*.d
+*.gch
+*.tlog
+
+# Rust
+/target/
+**/*.rs.bk
+debug/
+release/
+
+# General/OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.Trash-0/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker Compose
+deploy/compose/.env
+deploy/compose/work/
+
+# Terraform
+deploy/terraform/**/.terraform/
+deploy/terraform/**/.terraform.lock.hcl
+deploy/terraform/**/terraform.tfstate
+deploy/terraform/**/terraform.tfstate.backup
+deploy/terraform/**/terraform.tfvars
+deploy/terraform/**/*.tfplan
+deploy/terraform/**/crash.log
+
+# Kubernetes
+deploy/kubernetes/**/secrets.yaml
+
+# Config secrets
+config/secrets.yaml
+
+# Generated files (keep examples)
+!deploy/compose/.env.example
+!deploy/terraform/**/terraform.tfvars.example
+!config/secrets.example.yaml
+# Node.js
+node_modules/
+**/.yarn/install-state.gz
+*.tsbuildinfo
+
+# Agents
+.claude/
+tests/.matrix-logs
+.aider*
+.codex
+deploy/.ollama-reasoning-cache.json
+deploy/.vllm-reasoning-cache.json
+deploy/.sglang-reasoning-cache.json
+deploy/.bench-cache.json
+deploy/.bench-cache.json.bak-*
+deploy/.model-status.json
+.playwright-mcp/
+
+# Go build artifacts (router binary built by `make build-router` lands here
+# on hosts that compile outside the container; the repo only tracks source).
+gpu-arbiter/gpu-arbiter
+devai-tools/bin/
+
+# Graphify
+graphify-out/
+.graphify-input/
+
+# sops/age secrets render targets and any plaintext working files.
+# Encrypted *.sops.env files are tracked (see exception below).
+/run/devai
+*.env.plain
+!deploy/*.sops.env
+
+# pipelock egress proxy: the CA is per-host and NEVER committed. The private
+# key lives on the host (~/.config/devai/pipelock-ca-key.pem, 0600); the public
+# cert (deploy/pipelock-ca.crt) is only a local build input the lab image bakes
+# in. Both are regenerated per host by `make pipelock-ca-init`. Ignore both.
+deploy/pipelock-ca.crt
+deploy/*-ca-key.pem
+
+# understand-anything: config stays tracked (config.json, .understandignore);
+# the generated graph artifacts are rebuildable (/understand-anything:understand)
+# and no longer committed -- they regenerated on every code change and churned git.
+.understand-anything/knowledge-graph.json
+.understand-anything/meta.json
+.understand-anything/fingerprints.json
+.understand-anything/intermediate/
+.understand-anything/.trash-*/
+.understand-anything/tmp/
+
