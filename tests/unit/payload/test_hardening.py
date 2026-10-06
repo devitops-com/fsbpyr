@@ -1,0 +1,239 @@
+"""Regression tests for review findings: hostile sizes, file-level errors, spec rules on read."""
+
+import struct
+from pathlib import Path
+
+import pytest
+
+from fsbpyr.payload.format import (
+    BLOB,
+    MAX_BLOB_SIZE,
+    MODULE,
+    TRAILER_SIZE,
+    FileKind,
+    ModuleKind,
+    PayloadError,
+    Section,
+)
+from fsbpyr.payload.reader import Executable, Payload
+from fsbpyr.payload.spec import Blob, Dist, File, Module
+from fsbpyr.payload.writer import assemble, encode_payload
+
+from .conftest import make_spec
+
+
+def _patch(buf: bytes, offset: int, fmt: str, *values: object) -> bytes:
+    out = bytearray(buf)
+    struct.pack_into(fmt, out, offset, *values)
+    return bytes(out)
+
+
+def _section(raw: bytes, section: Section) -> tuple[int, int]:
+    offset, count = struct.unpack_from("<QQ", raw, 80 + 16 * section)
+    return int(offset), int(count)
+
+
+def _replace_string(raw: bytes, old: str, new: str) -> bytes:
+    assert len(old) == len(new)
+    needle = old.encode() + b"\0"
+    assert raw.count(needle) == 1
+    return raw.replace(needle, new.encode() + b"\0")
+
+
+def _two_lib_spec_raw() -> bytes:
+    libs = ("x.libs/a.so", "x.libs/b.so")
+    files = (
+        File("x/_e.so", FileKind.NATIVE_EXT, Blob.raw(b"e"), closure=libs),
+        *(File(p, FileKind.NATIVE_LIB, Blob.raw(p.encode())) for p in libs),
+    )
+    return encode_payload(make_spec(files=files, modules=(), dists=()))
+
+
+# --- hostile sizes ----------------------------------------------------------------------------
+
+
+def test_reader_rejects_blob_size_beyond_limit() -> None:
+    raw = encode_payload(make_spec())
+    base, _ = _section(raw, Section.BLOBS)
+    payload = Payload(raw)
+    zstd_blob = next(b for b in payload.blobs() if b.codec.name == "ZSTD")
+
+    for size in (MAX_BLOB_SIZE + 1, 2**64 - 1):
+        with pytest.raises(PayloadError, match="size"):
+            Payload(_patch(raw, base + zstd_blob.index * BLOB.size + 16, "<Q", size))
+
+
+def test_spec_rejects_blob_size_beyond_limit() -> None:
+    with pytest.raises(PayloadError, match="size"):
+        Blob(b"x", MAX_BLOB_SIZE + 1, Blob.zstd(b"a" * 100).codec)
+
+
+# --- file-level errors surface as PayloadError ------------------------------------------------
+
+
+@pytest.mark.parametrize("damage", ["empty", "short", "trailer", "header"])
+def test_open_reports_corrupt_files_as_payload_error(tmp_path: Path, damage: str) -> None:
+    image = bytearray(assemble(b"STUB", encode_payload(make_spec())))
+    if damage == "empty":
+        image = bytearray()
+    elif damage == "short":
+        image = image[: TRAILER_SIZE - 1]
+    elif damage == "trailer":
+        image[-TRAILER_SIZE] ^= 0xFF
+    else:
+        image[Executable.parse(bytes(image)).payload_offset] ^= 0xFF
+    path = tmp_path / "app"
+    path.write_bytes(bytes(image))
+
+    with pytest.raises(PayloadError):
+        Executable.open(path)
+    path.unlink()  # nothing left mapped or open
+
+
+def test_close_is_idempotent(tmp_path: Path) -> None:
+    path = tmp_path / "app"
+    path.write_bytes(assemble(b"STUB", encode_payload(make_spec())))
+    exe = Executable.open(path)
+
+    exe.close()
+    exe.close()
+
+
+# --- spec rules enforced on read --------------------------------------------------------------
+
+
+def test_reader_rejects_path_traversal() -> None:
+    raw = encode_payload(
+        make_spec(files=(File("aaa/b", FileKind.RESOURCE, Blob.raw(b"x")),), modules=(), dists=())
+    )
+
+    with pytest.raises(PayloadError, match="path"):
+        Payload(_replace_string(raw, "aaa/b", "../xb"))
+
+
+def test_reader_rejects_invalid_module_name() -> None:
+    raw = encode_payload(make_spec())
+
+    with pytest.raises(PayloadError, match="module name"):
+        Payload(_replace_string(raw, "nspkg", "n-pkg"))
+
+
+def test_reader_rejects_non_canonical_dist_name() -> None:
+    raw = encode_payload(make_spec())
+
+    with pytest.raises(PayloadError, match="canonical"):
+        Payload(_replace_string(raw, "demo", "Demo"))
+
+
+def test_reader_rejects_misaligned_blob() -> None:
+    raw = encode_payload(make_spec())
+    base, _ = _section(raw, Section.BLOBS)
+    offset = struct.unpack_from("<Q", raw, base)[0]
+
+    with pytest.raises(PayloadError, match="aligned"):
+        Payload(_patch(raw, base, "<Q", offset + 1))
+
+
+def test_reader_rejects_blob_data_inside_tables() -> None:
+    raw = encode_payload(make_spec())
+    base, _ = _section(raw, Section.BLOBS)
+    modules, _ = _section(raw, Section.MODULES)
+
+    with pytest.raises(PayloadError, match="blob range"):
+        Payload(_patch(raw, base, "<Q", modules - modules % 16))
+
+
+def test_reader_rejects_overlapping_sections() -> None:
+    raw = encode_payload(make_spec())
+    closures, _ = _section(raw, Section.CLOSURES)
+
+    with pytest.raises(PayloadError, match="overlap"):
+        Payload(_patch(raw, 80 + 16 * Section.DIGESTS, "<Q", closures))
+
+
+@pytest.mark.parametrize(
+    ("section", "offset", "fmt"),
+    [
+        (Section.BLOBS, 25, "<B"),
+        (Section.BLOBS, 26, "<H"),
+        (Section.MODULES, 18, "<H"),
+        (Section.MODULES, 36, "<I"),
+    ],
+)
+def test_reader_rejects_nonzero_reserved_fields(section: Section, offset: int, fmt: str) -> None:
+    raw = encode_payload(make_spec())
+    base, _ = _section(raw, section)
+    assert MODULE.size == 40
+
+    with pytest.raises(PayloadError, match="reserved"):
+        Payload(_patch(raw, base + offset, fmt, 1))
+
+
+def test_executable_rejects_nonzero_trailer_flags() -> None:
+    image = assemble(b"STUB", encode_payload(make_spec()))
+
+    with pytest.raises(PayloadError, match="flags"):
+        Executable.parse(_patch(image, len(image) - TRAILER_SIZE + 12, "<I", 1))
+
+
+@pytest.mark.parametrize(
+    "words",
+    [(2, 1, 0), (2, 0, 0), (2, 0, 2), (5, 0, 1)],
+    ids=["unsorted", "duplicate", "self-not-lib", "overrun"],
+)
+def test_reader_rejects_bad_closures(words: tuple[int, int, int]) -> None:
+    raw = _two_lib_spec_raw()  # files: 0 x.libs/a.so, 1 x.libs/b.so, 2 x/_e.so -> [2, 0, 1]
+    base, count = _section(raw, Section.CLOSURES)
+    assert count == 3
+
+    with pytest.raises(PayloadError, match="closure"):
+        Payload(_patch(raw, base, "<III", *words))
+
+
+# --- writer edge cases ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "closure",
+    [("x.libs/a.so", "x.libs/a.so"), ("x/res",), ("x/_e.so",)],
+    ids=["dup", "kind", "self"],
+)
+def test_writer_rejects_bad_closures(closure: tuple[str, ...]) -> None:
+    files = (
+        File("x/_e.so", FileKind.NATIVE_EXT, Blob.raw(b"e"), closure=closure),
+        File("x.libs/a.so", FileKind.NATIVE_LIB, Blob.raw(b"a")),
+        File("x/res", FileKind.RESOURCE, Blob.raw(b"r")),
+    )
+
+    with pytest.raises(PayloadError, match="closure"):
+        encode_payload(make_spec(files=files, modules=(), dists=()))
+
+
+def test_writer_rejects_closure_on_non_extension() -> None:
+    files = (
+        File("x/res", FileKind.RESOURCE, Blob.raw(b"r"), closure=("x.libs/a.so",)),
+        File("x.libs/a.so", FileKind.NATIVE_LIB, Blob.raw(b"a")),
+    )
+
+    with pytest.raises(PayloadError, match="closure"):
+        encode_payload(make_spec(files=files, modules=(), dists=()))
+
+
+@pytest.mark.parametrize("bad", ["a\udcffb"])
+def test_writer_rejects_unencodable_strings(bad: str) -> None:
+    with pytest.raises(PayloadError):
+        encode_payload(make_spec(app_name=bad))
+    with pytest.raises(PayloadError):
+        encode_payload(
+            make_spec(files=(File(bad, FileKind.RESOURCE, Blob.raw(b"")),), modules=(), dists=())
+        )
+    with pytest.raises(PayloadError):
+        encode_payload(
+            make_spec(
+                modules=(Module(bad, "m.py", ModuleKind.MODULE, code=Blob.raw(b"c")),),
+                files=(),
+                dists=(),
+            )
+        )
+    with pytest.raises(PayloadError):
+        encode_payload(make_spec(dists=(Dist("d", bad, "1"),), modules=(), files=()))

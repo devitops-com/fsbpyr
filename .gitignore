@@ -148,3 +148,4 @@ deploy/*-ca-key.pem
 
 # fsbpyr spike build outputs
 spikes/.out/
+.coverage

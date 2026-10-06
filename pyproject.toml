@@ -1,0 +1,55 @@
+[project]
+name = "fsbpyr"
+version = "0.1.0.dev0"
+description = "Fast single-binary Python CLI runtime and packager"
+authors = [{ name = "Kresimir Sparavec", email = "ksparavec@devitops.com" }]
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.14"
+dependencies = ["packaging>=25"]
+
+[project.scripts]
+fsbpyr = "fsbpyr.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.100",
+    "mypy>=1.15",
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.12",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-markers", "--strict-config", "-ra"]
+markers = ["slow: takes more than a few seconds"]
+
+[tool.coverage.run]
+source = ["fsbpyr"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+extend-exclude = ["spikes"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF", "S", "PL"]
+ignore = ["PLR2004"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S302", "S603", "PLR0913", "PLR0917"]
+
+[tool.mypy]
+strict = true
+python_version = "3.14"
+files = ["src", "tests"]

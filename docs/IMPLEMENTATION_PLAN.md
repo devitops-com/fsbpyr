@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.1, 2026-10-06. Phase 0 is complete; findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.2, 2026-10-06. Phases 0–1 are complete; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -102,7 +102,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D12 | **Sources are kept** by default as separate zstd frames, read only for tracebacks and `inspect`. `--no-source` drops them | Size may grow, startup may not. Gives full tracebacks | — |
 | D13 | **fsbpyr itself** requires Python ≥ 3.14. Its only runtime dependency is `packaging`. zstd comes from the stdlib `compression.zstd`, TOML from `tomllib` | Small self-hosting surface. fsbpyr is pure Python, so self-hosting does not depend on native-extension support | `zstandard` package (a native dependency) |
 | D14 | **Interpreter config in built apps:** isolated (`PYTHON*` env vars ignored), `site_import=0`, `safe_path=1`, UTF-8 mode, `parse_argv=0`, `executable` = realpath of the binary. Debug knobs only through `FSBPYR_*` env vars | Deterministic startup. The app's argv stays untouched | — |
-| D15 | **Deterministic builds:** sorted entries, fixed blob order, no timestamps, single-threaded zstd with fixed parameters, canonical bytecode (D16). Self-hosting fixed point: stage2 == stage3, byte for byte | The classic compiler-bootstrap check for R2/R3 | — |
+| D15 | **Deterministic builds:** sorted entries, fixed blob order, no timestamps, single-threaded zstd with fixed parameters, canonical bytecode (D16); output is byte-identical for a fixed libzstd version, which `build_info` records. Self-hosting fixed point: stage2 == stage3, byte for byte | The classic compiler-bootstrap check for R2/R3 | — |
 | D16 | **Canonical bytecode:** every `marshal.dumps` result is rewritten by `fsbpyr/bytecode.py`. Strings are merged by value (interned if any occurrence was), FLAG_REF is set only for nodes that occur ≥ 2 times or are interned strings, refs are renumbered in pre-order, and set elements are sorted canonically | Raw marshal output depends on refcounts and on process-global interning (S3: 561/561 files differ in batch mode, 4 in a "noisy" build process). Canonical output: 0 differences, round-trip equality, same size and load time | Compiling in a clean worker process (still state-dependent). Accepting non-determinism |
 | D17 | **Non-PIE stub** | 0.3 ms faster startup than PIE (4.85 vs 5.16 ms, S1); 59 k relative relocations avoided. ASLR still applies to heap, stack and shared libraries | PIE |
 
@@ -421,7 +421,7 @@ criteria are automated tests unless noted. Sizes are S, M or L.
 - **Exit:** decisions D1–D8 confirmed or revised. Fallback if S1 fails: shared libpython loaded
   through `memfd_create` + `dlopen` (measure its cost).
 
-### Phase 1 — Skeleton and payload format (M)
+### Phase 1 — Skeleton and payload format (M) — **DONE 2026-10-06**
 
 - `pyproject.toml`, package skeleton, pytest + coverage config, and `ruff` for formatting and
   linting.
