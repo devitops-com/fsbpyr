@@ -299,6 +299,7 @@ def test_extension_wins_over_same_named_source_module(site: Path) -> None:
 
     content = classify([index.dists["dual"]], extension_suffixes=SUFFIXES, include_source=True)
 
+    assert not [w for w in content.warnings if "provided by" in w]  # one dist: a fallback
     impl = next(m for m in content.modules if m.name == "dual._impl")
     assert impl.kind is ModuleKind.EXTENSION  # CPython's FileFinder order, first suffix first
     assert impl.file == "dual/_impl.cpython-314-x86_64-linux-gnu.so"
@@ -329,6 +330,15 @@ def test_native_files_too_large_to_load_fail_the_build(
 
     with pytest.raises(ClassifyError, match="too large"):
         classify([index.dists["fast"]], extension_suffixes=SUFFIXES, include_source=True)
+
+
+def test_same_dist_duplicates_warn_unless_extension_and_fallback(site: Path) -> None:
+    _dist(site, "twice", "1.0", {"twice.py": b"", "twice/__init__.py": b""})
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["twice"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    assert any("twice is provided by twice and twice" in w for w in content.warnings)
 
 
 def test_compiled_package_init_is_an_extension_package(site: Path) -> None:
@@ -464,3 +474,113 @@ def test_certifi_is_fs_required_without_configuration(site: Path) -> None:
     pem = next(f for f in with_certifi.files if f.path == "certifi/cacert.pem")
     assert FileFlag.FS_REQUIRED in pem.flags
     assert all(m.flags == ModuleFlag(0) for m in without.modules)
+
+
+# --- .pth files ------------------------------------------------------------------------------
+
+
+def test_pth_path_lines_make_modules_importable_by_relative_name(site: Path) -> None:
+    _dist(site, "vendored", "1.0", {
+        "vendored.pth": b"# comment\n\nvendored_libs\n../outside\n",
+        "vendored_libs/helper.py": b"X = 1\n",
+        "vendored_libs/bar/__init__.py": b"",
+        "vendored_libs/bar/baz.py": b"",
+        "vendored_libs/clash.py": b"WHERE = 'pth'\n",
+        "vendored_libs/bar/plug/m.py": b"",
+        "clash.py": b"WHERE = 'site'\n",
+        ".hidden.pth": b"hidden_libs\n",
+        "hidden_libs/secret.py": b"",
+    })  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["vendored"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    paths = {m.name: m.path for m in content.modules}
+    assert paths["helper"] == "vendored_libs/helper.py"
+    assert paths["bar"] == "vendored_libs/bar/__init__.py"
+    assert paths["bar.baz"] == "vendored_libs/bar/baz.py"
+    assert paths["clash"] == "clash.py"  # site-packages comes first on sys.path
+    kinds = {m.name: m.kind for m in content.modules}
+    assert (
+        kinds["bar.plug"] is ModuleKind.NAMESPACE and paths["bar.plug"] == "vendored_libs/bar/plug"
+    )
+    assert paths["bar.plug.m"] == "vendored_libs/bar/plug/m.py"
+    assert "secret" not in paths  # site.py skips .pth files whose name starts with "."
+    assert "vendored.pth" not in {f.path for f in content.files}
+    assert any("../outside" in w and "outside site-packages" in w for w in content.warnings)
+
+
+def test_pth_code_lines_warn_unless_known_to_be_redundant(site: Path) -> None:
+    _dist(site, "hooks", "1.0", {"hooks.pth": b"import hooks; hooks.install()\n",
+                                 "hooks.py": b"", "zope.interface-5-nspkg.pth": b"import sys\n",
+                                 "distutils-precedence.pth": b"import os\n"})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["hooks"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    pth_warnings = [w for w in content.warnings if ".pth" in w]
+    assert len(pth_warnings) == 1 and "hooks.pth" in pth_warnings[0]
+    assert "not run" in pth_warnings[0]
+
+
+# --- build hints -----------------------------------------------------------------------------
+
+READS_DATA = b"import os\nDATA = open(os.path.join(os.path.dirname(__file__), 'd.txt')).read()\n"
+
+
+def test_reads_next_to_file_are_reported_unless_fs_required(site: Path) -> None:
+    _dist(site, "datapkg", "1.0", {"datapkg/__init__.py": READS_DATA, "datapkg/d.txt": b"d",
+                                   "datapkg/util.py": READS_DATA,
+                                   "datapkg/tests/test_x.py": READS_DATA})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    plain = classify([index.dists["datapkg"]], extension_suffixes=SUFFIXES, include_source=True)
+    fs = classify([index.dists["datapkg"]], extension_suffixes=SUFFIXES, include_source=True,
+                  fs_packages=frozenset({"datapkg"}))  # fmt: skip
+
+    hints = [w for w in plain.warnings if "__file__" in w]
+    assert len(hints) == 1  # one line for the whole build
+    assert "datapkg (datapkg/__init__.py:2)" in hints[0] and "fs-packages" in hints[0]
+    assert not [w for w in fs.warnings if "__file__" in w]
+
+
+def test_file_read_hints_name_a_package_fs_packages_accepts(site: Path) -> None:
+    _dist(site, "google-cloud-x", "1.0", {"google/cloud/x/__init__.py": b"",
+                                          "google/cloud/x/res.py": READS_DATA})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["google-cloud-x"]], extension_suffixes=SUFFIXES,
+                       include_source=True)  # fmt: skip
+
+    (hint,) = [w for w in content.warnings if "__file__" in w]
+    assert "google.cloud.x (google/cloud/x/res.py:2)" in hint  # not the namespace 'google'
+    classify([index.dists["google-cloud-x"]], extension_suffixes=SUFFIXES, include_source=True,
+             fs_packages=frozenset({"google.cloud.x"}))  # fmt: skip  # the advice works
+
+
+def test_shared_objects_no_extension_uses_are_reported(site: Path) -> None:
+    extension = make_elf(soname="PyInit__ext")  # the symbol name CPython looks up
+    _dist(site, "tool", "1.0", {"tool/__init__.py": b"", "tool/libplugin.so": make_elf(),
+                                f"tool/_ext{SUFFIXES[0]}": extension})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    plain = classify([index.dists["tool"]], extension_suffixes=SUFFIXES, include_source=True)
+    fs = classify([index.dists["tool"]], extension_suffixes=SUFFIXES, include_source=True,
+                  fs_packages=frozenset({"tool"}))  # fmt: skip
+
+    hints = [w for w in plain.warnings if "no extension" in w]
+    assert len(hints) == 1 and "tool/libplugin.so" in hints[0] and "fs-packages" in hints[0]
+    assert not [w for w in fs.warnings if "no extension" in w]
+
+
+def test_pth_files_with_the_same_name_or_missing_do_not_break_the_build(site: Path) -> None:
+    _dist(site, "one", "1.0", {"shared.pth": b"one_libs\n", "one_libs/a.py": b""})
+    _dist(site, "two", "1.0", {"shared.pth": b"two_libs\n", "two_libs/b.py": b"",
+                               "gone.pth": b""})  # fmt: skip
+    (site / "gone.pth").unlink()
+    index = SiteIndex.scan(site)
+
+    content = classify(list(index.dists.values()), extension_suffixes=SUFFIXES,
+                       include_source=True)  # fmt: skip
+
+    assert any("gone.pth" in w and "missing" in w for w in content.warnings)

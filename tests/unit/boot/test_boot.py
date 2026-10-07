@@ -44,6 +44,20 @@ def _load(boot: ModuleType, name: str) -> ModuleType:
 # --- path hook, specs, loader -------------------------------------------------------------
 
 
+def test_listed_modules_get_their_fixup_after_loading(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixups = importlib.import_module("_fsbpyr_rt.fixups")
+    seen: list[tuple[str, str]] = []
+    monkeypatch.setitem(fixups.FIXUPS, "pkg.cli", lambda m: seen.append((m.__name__, m.main())))
+    monkeypatch.setattr(boot, "_FIXUPS", frozenset({"pkg.cli"}))
+
+    _load(boot, "pkg.cli")
+    _load(boot, "pkg")
+
+    assert seen == [("pkg.cli", "cli")]  # after the module's code ran; only listed modules
+
+
 def test_path_hook_claims_only_payload_paths(boot: ModuleType) -> None:
     assert boot.path_hook(boot.ROOT).directory == ""
     assert boot.path_hook(boot.ROOT + "/pkg/sub").directory == "pkg/sub"
@@ -238,6 +252,8 @@ def isolated_sys(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(sys, "meta_path", list(sys.meta_path))
     monkeypatch.setattr(sys, "path_importer_cache", {})
     monkeypatch.setattr(sys, "excepthook", sys.__excepthook__)
+    frozen = importlib.machinery.FrozenImporter
+    monkeypatch.setattr(frozen, "get_source", frozen.get_source)  # run() extends it
     before = set(sys.modules)
     yield
     for name in set(sys.modules) - before:

@@ -196,8 +196,9 @@ class Runtime:
 
 
 def running_executable() -> Path | None:
-    """The fsbpyr executable this process runs in, if any."""
-    return Path(sys.executable) if "_fsbpyr" in sys.builtin_module_names else None
+    """The fsbpyr executable this process runs in, if any: the running inode, not
+    ``sys.executable``, which names whatever file is at that path now (an upgrade, say)."""
+    return Path("/proc/self/exe") if "_fsbpyr" in sys.builtin_module_names else None
 
 
 def select_runtime(python: str, cache: Path | None = None) -> Runtime:

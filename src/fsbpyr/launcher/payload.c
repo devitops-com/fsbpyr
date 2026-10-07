@@ -3,6 +3,7 @@
 
 #include "vendor/zstd/zstd.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -62,6 +63,25 @@ static const char *check_header(struct fsb_payload *p) {
     return NULL;
 }
 
+/* The kernel names an executable that was replaced or removed while it runs "path (deleted)".
+ * Keep the path the program was started as: it names the payload's virtual tree, and a
+ * multiprocessing parent passes its own sys.path (that tree) to children started from the same
+ * binary through /proc/self/exe. A file really called "... (deleted)" is left alone. */
+static void strip_deleted(char *path, size_t *length, const struct stat *self) {
+    static const char suffix[] = " (deleted)";
+    size_t n = sizeof suffix - 1;
+    struct stat named;
+    if (*length <= n || memcmp(path + *length - n, suffix, n) != 0) return;
+    if (path[*length - n - 1] == '/') return; /* "dir/ (deleted)" would leave a directory */
+    if (stat(path, &named) == 0) {
+        if (named.st_dev == self->st_dev && named.st_ino == self->st_ino) return;
+    } else if (errno != ENOENT && errno != ENOTDIR) {
+        return; /* cannot tell: keep what the kernel reported */
+    }
+    *length -= n;
+    path[*length] = '\0';
+}
+
 bool fsb_payload_open(struct fsb_payload *p, const char **error) {
     memset(p, 0, sizeof *p);
     ssize_t n = readlink("/proc/self/exe", p->executable, sizeof p->executable - 1);
@@ -78,6 +98,8 @@ bool fsb_payload_open(struct fsb_payload *p, const char **error) {
         if (fd >= 0) close(fd);
         return false;
     }
+    size_t length = (size_t)n;
+    strip_deleted(p->executable, &length, &st);
     *error = check_trailer(&trailer, (uint64_t)st.st_size);
     if (*error == NULL && trailer.payload_size < sizeof p->header) *error = "payload truncated";
     void *map = MAP_FAILED;

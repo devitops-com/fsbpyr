@@ -2,8 +2,10 @@
 
 import csv
 import hashlib
+import posixpath
 import re
 import warnings
+from collections.abc import Callable
 from compression import zstd
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
@@ -22,6 +24,7 @@ from .payload.format import (
     ModuleKind,
 )
 from .payload.spec import Blob, Dist, File, Module
+from .scan import file_relative_reads
 
 # Written by installers, not by the wheel: they embed paths, timestamps or the installer's name,
 # so packaging them would make builds machine-specific and non-reproducible.
@@ -31,11 +34,14 @@ INSTALLER_FILES = frozenset({
 
 
 _SHARED_OBJECT = re.compile(r"\.so(\.\d+)*$")
+_TEST_DIRECTORIES = frozenset({"tests", "test"})
+# .pth files whose code only re-creates what PEP 420 namespaces (and the payload) provide
+_REDUNDANT_PTH = re.compile(r"(-nspkg|^distutils-precedence)\.pth$")
 _NATIVE_MODE = 0o755  # fixed: the installer's umask must not leak into the build
-# Packages that need their data files on disk, whatever the configuration says (plan §3.5):
-# certifi hands out the path of cacert.pem, which would otherwise be a temporary copy made
-# again in every process.
-BUILTIN_FS_PACKAGES = frozenset({"certifi"})
+# Packages that need their data files on disk, whatever the configuration says (plan §3.5).
+# Each one was verified to fail without (Phase 6b, fixture datafiles), except certifi, which
+# hands out the path of cacert.pem: otherwise a temporary copy made again in every process.
+BUILTIN_FS_PACKAGES = frozenset({"babel", "botocore", "certifi", "matplotlib"})
 
 
 def _digested(blob: Blob) -> Blob:
@@ -108,12 +114,58 @@ class _Collector:
         self.files: dict[str, File] = {}
         self.owners: dict[str, str] = {}  # path -> dist
         self.natives: dict[str, bytes] = {}  # ELF shared objects, path -> content
-        # CPython's FileFinder order: a package directory before a module file, and within
-        # each, extension suffixes in order before .py. Lower wins.
-        self.ranks: dict[str, tuple[bool, int]] = {}  # module -> (not package, loader rank)
+        # Directories that top-level .pth files add to sys.path, in site.py's order.
+        self.roots: list[str] = []
+        # CPython's order: sys.path entry (site-packages, then .pth directories), then within a
+        # directory a package before a module file, then extension suffixes before .py.
+        self.ranks: dict[str, tuple[int, bool, int]] = {}  # module -> (entry, not package, loader)
         self.warnings: list[str] = []
         self.broken: set[str] = set()  # package directories whose __init__.py does not compile
         self.sites: dict[str, Path] = {}  # dist -> site-packages directory
+        self.reads: list[tuple[str, str, int]] = []  # (dist, path, line) reading next to __file__
+        self.reached: set[str] = set()  # shared objects some extension's closure loads
+        self.fs_directories: tuple[str, ...] = ()  # FS_REQUIRED package directories, with "/"
+
+    def read_pth_files(self, dists: list[InstalledDist]) -> None:
+        """Path lines of top-level .pth files become extra module roots; code lines never run."""
+        found = sorted(
+            ((rel, dist) for dist in dists for rel in map(_record_path, dist.record)
+             if rel.endswith(".pth") and "/" not in rel and not rel.startswith(".")),
+            key=lambda item: (item[0], item[1].name),
+        )  # fmt: skip
+        for rel, dist in found:
+            if not (dist.site / rel).is_file():
+                continue  # reported as missing when its dist is added
+            text = (dist.site / rel).read_bytes().decode("utf-8-sig", errors="replace")
+            has_code = False
+            for line in text.splitlines():
+                if not line.strip() or line.startswith("#"):
+                    continue
+                if line.startswith(("import ", "import\t")):
+                    has_code = True
+                    continue
+                root = posixpath.normpath(line.rstrip())
+                if root.startswith(("/", "../")) or root == "..":
+                    self.warnings.append(
+                        f"{dist.name}: {rel} adds {line.strip()!r}, outside site-packages; "
+                        "it is not packaged"
+                    )
+                elif root not in self.roots:
+                    self.roots.append(root)
+            if has_code and not _REDUNDANT_PTH.search(rel):
+                self.warnings.append(
+                    f"{dist.name}: {rel} has code lines, which are not run in executables"
+                )
+
+    def _names[T](self, rel: str, name: Callable[[str], T | None]) -> list[tuple[T, int]]:
+        """``name`` of ``rel`` relative to site-packages and to each .pth root, with the rank
+        of that sys.path entry."""
+        bases = [("", 0)] + [(root + "/", i) for i, root in enumerate(self.roots, 1)]
+        found = []
+        for base, entry in bases:
+            if rel.startswith(base) and (named := name(rel[len(base) :])) is not None:
+                found.append((named, entry))
+        return found
 
     def add_dist(self, dist: InstalledDist) -> None:
         self.sites[dist.name] = dist.site
@@ -139,10 +191,7 @@ class _Collector:
         if not path.is_file():
             self.warnings.append(f"{dist.name}: {rel} is listed in RECORD but missing")
             return
-        if rel.endswith(".pth"):
-            self.warnings.append(
-                f"{dist.name}: {rel} ignored (.pth files do not run in executables)"
-            )
+        if rel.endswith(".pth") and "/" not in rel:  # read by read_pth_files()
             return
         data = path.read_bytes()
         if rel.endswith(self.suffixes) or _SHARED_OBJECT.search(rel):
@@ -150,42 +199,51 @@ class _Collector:
                 self._add_native(dist, rel, data)
                 return
             self.warnings.append(f"{dist.name}: {rel} kept as data (not an ELF shared object)")
-        named = module_name(rel) if rel.endswith(".py") else None
-        if named is not None and self._add_module(dist, rel, named, data):
+        names = self._names(rel, module_name) if rel.endswith(".py") else []
+        if names and self._add_module(dist, rel, names, data):
             return
         is_metadata = rel.startswith(f"{dist.dist_info}/")
         self._add_file(dist, rel, FileKind.METADATA if is_metadata else FileKind.RESOURCE, data)
 
     def _add_module(
-        self, dist: InstalledDist, rel: str, named: tuple[str, bool], data: bytes
+        self, dist: InstalledDist, rel: str, names: list[tuple[tuple[str, bool], int]], data: bytes
     ) -> bool:
         try:
             code = compile_module(data, rel)
         except SyntaxError as exc:
             self.warnings.append(f"{dist.name}: {rel} kept as data ({exc.msg}, line {exc.lineno})")
-            if named[1]:  # CPython cannot import this package either: no namespace stand-in
+            if names[0][0][1]:  # CPython cannot import this package either: no namespace stand-in
                 self.broken.add(rel.rpartition("/")[0])
             return False
-        kind = ModuleKind.PACKAGE if named[1] else ModuleKind.MODULE
-        if not self._prevails(named[0], (not named[1], len(self.suffixes)), dist.name):
-            return False
+        if not _TEST_DIRECTORIES.intersection(rel.split("/")[:-1]):  # tests are never imported
+            self.reads += [(dist.name, rel, line) for line in file_relative_reads(data, rel)]
         source = Blob.zstd(data) if self.include_source else None
-        self.modules[named[0]] = Module(named[0], rel, kind, code=Blob.code(code),
-                                        source=source, dist=dist.name)  # fmt: skip
+        added = False
+        for (name, is_package), entry in names:
+            if self._prevails(name, (entry, not is_package, len(self.suffixes)), dist.name):
+                kind = ModuleKind.PACKAGE if is_package else ModuleKind.MODULE
+                self.modules[name] = Module(name, rel, kind, code=Blob.code(code),
+                                            source=source, dist=dist.name)  # fmt: skip
+                added = True
+        if not added:
+            return False
         if source is not None:
             self.files[rel] = File(rel, FileKind.SOURCE, source, dist=dist.name)
         self.owners[rel] = dist.name
         return True
 
-    def _prevails(self, name: str, rank: tuple[bool, int], dist: str) -> bool:
+    def _prevails(self, name: str, rank: tuple[int, bool, int], dist: str) -> bool:
         """Record ``name``'s rank if it beats the module already registered under that name."""
         existing = self.modules.get(name)
         if existing is not None:
-            self.warnings.append(f"{name} is provided by {existing.dist} and {dist}")
+            compiled = min(self.ranks[name][2], rank[2]) < len(self.suffixes)
+            if existing.dist != dist or not compiled:  # a dist's compiled builds and fallback
+                self.warnings.append(f"{name} is provided by {existing.dist} and {dist}")
             if self.ranks[name] <= rank:
                 return False
             displaced = self.files.get(existing.path)
-            if displaced is not None and displaced.kind is FileKind.SOURCE:  # now plain data
+            still_used = any(m.path == existing.path and n != name for n, m in self.modules.items())
+            if displaced is not None and displaced.kind is FileKind.SOURCE and not still_used:
                 self.files[existing.path] = replace(displaced, kind=FileKind.RESOURCE)
         self.ranks[name] = rank
         return True
@@ -193,9 +251,11 @@ class _Collector:
     def _add_native(self, dist: InstalledDist, rel: str, data: bytes) -> None:
         self.natives[rel] = data
         self.owners[rel] = dist.name
-        named = extension_name(rel, self.suffixes)
-        if named is not None and self._prevails(named[0], (not named[1], named[2]), dist.name):
-            self.modules[named[0]] = Module(named[0], rel, ModuleKind.EXTENSION, file=rel,
+        for (name, is_package, rank), entry in self._names(
+            rel, lambda tail: extension_name(tail, self.suffixes)
+        ):
+            if self._prevails(name, (entry, not is_package, rank), dist.name):
+                self.modules[name] = Module(name, rel, ModuleKind.EXTENSION, file=rel,
                                             dist=dist.name)  # fmt: skip
 
     def add_natives(self, allowed: frozenset[str]) -> None:
@@ -205,6 +265,7 @@ class _Collector:
             needs = closures(self.natives, extensions, allowed=allowed)
         except NativeError as exc:
             raise ClassifyError(str(exc)) from exc
+        self.reached = {member for members in needs.values() for member in members}
         for rel, data in self.natives.items():
             if len(data) > MAX_MEMORY_BLOB:  # extraction reads a blob whole (no streaming yet)
                 raise ClassifyError(f"{rel} is too large to bundle ({len(data)} bytes)")
@@ -229,6 +290,7 @@ class _Collector:
                 continue
             self.modules[name] = replace(module, flags=module.flags | ModuleFlag.FS_REQUIRED_ROOT)
             directories.append(module.path.rpartition("/")[0] + "/")
+        self.fs_directories = tuple(directories)
         sources = {m.path: m for m in self.modules.values() if m.source is not None}
         for rel, file in list(self.files.items()):
             if rel.startswith(tuple(directories)) and file.kind not in NATIVE_KINDS:
@@ -242,21 +304,70 @@ class _Collector:
         if module is not None:  # the module's source is the same blob
             self.modules[module.name] = replace(module, source=blob)
 
+    def add_hints(self) -> None:
+        """Warnings for code that probably needs its files on disk (fs-packages)."""
+        self._hint_file_reads()
+        self._hint_unused_natives()
+
+    def _hint_file_reads(self) -> None:
+        # (directory, name) of regular packages; sorted, the outermost container comes first
+        packages = sorted(
+            (m.path.rpartition("/")[0] + "/", m.name)
+            for m in self.modules.values() if m.kind is ModuleKind.PACKAGE
+        )  # fmt: skip
+        first: dict[str, str] = {}
+        for _, rel, line in self.reads:
+            if rel.startswith(self.fs_directories):
+                continue
+            package = next(
+                (name for directory, name in packages if rel.startswith(directory)), None
+            )
+            if package is not None:
+                first.setdefault(package, f"{rel}:{line}")
+        if first:
+            listed = ", ".join(f"{name} ({where})" for name, where in sorted(first.items()))
+            self.warnings.append(
+                "these packages read files next to __file__ (a heuristic); add one to "
+                f"fs-packages only if it fails at run time: {listed}"
+            )
+
+    def _hint_unused_natives(self) -> None:
+        unused: dict[str, list[str]] = {}
+        for rel, data in sorted(self.natives.items()):
+            stem = rel.rpartition("/")[2].partition(".")[0]
+            used = (
+                rel in self.reached
+                or rel.startswith(self.fs_directories)
+                or b"PyInit_" + stem.encode() + b"\0" in data  # what CPython would call
+            )
+            if not used:
+                unused.setdefault(self.owners[rel], []).append(rel)
+        for dist, paths in sorted(unused.items()):
+            self.warnings.append(
+                f"{dist}: {', '.join(paths[:3])}{' ...' if len(paths) > 3 else ''} loaded by no "
+                "extension module; if the package loads them itself (ctypes), add it to "
+                "fs-packages"
+            )
+
     def namespaces(self) -> list[Module]:
-        """Implicit namespace packages: identifier directories without __init__.py."""
+        """Implicit namespace packages: identifier directories without __init__.py, named
+        relative to site-packages and then to each .pth root (as sys.path orders them)."""
         packages = {
             m.path.rpartition("/")[0] for m in self.modules.values() if m.kind is ModuleKind.PACKAGE
         }
         found: dict[str, Module] = {}
-        for rel, owner in sorted(self.owners.items()):
-            parts = PurePosixPath(rel).parts[:-1]
-            for depth in range(1, len(parts) + 1):
-                directory = "/".join(parts[:depth])
-                if not all(p.isidentifier() for p in parts[:depth]) or directory in self.broken:
-                    break
-                name = directory.replace("/", ".")
-                if directory not in packages and name not in self.modules and name not in found:
-                    found[name] = Module(name, directory, ModuleKind.NAMESPACE, dist=owner)
+        for base in ["", *(root + "/" for root in self.roots)]:
+            for rel, owner in sorted(self.owners.items()):
+                if not rel.startswith(base):
+                    continue
+                parts = PurePosixPath(rel[len(base) :]).parts[:-1]
+                for depth in range(1, len(parts) + 1):
+                    directory = base + "/".join(parts[:depth])
+                    if not all(p.isidentifier() for p in parts[:depth]) or directory in self.broken:
+                        break
+                    name = ".".join(parts[:depth])
+                    if directory not in packages and name not in self.modules and name not in found:
+                        found[name] = Module(name, directory, ModuleKind.NAMESPACE, dist=owner)
         return list(found.values())
 
 
@@ -269,11 +380,13 @@ def classify(
     fs_packages: frozenset[str] = frozenset(),
 ) -> Content:
     collector = _Collector(extension_suffixes, include_source)
+    collector.read_pth_files(dists)
     for dist in sorted(dists, key=lambda d: d.name):
         collector.add_dist(dist)
     collector.add_natives(allowed_system_libs)
     namespaces = collector.namespaces()
     collector.mark_fs_packages(fs_packages, namespaces)
+    collector.add_hints()
     modules = [*collector.modules.values(), *namespaces]
     return Content(
         modules=tuple(sorted(modules, key=lambda m: m.name)),

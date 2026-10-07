@@ -11,7 +11,11 @@ def square(x: int) -> int:
 
 
 def main() -> None:
-    for method in sys.argv[1:] or ["spawn", "forkserver", "fork"]:
+    if "--wait" in sys.argv:  # lets a test replace the binary on disk before any child starts
+        print("ready", flush=True)
+        sys.stdin.readline()
+    methods = [arg for arg in sys.argv[1:] if arg != "--wait"]
+    for method in methods or ["spawn", "forkserver", "fork"]:
         context = multiprocessing.get_context(method)
         with context.Pool(2) as pool:
             print(method, "pool", pool.map(square, range(5)))

@@ -223,3 +223,18 @@ def test_unencodable_module_name_is_not_found(build_app: BuildApp) -> None:
     result = _run(app)
 
     assert (result.returncode, result.stdout.strip()) == (0, "not found"), result.stderr
+
+
+def test_inspect_finds_sources_of_cpython_frozen_stdlib_modules(build_app: BuildApp) -> None:
+    source = (
+        "import inspect, os, sys\n"
+        "def main():\n"
+        "    assert os.__spec__.origin == 'frozen'  # loaded by FrozenImporter, not the payload\n"
+        "    print(inspect.getsource(os).splitlines()[0])\n"
+    )
+    app = build_app({"insp.py": source}, "insp:main")
+
+    result = _run(app)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().startswith('r"""OS routines for NT or Posix')

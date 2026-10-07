@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.8, 2026-10-07. Phases 0–6 are complete; Phases 6b and 6c close the remaining gaps; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.9, 2026-10-07. Phases 0–6 and 6b (except D23) are complete; Phase 6c is next; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -668,7 +668,7 @@ criteria are automated tests unless noted. Sizes are S, M or L.
     of the cache (fixed); the generation id now covers file modes, and `-X opt` flags are
     skipped when locating `-c`
 
-### Phase 6b — Compatibility follow-ups (M)
+### Phase 6b — Compatibility follow-ups (M) — **DONE 2026-10-07, except interpreter re-exec (D23)**
 
 Closes the open issues that no later phase covered (review of open issues, 2026-10-07).
 
@@ -717,6 +717,42 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
   - with `interpreter-reexec`, app code running `sys.executable -m <payload module>` and `-c`
     works; the same command lines started from a shell are refused; without the option
     nothing changes
+- **Result (2026-10-07):** all items except D23 are done; 512 tests pass, coverage 93%.
+  - build hints: one warning line lists the regular packages whose code reads files next to
+    `__file__` (AST heuristic over modules that mention `__file__`, skipping `tests`
+    directories and `__main__` blocks), and one per distribution names shared objects no
+    extension loads (no `PyInit_<name>` symbol, in no closure). Known limits: reads through
+    other modules, attributes or helper functions are missed (botocore), and some hits are
+    build tools or have fallbacks (numpy's f2py, cffi's recompiler, pytz)
+  - fixture `datafiles`: botocore, babel and matplotlib fail without their files on disk and
+    are now built-in FS_REQUIRED packages; pytz works (it falls back). Extracted on first
+    import: babel 33 MB, matplotlib 27 MB, botocore 25 MB
+  - D24 runtime hint dropped: a Python `open` audit hook costs +1.5% on an import-heavy start
+    (60 interleaved runs, 2834 audit events; a first sequential run showed +3.9%), above the 1%
+    gate. A C hook in the launcher would likely be cheaper; not attempted (new scope)
+  - `.pth` files: path lines make modules, packages and namespace packages importable by
+    their names relative to that directory, after site-packages; code lines warn unless they
+    are namespace shims or `distutils-precedence.pth`; dot-prefixed `.pth` files are skipped
+    as `site.py` does. Package and namespace `__path__` is now derived from the module name.
+    Not covered: FS_REQUIRED packages below a `.pth` directory (their `__path__` is not on disk)
+  - frozen stdlib sources: `inspect.getsource(os)` works. Function-level lookups
+    (`inspect.getsource(os.makedirs)`) and source lines of frozen frames in tracebacks do not:
+    linecache reads `<frozen ...>` names only from `__file__` on disk
+  - CA fallback: verified in a `debian:trixie` container with the Nix CA layout (bundle only,
+    no `cert.pem`, no hashed links): HTTPS works with the fallback and fails without it. The
+    `nixos/nix` image has that layout but no `/lib64` dynamic loader, so on NixOS fsbpyr
+    binaries need nix-ld, like any foreign dynamically linked binary
+  - multiprocessing children start from `/proc/self/exe`; an e2e test replaces the binary
+    mid-run. This found that a replaced binary's children saw their executable as
+    `path (deleted)`: the launcher now keeps the original path unless that name is still
+    this file (runtime rebuilt). Self-hosting reads its own runtime from `/proc/self/exe`
+  - `FSBPYR_VERIFY=1` re-hashes cached files (natives and FS_REQUIRED files) on use; same-dist
+    duplicate-module warnings are kept only for two pure-Python modules
+  - reviews (code and security; no CRITICAL or HIGH findings) led to: namespace packages and
+    compiled packages below `.pth` directories, hint names that `fs-packages` accepts and
+    less noise, the CA fallback re-checking `SSL_CERT_*` at use and never raising, robust
+    `.pth` reading, self-hosting reading `/proc/self/exe`, and a stricter `(deleted)` rule
+  - **open: interpreter re-exec (D23)** was not implemented in this phase
 
 ### Phase 6c — Portable glibc baseline (M) — moved from Phase 9 (D25)
 
@@ -756,6 +792,8 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
 - Cache-root ancestors: walk the root's path from `/` and require every component to be owned
   by root or the user and not writable by others unless sticky. Closes the risk accepted in the
   Phase 5 security review (a root inside a directory other users can write).
+- `FSBPYR_VERIFY=1` also checks the payload digest (D11); so far it only re-hashes cached
+  files (Phase 6b).
 - **Exit:**
   - the fuzzer and sanitizers are clean
   - security tests pass: path traversal in names, symlinked cache dirs, foreign-owned cache,

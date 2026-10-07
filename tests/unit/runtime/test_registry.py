@@ -3,6 +3,7 @@
 import dataclasses
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -217,6 +218,13 @@ def test_select_runtime_uses_the_cache_outside_executables(
 
     assert registry.running_executable() is None  # pytest is not an fsbpyr executable
     assert registry.select_runtime("3.14") == _runtime()
+
+
+def test_own_runtime_is_read_from_the_running_inode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "builtin_module_names", (*sys.builtin_module_names, "_fsbpyr"))
+
+    # not sys.executable: after an in-place upgrade that name is another file
+    assert registry.running_executable() == Path("/proc/self/exe")
 
 
 @pytest.mark.parametrize("name", ["grp", "posix", "os", "_fsbpyr"])

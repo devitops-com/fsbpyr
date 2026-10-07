@@ -175,3 +175,49 @@ def test_forged_multiprocessing_children_are_refused(mp_tmp: Path, tmp_path: Pat
     assert not marker.exists()
     assert b"cannot find context for '-c'" in stdin.stderr  # stdio: not a child, the app ran
     assert piped.returncode == 1 and "refusing to run as a multiprocessing child" in piped.stderr
+
+
+def test_children_run_the_parents_binary_after_an_in_place_upgrade(
+    mp_tmp: Path, tmp_path: Path
+) -> None:
+    executable = tmp_path / "mp"
+    shutil.copy(_build("mp", mp_tmp), executable)
+    env = {**os.environ, "FSBPYR_CACHE_DIR": str(tmp_path / "cache")}
+    process = subprocess.Popen([executable, "--wait", "spawn", "forkserver"], env=env,
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True)  # fmt: skip
+    assert process.stdout is not None and process.stdout.readline() == "ready\n"
+    upgrade = tmp_path / "mp.new"
+    shutil.copy(executable, upgrade)
+    os.replace(upgrade, executable)  # a package manager's upgrade: a new file at the same path
+
+    stdout, stderr = process.communicate("\n", timeout=120)
+
+    assert process.returncode == 0, stderr
+    expected = [line.format(method=m) for m in ("spawn", "forkserver") for line in MP_LINES]
+    assert stdout.splitlines() == [*expected, "shared_memory ok"]
+
+
+DATAFILES = {
+    "botocore": "botocore s3",
+    "pytz": "pytz Europe/Zagreb",
+    "babel": "babel German",
+    "matplotlib": "matplotlib True",
+}
+
+
+@pytest.fixture(scope="module")
+def datafiles(tmp_path_factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
+    return _build("datafiles", tmp_path_factory.mktemp("datafiles"))
+
+
+@pytest.mark.parametrize("check", sorted(DATAFILES))
+def test_packages_reading_data_next_to_their_modules(
+    datafiles: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, check: str
+) -> None:
+    monkeypatch.setenv("MPLCONFIGDIR", str(tmp_path / "mpl"))  # matplotlib's own font cache
+
+    result = _run(datafiles, tmp_path / "cache", check)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == DATAFILES[check]

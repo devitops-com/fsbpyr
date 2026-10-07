@@ -182,6 +182,11 @@ def native_cache() -> NativeCache:
     return _CACHE[0]
 
 
+def _verify_requested() -> bool:
+    """FSBPYR_VERIFY=1: re-hash cached files on use instead of trusting a matching size."""
+    return bool(os.environ.get("FSBPYR_VERIFY"))
+
+
 def _noexec(path: str) -> bool:
     try:
         return bool(os.statvfs(path).f_flag & os.ST_NOEXEC)
@@ -200,7 +205,7 @@ class PayloadExtensionLoader(ExtensionFileLoader):
     def create_module(self, spec: ModuleSpec) -> ModuleType:
         cache = native_cache()
         try:
-            cache.sync(self.files)
+            cache.sync(self.files, verify=_verify_requested())
             try:
                 return super().create_module(spec)
             except ImportError as exc:
@@ -238,7 +243,7 @@ def materialize_package(directory: str) -> str:
     prefix (with "/") that the package's modules live under."""
     cache = native_cache()
     try:
-        cache.sync(tuple(_files_below(directory)))
+        cache.sync(tuple(_files_below(directory)), verify=_verify_requested())
     except OSError as exc:
         raise NativeCacheError(
             f"cannot extract {directory} into {cache.root}: {exc}; "
@@ -261,5 +266,5 @@ def extension_spec(
     spec = ModuleSpec(fullname, loader, origin=origin)
     spec.has_location = True
     if loader.is_package(fullname):  # compiled __init__: submodules live in the payload
-        spec.submodule_search_locations = [prefix + rel.rpartition("/")[0]]
+        spec.submodule_search_locations = [prefix + fullname.replace(".", "/")]
     return spec

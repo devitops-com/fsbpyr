@@ -16,7 +16,7 @@ import _imp
 import marshal
 import posix
 import sys
-from _frozen_importlib import ModuleSpec
+from _frozen_importlib import FrozenImporter, ModuleSpec
 from _frozen_importlib_external import NamespaceLoader, PathFinder
 
 import _fsbpyr
@@ -38,6 +38,9 @@ INFO = _fsbpyr.info()
 ROOT = INFO["executable"]
 _PREFIX = ROOT + "/"
 _INTERNAL = ("_fsbpyr_boot", "_fsbpyr_rt")  # boot code, hidden from module listings
+# Stdlib modules adjusted right after they load (_fsbpyr_rt.fixups): CA store fallback and
+# multiprocessing children started from this very binary.
+_FIXUPS = frozenset({"ssl", "multiprocessing.spawn"})
 # The native cache's site directory (with "/"), once an FS_REQUIRED package was extracted
 # there: modules of such packages live below it, and the path hook claims it too.
 _FS_PREFIXES: list[str] = []
@@ -76,6 +79,10 @@ class PayloadLoader(_LoaderBase):
             raise ImportError(f"{module.__name__!r} has no spec", name=module.__name__)
         record: Record = spec.loader_state
         exec(self._code(record), module.__dict__)  # noqa: S102
+        if module.__name__ in _FIXUPS:
+            from _fsbpyr_rt.fixups import apply  # type: ignore[import-not-found]  # noqa: PLC0415
+
+            apply(module)
 
     def _record(self, fullname: str) -> Record:
         record = _fsbpyr.find_module(fullname)
@@ -163,7 +170,7 @@ class PayloadPathFinder:
         kind, path, location, loader = record[1], record[7], self.location, self._loader
         if kind == NAMESPACE:  # a portion: PathFinder assembles the namespace package
             spec = ModuleSpec(fullname, None, is_package=True)
-            spec.submodule_search_locations = [location + path]
+            spec.submodule_search_locations = [location + fullname.replace(".", "/")]
             return spec
         if kind == EXTENSION:
             from _fsbpyr_rt.native import extension_spec  # noqa: PLC0415
@@ -181,8 +188,8 @@ class PayloadPathFinder:
             is_package=kind == PACKAGE,
         )
         spec.has_location = True
-        if kind == PACKAGE:
-            spec.submodule_search_locations = [location + _directory(path)]
+        if kind == PACKAGE:  # by name: a package below a .pth directory keeps its submodules
+            spec.submodule_search_locations = [location + fullname.replace(".", "/")]
         return spec
 
     def iter_modules(self, prefix: str = "") -> Iterator[tuple[str, bool]]:
@@ -223,7 +230,9 @@ class PayloadNamespaceLoader(NamespaceLoader):
         if not location.startswith(_PREFIX):  # an extracted FS_REQUIRED directory
             on_disk: TraversableResources = super().get_resource_reader(module)  # type: ignore[arg-type]
             return on_disk
-        reader: TraversableResources = PayloadResourceReader(ROOT, location[len(_PREFIX) :])
+        record = _fsbpyr.find_module(module)  # its directory, also below a .pth root
+        directory = record[7] if record is not None else location[len(_PREFIX) :]
+        reader: TraversableResources = PayloadResourceReader(ROOT, directory)
         return reader
 
 
@@ -241,7 +250,7 @@ class PayloadMetaFinder:
         parent = next(iter(path), "") if path else ""  # a list, or a parent's _NamespacePath
         location = next((p for p in _FS_PREFIXES if parent.startswith(p)), _PREFIX)
         finder = PathFinder._get_spec  # type: ignore[attr-defined]  # namespace recalculation
-        loader = PayloadNamespaceLoader(fullname, [location + record[7]], finder)
+        loader = PayloadNamespaceLoader(fullname, [location + fullname.replace(".", "/")], finder)
         spec = ModuleSpec(fullname, loader, is_package=True)
         spec.submodule_search_locations = loader._path  # type: ignore[attr-defined]
         return spec
@@ -286,6 +295,26 @@ def _resolve(entrypoint: str) -> object:
     return target
 
 
+def _frozen_source(fullname: str) -> str | None:
+    record = _fsbpyr.find_module(fullname)
+    if record is None or record[4] == NONE:
+        return None
+    from _frozen_importlib_external import decode_source  # noqa: PLC0415  frozen, rarely used
+
+    return decode_source(_fsbpyr.read(record[4]))
+
+
+def _install_frozen_sources() -> None:
+    """CPython keeps no source for its frozen stdlib modules (os, codecs, ...); the payload
+    does, so inspect.getsource() works on them as it does on a normal installation."""
+    frozen_source = FrozenImporter.get_source
+
+    def get_source(cls: type, fullname: str) -> str | None:
+        return frozen_source(fullname) or _frozen_source(fullname)
+
+    FrozenImporter.get_source = classmethod(get_source)  # type: ignore[method-assign,assignment]
+
+
 def _multiprocessing_child() -> bool:
     """multiprocessing re-executes ``sys.executable`` (this app) with ``-c <code>``."""
     argv = sys.argv
@@ -307,6 +336,7 @@ def run() -> None:
     sys.meta_path.insert(position, META_FINDER)
     if sys.excepthook is sys.__excepthook__:
         sys.excepthook = _excepthook
+    _install_frozen_sources()
     if posix.environ.get(b"FSBPYR_TRACE"):
         import atexit  # noqa: PLC0415
 

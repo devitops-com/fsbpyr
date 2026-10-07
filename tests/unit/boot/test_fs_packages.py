@@ -133,3 +133,22 @@ def test_extraction_happens_once(site: Path, boot: ModuleType) -> None:
     assert extracted == sorted([*DATA, NATIVE, "tpl/__init__.py", "tpl/sub.py"])
     assert sorted(native.EXTRACTED) == extracted
     assert os.path.isfile(site / "tpl/sub.py")
+
+
+def test_verify_env_repairs_extracted_data_files(
+    site: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    importlib.import_module("tpl")
+    data = site / "tpl/data/a.txt"
+    data.chmod(0o600)
+    data.write_bytes(b"Z")  # same size, different content
+    for name in [n for n in sys.modules if n.partition(".")[0] == "tpl"]:
+        del sys.modules[name]
+
+    importlib.import_module("tpl")
+    assert data.read_bytes() == b"Z"  # a cache hit is a size check
+    del sys.modules["tpl"]
+    monkeypatch.setenv("FSBPYR_VERIFY", "1")
+    importlib.import_module("tpl")
+
+    assert data.read_bytes() == b"A"

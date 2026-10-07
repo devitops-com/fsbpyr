@@ -20,7 +20,9 @@ from .conftest import FAKE_RUNTIME
 EXT = "fast/_speed.cpython-314-x86_64-linux-gnu.so"
 LIB = "fast.libs/libhelper.so"
 CY = "cy/__init__.cpython-314-x86_64-linux-gnu.so"
-CONTENT = {EXT: b"\x7fELF speed" * 50, LIB: b"\x7fELF helper" * 50, CY: b"\x7fELF cy"}
+RCY = "vendored/rcy/__init__.cpython-314-x86_64-linux-gnu.so"  # below a .pth root, named rcy
+CONTENT = {EXT: b"\x7fELF speed" * 50, LIB: b"\x7fELF helper" * 50, CY: b"\x7fELF cy",
+           RCY: b"\x7fELF rcy"}  # fmt: skip
 
 
 def _code(rel: str) -> Blob:
@@ -38,6 +40,7 @@ def executable(tmp_path_factory: pytest.TempPathFactory) -> Path:
         Module("fast", "fast/__init__.py", ModuleKind.PACKAGE, code=_code("fast/__init__.py")),
         Module("fast._speed", EXT, ModuleKind.EXTENSION, file=EXT),
         Module("cy", CY, ModuleKind.EXTENSION, file=CY),
+        Module("rcy", RCY, ModuleKind.EXTENSION, file=RCY),
         Module("cy.helpers", "cy/helpers.py", ModuleKind.MODULE, code=_code("cy/helpers.py")),
     )
     out = tmp_path_factory.mktemp("native") / "native-demo"
@@ -97,6 +100,9 @@ def test_compiled_package_keeps_its_submodules_in_the_payload(boot: types.Module
     assert spec is not None and spec.submodule_search_locations == [boot.ROOT + "/cy"]
     assert ("cy", True) in set(boot.path_hook(boot.ROOT).iter_modules())
     assert boot.path_hook(boot.ROOT + "/cy").find_spec("cy.helpers") is not None
+    below_pth_root = boot.path_hook(boot.ROOT).find_spec("rcy")
+    assert below_pth_root is not None
+    assert below_pth_root.submodule_search_locations == [boot.ROOT + "/rcy"]  # by name
 
 
 def test_first_sync_extracts_the_closure_once(
@@ -293,3 +299,24 @@ def test_unsafe_app_names_never_reach_the_filesystem(native: types.ModuleType) -
     for app in ("", ".", "..", "a/b"):
         with pytest.raises(native.NativeCacheError, match="corrupt"):
             native.cache_directory(app, {"XDG_CACHE_HOME": "/x"})
+
+
+def test_verify_env_rehashes_cache_hits_before_loading(
+    boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = _speed_spec(boot)
+    native.native_cache().sync(_files(spec))
+    _damage(Path(native.native_cache().site) / LIB)
+
+    class Loads(ExtensionFileLoader):  # dlopen would not notice the damage
+        def create_module(self, spec: importlib.machinery.ModuleSpec) -> types.ModuleType:
+            return types.ModuleType(spec.name)
+
+    class Loader(native.PayloadExtensionLoader, Loads):  # type: ignore[misc,name-defined]
+        pass
+
+    factory: Any = Loader
+    monkeypatch.setenv("FSBPYR_VERIFY", "1")
+    factory(spec.name, spec.origin, _files(spec)).create_module(spec)
+
+    assert (Path(native.native_cache().site) / LIB).read_bytes() == CONTENT[LIB]
