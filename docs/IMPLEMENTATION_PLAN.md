@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.10, 2026-10-07. Phases 0–6, 6b (except D23) and 6c are complete; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.11, 2026-10-07. Phases 0–6, 6b (except D23) and 6c are complete; uv is required (D26); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -92,7 +92,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D2 | **CPython is statically linked into the launcher** from PBS `pgo+lto-full` (clang/lld ≥ 22, `--target=x86_64-unknown-linux-gnu`, `-flto=full`; only `Py*`/`_Py*` are exported (`--export-dynamic-symbol`, Phase 5) so manylinux wheels resolve the C API from the executable but never bind to the stub's static zlib, OpenSSL or libffi). Link inputs: libpython.a, the HACL objects of modules registered in `config.c`, and the static libraries listed in `PYTHON.json` (S1) | Runtime is directly loadable (manifest Fig. 1). PGO+LTO speed. PBS already handles the static dependencies and the glibc 2.17 baseline | Shared libpython extracted to the cache (extracts the runtime on first run). memfd + dlopen (copies MBs on every start). Building CPython and its dependencies ourselves (large effort) |
 | D3 | A **runtime** is: the *stub* (launcher + static CPython, an ELF) + a precompiled *stdlib payload fragment* + `runtime.json`. It is built once per (Python minor, platform, launcher version) and cached | App builds become concatenation: no compiler and no network needed | Compile per app |
 | D4 | **Every fsbpyr binary carries its own runtime.** When `fsbpyr build` targets the same Python minor, it reuses its own stub bytes and the already-compressed stdlib frames from its own executable (`Runtime.from_self()`) | Makes R2/R3 work without a toolchain. Fast builds | — |
-| D5 | **Inputs come from a fresh staging install driven by the project's lock** (§3.6). uv projects: `uv sync --frozen --no-dev --no-editable` into a throwaway staging venv. pip projects: `--target` install from `pylock.toml`, then a pinned requirements file, then `[project.dependencies]` (unlocked, with a warning), plus the project itself installed `--no-deps`. The developer's venv is never read or modified | Reproducible from the lock. No dev dependencies. The project is installed non-editable, so its package data is correct. uv and pip do all resolving and building | Reading the developer's venv (not reproducible, editable installs, dev deps). Our own resolver |
+| D5 | **Inputs come from a fresh staging install driven by the project's lock** (§3.6). uv projects: `uv sync --frozen --no-dev --no-editable` into a throwaway staging venv. pip projects (installed by uv, D26): `--target` install from `pylock.toml`, then a pinned requirements file, then `[project.dependencies]` (unlocked, with a warning), plus the project itself installed `--no-deps`. The developer's venv is never read or modified | Reproducible from the lock. No dev dependencies. The project is installed non-editable, so its package data is correct. uv does all resolving and building (D26) | Reading the developer's venv (not reproducible, editable installs, dev deps). Our own resolver |
 | D6 | Imports hook in through **`sys.path_hooks` + one virtual `sys.path` entry** (as zipimport does), plus a `sys.meta_path` `DistributionFinder` for `importlib.metadata` | `pkgutil.iter_modules`, `importlib.util.find_spec` and PEP 420 namespace packages work through the stock PathFinder | Pure meta-path finder |
 | D7 | **Index lookups happen in C** (built-in module `_fsbpyr`, binary search over sorted tables mapped with mmap). The index is never turned into Python dicts | Startup must not scale with the number of packaged files (M2) | Python dict built at boot (O(N) on every start) |
 | D8 | **Startup-critical modules** (`encodings*`, `linecache`, the boot module) are listed in the STARTUP section. The launcher decompresses them once (checksum-verified zstd frames, one shared context, about 0.08 ms) and hands them to CPython through a `PyImport_FrozenModules` table built at run time | No filesystem access during init. No launcher rebuild when boot code changes. `marshal` never sees corrupt bytes: the Phase 2 review showed raw startup blobs crashed CPython on bit flips | Raw blobs referenced straight from the mmap (zero-copy but unverified). Freezing into the C source |
@@ -113,6 +113,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D23 | **Interpreter re-exec is opt-in and authenticated** (owner decision 2026-10-07): with `interpreter-reexec = true`, `<exe> [flags] -m MODULE ...` and `-c CODE ...` run as CPython would, but only when the parent process runs this same executable (the D22 check); otherwise the app runs as usual | Tools that start helper interpreters through `sys.executable` work. Off by default, because an app's own CLI may use `-c`/`-m`; callers from a shell or sudo never get an interpreter | Always on; keeping it a non-goal |
 | D24 | **A runtime hint for `__file__`-relative data** (owner decision 2026-10-07): an `open` audit hook turns failures on paths inside the executable into an error that names the package and `fs-packages`. It ships only if measured overhead is below 1%; build-time warnings ship regardless | Field failures become self-explanatory | Build-time warnings only |
 | D25 | **The portable glibc baseline moves from Phase 9 to Phase 6c** (owner decision 2026-10-07) | glibc 2.38 excludes Debian 12, Ubuntu 22.04 and RHEL 8/9; benchmarks (Phase 7) should measure the stub that ships | Leaving it in Phase 9 |
+| D26 | **uv is required on the build host** (owner decision 2026-10-07): it installs every project, including pip projects (requirements.txt, unlocked); a build without uv on PATH fails with installation instructions. The pip fallback and `--interpreter` are gone | Only uv selects wheels for the runtime's glibc baseline (`--python-platform`); measured: a pip build of `heavy` picked cryptography's manylinux_2_34 wheel and failed on Debian 10 and Rocky 8 | Bundling uv inside fsbpyr; a wheels-only pip path; keeping pip with a warning |
 
 ---
 
@@ -286,13 +287,12 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
    |-------------|---------|
    | `uv.lock` | `UV_PROJECT_ENVIRONMENT=<staging> uv sync --frozen --no-dev --no-editable --python 3.14 [--extra X…]`. Honours `[tool.uv.sources]`, indexes and workspaces. The project is installed non-editable |
    | `pylock.toml` (PEP 751) | `uv pip install --target <staging> --python 3.14 -r pylock.toml`, then the project with `--no-deps` |
-   | pinned requirements (`--requirements FILE`, default `requirements.txt`) | `uv pip install` / `pip install --target <staging> -r FILE` (`--require-hashes` when hashes are present), then the project with `--no-deps` |
+   | pinned requirements (`--requirements FILE`, default `requirements.txt`) | `uv pip install --target <staging> -r FILE` (`--require-hashes` when hashes are present), then the project with `--no-deps` |
    | none | install the project with dependencies resolved fresh from `[project.dependencies]`. Prints the warning **"unlocked build — not reproducible"** |
 
-   The installer is uv when it is on PATH. Otherwise it is pip run by a Python 3.14
-   interpreter: `--interpreter`, then `$VIRTUAL_ENV/bin/python`, then `.venv/bin/python`, then
-   `python3.14`. The venv only supplies pip; its packages are never read. `--offline` is passed
-   through. Cross-platform flags (`--python-platform` / `--platform`) are Phase 9.
+   The installer is always uv (D26): without uv on PATH the build stops with installation
+   instructions. Every install passes `--python-platform` for the runtime's glibc baseline
+   (`x86_64-manylinux_2_28`, Phase 6c). `--offline` is passed through.
 4. **Entry point.** Read `[console_scripts]` from the project's installed `entry_points.txt`.
    If there is one, use it. If there are several, `--entry` or config is required. `module`
    and `module:func` are also accepted.
@@ -361,7 +361,7 @@ src/fsbpyr/
   cli.py                    argparse: build | inspect | runtime
   config.py                 [tool.fsbpyr] + CLI merge (tomllib)
   project.py                project discovery, pyproject/requires-python, lock-source selection
-  staging.py                fresh install into staging (uv sync / uv pip / pip --target)
+  staging.py                fresh install into staging (uv sync / uv pip install --target)
   closure.py                staging dist index, Requires-Dist consistency walk, markers (packaging)
   classify.py               RECORD → typed entries
   compile.py                bytecode compile (in-process / compile helper)
@@ -518,7 +518,8 @@ criteria are automated tests unless noted. Sizes are S, M or L.
   - fixtures `hello`, `clicky` (click + rich) and `resources` build and run from each lock
     source: `uv.lock`, `pylock.toml`, pinned `requirements.txt` with hashes, and unlocked
     (the warning is asserted)
-  - building from pip works both with and without uv on PATH
+  - building from pip works both with and without uv on PATH (superseded by D26: uv is
+    required)
   - the developer's `.venv` is untouched (mtime and file tree snapshot are asserted)
   - `dist/fsbpyr` is produced from the stage 0 venv install (stage1)
   - **stage2 == stage3**
@@ -530,11 +531,11 @@ criteria are automated tests unless noted. Sizes are S, M or L.
     3.14.8, with only uv on PATH and an empty cache. A self-build takes about 0.3 s
   - fixtures `hello` and `clicky` (click + rich + `files("clicky.data")`) build and run from
     `uv.lock`, `pylock.toml`, hashed `requirements.txt`, and unlocked (warning asserted); pip
-    works without uv
+    works without uv (superseded by D26: uv is required)
   - implementation notes that deviate from the text above:
     - `uv sync --locked` instead of `--frozen`: a stale lock is an error, not a silent build
     - the project's wheel is always built out of tree: `uv build` (sdist, then wheel), or
-      `pip wheel` from a clean copy. It is installed `--no-deps` after the dependencies from
+      `pip wheel` from a clean copy (removed by D26). It is installed `--no-deps` after the dependencies from
       the lock, so neither a stale setuptools `build/` directory nor uv's build cache (keyed on
       `pyproject.toml`, found by the self-hosting test) can ship old code, and the project tree
       is never written to. uv workspace members and path dependencies are rebuilt with
@@ -556,7 +557,8 @@ criteria are automated tests unless noted. Sizes are S, M or L.
       and leak build paths
     - native extensions are rejected with a clear error until Phase 5
     - CLI: `fsbpyr build [DIR] --entry -o --requirements --extra --interpreter --offline
-      --no-source --no-smoke`; the other options arrive with their phases
+      --no-source --no-smoke`; the other options arrive with their phases (`--interpreter`
+      was removed by D26)
 
 ### Phase 5 — Native extensions and the cache (L) — **DONE 2026-10-07**
 
@@ -780,9 +782,8 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
   - uv chose cryptography's manylinux_2_34 wheel on this host, so `heavy` needed glibc 2.34.
     Every uv install now passes `--python-platform x86_64-manylinux_2_28` (from the runtime's
     sysroot pin; uv also accepts the project's own locally built wheel with it). A dependency
-    without such a wheel is built from its sdist on the build host. The pip fallback is not
-    filtered (pip would refuse every sdist), and the build warns when a native file needs more
-    than the 2.28 baseline
+    without such a wheel is built from its sdist on the build host, and the build warns when a
+    native file needs more than the 2.28 baseline. The pip fallback was later removed (D26)
   - `fsbpyr build` reports the requirement (`glibc >= 2.25`), stores it in the build info,
     and reads it from DT_VERNEED of the stub and every bundled native file
   - `hello`, `heavy` and `compat` (every check except the two HTTP clients, which need the
@@ -792,7 +793,9 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
     over the stub and the natives, and is at most 2.28 (`tests/e2e/test_portability.py`)
   - without uv (pip path, `heavy` from a hash-pinned requirements.txt) pip chose
     cryptography's manylinux_2_34 wheel: the build reported `glibc >= 2.34` with a warning, and
-    on Debian 10 and Rocky 8 everything but `heavy crypto` worked (`GLIBC_2.30 not found`)
+    on Debian 10 and Rocky 8 everything but `heavy crypto` worked (`GLIBC_2.30 not found`).
+    Hence D26: uv is required; the same project built by uv reports `glibc >= 2.28` and runs
+    on all 13 distributions (`heavy-pip` in the portability matrix)
   - startup: `hello` 1.11x bare `python3.14 -I -S`, inside the 1.15x budget
   - clang-22 takes `crt*.o` and `libgcc` from the sysroot's GCC 8 (checked with `-###`)
   - reviews (code and security; no CRITICAL or HIGH findings) led to: symbol-version parsing
@@ -850,14 +853,14 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
   - format and writer/reader
   - ELF parser, against real `.so` fixtures and crafted malformed ELFs
   - marker/closure walker, against synthetic site-packages trees
-  - lock-source selection, installer selection and staging-key hashing (subprocess calls
+  - lock-source selection and staging-key hashing (subprocess calls
     mocked at the `staging.py` boundary)
   - classifier, config merge
   - cache materialization, including concurrency through multiprocessing and hostile
     filesystem layouts
 - **Integration:**
   - `runtime build` (marked `slow`; needs clang ≥ 22)
-  - project wheel acquisition through uv and through pip
+  - project wheel acquisition through uv (D26)
   - boot contract suite against `_fsbpyr_py`
 - **E2E:**
   - fixture projects under `tests/fixtures/projects/` carry committed `uv.lock`,
@@ -895,7 +898,7 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
 
 ```
 fsbpyr build [PROJECT_DIR] [--entry NAME | module | module:func] [-o OUT]
-             [--requirements FILE] [--interpreter PYTHON] [--offline]
+             [--requirements FILE] [--offline]
              [--profile fast|balanced|compact] [--extra NAME]... [--no-source]
              [--fs-package NAME]... [--allow-system-lib SONAME]... [--no-smoke]
              [--interpreter-reexec]
@@ -938,7 +941,7 @@ import timings; this was accepted in the Phase 2 review, since that party could 
 | Wheels not compliant with manylinux (local builds linking host libs) | Missing libs on targets | Fail the build with a named library; `--allow-system-lib` |
 | Staging install needs network or a warm cache | Builds fail offline | Staging is reused per lock hash; `--offline` passthrough; clear error naming the missing package |
 | pip projects without any lock | Builds not reproducible | Loud warning; the build-info JSON records "unlocked" plus the resolved versions; `fsbpyr inspect` shows it |
-| sdist-only dependencies | Build backends needed at staging time | Delegated to uv/pip, as in any normal install; the error output is passed through verbatim |
+| sdist-only dependencies | Build backends needed at staging time | Delegated to uv, as in any normal install; the error output is passed through verbatim |
 | Memory safety bugs in `_fsbpyr` | Security | Bounds checks, fuzzing, sanitizers (Phase 8) |
 
 ## 11. Resolved questions (owner, 2026-10-06)

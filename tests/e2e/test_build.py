@@ -1,14 +1,13 @@
 """Phase 4 exit criteria: `fsbpyr build` on real uv/pip projects, and self-hosting.
 
 Needs the cached runtime and, on the first run, network access for the fixtures' packages
-(uv and pip caches afterwards).
+(the uv cache afterwards).
 """
 
 import itertools
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -80,20 +79,17 @@ def test_clicky_from_each_lock_source(
     assert unlocked_warning is (lock == "unlocked")
 
 
-def test_pip_projects_build_without_uv(
+def test_builds_without_uv_explain_how_to_install_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     project = _fixture("clicky", tmp_path, drop=("uv.lock", "pylock.toml"))
-    venv = tmp_path / "venv"
-    subprocess.run([sys.executable, "-m", "venv", venv], check=True)
-    monkeypatch.setenv("PATH", "/usr/bin:/bin")  # no uv here
-    out = tmp_path / "out" / "clicky"
-    python = str(venv / "bin" / "python")
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))  # no uv (D26: uv is required)
 
-    status = main(["build", str(project), "-o", str(out), "--interpreter", python])
+    status = main(["build", str(project), "-o", str(tmp_path / "out" / "clicky")])
 
-    assert status == 0, capsys.readouterr().err
-    assert _run(out, "pip").stdout.splitlines()[0] == "Hello, pip!"
+    assert status == 1
+    assert "fsbpyr needs uv to build" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
 
 
 def test_sources_are_rebuilt_after_every_change(tmp_path: Path) -> None:

@@ -20,7 +20,6 @@ class BuildConfig:
     requirements: str | None = None
     extras: tuple[str, ...] = ()
     include_source: bool = True
-    interpreter: Path | None = None
     offline: bool = False
     smoke: bool = True
     allowed_system_libs: tuple[str, ...] = ()  # sonames extensions may load from the host

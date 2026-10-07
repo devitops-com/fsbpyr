@@ -14,12 +14,14 @@ import pytest
 from fsbpyr.cli import main
 from fsbpyr.payload.format import NATIVE_KINDS
 from fsbpyr.payload.reader import Executable
+from fsbpyr.project import LockSource
 from fsbpyr.runtime.registry import Runtime
 
 from .test_compat import MATRIX
 from .test_natives import EXPECTED as HEAVY
 
 PODMAN = shutil.which("podman")
+UV = shutil.which("uv")
 OBJDUMP = shutil.which("llvm-objdump-22") or shutil.which("llvm-objdump")
 pytestmark = [pytest.mark.slow, pytest.mark.skipif(PODMAN is None, reason="needs podman")]
 
@@ -42,6 +44,7 @@ IMAGES = (  # glibc 2.28 (the baseline) up to the newest releases
 COMMANDS = {  # (binary, arguments) -> expected stdout; the HTTP checks need the host's network
     ("hello", "5 x"): "hello ['5', 'x']",
     **{("heavy", check): out for check, out in HEAVY.items()},
+    **{("heavy-pip", check): out for check, out in HEAVY.items()},  # requirements.txt project
     **{
         ("compat", check): out
         for check, out in MATRIX.items()
@@ -58,6 +61,15 @@ def apps(tmp_path_factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
         project = directory / "src" / name
         shutil.copytree(FIXTURES / name, project)
         assert main(["build", str(project), "-o", str(directory / name)]) == 0
+    pip_project = directory / "src" / "heavy-pip"  # maintained with pip: hash-pinned, no uv.lock
+    shutil.copytree(FIXTURES / "heavy", pip_project)
+    subprocess.run([UV or "uv", "export", "--quiet", "--frozen", "--no-dev", "--no-emit-project",
+                    "--format", "requirements-txt", "-o", "requirements.txt"],
+                   cwd=pip_project, check=True)  # fmt: skip
+    (pip_project / "uv.lock").unlink()
+    assert main(["build", str(pip_project), "-o", str(directory / "heavy-pip")]) == 0
+    with Executable.open(directory / "heavy-pip") as executable:
+        assert json.loads(executable.payload.build_info)["lock"] == LockSource.REQUIREMENTS.value
     return directory
 
 
@@ -92,7 +104,7 @@ def _objdump_glibc(data: bytes, scratch: Path) -> tuple[int, int] | None:
 
 
 @pytest.mark.skipif(OBJDUMP is None, reason="needs llvm-objdump")
-@pytest.mark.parametrize("name", ["hello", "heavy", "compat"])
+@pytest.mark.parametrize("name", ["hello", "heavy", "heavy-pip", "compat"])
 def test_reported_glibc_requirement_matches_the_binary(
     apps: Path, tmp_path: Path, name: str
 ) -> None:

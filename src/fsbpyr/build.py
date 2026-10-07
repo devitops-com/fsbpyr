@@ -17,7 +17,7 @@ from .elf import ElfError, glibc_requirement
 from .project import LockSource, Project
 from .runtime import pins
 from .runtime.registry import Runtime, select_runtime
-from .staging import StagingOptions, find_installer, run_plan, staging_plan
+from .staging import StagingOptions, find_uv, run_plan, staging_plan
 
 TARGET_PYTHON = "3.14"
 _SMOKE_TIMEOUT = 120
@@ -99,6 +99,7 @@ def build(
     directory: Path, config: BuildConfig, *, log: Callable[[str], None] = lambda _: None
 ) -> BuildResult:
     project = Project.load(directory)
+    uv = find_uv()  # before anything slow: a build cannot go far without it (D26)
     runtime = select_runtime(TARGET_PYTHON)
     project.check_python(runtime.python_version)
     warnings: list[str] = []
@@ -107,13 +108,12 @@ def build(
     source = project.lock_source(config.requirements)
     if source is LockSource.UNLOCKED:
         warnings.append("unlocked build: dependencies resolved now, not reproducible")
-    installer = find_installer(source, TARGET_PYTHON, project.directory, config.interpreter)
     log(f"staging {project.name or project.directory.name} from {source.value}")
     with tempfile.TemporaryDirectory(prefix="fsbpyr-stage-") as tmp:
         baseline = pins.sysroot_for(runtime.tag.partition("-")[2])  # the stub's glibc (D25)
         options = StagingOptions(TARGET_PYTHON, config.extras, config.offline, config.requirements,
                                  platform=baseline.platform)  # fmt: skip
-        plan = staging_plan(project, source, installer, Path(tmp), options)
+        plan = staging_plan(project, source, uv, Path(tmp), options)
         wheel = run_plan(plan, project.directory)
         index = SiteIndex.scan(plan.site)
         index.check_no_editable()

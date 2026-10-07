@@ -4,8 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from fsbpyr.build import BuildError, glibc_report, smoke_test
+from fsbpyr.build import BuildError, build, glibc_report, smoke_test
 from fsbpyr.cli import main
+from fsbpyr.config import BuildConfig
+from fsbpyr.staging import StagingError
 
 from ...support.elf import make_elf
 
@@ -37,6 +39,17 @@ def test_build_without_project_files_fails_cleanly(
 ) -> None:
     assert main(["build", str(tmp_path)]) == 1
     assert "has no pyproject.toml or setup.py" in capsys.readouterr().err
+
+
+def test_builds_without_uv_fail_before_looking_for_a_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    monkeypatch.setattr("fsbpyr.build.select_runtime", lambda version: pytest.fail("runtime"))
+
+    with pytest.raises(StagingError, match="needs uv"):
+        build(tmp_path, BuildConfig())
 
 
 def test_output_must_not_be_a_directory(tmp_path: Path) -> None:
