@@ -62,7 +62,10 @@ def make_spec(**overrides: object) -> PayloadSpec:
                 dist="demo",
             ),
             File(
-                "pkg/certs/ca.pem", FileKind.RESOURCE, Blob.raw(b"PEM"), flags=FileFlag.FS_REQUIRED
+                "pkg/certs/ca.pem",
+                FileKind.RESOURCE,
+                Blob.raw(b"PEM", digest=True),
+                flags=FileFlag.FS_REQUIRED,
             ),
             File(
                 "demo-1.0.dist-info/METADATA",

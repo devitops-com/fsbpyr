@@ -1,5 +1,6 @@
 """Payload -> spec conversion, runtime cache round trip and app assembly."""
 
+import dataclasses
 import importlib.util
 import json
 from pathlib import Path
@@ -133,6 +134,9 @@ def test_generation_id_depends_on_runtime_and_extractable_files() -> None:
     base = generation_id("cp314-x", ())
     assert generation_id("cp314-x", (res,)) == base  # in-memory resources do not count
     assert generation_id("cp314-x", (lib,)) != base
+    executable = dataclasses.replace(lib, mode=0o755)
+    # cached files keep the mode of their first extraction, so a mode change needs a new one
+    assert generation_id("cp314-x", (executable,)) != generation_id("cp314-x", (lib,))
     assert generation_id("cp314-y", ()) != base
     assert len(base) == 32
 

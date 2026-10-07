@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import __version__, bytecode
-from .payload.format import NATIVE_KINDS, FileFlag, ModuleFlag, ModuleKind
+from .payload.format import ModuleFlag, ModuleKind, extractable
 from .payload.spec import Blob, Dist, File, Module, PayloadSpec
 from .payload.writer import encode_payload, write_executable
 from .runtime.registry import BOOT_PACKAGES, Runtime
@@ -58,9 +58,10 @@ def generation_id(runtime_tag: str, files: tuple[File, ...]) -> bytes:
     """Native cache generation: runtime ABI plus identity of every extractable artifact (D10)."""
     digest = hashlib.sha256(runtime_tag.encode() + b"\0")
     for file in sorted(files, key=lambda f: f.path.encode()):
-        if file.kind in NATIVE_KINDS or FileFlag.FS_REQUIRED in file.flags:
+        if extractable(file.kind, file.flags):
             identity = file.blob.sha256 or hashlib.sha256(file.blob.stored).digest()
-            digest.update(file.path.encode() + b"\0" + identity)
+            mode = file.mode.to_bytes(2, "little")  # cached files keep their first mode
+            digest.update(file.path.encode() + b"\0" + identity + mode)
     return digest.digest()
 
 

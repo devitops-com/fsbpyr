@@ -269,6 +269,27 @@ def test_run_selftest_installs_import_machinery(
 
 
 @pytest.mark.usefixtures("isolated_sys")
+def test_multiprocessing_children_run_instead_of_the_app(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    started: list[int] = []
+    tracker = types.ModuleType("multiprocessing.resource_tracker")
+    tracker.main = started.append  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "multiprocessing.resource_tracker", tracker)
+    mp = importlib.import_module("_fsbpyr_rt.mp")
+    monkeypatch.setattr(mp, "_parent_runs_this_executable", lambda: True)  # pytest's parent is not
+    monkeypatch.setitem(posix.environ, b"FSBPYR_SELFTEST", b"1")
+    command = "from multiprocessing.resource_tracker import main;main(7)"
+    monkeypatch.setattr(sys, "argv", [boot.ROOT, "-B", "-S", "-I", "-c", command])
+
+    boot.run()
+
+    assert started == [7] and sys.argv == ["-c"]
+    assert sys.path == [boot.ROOT]  # the child imports from the payload like the app does
+    assert "selftest" not in capsys.readouterr().out  # the application did not run
+
+
+@pytest.mark.usefixtures("isolated_sys")
 def test_trace_reports_payload_modules_by_dist_at_exit(
     boot: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

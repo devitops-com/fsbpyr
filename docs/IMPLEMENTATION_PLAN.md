@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.6, 2026-10-07. Phases 0–5 are complete; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.7, 2026-10-07. Phases 0–6 are complete; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -108,6 +108,8 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D17 | **PIE stub** (owner decision 2026-10-07, after the Phase 2 security review) | ASLR for the launcher and CPython image, the distro baseline. Costs about 0.3 ms per start (S1); measured no-op app 4.95 ms vs 4.84 ms bare CPython, inside the 1.15× budget. Also hardened with RELRO, BIND_NOW, NX stack, `-fstack-protector-strong`, `_FORTIFY_SOURCE=2`. A non-PIE stub may return as an opt-in for the Phase 7 `fast` profile | Non-PIE by default (0.3 ms faster, fixed image addresses) |
 | D19 | **Code blobs are always checksummed zstd frames** (`Blob.code`); every reader requires the frame's content-checksum flag | `marshal.loads` is not safe against corrupt input. Fuzzing 900 bit flips: 67 SIGSEGV + 4 SIGABRT + a hang before, 0 signals after (clean exit 70 or `PayloadError`) | Raw storage of small code objects |
 | D20 | **The cache is private:** cache directories must be owned by the user and are forced to 0700; `runtime.json` records SHA-256 of the stub and the stdlib fragment, verified on load; a concurrently completed runtime wins | Cached stubs are copied into every executable built from them | Trusting any directory named by `FSBPYR_CACHE_DIR` / `XDG_CACHE_HOME` |
+| D21 | **`sys.frozen` is not set** | It is PyInstaller's flag: code that sees it reaches for `sys._MEIPASS` or other PyInstaller layouts. multiprocessing would use it only to shorten the spawn command line, which D22 handles anyway | `sys.frozen = True` for compatibility with PyInstaller-aware code |
+| D22 | **multiprocessing children are recognized and authenticated, never executed:** the three command lines CPython re-executes `sys.executable` with (spawn `-c ... --multiprocessing-fork`, forkserver `-c ... main(...)`, resource tracker `-c ... main(fd)`) are matched exactly and their arguments decoded with `ast.literal_eval`. The known function is called only if the parent process runs this same executable (same inode of `/proc/<ppid>/exe`), every fd argument is ≥ 3, and nothing an fsbpyr parent never sends is asked for (a forkserver `main_path`; its `sys_path` is dropped) | Every start method works, and an app that may run with untrusted arguments (a sudo rule) does not become a Python interpreter. Recognition alone was not enough: the security review ran code through `spawn_main(pipe_handle=0)` unpickling stdin and through forkserver's `sys_path`/`main_path` | `exec` of any `-c` command that starts with the right prefix (PyInstaller's approach) |
 
 ---
 
@@ -185,7 +187,8 @@ too.
    - re-points `__path__` of frozen packages (`encodings`) at the virtual path
    - installs the path hook and sets `sys.path = ["<exe>"]`
    - appends the DistributionFinder
-   - dispatches multiprocessing helper argv patterns (Phase 6)
+   - runs multiprocessing children instead of the app when argv is one of the command lines
+     CPython re-executes `sys.executable` with (D22, Phase 6)
    - runs the entry point: `module:attr` → `sys.exit(attr())`; `module` →
      `runpy._run_module_as_main`
 8. CPython's own `Py_RunMain` handles exit codes, `SystemExit`, the SIGINT re-raise, stdio
@@ -257,9 +260,12 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
      initialization), re-hash the cached closure. Replace mismatches and retry once.
 - **Garbage collection (Phase 8):** `.last-used` is touched at most once a day. Generations
   unused for more than 30 days are removed opportunistically under a non-blocking `flock`.
-- **FS_REQUIRED packages** (from config or built-in rules): on first import, the package's
-  non-code files are materialized into `<gen>/site/<pkg>/`. The package's `__file__` and
-  `__path__` point there, while code is still loaded from memory.
+- **FS_REQUIRED packages** (`fs-packages` / `--fs-package`, plus the built-in rule for
+  `certifi`): when the package is first imported, every file below its directory (data files
+  and, unless `--no-source`, its `.py` sources) is materialized into `<gen>/site/<pkg>/` with
+  the steps above, owner-readable and executable only if the wheel's file was. The package's
+  modules get `__file__`/`__path__` there, the path hook also claims that directory, and
+  `importlib.resources` returns real `pathlib.Path` objects; code is still loaded from memory.
 
 ### 3.6 Build pipeline (`fsbpyr build`)
 
@@ -613,7 +619,7 @@ criteria are automated tests unless noted. Sizes are S, M or L.
     them swap the tree between the checks and `dlopen`; the default `~/.cache/<app>` is not
     affected
 
-### Phase 6 — Compatibility layer (M)
+### Phase 6 — Compatibility layer (M) — **DONE 2026-10-07**
 
 - FS_REQUIRED packages (config + built-in rules).
 - Multiprocessing re-exec patterns: spawn `--multiprocessing-fork`, forkserver and
@@ -624,6 +630,40 @@ criteria are automated tests unless noted. Sizes are S, M or L.
 - **Exit:** a compatibility matrix is green: click, typer, rich, httpx, requests + certifi,
   pydantic, jinja2, pyyaml, numpy, cryptography, orjson, zoneinfo/tzdata, sqlalchemy, and
   multiprocessing fixture `mp`.
+- **Result (2026-10-07):** the matrix is green (`tests/e2e/test_compat.py`):
+  - all 14 checks of fixture `compat` pass; the HTTP clients talk to a local server, TLS
+    setup is checked by loading certifi's bundle
+  - before any Phase 6 change, 13 of them already worked. Only `jinja2.PackageLoader` needed a
+    real directory, which `fs-packages = ["compat"]` provides
+  - fixture `mp`: spawn, forkserver and fork pools and `ProcessPoolExecutor`s, plus
+    `shared_memory` (resource tracker), work for `module:function` and module entry points.
+    Before the change, every re-executed child ran the app instead
+  - `sys.frozen` stays unset (D21); multiprocessing argv is recognized and authenticated,
+    never executed (D22; e2e tests pass `-c <code>` and replay forged child command lines)
+  - CA bundle: no fallback needed. PBS's OpenSSL looks in `/etc/ssl` (`cert.pem`, `certs/`):
+    Debian and Ubuntu verify through the hashed `/etc/ssl/certs` (real HTTPS request on
+    Debian 13), and RHEL 9 links `/etc/ssl/cert.pem` to its bundle (layout checked in a Rocky
+    9 container; the binary itself needs glibc 2.38 there, a Phase 9 item)
+  - `.pth` files are skipped with a warning (since Phase 4)
+  - implementation notes that deviate from the text above:
+    - FS_REQUIRED packages get every file extracted, `.py` sources included, so `__file__`
+      exists and `inspect.getsource` works; only regular packages can be FS_REQUIRED
+    - extraction happens when the package's spec is found, so its `__init__` can already read
+      its data files; nested namespace packages also get their `__path__` in the cache
+    - built-in rules: only `certifi`, which otherwise worked through a temporary copy of
+      `cacert.pem` made again in every process
+    - `--fs-package` overrides `fs-packages`, like every other option
+    - known gaps: `inspect.getsource` on CPython-frozen stdlib modules (`os`, `codecs`) still
+      raises OSError; re-executing `sys.executable` for anything but multiprocessing (`-m`,
+      `-c`) is not supported (a v1 non-goal)
+  - reviews: the security review found that recognizing the three command lines did not
+    stop code execution through the functions they name (CRITICAL, reproduced against the
+    `mp` binary: a pickle on stdin, a planted module through forkserver's `sys_path`, a file
+    run through `main_path`); fixed by the parent-executable, fd and argument checks of D22,
+    with an e2e test that replays the stdin and pipe variants. The code review found
+    namespace packages two levels below an FS_REQUIRED package placed in the payload instead
+    of the cache (fixed); the generation id now covers file modes, and `-X opt` flags are
+    skipped when locating `-c`
 
 ### Phase 7 — Compression profiles and benchmarks (M)
 

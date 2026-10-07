@@ -26,7 +26,8 @@ NATIVE_EXT, NATIVE_LIB = 3, 4
 GENERATION_DIGITS = 32
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
 _NEW_FILE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
-_MODE = 0o500
+FS_REQUIRED = 1  # file flag: extracted together with its FS_REQUIRED package
+_MODE_MASK = 0o500  # owner read (and execute, where the payload says so); never writable
 EXTRACTED: list[str] = []  # site-relative paths this process wrote (FSBPYR_TRACE)
 
 
@@ -97,13 +98,13 @@ def _cached(directory: int, name: str, size: int, digest: bytes | None) -> bool:
         return hashlib.file_digest(file, "sha256").digest() == digest
 
 
-def _publish(directory: int, name: str, data: bytes) -> None:
+def _publish(directory: int, name: str, data: bytes, mode: int) -> None:
     temporary = f".fsbpyr-{os.getpid()}-{os.urandom(6).hex()}"  # fits whatever ``name`` is
     fd = os.open(temporary, _NEW_FILE, 0o600, dir_fd=directory)
     try:
         with open(fd, "wb", closefd=False) as out:
             out.write(data)
-        os.fchmod(fd, _MODE)
+        os.fchmod(fd, mode & _MODE_MASK)
         os.fsync(fd)
         os.rename(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
     except BaseException:
@@ -149,17 +150,18 @@ class NativeCache:
         written = []
         try:
             for index in files:
-                _, kind, _, _, blob, _, _, rel = _fsbpyr.file_at(index)
+                _, kind, flags, mode, blob, _, _, rel = _fsbpyr.file_at(index)
                 size, digest = _fsbpyr.blob_info(blob)
-                if kind not in (NATIVE_EXT, NATIVE_LIB) or digest is None or _unsafe(rel):
-                    raise _corrupt(f"native file {rel!r}")
+                extractable = kind in (NATIVE_EXT, NATIVE_LIB) or flags & FS_REQUIRED
+                if not extractable or digest is None or _unsafe(rel):
+                    raise _corrupt(f"extracted file {rel!r}")
                 parent, _, name = rel.rpartition("/")
                 if _cached(directory(parent), name, size, digest if verify else None):
                     continue
                 data = _fsbpyr.read(blob)
                 if hashlib.sha256(data).digest() != digest:
                     raise _corrupt(f"{rel!r} digest")
-                _publish(directory(parent), name, data)
+                _publish(directory(parent), name, data, mode)
                 written.append(rel)
         finally:
             for fd in opened.values():
@@ -219,6 +221,31 @@ class PayloadExtensionLoader(ExtensionFileLoader):
                 "set FSBPYR_CACHE_DIR to a writable directory",
                 name=spec.name,
             ) from exc
+
+
+def _files_below(directory: str) -> list[int]:
+    """FILES indices of every payload file below ``directory``."""
+    found = []
+    for name in _fsbpyr.list_dir(directory):
+        path = f"{directory}/{name}"
+        record = _fsbpyr.find_file(path)
+        found.extend(_files_below(path) if record is None else [record[0]])
+    return found
+
+
+def materialize_package(directory: str) -> str:
+    """Extract every file of the FS_REQUIRED package at payload ``directory``; returns the
+    prefix (with "/") that the package's modules live under."""
+    cache = native_cache()
+    try:
+        cache.sync(tuple(_files_below(directory)))
+    except OSError as exc:
+        raise NativeCacheError(
+            f"cannot extract {directory} into {cache.root}: {exc}; "
+            "set FSBPYR_CACHE_DIR to a writable directory",
+            name=directory.replace("/", "."),
+        ) from exc
+    return cache.site + "/"
 
 
 def extension_spec(

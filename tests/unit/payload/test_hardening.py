@@ -10,8 +10,10 @@ from fsbpyr.payload.format import (
     BLOB,
     MAX_BLOB_SIZE,
     MODULE,
+    NONE,
     TRAILER_SIZE,
     Codec,
+    FileFlag,
     FileKind,
     ModuleFlag,
     ModuleKind,
@@ -299,3 +301,24 @@ def test_closure_may_name_another_extension() -> None:
     owner = payload.find_file("x/_a.so")
     assert owner is not None
     assert [payload.files()[i].path for i in payload.closure(owner.closure)] == ["x/_b.so"]
+
+
+def test_reader_rejects_fs_required_files_without_digest() -> None:
+    files = (File("pkg/d.txt", FileKind.RESOURCE, Blob.raw(b"d", digest=True),
+                  flags=FileFlag.FS_REQUIRED),)  # fmt: skip
+    raw = encode_payload(make_spec(files=files, modules=(), dists=()))
+    base, _ = _section(raw, Section.BLOBS)
+
+    with pytest.raises(PayloadError, match="digest"):
+        Payload(_patch(raw, base + BLOB.size - 4, "<I", NONE))  # the only blob's digest field
+
+
+def test_reader_rejects_fs_required_root_on_a_namespace() -> None:
+    raw = encode_payload(make_spec())
+    record = Payload(raw).find_module("nspkg")
+    assert record is not None
+    base, _ = _section(raw, Section.MODULES)
+
+    with pytest.raises(PayloadError, match="FS_REQUIRED_ROOT"):
+        Payload(_patch(raw, base + record.index * MODULE.size + 17, "<B",
+                       int(ModuleFlag.FS_REQUIRED_ROOT)))  # fmt: skip

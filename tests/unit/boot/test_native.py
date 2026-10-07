@@ -240,7 +240,7 @@ def test_long_file_names_can_be_published(native: types.ModuleType, tmp_path: Pa
     name = "x" * 250
     directory = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        native._publish(directory, name, b"data")
+        native._publish(directory, name, b"data", 0o644)
     finally:
         os.close(directory)
 

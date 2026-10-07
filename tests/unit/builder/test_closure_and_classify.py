@@ -12,7 +12,7 @@ import pytest
 
 from fsbpyr.classify import ClassifyError, classify
 from fsbpyr.closure import ClosureError, SiteIndex, resolve_entry
-from fsbpyr.payload.format import FileKind, ModuleKind
+from fsbpyr.payload.format import FileFlag, FileKind, ModuleFlag, ModuleKind
 
 from ...support.elf import make_elf
 
@@ -394,3 +394,73 @@ def test_bytecode_ignores_the_build_interpreters_optimization_level(tmp_path: Pa
                             check=True)  # fmt: skip
 
     assert result.stdout.split()[0] == "doc"
+
+
+# --- FS_REQUIRED packages ------------------------------------------------------------------
+
+
+def test_fs_packages_mark_every_file_below_them(site: Path) -> None:
+    _dist(site, "tpl", "1.0", {"tpl/__init__.py": b"", "tpl/templates/a.txt": b"A",
+                               "tpl/tool.sh": b"#!/bin/sh\n", "tpl/sub/__init__.py": b"",
+                               "other/x.txt": b"x"})  # fmt: skip
+    (site / "tpl" / "tool.sh").chmod(0o775)
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["tpl"]], extension_suffixes=SUFFIXES, include_source=True,
+                       fs_packages=frozenset({"tpl"}))  # fmt: skip
+
+    modules = {m.name: m for m in content.modules}
+    assert ModuleFlag.FS_REQUIRED_ROOT in modules["tpl"].flags
+    assert ModuleFlag.FS_REQUIRED_ROOT not in modules["tpl.sub"].flags
+    files = {f.path: f for f in content.files}
+    for rel in ("tpl/__init__.py", "tpl/templates/a.txt", "tpl/tool.sh", "tpl/sub/__init__.py"):
+        assert FileFlag.FS_REQUIRED in files[rel].flags and files[rel].blob.sha256 is not None
+    assert (files["tpl/tool.sh"].mode, files["tpl/templates/a.txt"].mode) == (0o755, 0o644)
+    assert files["other/x.txt"].flags == FileFlag(0)
+    assert modules["tpl"].source is files["tpl/__init__.py"].blob
+
+
+@pytest.mark.parametrize(("name", "message"), [("missing", "not a package"),
+                                               ("nsdir", "not a regular package")])  # fmt: skip
+def test_fs_packages_must_be_regular_packages_of_the_app(
+    site: Path, name: str, message: str
+) -> None:
+    _dist(site, "app", "1.0", {"app/__init__.py": b"", "nsdir/data.txt": b"d"})
+    index = SiteIndex.scan(site)
+
+    with pytest.raises(ClassifyError, match=f"fs-packages: {name!r} is {message}"):
+        classify([index.dists["app"]], extension_suffixes=SUFFIXES, include_source=True,
+                 fs_packages=frozenset({name}))  # fmt: skip
+
+
+def test_fs_packages_nested_with_natives_and_without_sources(site: Path) -> None:
+    _dist(site, "tpl", "1.0", {"tpl/__init__.py": b"", "tpl/sub/__init__.py": b"",
+                               "tpl/sub/x.txt": b"x", "tpl/_c.abi3.so": make_elf()})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["tpl"]], extension_suffixes=SUFFIXES, include_source=False,
+                       fs_packages=frozenset({"tpl", "tpl.sub"}))  # fmt: skip
+
+    roots = {m.name for m in content.modules if ModuleFlag.FS_REQUIRED_ROOT in m.flags}
+    assert roots == {"tpl", "tpl.sub"}
+    files = {f.path: f for f in content.files}
+    assert not any(f.kind is FileKind.SOURCE for f in files.values())  # --no-source
+    assert FileFlag.FS_REQUIRED in files["tpl/sub/x.txt"].flags
+    native = files["tpl/_c.abi3.so"]  # extracted with the package as a native file anyway
+    assert native.kind is FileKind.NATIVE_EXT and native.blob.sha256 is not None
+
+
+def test_certifi_is_fs_required_without_configuration(site: Path) -> None:
+    _dist(site, "certifi", "2026.1.1", {"certifi/__init__.py": b"", "certifi/cacert.pem": b"P"})
+    _dist(site, "app", "1.0", {"app/__init__.py": b""})
+    index = SiteIndex.scan(site)
+
+    with_certifi = classify(list(index.dists.values()), extension_suffixes=SUFFIXES,
+                            include_source=False)  # fmt: skip
+    without = classify([index.dists["app"]], extension_suffixes=SUFFIXES, include_source=False)
+
+    certifi = next(m for m in with_certifi.modules if m.name == "certifi")
+    assert ModuleFlag.FS_REQUIRED_ROOT in certifi.flags
+    pem = next(f for f in with_certifi.files if f.path == "certifi/cacert.pem")
+    assert FileFlag.FS_REQUIRED in pem.flags
+    assert all(m.flags == ModuleFlag(0) for m in without.modules)

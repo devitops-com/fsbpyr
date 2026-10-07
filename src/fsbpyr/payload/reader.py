@@ -44,6 +44,7 @@ from .format import (
     canonical_dist_name,
     check_module_name,
     check_path,
+    extractable,
 )
 
 type Buffer = bytes | bytearray | memoryview | mmap.mmap
@@ -149,8 +150,8 @@ class Payload:
         self._dists = self._parse_dists()
         self._files = self._parse_files()
         for file in self._files:
-            if file.kind in NATIVE_KINDS and self._blobs[file.blob].digest == NONE:
-                raise PayloadError(f"native file {file.path!r} has no digest")
+            if extractable(file.kind, file.flags) and self._blobs[file.blob].digest == NONE:
+                raise PayloadError(f"extracted file {file.path!r} has no digest")
             if file.closure != NONE:
                 self._check_closure(file)
         self._modules = self._parse_modules()
@@ -307,6 +308,8 @@ class Payload:
             )
         if not valid:
             raise PayloadError(f"module {m.name!r} violates the {m.kind.name} kind invariants")
+        if ModuleFlag.FS_REQUIRED_ROOT in m.flags and m.kind is not ModuleKind.PACKAGE:
+            raise PayloadError(f"FS_REQUIRED_ROOT on {m.name!r}, which is not a regular package")
 
     def _closure_members(self, start: int) -> tuple[int, ...]:
         if start >= len(self._words):

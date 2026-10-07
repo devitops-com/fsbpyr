@@ -6,6 +6,7 @@ it may use regular stdlib modules.
 
 import io
 import os
+import pathlib
 import posixpath
 from collections.abc import Iterator
 from importlib.resources.abc import Traversable, TraversableResources
@@ -108,3 +109,14 @@ class PayloadResourceReader(TraversableResources):
 
     def files(self) -> PayloadTraversable:
         return PayloadTraversable(self._root, self._directory)
+
+
+class DirectoryReader(TraversableResources):
+    """FS_REQUIRED packages: their files were extracted, so resources are real paths (and
+    ``importlib.resources.as_file`` needs no temporary copy)."""
+
+    def __init__(self, directory: str) -> None:
+        self._directory = directory
+
+    def files(self) -> pathlib.Path:
+        return pathlib.Path(self._directory)

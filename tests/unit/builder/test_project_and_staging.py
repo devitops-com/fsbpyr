@@ -158,6 +158,21 @@ def test_allowed_system_libs_must_be_sonames(tmp_path: Path, value: str) -> None
         load_config(project)
 
 
+def test_fs_packages_come_from_tool_table_or_cli(tmp_path: Path) -> None:
+    project = Project.load(_project(tmp_path, PYPROJECT + 'fs-packages = ["app.templates"]\n'))
+
+    assert load_config(project).fs_packages == ("app.templates",)
+    assert load_config(project, fs_packages=("other",)).fs_packages == ("other",)
+
+
+@pytest.mark.parametrize("value", ['"app"', '["app/templates"]', '["1app"]', "[1]"])
+def test_fs_packages_must_be_package_names(tmp_path: Path, value: str) -> None:
+    project = Project.load(_project(tmp_path, PYPROJECT + f"fs-packages = {value}\n"))
+
+    with pytest.raises(ConfigError, match=r"fs-packages (has the wrong type|entry)"):
+        load_config(project)
+
+
 # --- staging ---------------------------------------------------------------------------------
 
 UV = Installer(uv=Path("/u/uv"), python=None)

@@ -97,6 +97,7 @@ def build(
             extension_suffixes=runtime.extension_suffixes,
             include_source=config.include_source,
             allowed_system_libs=frozenset(config.allowed_system_libs),
+            fs_packages=frozenset(config.fs_packages),
         )
     warnings += walk.warnings
     if walk.unreachable:

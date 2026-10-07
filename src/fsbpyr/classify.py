@@ -1,16 +1,26 @@
 """RECORD entries -> payload modules, files and namespace packages (plan §3.6 steps 6-7)."""
 
 import csv
+import hashlib
 import re
 import warnings
+from compression import zstd
 from dataclasses import dataclass, replace
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from . import bytecode
 from .closure import InstalledDist
 from .elf import is_elf
 from .natives import NativeError, closures
-from .payload.format import MAX_MEMORY_BLOB, FileKind, ModuleKind
+from .payload.format import (
+    MAX_MEMORY_BLOB,
+    NATIVE_KINDS,
+    Codec,
+    FileFlag,
+    FileKind,
+    ModuleFlag,
+    ModuleKind,
+)
 from .payload.spec import Blob, Dist, File, Module
 
 # Written by installers, not by the wheel: they embed paths, timestamps or the installer's name,
@@ -22,6 +32,15 @@ INSTALLER_FILES = frozenset({
 
 _SHARED_OBJECT = re.compile(r"\.so(\.\d+)*$")
 _NATIVE_MODE = 0o755  # fixed: the installer's umask must not leak into the build
+# Packages that need their data files on disk, whatever the configuration says (plan §3.5):
+# certifi hands out the path of cacert.pem, which would otherwise be a temporary copy made
+# again in every process.
+BUILTIN_FS_PACKAGES = frozenset({"certifi"})
+
+
+def _digested(blob: Blob) -> Blob:
+    data = zstd.decompress(blob.stored) if blob.codec is Codec.ZSTD else blob.stored
+    return replace(blob, sha256=hashlib.sha256(data).digest())
 
 
 class ClassifyError(RuntimeError):
@@ -94,8 +113,10 @@ class _Collector:
         self.ranks: dict[str, tuple[bool, int]] = {}  # module -> (not package, loader rank)
         self.warnings: list[str] = []
         self.broken: set[str] = set()  # package directories whose __init__.py does not compile
+        self.sites: dict[str, Path] = {}  # dist -> site-packages directory
 
     def add_dist(self, dist: InstalledDist) -> None:
+        self.sites[dist.name] = dist.site
         info = dist.dist_info
         record_lines = []
         for line in dist.record:
@@ -195,6 +216,32 @@ class _Collector:
         self.files[rel] = File(rel, kind, Blob.zstd(data), dist=dist.name)
         self.owners[rel] = dist.name
 
+    def mark_fs_packages(self, configured: frozenset[str], namespaces: list[Module]) -> None:
+        """FS_REQUIRED: every file below these packages is extracted when they are imported."""
+        known = {m.name: m for m in namespaces} | self.modules
+        directories = []
+        for name in sorted(configured | BUILTIN_FS_PACKAGES):
+            module = known.get(name)
+            if module is None or module.kind is not ModuleKind.PACKAGE:
+                if name in configured:
+                    problem = "not a package of" if module is None else "not a regular package in"
+                    raise ClassifyError(f"fs-packages: {name!r} is {problem} the application")
+                continue
+            self.modules[name] = replace(module, flags=module.flags | ModuleFlag.FS_REQUIRED_ROOT)
+            directories.append(module.path.rpartition("/")[0] + "/")
+        sources = {m.path: m for m in self.modules.values() if m.source is not None}
+        for rel, file in list(self.files.items()):
+            if rel.startswith(tuple(directories)) and file.kind not in NATIVE_KINDS:
+                self._require_on_disk(rel, file, sources.get(rel))
+
+    def _require_on_disk(self, rel: str, file: File, module: Module | None) -> None:
+        executable = (self.sites[self.owners[rel]] / rel).stat().st_mode & 0o111
+        blob = _digested(file.blob)
+        self.files[rel] = replace(file, blob=blob, flags=file.flags | FileFlag.FS_REQUIRED,
+                                  mode=0o755 if executable else 0o644)  # fmt: skip
+        if module is not None:  # the module's source is the same blob
+            self.modules[module.name] = replace(module, source=blob)
+
     def namespaces(self) -> list[Module]:
         """Implicit namespace packages: identifier directories without __init__.py."""
         packages = {
@@ -219,12 +266,15 @@ def classify(
     extension_suffixes: tuple[str, ...],
     include_source: bool,
     allowed_system_libs: frozenset[str] = frozenset(),
+    fs_packages: frozenset[str] = frozenset(),
 ) -> Content:
     collector = _Collector(extension_suffixes, include_source)
     for dist in sorted(dists, key=lambda d: d.name):
         collector.add_dist(dist)
     collector.add_natives(allowed_system_libs)
-    modules = [*collector.modules.values(), *collector.namespaces()]
+    namespaces = collector.namespaces()
+    collector.mark_fs_packages(fs_packages, namespaces)
+    modules = [*collector.modules.values(), *namespaces]
     return Content(
         modules=tuple(sorted(modules, key=lambda m: m.name)),
         files=tuple(sorted(collector.files.values(), key=lambda f: f.path)),

@@ -37,6 +37,7 @@ from .format import (
     check_module_name,
     check_path,
     encode_text,
+    extractable,
 )
 from .spec import Blob, Dist, File, Module, PayloadSpec
 
@@ -152,8 +153,8 @@ def _check_files(files: tuple[File, ...], dists: set[str]) -> None:
             raise PayloadError(f"file mode {oct(file.mode)} not allowed for {file.path!r}")
         if file.dist is not None and file.dist not in dists:
             raise PayloadError(f"unknown dist {file.dist!r} for {file.path!r}")
-        if file.kind in NATIVE_KINDS and file.blob.sha256 is None:
-            raise PayloadError(f"native file {file.path!r} needs a digest (Blob.zstd(digest=True))")
+        if extractable(file.kind, file.flags) and file.blob.sha256 is None:
+            raise PayloadError(f"{file.path!r} is extracted at run time and needs a digest")
         _check_closure(file, known)
     directories = {p.rsplit("/", i)[0] for p in paths for i in range(1, p.count("/") + 1)}
     clashes = sorted(directories & known.keys())
@@ -177,6 +178,8 @@ def _check_closure(file: File, files: dict[str, File]) -> None:
 def _check_module(module: Module, files: dict[str, File], dists: set[str]) -> None:
     check_module_name(module.name)
     check_path(module.path)
+    if ModuleFlag.FS_REQUIRED_ROOT in module.flags and module.kind is not ModuleKind.PACKAGE:
+        raise PayloadError(f"FS_REQUIRED_ROOT on {module.name!r}, which is not a regular package")
     if module.dist is not None and module.dist not in dists:
         raise PayloadError(f"unknown dist {module.dist!r} for module {module.name!r}")
     if module.kind in (ModuleKind.MODULE, ModuleKind.PACKAGE):

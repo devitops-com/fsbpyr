@@ -23,7 +23,7 @@ import _fsbpyr
 
 TYPE_CHECKING = False
 if TYPE_CHECKING:  # annotations are lazy (PEP 649): nothing below is imported at runtime
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
     from importlib.abc import Loader as _LoaderBase
     from importlib.metadata import Distribution, DistributionFinder
     from importlib.resources.abc import TraversableResources
@@ -32,11 +32,15 @@ else:
     _LoaderBase = object
 
 MODULE, PACKAGE, NAMESPACE, EXTENSION = 1, 2, 3, 4
+FS_REQUIRED_ROOT = 2  # module flag: the package's files are extracted on first import
 NONE = _fsbpyr.NONE
 INFO = _fsbpyr.info()
 ROOT = INFO["executable"]
 _PREFIX = ROOT + "/"
 _INTERNAL = ("_fsbpyr_boot", "_fsbpyr_rt")  # boot code, hidden from module listings
+# The native cache's site directory (with "/"), once an FS_REQUIRED package was extracted
+# there: modules of such packages live below it, and the path hook claims it too.
+_FS_PREFIXES: list[str] = []
 
 # (index, kind, flags, code, source, file, dist, path) as returned by _fsbpyr.find_module
 type Record = tuple[int, int, int, int, int, int, int, str]
@@ -54,7 +58,14 @@ def _is_extension_package(name: str) -> bool:
 
 
 class PayloadLoader(_LoaderBase):
-    """Loads pure-Python modules and packages from payload records (spec.loader_state)."""
+    """Loads pure-Python modules and packages from payload records (spec.loader_state).
+
+    ``prefix`` is where the modules appear to live: the executable, or the native cache for
+    FS_REQUIRED packages (whose files are on disk there; the code still comes from memory).
+    """
+
+    def __init__(self, prefix: str = _PREFIX) -> None:
+        self.prefix = prefix
 
     def create_module(self, spec: ModuleSpec) -> None:
         return None
@@ -72,11 +83,10 @@ class PayloadLoader(_LoaderBase):
             raise ImportError(f"no module named {fullname!r} in the payload", name=fullname)
         return record
 
-    @staticmethod
-    def _code(record: Record) -> CodeType:
+    def _code(self, record: Record) -> CodeType:
         code: CodeType = marshal.loads(_fsbpyr.read(record[3]))
         # Absolute virtual path: linecache can never mistake a file in the cwd for our source.
-        _imp._fix_co_filename(code, _PREFIX + record[7])  # type: ignore[attr-defined]
+        _imp._fix_co_filename(code, self.prefix + record[7])  # type: ignore[attr-defined]
         return code
 
     def get_code(self, fullname: str) -> CodeType:
@@ -94,11 +104,12 @@ class PayloadLoader(_LoaderBase):
         return self._record(fullname)[1] == PACKAGE
 
     def get_filename(self, fullname: str) -> str:
-        return _PREFIX + self._record(fullname)[7]
+        return self.prefix + self._record(fullname)[7]
 
     def get_data(self, path: str) -> bytes:
         """``pkgutil.get_data`` and ``open(os.path.join(dirname(__file__), ...))`` emulation."""
-        record = _fsbpyr.find_file(path[len(_PREFIX) :]) if path.startswith(_PREFIX) else None
+        prefix = next((p for p in (_PREFIX, self.prefix) if path.startswith(p)), None)
+        record = _fsbpyr.find_file(path[len(prefix) :]) if prefix is not None else None
         if record is None:
             raise FileNotFoundError(2, "No such file in the executable payload", path)
         return _fsbpyr.read(record[4])
@@ -106,11 +117,15 @@ class PayloadLoader(_LoaderBase):
     def get_resource_reader(self, fullname: str) -> TraversableResources:
         # _fsbpyr_rt exists as a top-level package only inside executables (and boot tests)
         from _fsbpyr_rt.resources import (  # type: ignore[import-not-found]  # noqa: PLC0415
+            DirectoryReader,
             PayloadResourceReader,
         )
 
-        reader: TraversableResources = PayloadResourceReader(
-            ROOT, _directory(self._record(fullname)[7])
+        directory = _directory(self._record(fullname)[7])
+        reader: TraversableResources = (
+            PayloadResourceReader(ROOT, directory)
+            if self.prefix == _PREFIX
+            else DirectoryReader(self.prefix + directory)
         )
         return reader
 
@@ -118,11 +133,25 @@ class PayloadLoader(_LoaderBase):
 LOADER = PayloadLoader()
 
 
+def _fs_package_prefix(directory: str) -> str:
+    """Extract an FS_REQUIRED package's files; the prefix its modules live under from now on."""
+    from _fsbpyr_rt.native import (  # type: ignore[import-not-found]  # noqa: PLC0415
+        materialize_package,
+    )
+
+    prefix: str = materialize_package(directory)
+    if prefix not in _FS_PREFIXES:
+        _FS_PREFIXES.append(prefix)
+    return prefix
+
+
 class PayloadPathFinder:
     """Path-entry finder for one virtual directory of the payload ('' is the root)."""
 
-    def __init__(self, directory: str) -> None:
+    def __init__(self, directory: str, location: str = _PREFIX) -> None:
         self.directory = directory
+        self.location = location  # _PREFIX, or an FS_REQUIRED cache prefix
+        self._loader = LOADER if location == _PREFIX else PayloadLoader(location)
         self._prefix = directory.replace("/", ".") + "." if directory else ""
 
     def find_spec(self, fullname: str, target: object = None) -> ModuleSpec | None:
@@ -131,24 +160,29 @@ class PayloadPathFinder:
         record = _fsbpyr.find_module(fullname)
         if record is None:
             return None
-        kind, path = record[1], record[7]
+        kind, path, location, loader = record[1], record[7], self.location, self._loader
         if kind == NAMESPACE:  # a portion: PathFinder assembles the namespace package
             spec = ModuleSpec(fullname, None, is_package=True)
-            spec.submodule_search_locations = [_PREFIX + path]
+            spec.submodule_search_locations = [location + path]
             return spec
         if kind == EXTENSION:
-            from _fsbpyr_rt.native import (  # type: ignore[import-not-found]  # noqa: PLC0415
-                extension_spec,
-            )
+            from _fsbpyr_rt.native import extension_spec  # noqa: PLC0415
 
-            native: ModuleSpec = extension_spec(fullname, record, _PREFIX)
+            native: ModuleSpec = extension_spec(fullname, record, location)
             return native
+        if record[2] & FS_REQUIRED_ROOT and location == _PREFIX:
+            location = _fs_package_prefix(_directory(path))
+            loader = PayloadLoader(location)
         spec = ModuleSpec(
-            fullname, LOADER, origin=_PREFIX + path, loader_state=record, is_package=kind == PACKAGE
+            fullname,
+            loader,
+            origin=location + path,
+            loader_state=record,
+            is_package=kind == PACKAGE,
         )
         spec.has_location = True
         if kind == PACKAGE:
-            spec.submodule_search_locations = [_PREFIX + _directory(path)]
+            spec.submodule_search_locations = [location + _directory(path)]
         return spec
 
     def iter_modules(self, prefix: str = "") -> Iterator[tuple[str, bool]]:
@@ -167,11 +201,13 @@ class PayloadPathFinder:
 
 
 def path_hook(entry: str) -> PayloadPathFinder:
-    """Claim ``<exe>`` and ``<exe>/<dir>`` (normalizing '', '.' and trailing components)."""
-    if entry == ROOT or entry.startswith(_PREFIX):
-        parts = [part for part in entry[len(_PREFIX) :].split("/") if part not in ("", ".")]
-        if ".." not in parts:
-            return PayloadPathFinder("/".join(parts))
+    """Claim ``<exe>`` and ``<exe>/<dir>`` (normalizing '', '.' and trailing components), and
+    the same below the cache directory of extracted FS_REQUIRED packages."""
+    for location in (_PREFIX, *_FS_PREFIXES):
+        if entry == location[:-1] or entry.startswith(location):
+            parts = [part for part in entry[len(location) :].split("/") if part not in ("", ".")]
+            if ".." not in parts:
+                return PayloadPathFinder("/".join(parts), location)
     raise ImportError("not an fsbpyr payload path", path=entry)
 
 
@@ -184,6 +220,9 @@ class PayloadNamespaceLoader(NamespaceLoader):
         from _fsbpyr_rt.resources import PayloadResourceReader  # noqa: PLC0415
 
         location: str = self._path[0]  # type: ignore[attr-defined]
+        if not location.startswith(_PREFIX):  # an extracted FS_REQUIRED directory
+            on_disk: TraversableResources = super().get_resource_reader(module)  # type: ignore[arg-type]
+            return on_disk
         reader: TraversableResources = PayloadResourceReader(ROOT, location[len(_PREFIX) :])
         return reader
 
@@ -193,12 +232,16 @@ class PayloadMetaFinder:
     NamespaceReader only understands real directories and zip files) and importlib.metadata."""
 
     @staticmethod
-    def find_spec(fullname: str, path: object = None, target: object = None) -> ModuleSpec | None:
+    def find_spec(
+        fullname: str, path: Iterable[str] | None = None, target: object = None
+    ) -> ModuleSpec | None:
         record = _fsbpyr.find_module(fullname)
         if record is None or record[1] != NAMESPACE:
             return None
+        parent = next(iter(path), "") if path else ""  # a list, or a parent's _NamespacePath
+        location = next((p for p in _FS_PREFIXES if parent.startswith(p)), _PREFIX)
         finder = PathFinder._get_spec  # type: ignore[attr-defined]  # namespace recalculation
-        loader = PayloadNamespaceLoader(fullname, [_PREFIX + record[7]], finder)
+        loader = PayloadNamespaceLoader(fullname, [location + record[7]], finder)
         spec = ModuleSpec(fullname, loader, is_package=True)
         spec.submodule_search_locations = loader._path  # type: ignore[attr-defined]
         return spec
@@ -243,6 +286,17 @@ def _resolve(entrypoint: str) -> object:
     return target
 
 
+def _multiprocessing_child() -> bool:
+    """multiprocessing re-executes ``sys.executable`` (this app) with ``-c <code>``."""
+    argv = sys.argv
+    if "-c" not in argv[1:-1] or "multiprocessing" not in argv[argv.index("-c") + 1]:
+        return False  # the common case costs two scans of argv
+    from _fsbpyr_rt.mp import run_child  # type: ignore[import-not-found]  # noqa: PLC0415
+
+    handled: bool = run_child(argv)
+    return handled
+
+
 def run() -> None:
     sys.path_hooks.insert(0, path_hook)
     sys.path[:] = [ROOT]
@@ -259,6 +313,8 @@ def run() -> None:
         from _fsbpyr_rt.trace import report  # type: ignore[import-not-found]  # noqa: PLC0415
 
         atexit.register(report)
+    if _multiprocessing_child():
+        return
     entrypoint = INFO["entrypoint"]
     if posix.environ.get(b"FSBPYR_SELFTEST"):
         _resolve(entrypoint)  # import the module and look the attribute up, without calling

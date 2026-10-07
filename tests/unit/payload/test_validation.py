@@ -15,6 +15,7 @@ from fsbpyr.payload.format import (
     MODULE,
     TRAILER,
     TRAILER_SIZE,
+    FileFlag,
     FileKind,
     ModuleFlag,
     ModuleKind,
@@ -95,6 +96,24 @@ def test_encode_rejects_unknown_closure_member() -> None:
 def test_app_name_must_be_one_path_component(name: str) -> None:
     with pytest.raises(PayloadError, match="app name"):  # it names the app's cache directory
         encode_payload(make_spec(app_name=name))
+
+
+def test_fs_required_files_need_digests() -> None:
+    flagged = File("pkg/data.txt", FileKind.RESOURCE, Blob.raw(b"d"), flags=FileFlag.FS_REQUIRED)
+
+    with pytest.raises(PayloadError, match="digest"):
+        encode_payload(make_spec(files=(flagged,), modules=(), dists=()))
+
+    digested = dataclasses.replace(flagged, blob=Blob.raw(b"d", digest=True))
+    payload = Payload(encode_payload(make_spec(files=(digested,), modules=(), dists=())))
+    assert payload.find_file("pkg/data.txt") is not None
+
+
+def test_fs_required_root_marks_regular_packages_only() -> None:
+    namespace = Module("ns", "ns", ModuleKind.NAMESPACE, flags=ModuleFlag.FS_REQUIRED_ROOT)
+
+    with pytest.raises(PayloadError, match="FS_REQUIRED_ROOT"):
+        encode_payload(make_spec(modules=(namespace,), files=(), dists=()))
 
 
 def test_encode_rejects_bad_header_values() -> None:

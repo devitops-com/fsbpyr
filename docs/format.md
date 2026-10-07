@@ -108,6 +108,8 @@ Invariants:
 - MODULE and PACKAGE have `code`.
 - NAMESPACE has no `code`, `source` or `file`.
 - EXTENSION has `file` pointing at a NATIVE_EXT record, and no `code`.
+- FS_REQUIRED_ROOT marks regular packages (PACKAGE) only: on first import every file below the
+  package's directory is extracted, and the package's modules get `__file__`/`__path__` there.
 - Every `code` blob is a zstd frame with the content-checksum flag set. `marshal.loads` is not
   safe against corrupt input, so integrity is verified before bytecode is ever unmarshalled.
   STARTUP code is decompressed once by the launcher into memory that it then hands to CPython's
@@ -143,8 +145,8 @@ by `n` FILES indices in strictly ascending order. Closures list the bundled shar
 must be materialized together with a NATIVE_EXT file (its transitive `DT_NEEDED` dependencies
 inside the payload). Only NATIVE_EXT records carry a closure, every member is a NATIVE_LIB or
 NATIVE_EXT record (an extension may link against another extension's shared object), and a record
-never lists itself. The blob of every NATIVE_EXT and NATIVE_LIB record has a digest, which the
-runtime verifies after extraction.
+never lists itself. The blob of every record the runtime extracts (NATIVE_EXT, NATIVE_LIB and
+FS_REQUIRED files) has a digest, which the runtime verifies before publishing the file.
 
 ### DIGESTS
 

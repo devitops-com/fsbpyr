@@ -91,11 +91,16 @@ class FileKind(IntEnum):
 
 
 MAX_MEMORY_BLOB = 1 << 30  # largest blob _fsbpyr.read() returns (launcher/module.c)
-NATIVE_KINDS = frozenset({FileKind.NATIVE_EXT, FileKind.NATIVE_LIB})  # extracted to disk, digested
+NATIVE_KINDS = frozenset({FileKind.NATIVE_EXT, FileKind.NATIVE_LIB})
 
 
 class FileFlag(IntFlag):
     FS_REQUIRED = 1
+
+
+def extractable(kind: FileKind, flags: FileFlag) -> bool:
+    """Files written to the cache at run time; they carry a SHA-256 digest."""
+    return kind in NATIVE_KINDS or FileFlag.FS_REQUIRED in flags
 
 
 def align(value: int, alignment: int) -> int:

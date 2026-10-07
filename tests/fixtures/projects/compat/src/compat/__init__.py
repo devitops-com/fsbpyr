@@ -1,0 +1,1 @@
+"""fsbpyr compatibility fixture."""

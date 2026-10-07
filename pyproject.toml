@@ -49,7 +49,7 @@ ignore = ["PLR2004"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S302", "S603", "PLR0913", "PLR0917"]
-"tests/fixtures/projects/heavy/**" = ["PLC0415"]  # imports lazily on purpose
+"tests/fixtures/projects/**" = ["PLC0415", "S701"]  # lazy imports on purpose; text templates
 "src/fsbpyr/boot/**" = ["S302"]  # unmarshals code from its own payload
 "src/fsbpyr/runtime/**" = ["S603"]  # runs the pinned interpreter and the located toolchain
 "src/fsbpyr/staging.py" = ["S603"]  # runs uv / pip with argument lists, never a shell

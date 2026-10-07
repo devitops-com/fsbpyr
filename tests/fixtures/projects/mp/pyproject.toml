@@ -1,0 +1,13 @@
+[project]
+name = "mp"
+version = "1.0.0"
+description = "fsbpyr test fixture: multiprocessing start methods re-executing the binary"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+mp = "mp.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
