@@ -30,7 +30,8 @@ addopts = ["--strict-markers", "--strict-config", "-ra"]
 markers = ["slow: takes more than a few seconds"]
 
 [tool.coverage.run]
-source = ["fsbpyr"]
+# by path: boot code also runs in-process under its embedded names (_fsbpyr_boot, _fsbpyr_rt)
+source = ["src/fsbpyr"]
 branch = true
 
 [tool.coverage.report]
@@ -56,3 +57,7 @@ strict = true
 python_version = "3.14"
 files = ["src", "tests"]
 mypy_path = "stubs"
+
+[[tool.mypy.overrides]]
+module = ["pkg", "pkg.*", "ns.*"]  # demo-app packages that exist only inside test executables
+ignore_missing_imports = true

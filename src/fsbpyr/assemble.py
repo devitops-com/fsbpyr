@@ -15,6 +15,7 @@ from .payload.writer import encode_payload, write_executable
 from .runtime.registry import Runtime
 
 BOOT_MODULE = "_fsbpyr_boot"
+RUNTIME_PACKAGE = "_fsbpyr_rt"
 _EXTRACTABLE = (FileKind.NATIVE_EXT, FileKind.NATIVE_LIB)
 
 
@@ -22,20 +23,35 @@ class AssemblyError(RuntimeError):
     """The pieces cannot be combined into a valid executable."""
 
 
-def boot_modules() -> tuple[Module, ...]:
-    """The boot module, compiled for the running interpreter (a STARTUP module)."""
-    source = importlib.resources.files("fsbpyr.boot").joinpath(f"{BOOT_MODULE}.py").read_bytes()
-    code = bytecode.dumps(compile(source, f"{BOOT_MODULE}.py", "exec", dont_inherit=True))
-    return (
-        Module(
-            BOOT_MODULE,
-            f"{BOOT_MODULE}.py",
-            ModuleKind.MODULE,
-            code=Blob.code(code),
-            source=Blob.zstd(source),
-            flags=ModuleFlag.STARTUP,
-        ),
+def _boot_module(name: str, rel: str, source: bytes, *, filename: str, startup: bool) -> Module:
+    code = bytecode.dumps(compile(source, filename, "exec", dont_inherit=True))
+    return Module(
+        name,
+        rel,
+        ModuleKind.PACKAGE if rel.endswith("/__init__.py") else ModuleKind.MODULE,
+        code=Blob.code(code),
+        source=Blob.zstd(source),
+        flags=ModuleFlag.STARTUP if startup else ModuleFlag(0),
     )
+
+
+def boot_modules() -> tuple[Module, ...]:
+    """The boot module (STARTUP, frozen-style filename) and the lazily imported _fsbpyr_rt."""
+    root = importlib.resources.files("fsbpyr.boot")
+    boot_rel = f"{BOOT_MODULE}.py"
+    modules = [
+        _boot_module(BOOT_MODULE, boot_rel, root.joinpath(boot_rel).read_bytes(),
+                     filename=f"<frozen {BOOT_MODULE}>", startup=True)
+    ]  # fmt: skip
+    package = root.joinpath(RUNTIME_PACKAGE)
+    for entry in sorted(package.iterdir(), key=lambda e: e.name):
+        if not entry.name.endswith(".py"):
+            continue
+        rel = f"{RUNTIME_PACKAGE}/{entry.name}"
+        stem = entry.name.removesuffix(".py")
+        name = RUNTIME_PACKAGE if stem == "__init__" else f"{RUNTIME_PACKAGE}.{stem}"
+        modules.append(_boot_module(name, rel, entry.read_bytes(), filename=rel, startup=False))
+    return tuple(modules)
 
 
 def generation_id(runtime_tag: str, files: tuple[File, ...]) -> bytes:

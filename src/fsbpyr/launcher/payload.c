@@ -128,6 +128,10 @@ bool fsb_get_file(const struct fsb_payload *p, uint32_t index, struct fsb_file *
            f->kind <= FSB_FILE_METADATA && f->mode <= FSB_MAX_MODE;
 }
 
+bool fsb_get_dist(const struct fsb_payload *p, uint32_t index, struct fsb_dist *d) {
+    return get_record(p, FSB_SECTION_DISTS, index, d);
+}
+
 bool fsb_get_startup(const struct fsb_payload *p, uint32_t position, uint32_t *module) {
     return get_record(p, FSB_SECTION_STARTUP, position, module);
 }
@@ -153,23 +157,41 @@ static int compare_key(const char *a, size_t la, const char *b, size_t lb) {
     return (la > lb) - (la < lb);
 }
 
-static uint32_t search(const struct fsb_payload *p, enum fsb_section s, const char *key,
-                       size_t length) {
+bool fsb_record_key(const struct fsb_payload *p, enum fsb_section s, uint64_t index,
+                    const char **text, uint32_t *length) {
+    if (index >= fsb_count(p, s)) return false;
+    struct fsb_str key; /* every sorted table starts its records with the key */
+    memcpy(&key, p->base + p->header.sections[s].offset + index * RECORD_SIZE[s], sizeof key);
+    if (!fsb_str(p, key, text)) return false;
+    *length = key.length;
+    return true;
+}
+
+uint64_t fsb_lower_bound(const struct fsb_payload *p, enum fsb_section s, const char *key,
+                         size_t length) {
     uint64_t lo = 0, hi = fsb_count(p, s);
     while (lo < hi) {
         uint64_t mid = lo + (hi - lo) / 2;
-        struct fsb_str name;
-        memcpy(&name, p->base + p->header.sections[s].offset + mid * RECORD_SIZE[s], sizeof name);
         const char *text;
-        if (!fsb_str(p, name, &text)) return FSB_NONE; /* corrupt table: treat as a miss */
-        int c = compare_key(text, name.length, key, length);
-        if (c == 0) return (uint32_t)mid;
-        if (c < 0)
+        uint32_t text_length;
+        if (!fsb_record_key(p, s, mid, &text, &text_length)) return fsb_count(p, s);
+        if (compare_key(text, text_length, key, length) < 0)
             lo = mid + 1;
         else
             hi = mid;
     }
-    return FSB_NONE;
+    return lo;
+}
+
+static uint32_t search(const struct fsb_payload *p, enum fsb_section s, const char *key,
+                       size_t length) {
+    uint64_t index = fsb_lower_bound(p, s, key, length);
+    const char *text;
+    uint32_t text_length;
+    if (index >= UINT32_MAX || !fsb_record_key(p, s, index, &text, &text_length) ||
+        compare_key(text, text_length, key, length) != 0)
+        return FSB_NONE;
+    return (uint32_t)index;
 }
 
 uint32_t fsb_find_module(const struct fsb_payload *p, const char *name, size_t length) {
@@ -178,4 +200,8 @@ uint32_t fsb_find_module(const struct fsb_payload *p, const char *name, size_t l
 
 uint32_t fsb_find_file(const struct fsb_payload *p, const char *path, size_t length) {
     return search(p, FSB_SECTION_FILES, path, length);
+}
+
+uint32_t fsb_find_dist(const struct fsb_payload *p, const char *name, size_t length) {
+    return search(p, FSB_SECTION_DISTS, name, length);
 }

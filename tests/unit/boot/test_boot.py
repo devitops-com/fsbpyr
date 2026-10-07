@@ -1,0 +1,311 @@
+"""The boot module and _fsbpyr_rt, run in-process against the pure-Python _fsbpyr stand-in."""
+
+import importlib.machinery
+import importlib.metadata
+import importlib.resources
+import importlib.util
+import io
+import os
+import posix
+import sys
+from collections.abc import Iterator
+from pathlib import Path
+from types import ModuleType
+from typing import Any, cast
+
+import pytest
+
+from fsbpyr.assemble import build_executable
+from fsbpyr.runtime.registry import Runtime
+
+from ...support.apps import demo_app
+from ...support.standin import StandIn
+
+BOOT_DIR = Path(__file__).parents[3] / "src" / "fsbpyr" / "boot"
+FAKE_RUNTIME = Runtime(
+    tag="cp314-x86_64-unknown-linux-gnu",
+    runtime_id="cp314-x86_64-unknown-linux-gnu-test",
+    python_version="3.14.8",
+    hexversion=0x030E08F0,
+    bytecode_magic=importlib.util.MAGIC_NUMBER,
+    extension_suffixes=(".cpython-314-x86_64-linux-gnu.so", ".abi3.so", ".so"),
+    stub=b"\x7fELF-fake",
+    modules=(),
+    files=(),
+)
+
+
+@pytest.fixture(scope="module")
+def executable(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    out = tmp_path_factory.mktemp("boot") / "demo"
+    build_executable(FAKE_RUNTIME, demo_app(), out)
+    return out
+
+
+@pytest.fixture
+def boot(executable: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
+    standin = StandIn(executable)
+    monkeypatch.setitem(sys.modules, "_fsbpyr", standin)
+    monkeypatch.syspath_prepend(str(BOOT_DIR))
+    for name in [n for n in sys.modules if n == "_fsbpyr_rt" or n.startswith("_fsbpyr_rt.")]:
+        monkeypatch.delitem(sys.modules, name)
+    spec = importlib.util.spec_from_file_location("_fsbpyr_boot", BOOT_DIR / "_fsbpyr_boot.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    yield module
+    for name in [n for n in sys.modules if n == "_fsbpyr_rt" or n.startswith("_fsbpyr_rt.")]:
+        del sys.modules[name]
+    standin.close()
+
+
+def _load(boot: ModuleType, name: str) -> ModuleType:
+    directory = name.rpartition(".")[0].replace(".", "/")
+    finder = boot.path_hook(boot.ROOT + ("/" + directory if directory else ""))
+    spec = finder.find_spec(name)
+    assert spec is not None, name
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+# --- path hook, specs, loader -------------------------------------------------------------
+
+
+def test_path_hook_claims_only_payload_paths(boot: ModuleType) -> None:
+    assert boot.path_hook(boot.ROOT).directory == ""
+    assert boot.path_hook(boot.ROOT + "/pkg/sub").directory == "pkg/sub"
+    assert boot.path_hook(boot.ROOT + "/pkg/").directory == "pkg"
+    assert boot.path_hook(boot.ROOT + "//pkg/./sub/").directory == "pkg/sub"
+    for foreign in ("/usr/lib/python3.14", boot.ROOT + "x", boot.ROOT + "/pkg/../.."):
+        with pytest.raises(ImportError):
+            boot.path_hook(foreign)
+
+
+def test_package_spec_and_execution(boot: ModuleType) -> None:
+    spec = boot.path_hook(boot.ROOT).find_spec("pkg")
+
+    assert spec.origin == boot.ROOT + "/pkg/__init__.py"
+    assert spec.submodule_search_locations == [boot.ROOT + "/pkg"]
+    assert spec.has_location
+    assert _load(boot, "pkg").VALUE == "pkg"
+
+
+def test_finder_only_answers_for_its_own_directory(boot: ModuleType) -> None:
+    root = boot.path_hook(boot.ROOT)
+
+    assert root.find_spec("pkg.cli") is None
+    assert boot.path_hook(boot.ROOT + "/pkg").find_spec("cli") is None
+    assert root.find_spec("missing") is None
+    assert root.find_spec("\ud800") is None
+
+
+def test_code_filenames_point_into_the_payload_tree(boot: ModuleType) -> None:
+    cli = _load(boot, "pkg.cli")
+
+    assert cli.main.__code__.co_filename == boot.ROOT + "/pkg/cli.py"
+    assert boot.LOADER.get_code("pkg.cli").co_filename == boot.ROOT + "/pkg/cli.py"
+
+
+def test_loader_introspection(boot: ModuleType) -> None:
+    loader = boot.LOADER
+
+    assert loader.is_package("pkg") and not loader.is_package("pkg.cli")
+    assert loader.get_filename("pkg.cli") == boot.ROOT + "/pkg/cli.py"
+    assert loader.get_source("pkg.cli") == "def main():\n    return 'cli'\n"
+    with pytest.raises(ImportError):
+        loader.get_code("missing")
+
+
+def test_get_data_maps_virtual_paths(boot: ModuleType) -> None:
+    loader = boot.LOADER
+
+    assert loader.get_data(boot.ROOT + "/pkg/data/table.json") == b'{"k": 1}'
+    with pytest.raises(FileNotFoundError):
+        loader.get_data(boot.ROOT + "/pkg/data/nope")
+    with pytest.raises(FileNotFoundError):
+        loader.get_data("/etc/passwd")
+
+
+def test_namespace_package_spec(boot: ModuleType) -> None:
+    spec = boot.path_hook(boot.ROOT).find_spec("ns")
+
+    assert spec.loader is None
+    assert spec.submodule_search_locations == [boot.ROOT + "/ns"]
+    assert _load(boot, "ns.a").VALUE == "a"
+
+
+def test_meta_finder_serves_namespace_packages_with_resources(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(sys.modules, "pkg", _load(boot, "pkg"))  # parents are imported first
+    spec = boot.META_FINDER.find_spec("ns")
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+
+    assert isinstance(spec.loader, importlib.machinery.NamespaceLoader)
+    assert list(module.__path__) == [boot.ROOT + "/ns"]
+    assert sorted(p.name for p in importlib.resources.files(module).iterdir()) == ["a.py", "b.py"]
+    data_spec = boot.META_FINDER.find_spec("pkg.data")
+    assert data_spec is not None
+    data = importlib.resources.files(importlib.util.module_from_spec(data_spec))
+    assert data.joinpath("table.json").read_text() == '{"k": 1}'
+    assert boot.META_FINDER.find_spec("pkg") is None  # regular packages: PathFinder
+
+
+def test_iter_modules(boot: ModuleType) -> None:
+    root = list(boot.path_hook(boot.ROOT).iter_modules(""))
+    children = list(boot.path_hook(boot.ROOT + "/pkg").iter_modules("pkg."))
+
+    assert {("pkg", True), ("entry", False)} <= set(root)
+    assert not {name for name, _ in root} & {"ns", "_fsbpyr_boot", "_fsbpyr_rt"}  # like FileFinder
+    assert children == [("pkg.cli", False), ("pkg.sub", True)]
+
+
+# --- importlib.resources ---------------------------------------------------------------------
+
+
+def test_resources_traversal(boot: ModuleType) -> None:
+    files = importlib.resources.files(_load(boot, "pkg"))
+
+    assert sorted(p.name for p in files.iterdir()) == ["__init__.py", "cli.py", "data", "sub"]
+    data = files / "data"
+    assert data.is_dir() and not data.is_file()
+    assert sorted(p.name for p in data.iterdir()) == ["sub", "table.json"]
+    table = data.joinpath("table.json")
+    assert table.is_file() and table.read_text() == '{"k": 1}'
+    assert files.joinpath("data", "sub", "x.txt").read_bytes() == b"x"
+    with table.open("rb") as handle:
+        assert handle.read() == b'{"k": 1}'
+    with table.open(encoding="utf-8") as text:
+        assert isinstance(text, io.TextIOBase) and text.read() == '{"k": 1}'
+    assert str(table) == os.fspath(cast(Any, table)) == boot.ROOT + "/pkg/data/table.json"
+    assert table == files / "data" / "table.json" and hash(table) == hash(data / "table.json")
+    assert table != data
+    loose = cast(Any, table)  # Traversable's typed modes are only "r" and "rb"
+    with loose.open("rt") as text_mode, loose.open("br") as binary_mode:
+        assert text_mode.read() == binary_mode.read().decode()
+    assert cast(Any, table).read_text(encoding="ascii", errors="strict") == '{"k": 1}'
+
+
+def test_functional_resources_api(boot: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "pkg", _load(boot, "pkg"))
+
+    assert importlib.resources.read_text("pkg", "data", "table.json", encoding="utf-8") == (
+        '{"k": 1}'
+    )
+    assert importlib.resources.is_resource("pkg", "data", "table.json")
+
+
+def test_resources_missing_and_escaping_paths(boot: ModuleType) -> None:
+    files = importlib.resources.files(_load(boot, "pkg"))
+
+    missing = files / "nope"
+    assert not missing.is_file() and not missing.is_dir()
+    with pytest.raises(FileNotFoundError):
+        missing.read_bytes()
+    with pytest.raises(NotADirectoryError):
+        list((files / "data" / "table.json").iterdir())
+    outside = files / ".." / ".." / "etc"
+    assert not outside.is_dir() and not outside.is_file()
+
+
+def test_resources_as_file_materializes_content(boot: ModuleType) -> None:
+    files = importlib.resources.files(_load(boot, "pkg"))
+
+    with importlib.resources.as_file(files / "data" / "table.json") as path:
+        assert Path(path).read_bytes() == b'{"k": 1}'
+
+
+def test_resources_module_anchor_is_containing_directory(boot: ModuleType) -> None:
+    files = importlib.resources.files(_load(boot, "pkg.cli"))
+
+    assert "cli.py" in {p.name for p in files.iterdir()}
+
+
+# --- importlib.metadata ----------------------------------------------------------------------
+
+
+def _context(**kwargs: Any) -> importlib.metadata.DistributionFinder.Context:
+    return importlib.metadata.DistributionFinder.Context(**kwargs)
+
+
+def test_distribution_lookup(boot: ModuleType) -> None:
+    finder = boot.META_FINDER
+    dists = list(finder.find_distributions(_context(name="DEMO", path=[boot.ROOT])))
+
+    assert len(dists) == 1
+    demo = dists[0]
+    assert (demo.version, demo.metadata["Name"]) == ("1.0", "Demo")
+    assert [f"{ep.name}={ep.value}" for ep in demo.entry_points] == ["demo=pkg.cli:main"]
+    files = demo.files or []
+    assert [str(f) for f in files] == ["pkg/__init__.py", "pkg/cli.py", "pkg/data/table.json"]
+    assert files[2].read_text() == '{"k": 1}'
+    assert demo.read_text("missing.txt") is None
+    assert os.fspath(demo.locate_file("pkg/cli.py")) == boot.ROOT + "/pkg/cli.py"
+    assert os.fspath(demo._path) == boot.ROOT + "/demo-1.0.dist-info"  # PathDistribution compat
+
+
+def test_distribution_enumeration_respects_context(boot: ModuleType) -> None:
+    finder = boot.META_FINDER
+
+    assert [d.version for d in finder.find_distributions(_context(path=[boot.ROOT]))] == ["1.0"]
+    assert list(finder.find_distributions(_context(name="missing", path=[boot.ROOT]))) == []
+    assert list(finder.find_distributions(_context(name="demo", path=["/elsewhere"]))) == []
+    assert finder.find_spec("anything") is None
+
+
+# --- run(), entry points, tracebacks -------------------------------------------------------
+
+
+@pytest.fixture
+def isolated_sys(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Let boot.run() rewire the import system; everything is restored afterwards."""
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(sys, "path_hooks", list(sys.path_hooks))
+    monkeypatch.setattr(sys, "meta_path", list(sys.meta_path))
+    monkeypatch.setattr(sys, "path_importer_cache", {})
+    monkeypatch.setattr(sys, "excepthook", sys.__excepthook__)
+    before = set(sys.modules)
+    yield
+    for name in set(sys.modules) - before:
+        del sys.modules[name]
+
+
+@pytest.mark.usefixtures("isolated_sys")
+def test_resolve_entry_points(boot: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(posix.environ, b"FSBPYR_SELFTEST", b"1")
+    boot.run()
+
+    assert boot._resolve("pkg.cli:main")() == "cli"
+    assert boot._resolve("pkg").VALUE == "pkg"
+
+
+@pytest.mark.usefixtures("isolated_sys")
+def test_run_selftest_installs_import_machinery(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setitem(posix.environ, b"FSBPYR_SELFTEST", b"1")
+
+    boot.run()
+
+    assert sys.path == [boot.ROOT]
+    assert sys.path_hooks[0] is boot.path_hook
+    assert boot.META_FINDER in sys.meta_path
+    assert sys.excepthook is boot._excepthook
+    assert capsys.readouterr().out == "fsbpyr selftest ok: demo\n"
+
+
+def test_excepthook_hides_only_leading_boot_frames(
+    boot: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def failing() -> None:
+        raise ValueError("bad input")
+
+    try:
+        failing()
+    except ValueError as exc:
+        boot._excepthook(ValueError, exc, exc.__traceback__)
+    err = capsys.readouterr().err
+    assert "failing" in err and err.rstrip().endswith("ValueError: bad input")

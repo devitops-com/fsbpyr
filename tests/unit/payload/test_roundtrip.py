@@ -233,3 +233,28 @@ def test_startup_section_lists_startup_modules(spec: PayloadSpec) -> None:
 
     assert [m.name for m in payload.startup_modules()] == ["_boot"]
     assert all(ModuleFlag.STARTUP in m.flags for m in payload.startup_modules())
+
+
+@pytest.mark.parametrize(
+    ("prefix", "expected"),
+    [
+        ("pkg.", (("_speed", ModuleKind.EXTENSION), ("cli", ModuleKind.MODULE))),
+        ("", (("_boot", ModuleKind.MODULE), ("nspkg", ModuleKind.NAMESPACE),
+              ("pkg", ModuleKind.PACKAGE))),
+        ("pkg.cli.", ()),
+        ("missing.", ()),
+    ],
+)  # fmt: skip
+def test_list_modules_returns_direct_children(
+    spec: PayloadSpec, prefix: str, expected: tuple[tuple[str, ModuleKind], ...]
+) -> None:
+    assert Payload(encode_payload(spec)).list_modules(prefix) == expected
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [("", True), ("pkg", True), ("pkg/data", True), ("pkg/data/table.json", False),
+     ("pk", False), ("missing", False)],
+)  # fmt: skip
+def test_is_dir(spec: PayloadSpec, path: str, expected: bool) -> None:
+    assert Payload(encode_payload(spec)).is_dir(path) is expected

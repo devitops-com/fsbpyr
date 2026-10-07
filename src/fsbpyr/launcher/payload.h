@@ -35,7 +35,16 @@ bool fsb_str(const struct fsb_payload *payload, struct fsb_str ref, const char *
 bool fsb_get_blob(const struct fsb_payload *payload, uint32_t index, struct fsb_blob *out);
 bool fsb_get_module(const struct fsb_payload *payload, uint32_t index, struct fsb_module *out);
 bool fsb_get_file(const struct fsb_payload *payload, uint32_t index, struct fsb_file *out);
+bool fsb_get_dist(const struct fsb_payload *payload, uint32_t index, struct fsb_dist *out);
 bool fsb_get_startup(const struct fsb_payload *payload, uint32_t position, uint32_t *module);
+
+/* Key (name or path) of record ``index`` of a sorted table; false if out of range or corrupt. */
+bool fsb_record_key(const struct fsb_payload *payload, enum fsb_section section, uint64_t index,
+                    const char **text, uint32_t *length);
+
+/* First index whose key is >= ``key`` (the table's count if none; also on a corrupt table). */
+uint64_t fsb_lower_bound(const struct fsb_payload *payload, enum fsb_section section,
+                         const char *key, size_t length);
 
 /* True if [src, src+stored) is exactly one zstd frame that declares content size ``size`` and
  * carries a content checksum (so decompression verifies integrity). */
@@ -48,6 +57,7 @@ bool fsb_zstd_decompress(void *dst, uint64_t size, const uint8_t *src, uint64_t 
 /* Binary search by key bytes; returns the record index or FSB_NONE. */
 uint32_t fsb_find_module(const struct fsb_payload *payload, const char *name, size_t length);
 uint32_t fsb_find_file(const struct fsb_payload *payload, const char *path, size_t length);
+uint32_t fsb_find_dist(const struct fsb_payload *payload, const char *name, size_t length);
 
 static inline uint64_t fsb_count(const struct fsb_payload *payload, enum fsb_section section) {
     return payload->header.sections[section].count;

@@ -62,7 +62,7 @@ def test_uncaught_exception_shows_only_app_frames_with_source(build_app: BuildAp
     assert result.returncode == 1
     assert "<string>" not in result.stderr
     assert "_fsbpyr_boot" not in result.stderr
-    assert 'File "boom.py", line 2, in main' in result.stderr
+    assert f'File "{app}/boom.py", line 2, in main' in result.stderr  # absolute virtual path
     assert "raise ValueError('bad input')" in result.stderr
     assert result.stderr.rstrip().endswith("ValueError: bad input")
 

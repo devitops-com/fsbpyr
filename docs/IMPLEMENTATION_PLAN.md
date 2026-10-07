@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.3, 2026-10-07. Phases 0–2 are complete; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.4, 2026-10-07. Phases 0–3 are complete; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -291,7 +291,9 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
    and are still packaged, because the lock decided they belong. `.pth` files produce warnings.
 6. **Classify** each dist's RECORD into files. Skip paths outside site-packages,
    `__pycache__/` and `*.pyc`. Files not listed in any RECORD (venv scaffolding such as
-   `_virtualenv.py`) are not packaged.
+   `_virtualenv.py`) are not packaged. Every directory with an identifier name and no
+   `__init__.py` gets a NAMESPACE record, matching CPython's implicit namespace packages, so
+   that `importlib.resources.files("pkg.data")` works for data directories.
 7. **Compile** in-process when the runtime is self; otherwise use the runtime's compile helper
    (Phase 9). Every result is canonicalized (D16). A `SyntaxError` keeps the file as a resource
    and prints a warning.
@@ -365,12 +367,12 @@ src/fsbpyr/
   runtime/stdlib.py         stdlib selection, compile, STARTUP detection
   runtime/pins.py           pinned PBS URLs + SHA-256
   boot/                     code embedded into every built app (stdlib-only)
-    _fsbpyr_boot.py         STARTUP: path hook, loader, entry dispatch
-    _fsbpyr_rt/             lazily loaded: resources, metadata, cache, compat
-    _fsbpyr_py.py           pure-Python _fsbpyr for unit tests
+    _fsbpyr_boot.py         STARTUP: path hook, loader, dist finder, entry dispatch
+    _fsbpyr_rt/             lazily loaded: resources, metadata (cache, compat later)
   inspect.py
 tests/
   unit/ integration/ e2e/
+  support/                  pure-Python _fsbpyr stand-in, contract battery, demo app, probe
   fixtures/projects/        hello, clicky, heavy, resources, nspkg, mp
 benchmarks/                 harness + baselines JSON
 docs/
@@ -464,7 +466,7 @@ criteria are automated tests unless noted. Sizes are S, M or L.
   - runtime build: 51 s (full-LTO link plus stdlib compile); app size 27 MB (19.4 MB stub)
   - the format gained a STARTUP section, so the launcher never scans the MODULES table
 
-### Phase 3 — Import system (M)
+### Phase 3 — Import system (M) — **DONE 2026-10-07**
 
 - Path hook, loader, namespace packages, `iter_modules`, resources `Traversable`,
   `get_data`, `importlib.metadata` finder, and source-backed tracebacks.
@@ -474,6 +476,28 @@ criteria are automated tests unless noted. Sizes are S, M or L.
   - the contract suite is green on both implementations
   - boot imports nothing outside the built-in and frozen set, asserted through
     `sys.modules` in a self-test
+- **Result (2026-10-07):**
+  - the C `_fsbpyr` and the pure-Python stand-in (`tests/support/standin.py`) give identical
+    results, error types included, for the whole contract battery
+  - at entry, `sys.modules` holds only built-in, frozen and STARTUP modules
+  - inside a real binary, these work: `importlib.resources` (traversal, `as_file`, the
+    functional API, module anchors), `pkgutil.iter_modules`/`walk_packages`/`get_data`,
+    namespace packages, `importlib.metadata` (`version`, `metadata`, entry points, `files`,
+    name normalization), `inspect.getsource` and source-backed tracebacks
+  - code objects get absolute virtual `co_filename`s (`_imp._fix_co_filename`), and STARTUP
+    modules use `<frozen NAME>`, so files in the current directory can never shadow payload
+    sources in linecache
+  - in-process boot coverage is 86–93%; overall coverage is 93%
+  - startup is unchanged: 4.65 ms against 4.88 ms for bare CPython
+  - namespace packages are served by the payload meta finder with a `NamespaceLoader`
+    subclass, so `importlib.resources` works on them; CPython's NamespaceReader only
+    understands real directories and zip files
+  - review fixes: path-entry normalization, FileFinder parity in `iter_modules`, an O(log n)
+    `is_dir`, Traversable equality and `__fspath__`, `Distribution._path`
+  - known gaps, deferred to Phase 6:
+    - `inspect.getsource` on CPython-frozen stdlib modules (`os`, `codecs`) raises OSError
+    - `__file__` paths do not exist on disk, so `open(dirname(__file__)/x)` fails;
+      FS_REQUIRED packages address this
 
 ### Phase 4 — `fsbpyr build` for pure-Python projects, then self-hosting (L)
 

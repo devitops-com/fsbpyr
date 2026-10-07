@@ -400,6 +400,25 @@ class Payload:
             children.add(key[len(prefix) :].split(b"/", 1)[0])
         return tuple(child.decode() for child in sorted(children))
 
+    def is_dir(self, path: str) -> bool:
+        """Whether any file lives below directory ``path`` ('' is the root)."""
+        prefix = f"{path}/".encode() if path else b""
+        i = bisect_left(self._file_keys, prefix)
+        return i < len(self._file_keys) and self._file_keys[i].startswith(prefix)
+
+    def list_modules(self, prefix: str) -> tuple[tuple[str, ModuleKind], ...]:
+        """Direct children of package ``prefix`` ("pkg." or "" for top level) with their kind."""
+        encoded = prefix.encode()
+        children = []
+        for i in range(bisect_left(self._module_keys, encoded), len(self._module_keys)):
+            key = self._module_keys[i]
+            if not key.startswith(encoded):
+                break
+            tail = key[len(encoded) :]
+            if b"." not in tail:
+                children.append((tail.decode(), self._modules[i].kind))
+        return tuple(children)
+
     def release(self) -> None:
         self._buf.release()
 

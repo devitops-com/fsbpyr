@@ -17,14 +17,16 @@ _FAILED = 0xFFFFFFFF
 _ZSTD_LEVEL = 3
 
 # Runs under the PBS interpreter (-I -S): compile each listed file and frame the marshal data.
+# stdin: NUL-separated pairs of (relative path, co_filename).
 _COMPILE_WORKER = """
 import marshal, sys
 root, out = sys.argv[1], sys.stdout.buffer
-for rel in sys.stdin.read().split("\\0"):
+fields = sys.stdin.read().split("\\0")
+for rel, filename in zip(fields[::2], fields[1::2]):
     with open(root + "/" + rel, "rb") as handle:
         source = handle.read()
     try:
-        data = marshal.dumps(compile(source, rel, "exec", dont_inherit=True))
+        data = marshal.dumps(compile(source, filename, "exec", dont_inherit=True))
     except SyntaxError:
         out.write(b"\\xff\\xff\\xff\\xff")
         continue
@@ -105,9 +107,19 @@ def _run(command: list[str], stdin: str = "") -> subprocess.CompletedProcess[byt
     return result
 
 
-def compile_files(interpreter: Path, root: Path, rels: list[str]) -> dict[str, bytes | None]:
-    """Marshalled code compiled by ``interpreter`` (the exact target CPython)."""
-    result = _run([str(interpreter), "-I", "-S", "-c", _COMPILE_WORKER, str(root)], "\0".join(rels))
+def compile_files(
+    interpreter: Path, root: Path, rels: list[str], filenames: dict[str, str] | None = None
+) -> dict[str, bytes | None]:
+    """Marshalled code compiled by ``interpreter`` (the exact target CPython).
+
+    ``filenames`` overrides co_filename per path (default: the relative path itself).
+    """
+    if not rels:
+        return {}
+    pairs = [field for rel in rels for field in (rel, (filenames or {}).get(rel, rel))]
+    result = _run(
+        [str(interpreter), "-I", "-S", "-c", _COMPILE_WORKER, str(root)], "\0".join(pairs)
+    )
     return decode_compiled(result.stdout, rels)
 
 
@@ -121,8 +133,11 @@ def startup_names(interpreter: Path) -> list[str]:
 def fragment(dist: PbsDist) -> tuple[tuple[Module, ...], tuple[File, ...]]:
     """Stdlib modules (STARTUP ones uncompressed), sources and resources as payload specs."""
     tree = collect(dist.stdlib)
-    compiled = compile_files(dist.interpreter, dist.stdlib, [rel for _, rel, _ in tree.modules])
     startup = set(startup_names(dist.interpreter))
+    # Frozen-style names (like CPython's own frozen modules): linecache never stats a relative path.
+    filenames = {rel: f"<frozen {name}>" for name, rel, _ in tree.modules if name in startup}
+    rels = [rel for _, rel, _ in tree.modules]
+    compiled = compile_files(dist.interpreter, dist.stdlib, rels, filenames)
     modules: list[Module] = []
     files: list[File] = []
     for name, rel, is_package in tree.modules:
