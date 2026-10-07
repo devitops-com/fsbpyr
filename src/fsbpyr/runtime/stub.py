@@ -23,7 +23,7 @@ LAUNCHER_FILES = (
 _ERROR_TAIL = 4000
 # Fixed compiler/linker flags; hashed into the runtime id so a flag change yields a new runtime.
 COMPILE_FLAGS = (
-    "-std=c11", "-O2", "-flto=full", "-fno-pie", "-no-pie", "-D_GNU_SOURCE",
+    "-std=c11", "-O2", "-flto=full", "-fPIE", "-pie", "-D_GNU_SOURCE",
     "-fstack-protector-strong", "-D_FORTIFY_SOURCE=2", "-Wall", "-Wextra",
 )  # fmt: skip
 LINK_FLAGS = ("-Wl,--export-dynamic", "-Wl,-z,noexecstack", "-Wl,-z,relro", "-Wl,-z,now", "-s")

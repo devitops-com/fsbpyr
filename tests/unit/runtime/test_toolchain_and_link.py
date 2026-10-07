@@ -188,7 +188,7 @@ def test_link_inputs_cover_builtin_modules_only(tmp_path: Path) -> None:
     assert inputs.system_libs == ("pthread", "m")
 
 
-def test_stub_command_links_statically_without_pie(tmp_path: Path) -> None:
+def test_stub_command_links_statically_as_pie(tmp_path: Path) -> None:
     dist = _fake_dist(tmp_path)
     inputs = link_inputs(dist, {"_ssl.o", "sha2module.o", "mathmodule.o"})
     toolchain = Toolchain(clang=Path("/x/clang-22"), lld=Path("/x/ld.lld-22"), major=22)
@@ -200,8 +200,8 @@ def test_stub_command_links_statically_without_pie(tmp_path: Path) -> None:
     for flag in (
         "--target=x86_64-unknown-linux-gnu",
         "-flto=full",
-        "-no-pie",
-        "-fno-pie",
+        "-pie",
+        "-fPIE",
         "--ld-path=/x/ld.lld-22",
         "-Wl,--export-dynamic",
         "-DFSBPYR_BYTECODE_MAGIC=0x0a0d0e2bu",
@@ -232,3 +232,4 @@ def test_stub_command_hardens_launcher_code(tmp_path: Path) -> None:
     cmd = stub_command(dist, inputs, toolchain, [Path("/src/main.c")], tmp_path / "stub")
 
     assert {"-fstack-protector-strong", "-D_FORTIFY_SOURCE=2"} <= set(cmd)
+    assert not {"-no-pie", "-fno-pie"} & set(cmd)  # PIE by default (D17): ASLR for the image
