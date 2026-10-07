@@ -1,0 +1,13 @@
+[project]
+name = "clicky"
+version = "0.1.0"
+description = "fsbpyr test fixture: click + rich + package data"
+requires-python = ">=3.12"
+dependencies = ["click>=8.1", "rich>=13"]
+
+[project.scripts]
+clicky = "clicky.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

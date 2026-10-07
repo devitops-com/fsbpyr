@@ -1,9 +1,11 @@
 """Compose runtime, boot code and application content into one executable (plan §3.6 9-10)."""
 
+import _imp
 import hashlib
 import importlib.resources
 import importlib.util
 import json
+import sys
 from compression import zstd
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,10 +14,9 @@ from . import __version__, bytecode
 from .payload.format import FileFlag, FileKind, ModuleFlag, ModuleKind
 from .payload.spec import Blob, Dist, File, Module, PayloadSpec
 from .payload.writer import encode_payload, write_executable
-from .runtime.registry import Runtime
+from .runtime.registry import BOOT_PACKAGES, Runtime
 
-BOOT_MODULE = "_fsbpyr_boot"
-RUNTIME_PACKAGE = "_fsbpyr_rt"
+BOOT_MODULE, RUNTIME_PACKAGE = BOOT_PACKAGES
 _EXTRACTABLE = (FileKind.NATIVE_EXT, FileKind.NATIVE_LIB)
 
 
@@ -24,7 +25,7 @@ class AssemblyError(RuntimeError):
 
 
 def _boot_module(name: str, rel: str, source: bytes, *, filename: str, startup: bool) -> Module:
-    code = bytecode.dumps(compile(source, filename, "exec", dont_inherit=True))
+    code = bytecode.dumps(compile(source, filename, "exec", dont_inherit=True, optimize=0))
     return Module(
         name,
         rel,
@@ -64,6 +65,11 @@ def generation_id(runtime_tag: str, files: tuple[File, ...]) -> bytes:
     return digest.digest()
 
 
+def _builtin_or_frozen() -> set[str]:
+    """Modules CPython resolves before the payload (the stub embeds the same CPython build)."""
+    return {*sys.builtin_module_names, *_imp._frozen_module_names(), "_fsbpyr"}  # type: ignore[attr-defined]
+
+
 def _check_clashes(kind: str, runtime: set[str], app: list[str]) -> None:
     clashes = sorted(runtime.intersection(app))
     if clashes:
@@ -79,7 +85,7 @@ class App:
     modules: tuple[Module, ...] = ()
     files: tuple[File, ...] = ()
     dists: tuple[Dist, ...] = ()
-    build_info: tuple[tuple[str, str], ...] = ()
+    build_info: tuple[tuple[str, object], ...] = ()
 
 
 def build_executable(runtime: Runtime, app: App, out: Path) -> None:
@@ -89,12 +95,15 @@ def build_executable(runtime: Runtime, app: App, out: Path) -> None:
             f"from runtime {runtime.runtime_id} ({runtime.bytecode_magic.hex()})"
         )
     boot = boot_modules()
-    runtime_names = {m.name for m in (*runtime.modules, *boot)}
+    # built-in and frozen modules are found before the payload, so app modules could never load
+    runtime_names = {m.name for m in (*runtime.modules, *boot)} | _builtin_or_frozen()
     _check_clashes("modules", runtime_names, [m.name for m in app.modules])
     _check_clashes("files", {f.path for f in runtime.files}, [f.path for f in app.files])
     all_files = (*runtime.files, *app.files)
-    info = {
+    info: dict[str, object] = {
         "runtime": runtime.runtime_id,
+        "runtime_tag": runtime.tag,
+        "extension_suffixes": list(runtime.extension_suffixes),
         "python": runtime.python_version,
         "fsbpyr": __version__,
         "zstd": zstd.zstd_version,

@@ -240,7 +240,7 @@ def run() -> None:
         sys.excepthook = _excepthook
     entrypoint = INFO["entrypoint"]
     if posix.environ.get(b"FSBPYR_SELFTEST"):
-        _resolve(entrypoint.partition(":")[0])
+        _resolve(entrypoint)  # import the module and look the attribute up, without calling
         print(f"fsbpyr selftest ok: {INFO['app_name']}")
         return
     if ":" not in entrypoint:

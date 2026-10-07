@@ -1,0 +1,13 @@
+[project]
+name = "hello"
+version = "1.0.0"
+description = "fsbpyr test fixture: no dependencies"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+hello = "hello.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

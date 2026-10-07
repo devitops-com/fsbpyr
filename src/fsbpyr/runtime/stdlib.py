@@ -26,7 +26,7 @@ for rel, filename in zip(fields[::2], fields[1::2]):
     with open(root + "/" + rel, "rb") as handle:
         source = handle.read()
     try:
-        data = marshal.dumps(compile(source, filename, "exec", dont_inherit=True))
+        data = marshal.dumps(compile(source, filename, "exec", dont_inherit=True, optimize=0))
     except SyntaxError:
         out.write(b"\\xff\\xff\\xff\\xff")
         continue

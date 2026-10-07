@@ -13,12 +13,13 @@ from pathlib import Path
 
 from .. import __version__
 from ..payload.convert import spec_from_payload
-from ..payload.reader import Payload
+from ..payload.reader import Executable, Payload
 from ..payload.spec import File, Module, PayloadSpec
 from ..payload.writer import encode_payload
 from . import pbs, pins, stdlib, stub
 from .toolchain import find_toolchain
 
+BOOT_PACKAGES = ("_fsbpyr_boot", "_fsbpyr_rt")  # regenerated for every build, never runtime content
 LAYOUT_VERSION = 2  # bump when the stdlib selection or the runtime directory layout changes
 _STUB = "stub"
 _STDLIB = "stdlib.fsbp"
@@ -164,6 +165,49 @@ class Runtime:
             modules=fragment.modules,
             files=fragment.files,
         )
+
+    @classmethod
+    def from_executable(cls, path: Path) -> Runtime:
+        """The runtime embedded in an fsbpyr executable: its stub bytes and the stdlib frames,
+        copied verbatim (no compiler, no download, no cache; plan D4)."""
+        with Executable.open(path) as exe:
+            payload = exe.payload
+            info = json.loads(payload.build_info)
+            fragment = spec_from_payload(payload)
+            stub_bytes = exe.stub_prefix()
+            hexversion, magic = payload.python_hexversion, payload.bytecode_magic
+        if "runtime_tag" not in info:
+            raise RuntimeCacheError(f"{path} does not record its runtime")
+        return cls(
+            tag=info["runtime_tag"],
+            runtime_id=info["runtime"],
+            python_version=info["python"],
+            hexversion=hexversion,
+            bytecode_magic=magic,
+            extension_suffixes=tuple(info["extension_suffixes"]),
+            stub=stub_bytes,
+            # app content always belongs to a dist; boot code is regenerated for each build
+            modules=tuple(
+                m for m in fragment.modules
+                if m.dist is None and m.name.partition(".")[0] not in BOOT_PACKAGES
+            ),
+            files=tuple(f for f in fragment.files if f.dist is None),
+        )  # fmt: skip
+
+
+def running_executable() -> Path | None:
+    """The fsbpyr executable this process runs in, if any."""
+    return Path(sys.executable) if "_fsbpyr" in sys.builtin_module_names else None
+
+
+def select_runtime(python: str, cache: Path | None = None) -> Runtime:
+    """Our own embedded runtime when it matches ``python`` (self-hosting), else the cache."""
+    own = running_executable()
+    if own is not None:
+        runtime = Runtime.from_executable(own)
+        if runtime.python_version.startswith(python + "."):
+            return runtime
+    return find_runtime(python, cache)
 
 
 def find_runtime(python: str, cache: Path | None = None) -> Runtime:

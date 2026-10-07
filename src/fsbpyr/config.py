@@ -1,0 +1,60 @@
+"""Build configuration: command-line options override ``[tool.fsbpyr]`` (plan §3.6 step 1, §9)."""
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from .project import Project
+
+_LATER_PHASES = {"profile": "Phase 7", "fs-packages": "Phase 6", "allow-system-libs": "Phase 5"}
+
+
+class ConfigError(ValueError):
+    """Invalid [tool.fsbpyr] table or option."""
+
+
+@dataclass(frozen=True, slots=True)
+class BuildConfig:
+    entry: str | None = None  # console script name, "module" or "module:attr"
+    output: Path | None = None
+    requirements: str | None = None
+    extras: tuple[str, ...] = ()
+    include_source: bool = True
+    interpreter: Path | None = None
+    offline: bool = False
+    smoke: bool = True
+
+
+def _expect(key: str, value: Any, kind: type | tuple[type, ...]) -> Any:
+    if not isinstance(value, kind):
+        raise ConfigError(f"[tool.fsbpyr] {key} has the wrong type: {value!r}")
+    return value
+
+
+def _from_tool(project: Project) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for key, value in project.tool.items():
+        if key in _LATER_PHASES:
+            raise ConfigError(f"[tool.fsbpyr] {key} is not supported yet ({_LATER_PHASES[key]})")
+        if key in ("entry", "requirements"):
+            values[key] = _expect(key, value, str)
+        elif key == "output":
+            values["output"] = project.directory / _expect(key, value, str)
+        elif key == "extras":
+            extras = _expect(key, value, list)
+            values["extras"] = tuple(_expect(key, extra, str) for extra in extras)
+        elif key == "include-source":
+            values["include_source"] = _expect(key, value, bool)
+        else:
+            raise ConfigError(
+                f"unknown [tool.fsbpyr] key {key!r}; supported: entry, output, requirements, "
+                "extras, include-source"
+            )
+    return values
+
+
+def load_config(project: Project, **options: Any) -> BuildConfig:
+    """Merge: an option counts as given unless it is None (CLI flags default to None)."""
+    values = _from_tool(project)
+    values.update({key: value for key, value in options.items() if value is not None})
+    return BuildConfig(**values)

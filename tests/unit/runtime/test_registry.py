@@ -11,8 +11,9 @@ from fsbpyr.assemble import BOOT_MODULE, App, AssemblyError, build_executable, g
 from fsbpyr.payload.convert import spec_from_payload
 from fsbpyr.payload.format import Codec, FileKind, ModuleFlag, ModuleKind
 from fsbpyr.payload.reader import Executable, Payload
-from fsbpyr.payload.spec import Blob, File, Module, PayloadSpec
+from fsbpyr.payload.spec import Blob, Dist, File, Module, PayloadSpec
 from fsbpyr.payload.writer import encode_payload
+from fsbpyr.runtime import registry
 from fsbpyr.runtime.registry import Runtime, RuntimeCacheError, check_owner, secure_directory
 
 from ..payload.conftest import make_spec
@@ -183,3 +184,40 @@ def test_secure_directory_creates_private_directories(tmp_path: Path) -> None:
 def test_foreign_owner_is_refused() -> None:
     with pytest.raises(RuntimeCacheError, match="owned by uid 0"):
         check_owner(Path("/somewhere"), owner=0, euid=1000)
+
+
+def test_runtime_from_executable_recovers_the_embedded_runtime(tmp_path: Path) -> None:
+    runtime = _runtime()
+    out = tmp_path / "app"
+    app = Module("hello", "hello.py", ModuleKind.MODULE, code=Blob.code(b"c"), dist="hello")
+    build_executable(
+        runtime, App("hello", "hello:main", modules=(app,), dists=(Dist("hello", "h", "1"),)), out
+    )
+
+    embedded = Runtime.from_executable(out)
+
+    assert embedded.modules == runtime.modules  # app and boot modules are not runtime content
+    assert embedded.files == runtime.files
+    assert (embedded.tag, embedded.runtime_id, embedded.python_version) == (
+        runtime.tag, runtime.runtime_id, runtime.python_version)  # fmt: skip
+    assert embedded.extension_suffixes == runtime.extension_suffixes
+    assert embedded.stub.startswith(runtime.stub) and len(embedded.stub) % 4096 == 0
+
+
+def test_select_runtime_uses_the_cache_outside_executables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _runtime().save(tmp_path / "rt")
+    monkeypatch.setattr(registry, "find_runtime", lambda python, cache=None: Runtime.load(
+        tmp_path / "rt"))  # fmt: skip
+
+    assert registry.running_executable() is None  # pytest is not an fsbpyr executable
+    assert registry.select_runtime("3.14") == _runtime()
+
+
+@pytest.mark.parametrize("name", ["grp", "posix", "os", "_fsbpyr"])
+def test_app_modules_may_not_shadow_builtin_or_frozen_modules(tmp_path: Path, name: str) -> None:
+    clash = Module(name, f"{name}.py", ModuleKind.MODULE, code=Blob.code(b"c"), dist="x")
+
+    with pytest.raises(AssemblyError, match=name):
+        build_executable(_runtime(), App("x", "x:main", modules=(clash,)), tmp_path / "x")

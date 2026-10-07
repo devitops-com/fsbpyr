@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.4, 2026-10-07. Phases 0–3 are complete; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.5, 2026-10-07. Phases 0–4 are complete; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -499,7 +499,7 @@ criteria are automated tests unless noted. Sizes are S, M or L.
     - `__file__` paths do not exist on disk, so `open(dirname(__file__)/x)` fails;
       FS_REQUIRED packages address this
 
-### Phase 4 — `fsbpyr build` for pure-Python projects, then self-hosting (L)
+### Phase 4 — `fsbpyr build` for pure-Python projects, then self-hosting (L) — **DONE 2026-10-07**
 
 - `project.py`, `staging.py`, `closure.py`, `classify.py`, `compile.py`, `config.py`,
   `cli.py`, `Runtime.from_self()`.
@@ -513,6 +513,39 @@ criteria are automated tests unless noted. Sizes are S, M or L.
   - **stage2 == stage3**
   - after one warm-up run, the fsbpyr binary builds the fixtures with `--offline` and no clang
     on PATH
+- **Result (2026-10-07):**
+  - **self-hosting fixed point holds: stage1 == stage2 == stage3, byte for byte.** stage1 is
+    built by the venv's CPython 3.14.7; stage2 and stage3 by fsbpyr binaries on the embedded
+    3.14.8, with only uv on PATH and an empty cache. A self-build takes about 0.3 s
+  - fixtures `hello` and `clicky` (click + rich + `files("clicky.data")`) build and run from
+    `uv.lock`, `pylock.toml`, hashed `requirements.txt`, and unlocked (warning asserted); pip
+    works without uv
+  - implementation notes that deviate from the text above:
+    - `uv sync --locked` instead of `--frozen`: a stale lock is an error, not a silent build
+    - the project's wheel is always built out of tree: `uv build` (sdist, then wheel), or
+      `pip wheel` from a clean copy. It is installed `--no-deps` after the dependencies from
+      the lock, so neither a stale setuptools `build/` directory nor uv's build cache (keyed on
+      `pyproject.toml`, found by the self-hosting test) can ship old code, and the project tree
+      is never written to. uv workspace members and path dependencies are rebuilt with
+      `--reinstall-package`, using the names read from `uv.lock`
+    - staging commands run in the project directory, so relative paths in requirements files
+      resolve as expected; editable dependencies are rejected
+    - uv workspace members use the workspace's `uv.lock` (`--package`); `--no-default-groups`
+      keeps uv's default groups out; an explicit `--requirements` file wins over every lock
+    - distributions installed from the lock but not required by the project are packaged,
+      with a warning. Plugins listed only in the lock keep working (review suggestion to drop
+      them declined)
+    - bytecode is compiled with `optimize=0` whatever the build interpreter's `-O` setting;
+      app modules may not shadow built-in or frozen modules
+    - staging is a fresh temporary directory per build, not a reused `build/fsbpyr/staging`;
+      the uv cache keeps it fast
+    - installer-written dist-info files (`INSTALLER`, `REQUESTED`, `direct_url.json`,
+      `uv_cache.json`) are not packaged; RECORD is rewritten to list only packaged files.
+      Otherwise timestamps, staging shebangs and absolute paths would break reproducibility
+      and leak build paths
+    - native extensions are rejected with a clear error until Phase 5
+    - CLI: `fsbpyr build [DIR] --entry -o --requirements --extra --interpreter --offline
+      --no-source --no-smoke`; the other options arrive with their phases
 
 ### Phase 5 — Native extensions and the cache (L)
 
