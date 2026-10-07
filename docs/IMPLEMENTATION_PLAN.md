@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.7, 2026-10-07. Phases 0–6 are complete; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.8, 2026-10-07. Phases 0–6 are complete; Phases 6b and 6c close the remaining gaps; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -110,6 +110,9 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D20 | **The cache is private:** cache directories must be owned by the user and are forced to 0700; `runtime.json` records SHA-256 of the stub and the stdlib fragment, verified on load; a concurrently completed runtime wins | Cached stubs are copied into every executable built from them | Trusting any directory named by `FSBPYR_CACHE_DIR` / `XDG_CACHE_HOME` |
 | D21 | **`sys.frozen` is not set** | It is PyInstaller's flag: code that sees it reaches for `sys._MEIPASS` or other PyInstaller layouts. multiprocessing would use it only to shorten the spawn command line, which D22 handles anyway | `sys.frozen = True` for compatibility with PyInstaller-aware code |
 | D22 | **multiprocessing children are recognized and authenticated, never executed:** the three command lines CPython re-executes `sys.executable` with (spawn `-c ... --multiprocessing-fork`, forkserver `-c ... main(...)`, resource tracker `-c ... main(fd)`) are matched exactly and their arguments decoded with `ast.literal_eval`. The known function is called only if the parent process runs this same executable (same inode of `/proc/<ppid>/exe`), every fd argument is ≥ 3, and nothing an fsbpyr parent never sends is asked for (a forkserver `main_path`; its `sys_path` is dropped) | Every start method works, and an app that may run with untrusted arguments (a sudo rule) does not become a Python interpreter. Recognition alone was not enough: the security review ran code through `spawn_main(pipe_handle=0)` unpickling stdin and through forkserver's `sys_path`/`main_path` | `exec` of any `-c` command that starts with the right prefix (PyInstaller's approach) |
+| D23 | **Interpreter re-exec is opt-in and authenticated** (owner decision 2026-10-07): with `interpreter-reexec = true`, `<exe> [flags] -m MODULE ...` and `-c CODE ...` run as CPython would, but only when the parent process runs this same executable (the D22 check); otherwise the app runs as usual | Tools that start helper interpreters through `sys.executable` work. Off by default, because an app's own CLI may use `-c`/`-m`; callers from a shell or sudo never get an interpreter | Always on; keeping it a non-goal |
+| D24 | **A runtime hint for `__file__`-relative data** (owner decision 2026-10-07): an `open` audit hook turns failures on paths inside the executable into an error that names the package and `fs-packages`. It ships only if measured overhead is below 1%; build-time warnings ship regardless | Field failures become self-explanatory | Build-time warnings only |
+| D25 | **The portable glibc baseline moves from Phase 9 to Phase 6c** (owner decision 2026-10-07) | glibc 2.38 excludes Debian 12, Ubuntu 22.04 and RHEL 8/9; benchmarks (Phase 7) should measure the stub that ships | Leaving it in Phase 9 |
 
 ---
 
@@ -653,9 +656,9 @@ criteria are automated tests unless noted. Sizes are S, M or L.
     - built-in rules: only `certifi`, which otherwise worked through a temporary copy of
       `cacert.pem` made again in every process
     - `--fs-package` overrides `fs-packages`, like every other option
-    - known gaps: `inspect.getsource` on CPython-frozen stdlib modules (`os`, `codecs`) still
-      raises OSError; re-executing `sys.executable` for anything but multiprocessing (`-m`,
-      `-c`) is not supported (a v1 non-goal)
+    - known gaps, planned in Phase 6b: `inspect.getsource` on CPython-frozen stdlib modules
+      (`os`, `codecs`) raises OSError; re-executing `sys.executable` for anything but
+      multiprocessing (`-m`, `-c`) is not supported (opt-in support, D23)
   - reviews: the security review found that recognizing the three command lines did not
     stop code execution through the functions they name (CRITICAL, reproduced against the
     `mp` binary: a pickle on stdin, a planted module through forkserver's `sys_path`, a file
@@ -664,6 +667,72 @@ criteria are automated tests unless noted. Sizes are S, M or L.
     namespace packages two levels below an FS_REQUIRED package placed in the payload instead
     of the cache (fixed); the generation id now covers file modes, and `-X opt` flags are
     skipped when locating `-c`
+
+### Phase 6b — Compatibility follow-ups (M)
+
+Closes the open issues that no later phase covered (review of open issues, 2026-10-07).
+
+- **Data read relative to `__file__`.** A build-time scan (AST) of packaged modules outside
+  FS_REQUIRED packages finds file-system calls whose path derives from `__file__` (`open`,
+  `os.listdir`, `os.path` helpers, `pathlib.Path(__file__)`, `glob`) and prints one warning per
+  package, naming module and line and suggesting `fs-packages`. The compatibility matrix gains
+  packages known to read data this way (candidates: botocore, pytz, babel, matplotlib); a
+  built-in rule is added only for a verified failure. Runtime hint per D24, measured first.
+- **Shared objects no extension uses** (typically loaded with ctypes): a build warning when a
+  NATIVE_LIB is in no closure and not inside an FS_REQUIRED package.
+- **`.pth` files.** Path lines naming a directory inside site-packages make its modules
+  importable at top level (module records rooted there, after site-packages in precedence, as
+  CPython orders them). Code lines never run; they produce a warning, except recognized
+  redundant ones (`*-nspkg.pth` namespace shims, which PEP 420 namespaces replace, and
+  `distutils-precedence.pth`).
+- **Sources of CPython-frozen stdlib modules.** The payload already holds them; the boot code
+  lets `FrozenImporter.get_source` fall back to them, so `inspect.getsource(os)` works.
+- **Post-import fixups.** A small table in the boot loader, consulted after a payload module
+  executes, for the two items below.
+- **CA store fallback** for distros whose `/etc/ssl` holds neither `cert.pem` nor a hashed
+  `certs/` directory **[assumption — NixOS; to test in a container]**: when `ssl` is first
+  imported, default contexts also load the first existing well-known system bundle. No
+  environment variable is set, so child processes are unaffected.
+- **Multiprocessing children start from the parent's own binary** (`/proc/self/exe`, set when
+  `multiprocessing.spawn` is imported): after an in-place upgrade parent and children never mix
+  code versions, and the D22 check keeps passing.
+- **`FSBPYR_VERIFY=1`** also re-hashes cached files (natives and FS_REQUIRED files) on use and
+  repairs mismatches; without it a cache hit stays a size check.
+- **Interpreter re-exec (D23):** `interpreter-reexec = true` / `--interpreter-reexec`. `-m`
+  runs a payload module as `__main__` with `runpy`, `-c` runs the given code; interpreter flags
+  before them are accepted and ignored, as for multiprocessing.
+- Unchanged, documented as accepted: without `/proc` multiprocessing children are refused
+  (fails closed; fork still works); forkserver does not receive app-added `sys.path` entries;
+  finding an FS_REQUIRED package's spec extracts it.
+- **Exit:**
+  - the scan warns for a fixture package that opens data via `__file__`, not for one using
+    `importlib.resources`; the extended matrix is green
+  - the D24 hint is either measured below 1% and tested, or recorded as dropped
+  - a `.pth` path fixture is importable; namespace shims produce no warning
+  - `inspect.getsource(os)` works inside a built app
+  - the CA fallback verifies TLS in a NixOS container, or the assumption is recorded as false
+    and the item dropped
+  - multiprocessing keeps working after the binary is replaced on disk mid-run
+  - under `FSBPYR_VERIFY=1` a same-size corrupted cached data file is repaired
+  - with `interpreter-reexec`, app code running `sys.executable -m <payload module>` and `-c`
+    works; the same command lines started from a shell are refused; without the option
+    nothing changes
+
+### Phase 6c — Portable glibc baseline (M) — moved from Phase 9 (D25)
+
+- Link the stub against an old glibc instead of the host's (S1 found `GLIBC_2.38`). A short
+  spike picks between host clang with an extracted old-glibc sysroot and a podman build image
+  with LLVM 22 installed; the baseline target is glibc 2.28 (manylinux_2_28: Debian 10+,
+  Ubuntu 20.04+, RHEL 8+) unless the spike shows 2.17 is as cheap. The baseline is part of the
+  runtime id.
+- `fsbpyr build` reports the app's effective glibc requirement, max(stub, wheel platform
+  tags), stores it in the build info, and warns when a wheel raises it above the stub's.
+- **Exit:**
+  - `hello`, `heavy` and `compat` binaries run in Debian 12, Ubuntu 22.04, Rocky 8 and Rocky 9
+    containers
+  - the reported requirement matches the highest versioned symbol found in the stub and the
+    extracted natives
+  - self-hosting fixed point and startup budget still hold
 
 ### Phase 7 — Compression profiles and benchmarks (M)
 
@@ -681,18 +750,24 @@ criteria are automated tests unless noted. Sizes are S, M or L.
 - An ASan/UBSan stub variant for the E2E suite.
 - Cache ownership and permission checks, `noexec` mount detection (`statvfs ST_NOEXEC`) with a
   clear message, generation GC.
+- GC also removes temporary files left by killed processes (`.fsbpyr-*` older than an hour).
+- Streaming extraction: decompress natives and FS_REQUIRED files in chunks straight into the
+  temporary file, removing the whole-blob memory peak and the 1 GiB build limit (Phase 5).
+- Cache-root ancestors: walk the root's path from `/` and require every component to be owned
+  by root or the user and not writable by others unless sticky. Closes the risk accepted in the
+  Phase 5 security review (a root inside a directory other users can write).
 - **Exit:**
   - the fuzzer and sanitizers are clean
   - security tests pass: path traversal in names, symlinked cache dirs, foreign-owned cache,
-    truncated binary
+    a cache root below a directory others can write, truncated binary
+  - a native file over 1 GiB builds and loads with bounded memory
 
 ### Phase 9 — More Python versions and portability (L, later)
 
 - Runtimes for 3.12/3.13 (vendored zstd decompressor where PBS has no `libzstd.a`) and a
   per-runtime **compile-helper binary** (stub + stdlib + compile entry), so builds never depend
   on the venv interpreter.
-- Containerized stub builds (podman, old glibc sysroot) for a portable glibc baseline. Report
-  the effective glibc requirement of each app as max(stub, wheel tags).
+- (The portable glibc baseline moved to Phase 6c, D25.)
 - Then Linux aarch64, macOS (payload in a Mach-O segment so codesign works) and Windows
   (PE resource or overlay, explicit DLL search directories).
 
@@ -752,6 +827,7 @@ fsbpyr build [PROJECT_DIR] [--entry NAME | module | module:func] [-o OUT]
              [--requirements FILE] [--interpreter PYTHON] [--offline]
              [--profile fast|balanced|compact] [--extra NAME]... [--no-source]
              [--fs-package NAME]... [--allow-system-lib SONAME]... [--no-smoke]
+             [--interpreter-reexec]
 fsbpyr inspect BINARY [--json] [--verify]
 fsbpyr runtime list | build --python X.Y | path
 fsbpyr --version
@@ -767,6 +843,7 @@ extras = []
 include-source = true
 fs-packages = []
 allow-system-libs = []
+interpreter-reexec = false    # Phase 6b, D23
 ```
 
 Environment variables honored by built apps (never `PYTHON*`):
@@ -780,11 +857,11 @@ import timings; this was accepted in the Phase 2 review, since that party could 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | No clang/lld ≥ 22 on the build host | Cannot build runtimes | apt.llvm.org packages; podman image with LLVM 22; fallback: build a PBS non-LTO variant with PBS's own build scripts |
-| Host-linked stub binds to host glibc symbols (S1: needs GLIBC_2.38) | Binaries need a recent glibc | Phase 9 container link against an old sysroot; report the effective glibc requirement at build time |
+| Host-linked stub binds to host glibc symbols (S1: needs GLIBC_2.38) | Binaries need a recent glibc | Phase 6c (D25): link against an old glibc sysroot; report the effective glibc requirement at build time |
 | `marshal` output not deterministic (confirmed in S3) | Fixed-point gate fails | D16 canonicalizer; required round-trip and determinism tests |
 | Canonicalizer tied to marshal v5 / 3.14 code layout | Breaks on new Python versions | Version check at build time; Phase 9 adds layouts for other versions |
 | Packages that assume real files (`__file__` + `open`, `pkg_resources`) | Runtime failures | `get_data` mapping, FS_REQUIRED materialization, compatibility matrix |
-| Re-exec of `sys.executable` (multiprocessing, subprocess `-m`) | Child runs the app instead of Python | Narrow argv dispatch for multiprocessing. General `-m` is a documented non-goal for v1 |
+| Re-exec of `sys.executable` (multiprocessing, subprocess `-m`) | Child runs the app instead of Python | Multiprocessing command lines are recognized and authenticated (D22); `-m`/`-c` are opt-in and authenticated (D23, Phase 6b) |
 | Cache directory on a `noexec` mount | `dlopen` fails | Detect `ST_NOEXEC`, clear error, `FSBPYR_CACHE_DIR` |
 | Static PIE relocation cost | Startup | Measure PIE vs non-PIE in S1 |
 | Wheels not compliant with manylinux (local builds linking host libs) | Missing libs on targets | Fail the build with a named library; `--allow-system-lib` |
