@@ -13,7 +13,7 @@ SO = "pkg/_speed.cpython-314-x86_64-linux-gnu.so"
 
 def make_spec(**overrides: object) -> PayloadSpec:
     """A small but complete spec exercising every table and reference type."""
-    code = Blob.raw(b"code-pkg")
+    code = Blob.code(b"code-pkg")
     fields: dict[str, object] = {
         "python_hexversion": PY_HEXVERSION,
         "bytecode_magic": MAGIC,
@@ -27,7 +27,7 @@ def make_spec(**overrides: object) -> PayloadSpec:
                 "pkg.cli",
                 "pkg/cli.py",
                 ModuleKind.MODULE,
-                code=Blob.zstd(b"code-cli " * 100),
+                code=Blob.code(b"code-cli " * 100),
                 source=Blob.zstd(b"def main(): pass\n" * 50),
                 dist="demo",
             ),
@@ -37,7 +37,7 @@ def make_spec(**overrides: object) -> PayloadSpec:
                 "_boot",
                 "_boot.py",
                 ModuleKind.MODULE,
-                code=Blob.raw(b"boot"),
+                code=Blob.code(b"boot"),
                 flags=ModuleFlag.STARTUP,
             ),
         ),

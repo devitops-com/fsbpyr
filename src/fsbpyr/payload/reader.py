@@ -32,6 +32,7 @@ from .format import (
     TRAILER_MAGIC,
     TRAILER_SIZE,
     WORD,
+    ZSTD_MAGIC,
     Codec,
     FileFlag,
     FileKind,
@@ -141,7 +142,7 @@ class Payload:
         self.app_name, self.entrypoint, self.build_info = (
             self._str(fields[i], fields[i + 1]) for i in (6, 8, 10)
         )
-        self._words = self._parse_words()
+        self._words = self._parse_words(Section.CLOSURES)
         self._digests = self._sections[Section.DIGESTS][1]
         self._blobs = self._parse_blobs()
         self._dists = self._parse_dists()
@@ -156,6 +157,7 @@ class Payload:
         _check_sorted(self._dist_keys, "dists")
         _check_sorted(self._file_keys, "files")
         _check_sorted(self._module_keys, "modules")
+        self._startup = self._parse_startup()
 
     def _parse_sections(self, raw: tuple[int, ...]) -> tuple[dict[Section, tuple[int, int]], int]:
         sections = {}
@@ -195,9 +197,17 @@ class Payload:
         except UnicodeDecodeError:
             raise PayloadError(f"string at {offset} is not valid UTF-8") from None
 
-    def _parse_words(self) -> list[int]:
-        offset, count = self._sections[Section.CLOSURES]
+    def _parse_words(self, section: Section) -> list[int]:
+        offset, count = self._sections[section]
         return [WORD.unpack_from(self._buf, offset + 4 * i)[0] for i in range(count)]
+
+    def _parse_startup(self) -> tuple[int, ...]:
+        """STARTUP lists exactly the modules flagged STARTUP, in ascending index order."""
+        indices = tuple(self._parse_words(Section.STARTUP))
+        expected = tuple(m.index for m in self._modules if ModuleFlag.STARTUP in m.flags)
+        if indices != expected:
+            raise PayloadError("startup section does not match the STARTUP modules")
+        return indices
 
     def _index(self, value: int, limit: int, what: str, *, optional: bool = True) -> int:
         if (value == NONE and optional) or value < limit:
@@ -283,6 +293,7 @@ class Payload:
     def _check_module(self, m: ModuleRecord) -> None:
         if m.kind in (ModuleKind.MODULE, ModuleKind.PACKAGE):
             valid = m.code != NONE and m.file == NONE
+            valid = valid and self._blobs[m.code].codec is Codec.ZSTD
         elif m.kind is ModuleKind.NAMESPACE:
             valid = m.code == m.source == m.file == NONE
         else:
@@ -291,8 +302,6 @@ class Payload:
                 and m.file != NONE
                 and (self._files[m.file].kind is FileKind.NATIVE_EXT)
             )
-        if valid and ModuleFlag.STARTUP in m.flags:
-            valid = m.code != NONE and self._blobs[m.code].codec is Codec.NONE
         if not valid:
             raise PayloadError(f"module {m.name!r} violates the {m.kind.name} kind invariants")
 
@@ -315,6 +324,10 @@ class Payload:
             raise PayloadError(f"invalid closure of {owner.path!r}: kinds")
 
     # --- access ----------------------------------------------------------------------------
+
+    def startup_modules(self) -> tuple[ModuleRecord, ...]:
+        """Modules the launcher hands to CPython's frozen-module table before initialization."""
+        return tuple(self._modules[i] for i in self._startup)
 
     def blobs(self) -> tuple[BlobRecord, ...]:
         return self._blobs
@@ -344,6 +357,9 @@ class Payload:
         stored = self._buf[record.offset : record.offset + record.stored_size]
         if record.codec is Codec.NONE:
             return bytes(stored)
+        if not zstd_frame_has_checksum(stored):
+            stored.release()
+            raise PayloadError(f"blob {index}: zstd frame without content checksum")
         decompressor = zstd.ZstdDecompressor()
         try:
             data = decompressor.decompress(stored, max_length=record.size + 1)
@@ -386,6 +402,11 @@ class Payload:
 
     def release(self) -> None:
         self._buf.release()
+
+
+def zstd_frame_has_checksum(frame: bytes | memoryview) -> bool:
+    """Frame magic followed by a descriptor with Content_Checksum_flag (RFC 8878 3.1.1.1.1)."""
+    return len(frame) >= 6 and bytes(frame[:4]) == ZSTD_MAGIC and bool(frame[4] & 0x04)
 
 
 def _find[R](records: tuple[R, ...], keys: list[bytes], key: str) -> R | None:

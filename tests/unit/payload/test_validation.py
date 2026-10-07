@@ -42,7 +42,7 @@ def test_encode_rejects_unsafe_file_paths(path: str) -> None:
 
 @pytest.mark.parametrize("name", ["", ".a", "a.", "a..b", "a/b", "a\0b"])
 def test_encode_rejects_invalid_module_names(name: str) -> None:
-    modules = (Module(name, "x.py", ModuleKind.MODULE, code=Blob.raw(b"c")),)
+    modules = (Module(name, "x.py", ModuleKind.MODULE, code=Blob.code(b"c")),)
 
     with pytest.raises(PayloadError, match="module name"):
         encode_payload(make_spec(modules=modules, files=(), dists=()))
@@ -64,16 +64,15 @@ def test_encode_rejects_duplicate_keys(spec: PayloadSpec) -> None:
     [
         (Module("m", "m.py", ModuleKind.MODULE), "requires code"),
         (Module("m", "m", ModuleKind.PACKAGE), "requires code"),
-        (Module("m", "m", ModuleKind.NAMESPACE, code=Blob.raw(b"c")), "namespace"),
-        (Module("m", SO, ModuleKind.EXTENSION, code=Blob.raw(b"c"), file=SO), "extension"),
+        (Module("m", "m", ModuleKind.NAMESPACE, code=Blob.code(b"c")), "namespace"),
+        (Module("m", SO, ModuleKind.EXTENSION, code=Blob.code(b"c"), file=SO), "extension"),
         (Module("m", "m.so", ModuleKind.EXTENSION, file="pkg/certs/ca.pem"), "NATIVE_EXT"),
         (Module("m", "m.so", ModuleKind.EXTENSION, file="nope.so"), "unknown file"),
-        (Module("m", "m.py", ModuleKind.MODULE, code=Blob.raw(b"c"), dist="nope"), "unknown dist"),
+        (Module("m", "m.py", ModuleKind.MODULE, code=Blob.code(b"c"), dist="nope"), "unknown dist"),
+        (Module("m", "m.py", ModuleKind.MODULE, code=Blob.raw(b"c")), "zstd"),
         (
-            Module(
-                "m", "m.py", ModuleKind.MODULE, code=Blob.zstd(b"c" * 999), flags=ModuleFlag.STARTUP
-            ),
-            "uncompressed",
+            Module("m", "m.py", ModuleKind.MODULE, code=Blob.raw(b"c"), flags=ModuleFlag.STARTUP),
+            "zstd",
         ),
     ],
 )
@@ -292,7 +291,7 @@ def test_executable_verify_detects_tampering(image: bytes) -> None:
     boot = exe.payload.find_module("_boot")
     assert boot is not None
     tampered = bytearray(image)
-    tampered[exe.payload_offset + exe.payload.blob(boot.code).offset] ^= 1  # uncompressed data
+    tampered[exe.payload_offset + exe.payload.blob(boot.code).offset + 8] ^= 1  # frame body
 
     with pytest.raises(PayloadError, match="digest"):
         Executable.parse(bytes(tampered)).verify()

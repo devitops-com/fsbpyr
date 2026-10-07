@@ -16,13 +16,14 @@ MAX_STRTAB_SIZE = 0xFFFFFFFF
 
 TRAILER_MAGIC = b"FSBPYR\x00T"
 HEADER_MAGIC = b"FSBPYR\x00H"
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 
 # magic, version, flags, payload_offset, payload_size, payload_sha256
 TRAILER = struct.Struct("<8sIIQQ32s")
 TRAILER_SIZE = TRAILER.size
 # magic, version, header_size, python_hexversion, bytecode_magic, generation_id,
-# app_name (off, len), entrypoint (off, len), build_info (off, len), 7 x section (offset, count)
-HEADER = struct.Struct("<8sIII4s32s" + "II" * 3 + "QQ" * 7)
+# app_name (off, len), entrypoint (off, len), build_info (off, len), 8 x section (offset, count)
+HEADER = struct.Struct("<8sIII4s32s" + "II" * 3 + "QQ" * 8)
 HEADER_SIZE = HEADER.size
 # offset, stored_size, size, codec, reserved (u8, u16), digest
 BLOB = struct.Struct("<QQQBBHI")
@@ -49,6 +50,7 @@ class Section(IntEnum):
     DISTS = 4
     CLOSURES = 5
     DIGESTS = 6
+    STARTUP = 7
 
 
 RECORD_SIZE = {
@@ -59,6 +61,7 @@ RECORD_SIZE = {
     Section.DISTS: DIST.size,
     Section.CLOSURES: WORD.size,
     Section.DIGESTS: DIGEST_SIZE,
+    Section.STARTUP: WORD.size,
 }
 
 

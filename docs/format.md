@@ -1,7 +1,7 @@
 # fsbpyr executable format — version 1
 
 The single source of truth for this format is `src/fsbpyr/payload/format.py`.
-`launcher/format.h` (Phase 2) mirrors it, and a test checks that the two agree.
+`src/fsbpyr/launcher/format.h` mirrors it, and a test checks that the two agree.
 All integers are little-endian.
 
 ## Executable layout
@@ -31,20 +31,20 @@ All integers are little-endian.
 The payload digest is checked only on demand (`fsbpyr inspect --verify`, `FSBPYR_VERIFY=1`),
 never on a normal start.
 
-## Payload header (192 bytes, at payload offset 0)
+## Payload header (208 bytes, at payload offset 0)
 
 | Offset | Size | Field |
 |--------|------|-------|
 | 0 | 8 | magic `FSBPYR\0H` |
 | 8 | 4 | `format_version` (= 1) |
-| 12 | 4 | `header_size` (= 192) |
+| 12 | 4 | `header_size` (= 208) |
 | 16 | 4 | `python_hexversion` of the target CPython (`PY_VERSION_HEX`) |
 | 20 | 4 | bytecode magic (`importlib.util.MAGIC_NUMBER`) |
 | 24 | 32 | `generation_id` (native cache generation, §7 of the plan) |
 | 56 | 8 | `app_name` — Str |
 | 64 | 8 | `entrypoint` — Str (`module:attr` or `module`) |
 | 72 | 8 | `build_info` — Str (JSON, read only by `inspect`) |
-| 80 | 7 × 16 | section table: `(u64 offset, u64 count)` for each section below, in this order |
+| 80 | 8 × 16 | section table: `(u64 offset, u64 count)` for each section below, in this order |
 
 **Str** is `(u32 offset, u32 length)` into the string table. Every string is stored as UTF-8
 followed by one NUL byte, which the length does not count, so C code can use `strtab + offset`
@@ -64,6 +64,7 @@ All offsets inside the payload are relative to the payload start. The value `0xF
 | 4 | DISTS | records | 24 | 8 |
 | 5 | CLOSURES | u32 words | 4 | 8 |
 | 6 | DIGESTS | records | 32 | 8 |
+| 7 | STARTUP | u32 words | 4 | 8 |
 
 The MODULES, FILES and DISTS tables are sorted strictly ascending by their key's UTF-8 bytes
 (`memcmp` order, shorter prefix first). Lookups are binary searches. Keys are unique.
@@ -107,8 +108,10 @@ Invariants:
 - MODULE and PACKAGE have `code`.
 - NAMESPACE has no `code`, `source` or `file`.
 - EXTENSION has `file` pointing at a NATIVE_EXT record, and no `code`.
-- A STARTUP module's `code` blob has codec none, so the launcher can point CPython's frozen-module
-  table straight into the mapping.
+- Every `code` blob is a zstd frame with the content-checksum flag set. `marshal.loads` is not
+  safe against corrupt input, so integrity is verified before bytecode is ever unmarshalled.
+  STARTUP code is decompressed once by the launcher into memory that it then hands to CPython's
+  frozen-module table.
 
 ### FILES record (24 B), keyed by site-relative POSIX path
 
@@ -144,9 +147,14 @@ every member is a NATIVE_LIB record, and a record never lists itself.
 
 An array of 32-byte SHA-256 digests. They are recorded for blobs that may be extracted to disk.
 
+### STARTUP
+
+u32 MODULES indices, strictly ascending: exactly the modules flagged STARTUP. The launcher reads
+this short list to build CPython's frozen-module table, so it never scans the MODULES table.
+
 ## Validation rules (readers MUST enforce)
 
-- Trailer and header magic and version must match. `header_size` must be 192. Trailer `flags`
+- Trailer and header magic and version must match. `header_size` must be 208. Trailer `flags`
   must be 0.
 - `payload_offset` must be 4096-aligned, and the file size must match exactly.
 - Every section must lie inside the payload, start after the header, be 8-byte aligned, and not
@@ -158,7 +166,9 @@ An array of 32-byte SHA-256 digests. They are recorded for blobs that may be ext
   For codec none, `stored_size == size`.
 - FILES paths, module paths and `dist_info` paths obey the path rules above. Module names are
   dotted Python identifiers. Dist names are canonical.
-- The module kind invariants, the STARTUP rule and the closure rules hold.
+- The module kind invariants (including zstd code frames), the STARTUP rule (the STARTUP section
+  lists exactly the flagged modules) and the closure rules hold.
+- Every zstd frame a reader decompresses must have the content-checksum flag set.
 - On decompression, the output must be exactly `size` bytes, with no trailing data, and must
   pass the zstd checksum. Readers never allocate more than `size + 1` bytes.
 - Tables must be strictly sorted.

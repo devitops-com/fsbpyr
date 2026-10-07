@@ -188,10 +188,8 @@ def _check_module(module: Module, files: dict[str, File], dists: set[str]) -> No
             raise PayloadError(f"extension {module.name!r} names unknown file {module.file!r}")
         if target.kind is not FileKind.NATIVE_EXT:
             raise PayloadError(f"extension {module.name!r} file is not NATIVE_EXT")
-    if ModuleFlag.STARTUP in module.flags and (
-        module.code is None or module.code.codec is not Codec.NONE
-    ):
-        raise PayloadError(f"startup module {module.name!r} needs uncompressed code")
+    if module.code is not None and module.code.codec is not Codec.ZSTD:
+        raise PayloadError(f"code of {module.name!r} must be a checksummed zstd frame (Blob.code)")
 
 
 def _validate(spec: PayloadSpec) -> None:
@@ -246,6 +244,7 @@ def encode_payload(spec: PayloadSpec) -> bytes:
                 closure,
             )
         )
+    startup = [i for i, m in enumerate(modules) if ModuleFlag.STARTUP in m.flags]
     module_rows = [
         MODULE.pack(
             *strings.add(m.name),
@@ -269,6 +268,7 @@ def encode_payload(spec: PayloadSpec) -> bytes:
         Section.DISTS: (b"".join(dist_rows), len(dist_rows)),
         Section.CLOSURES: (b"".join(WORD.pack(w) for w in words), len(words)),
         Section.DIGESTS: (b"".join(blobs.digests), len(blobs.digests)),
+        Section.STARTUP: (b"".join(WORD.pack(i) for i in startup), len(startup)),
     }
     return _layout(spec, header_strings, sections, blobs)
 

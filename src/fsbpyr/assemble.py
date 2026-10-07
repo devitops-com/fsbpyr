@@ -1,0 +1,98 @@
+"""Compose runtime, boot code and application content into one executable (plan §3.6 9-10)."""
+
+import hashlib
+import importlib.resources
+import importlib.util
+import json
+from compression import zstd
+from dataclasses import dataclass
+from pathlib import Path
+
+from . import __version__, bytecode
+from .payload.format import FileFlag, FileKind, ModuleFlag, ModuleKind
+from .payload.spec import Blob, Dist, File, Module, PayloadSpec
+from .payload.writer import encode_payload, write_executable
+from .runtime.registry import Runtime
+
+BOOT_MODULE = "_fsbpyr_boot"
+_EXTRACTABLE = (FileKind.NATIVE_EXT, FileKind.NATIVE_LIB)
+
+
+class AssemblyError(RuntimeError):
+    """The pieces cannot be combined into a valid executable."""
+
+
+def boot_modules() -> tuple[Module, ...]:
+    """The boot module, compiled for the running interpreter (a STARTUP module)."""
+    source = importlib.resources.files("fsbpyr.boot").joinpath(f"{BOOT_MODULE}.py").read_bytes()
+    code = bytecode.dumps(compile(source, f"{BOOT_MODULE}.py", "exec", dont_inherit=True))
+    return (
+        Module(
+            BOOT_MODULE,
+            f"{BOOT_MODULE}.py",
+            ModuleKind.MODULE,
+            code=Blob.code(code),
+            source=Blob.zstd(source),
+            flags=ModuleFlag.STARTUP,
+        ),
+    )
+
+
+def generation_id(runtime_tag: str, files: tuple[File, ...]) -> bytes:
+    """Native cache generation: runtime ABI plus identity of every extractable artifact (D10)."""
+    digest = hashlib.sha256(runtime_tag.encode() + b"\0")
+    for file in sorted(files, key=lambda f: f.path.encode()):
+        if file.kind in _EXTRACTABLE or FileFlag.FS_REQUIRED in file.flags:
+            identity = file.blob.sha256 or hashlib.sha256(file.blob.stored).digest()
+            digest.update(file.path.encode() + b"\0" + identity)
+    return digest.digest()
+
+
+def _check_clashes(kind: str, runtime: set[str], app: list[str]) -> None:
+    clashes = sorted(runtime.intersection(app))
+    if clashes:
+        raise AssemblyError(f"application {kind} shadow the runtime: {clashes[:10]}")
+
+
+@dataclass(frozen=True, slots=True)
+class App:
+    """Application content to place on top of a runtime."""
+
+    name: str
+    entrypoint: str  # "module:attr" (console-script semantics) or "module" (run as __main__)
+    modules: tuple[Module, ...] = ()
+    files: tuple[File, ...] = ()
+    dists: tuple[Dist, ...] = ()
+    build_info: tuple[tuple[str, str], ...] = ()
+
+
+def build_executable(runtime: Runtime, app: App, out: Path) -> None:
+    if runtime.bytecode_magic != importlib.util.MAGIC_NUMBER:
+        raise AssemblyError(
+            f"bytecode magic of this interpreter ({importlib.util.MAGIC_NUMBER.hex()}) differs "
+            f"from runtime {runtime.runtime_id} ({runtime.bytecode_magic.hex()})"
+        )
+    boot = boot_modules()
+    runtime_names = {m.name for m in (*runtime.modules, *boot)}
+    _check_clashes("modules", runtime_names, [m.name for m in app.modules])
+    _check_clashes("files", {f.path for f in runtime.files}, [f.path for f in app.files])
+    all_files = (*runtime.files, *app.files)
+    info = {
+        "runtime": runtime.runtime_id,
+        "python": runtime.python_version,
+        "fsbpyr": __version__,
+        "zstd": zstd.zstd_version,
+        **dict(app.build_info),
+    }
+    spec = PayloadSpec(
+        python_hexversion=runtime.hexversion,
+        bytecode_magic=runtime.bytecode_magic,
+        generation_id=generation_id(runtime.tag, all_files),
+        app_name=app.name,
+        entrypoint=app.entrypoint,
+        build_info=json.dumps(info, sort_keys=True),
+        modules=(*runtime.modules, *boot, *app.modules),
+        files=all_files,
+        dists=app.dists,
+    )
+    write_executable(out, runtime.stub, encode_payload(spec))

@@ -41,8 +41,17 @@ class Blob:
         return cls(data, len(data), Codec.NONE, _digest(data, digest))
 
     @classmethod
-    def zstd(cls, data: bytes, *, level: int = 3, digest: bool = False) -> Blob:
-        """One zstd frame with content size and checksum; stored raw if that is not smaller."""
+    def code(cls, data: bytes, *, level: int = 3) -> Blob:
+        """Marshalled code: always a checksummed zstd frame, so corruption is detected before
+        ``marshal.loads`` (which is not safe against corrupt input) ever sees the bytes."""
+        return cls.zstd(data, level=level, allow_raw=False)
+
+    @classmethod
+    def zstd(
+        cls, data: bytes, *, level: int = 3, digest: bool = False, allow_raw: bool = True
+    ) -> Blob:
+        """One zstd frame with content size and checksum; stored raw if that is not smaller
+        (unless ``allow_raw`` is false)."""
         if not ZSTD_MIN_LEVEL <= level <= ZSTD_MAX_LEVEL:
             raise PayloadError(f"zstd level {level} out of range")
         options: dict[int, int] = {
@@ -51,7 +60,7 @@ class Blob:
             zstd.CompressionParameter.content_size_flag: 1,
         }
         compressed = zstd.compress(data, options=options)
-        if len(compressed) >= len(data):
+        if allow_raw and len(compressed) >= len(data):
             return cls.raw(data, digest=digest)
         return cls(compressed, len(data), Codec.ZSTD, _digest(data, digest))
 

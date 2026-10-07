@@ -1,6 +1,7 @@
 """Regression tests for review findings: hostile sizes, file-level errors, spec rules on read."""
 
 import struct
+from compression import zstd
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,9 @@ from fsbpyr.payload.format import (
     MAX_BLOB_SIZE,
     MODULE,
     TRAILER_SIZE,
+    Codec,
     FileKind,
+    ModuleFlag,
     ModuleKind,
     PayloadError,
     Section,
@@ -230,10 +233,56 @@ def test_writer_rejects_unencodable_strings(bad: str) -> None:
     with pytest.raises(PayloadError):
         encode_payload(
             make_spec(
-                modules=(Module(bad, "m.py", ModuleKind.MODULE, code=Blob.raw(b"c")),),
+                modules=(Module(bad, "m.py", ModuleKind.MODULE, code=Blob.code(b"c")),),
                 files=(),
                 dists=(),
             )
         )
     with pytest.raises(PayloadError):
         encode_payload(make_spec(dists=(Dist("d", bad, "1"),), modules=(), files=()))
+
+
+def _with_startup(raw: bytes, *indices: int) -> bytes:
+    """Point the STARTUP section at a fresh word list placed over the (16-aligned) digests."""
+    digests, _ = _section(raw, Section.DIGESTS)
+    patched = _patch(raw, digests, f"<{len(indices)}I", *indices)
+    return _patch(patched, 80 + 16 * Section.STARTUP, "<QQ", digests, len(indices))
+
+
+def test_reader_rejects_startup_section_naming_non_startup_module() -> None:
+    raw = encode_payload(
+        make_spec(
+            files=(),
+            dists=(),
+            modules=(
+                Module(
+                    "_boot",
+                    "_boot.py",
+                    ModuleKind.MODULE,
+                    code=Blob.code(b"b"),
+                    flags=ModuleFlag.STARTUP,
+                ),
+                Module("other", "other.py", ModuleKind.MODULE, code=Blob.code(b"o")),
+            ),
+        )
+    )
+
+    with pytest.raises(PayloadError, match="startup"):
+        Payload(_with_startup(raw, 0, 1))
+    with pytest.raises(PayloadError, match="startup"):
+        Payload(_with_startup(raw))  # STARTUP module missing from the section
+    with pytest.raises(PayloadError, match="startup"):
+        Payload(_with_startup(raw, 7))
+
+
+def test_reader_rejects_zstd_frame_without_checksum() -> None:
+    data = b"resource data " * 50
+    frame = zstd.compress(data, options={zstd.CompressionParameter.checksum_flag: 0})
+    unchecked = Blob(frame, len(data), Codec.ZSTD)
+    files = (File("r.txt", FileKind.RESOURCE, unchecked),)
+    payload = Payload(encode_payload(make_spec(files=files, modules=(), dists=())))
+    record = payload.find_file("r.txt")
+    assert record is not None
+
+    with pytest.raises(PayloadError, match="checksum"):
+        payload.read_blob(record.blob)

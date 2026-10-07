@@ -132,15 +132,22 @@ def test_blob_data_is_aligned_and_ordered_by_class(spec: PayloadSpec) -> None:
     assert natives == set(range(len(blobs) - len(natives), len(blobs)))  # natives come last
 
 
-def test_startup_code_is_uncompressed_and_directly_addressable(spec: PayloadSpec) -> None:
-    raw = encode_payload(spec)
-    payload = Payload(raw)
-    boot = payload.find_module("_boot")
-    assert boot is not None
+def test_code_blobs_are_checksummed_zstd_frames(spec: PayloadSpec) -> None:
+    payload = Payload(encode_payload(spec))
 
-    blob = payload.blob(boot.code)
-    assert blob.codec is Codec.NONE
-    assert raw[blob.offset : blob.offset + blob.size] == b"boot"
+    for module in payload.modules():
+        if module.code != NONE:
+            assert payload.blob(module.code).codec is Codec.ZSTD
+            assert payload.stored(module.code)[4] & 0x04  # frame header: content checksum flag
+    boot = payload.find_module("_boot")
+    assert boot is not None and payload.read_blob(boot.code) == b"boot"
+
+
+def test_blob_code_is_framed_even_when_incompressible() -> None:
+    blob = Blob.code(os.urandom(64))
+
+    assert blob.codec is Codec.ZSTD
+    assert len(blob.stored) > blob.size
 
 
 @pytest.mark.parametrize(
@@ -168,7 +175,7 @@ def test_zstd_falls_back_to_raw_when_not_smaller() -> None:
 def test_header_is_followed_by_tables() -> None:
     raw = encode_payload(make_spec())
 
-    assert HEADER.size == 192
+    assert HEADER.size == 208
     assert raw[:8] == b"FSBPYR\x00H"
 
 
@@ -219,3 +226,10 @@ def test_write_executable_replaces_existing_file(tmp_path: Path) -> None:
 
     with Executable.open(out) as exe:
         assert exe.payload.app_name == "new"
+
+
+def test_startup_section_lists_startup_modules(spec: PayloadSpec) -> None:
+    payload = Payload(encode_payload(spec))
+
+    assert [m.name for m in payload.startup_modules()] == ["_boot"]
+    assert all(ModuleFlag.STARTUP in m.flags for m in payload.startup_modules())

@@ -48,8 +48,11 @@ ignore = ["PLR2004"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S302", "S603", "PLR0913", "PLR0917"]
+"src/fsbpyr/boot/**" = ["S302"]  # unmarshals code from its own payload
+"src/fsbpyr/runtime/**" = ["S603"]  # runs the pinned interpreter and the located toolchain
 
 [tool.mypy]
 strict = true
 python_version = "3.14"
 files = ["src", "tests"]
+mypy_path = "stubs"

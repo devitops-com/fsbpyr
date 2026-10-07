@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.2, 2026-10-06. Phases 0–1 are complete; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.3, 2026-10-07. Phases 0–2 are complete; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -95,7 +95,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D5 | **Inputs come from a fresh staging install driven by the project's lock** (§3.6). uv projects: `uv sync --frozen --no-dev --no-editable` into a throwaway staging venv. pip projects: `--target` install from `pylock.toml`, then a pinned requirements file, then `[project.dependencies]` (unlocked, with a warning), plus the project itself installed `--no-deps`. The developer's venv is never read or modified | Reproducible from the lock. No dev dependencies. The project is installed non-editable, so its package data is correct. uv and pip do all resolving and building | Reading the developer's venv (not reproducible, editable installs, dev deps). Our own resolver |
 | D6 | Imports hook in through **`sys.path_hooks` + one virtual `sys.path` entry** (as zipimport does), plus a `sys.meta_path` `DistributionFinder` for `importlib.metadata` | `pkgutil.iter_modules`, `importlib.util.find_spec` and PEP 420 namespace packages work through the stock PathFinder | Pure meta-path finder |
 | D7 | **Index lookups happen in C** (built-in module `_fsbpyr`, binary search over sorted tables mapped with mmap). The index is never turned into Python dicts | Startup must not scale with the number of packaged files (M2) | Python dict built at boot (O(N) on every start) |
-| D8 | **Startup-critical modules** (`encodings*`, `linecache`, the boot module) are stored uncompressed. They are handed to CPython through a `PyImport_FrozenModules` table built at run time that points into the mmap | No copying, no decompression, no filesystem access during init. No launcher rebuild when boot code changes | Freezing them into the C source |
+| D8 | **Startup-critical modules** (`encodings*`, `linecache`, the boot module) are listed in the STARTUP section. The launcher decompresses them once (checksum-verified zstd frames, one shared context, about 0.08 ms) and hands them to CPython through a `PyImport_FrozenModules` table built at run time | No filesystem access during init. No launcher rebuild when boot code changes. `marshal` never sees corrupt bytes: the Phase 2 review showed raw startup blobs crashed CPython on bit flips | Raw blobs referenced straight from the mmap (zero-copy but unverified). Freezing into the C source |
 | D9 | The **native cache mirrors the site-packages layout** inside the generation directory (`<gen>/site/numpy/_core/*.so`, `<gen>/site/numpy.libs/*`) | auditwheel's `$ORIGIN`-relative RUNPATHs work unchanged, so no ELF patching is needed | Flat content-addressed files + patchelf |
 | D10 | **Generation id** = SHA-256(runtime ABI ‖ platform ‖ sorted (path, sha256) of every extractable artifact), computed at build time and stored in the header | Manifest §7. Releases that change only Python code reuse the existing generation | Per-build generations |
 | D11 | **Integrity:** SHA-256 for extractable artifacts, verified on extraction. zstd frame checksums for blobs kept in memory. Whole-payload SHA-256 in the trailer, checked only by `fsbpyr inspect --verify` or `FSBPYR_VERIFY=1` | Meets manifest §11 without hashing on every import | — |
@@ -104,7 +104,10 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D14 | **Interpreter config in built apps:** isolated (`PYTHON*` env vars ignored), `site_import=0`, `safe_path=1`, UTF-8 mode, `parse_argv=0`, `executable` = realpath of the binary. Debug knobs only through `FSBPYR_*` env vars | Deterministic startup. The app's argv stays untouched | — |
 | D15 | **Deterministic builds:** sorted entries, fixed blob order, no timestamps, single-threaded zstd with fixed parameters, canonical bytecode (D16); output is byte-identical for a fixed libzstd version, which `build_info` records. Self-hosting fixed point: stage2 == stage3, byte for byte | The classic compiler-bootstrap check for R2/R3 | — |
 | D16 | **Canonical bytecode:** every `marshal.dumps` result is rewritten by `fsbpyr/bytecode.py`. Strings are merged by value (interned if any occurrence was), FLAG_REF is set only for nodes that occur ≥ 2 times or are interned strings, refs are renumbered in pre-order, and set elements are sorted canonically | Raw marshal output depends on refcounts and on process-global interning (S3: 561/561 files differ in batch mode, 4 in a "noisy" build process). Canonical output: 0 differences, round-trip equality, same size and load time | Compiling in a clean worker process (still state-dependent). Accepting non-determinism |
-| D17 | **Non-PIE stub** | 0.3 ms faster startup than PIE (4.85 vs 5.16 ms, S1); 59 k relative relocations avoided. ASLR still applies to heap, stack and shared libraries | PIE |
+| D18 | **Launcher C sources ship as package data** (`src/fsbpyr/launcher/`, with vendored zstd 1.5.7 headers) and are hashed into the runtime id | A self-hosted fsbpyr binary can build runtimes for new Python versions from its own resources; any launcher change yields a new runtime id automatically | Top-level `launcher/` outside the package |
+| D17 | **Non-PIE stub** — *trade-off flagged by the Phase 2 security review; owner decision pending* | 0.3 ms faster startup than PIE (4.85 vs 5.16 ms, S1); 59 k relative relocations avoided. ASLR still applies to heap, stack and shared libraries, but the launcher and CPython image sit at fixed addresses. Mitigations in place: RELRO, BIND_NOW, NX stack, `-fstack-protector-strong`, `_FORTIFY_SOURCE=2` | PIE |
+| D19 | **Code blobs are always checksummed zstd frames** (`Blob.code`); every reader requires the frame's content-checksum flag | `marshal.loads` is not safe against corrupt input. Fuzzing 900 bit flips: 67 SIGSEGV + 4 SIGABRT + a hang before, 0 signals after (clean exit 70 or `PayloadError`) | Raw storage of small code objects |
+| D20 | **The cache is private:** cache directories must be owned by the user and are forced to 0700; `runtime.json` records SHA-256 of the stub and the stdlib fragment, verified on load; a concurrently completed runtime wins | Cached stubs are copied into every executable built from them | Trusting any directory named by `FSBPYR_CACHE_DIR` / `XDG_CACHE_HOME` |
 
 ---
 
@@ -173,7 +176,9 @@ too.
    - Isolated `PyConfig`: `executable`; `argv` with `parse_argv=0`; `site_import=0`;
      `safe_path=1`; `module_search_paths_set=1` with an empty list; `home`/`prefix` set so
      getpath does not probe the filesystem (S2: zero stdlib probes; two `pyvenv.cfg` ENOENT
-     lookups remain, which affect only `sys.prefix`); `import_time` from `FSBPYR_IMPORTTIME`.
+     lookups remain, which affect only `sys.prefix`). `stdlib_dir` is the executable itself, so
+     CPython's frozen modules get `__file__`/`__path__` inside the payload tree
+     (`encodings.__path__ == [<exe>/encodings]`). `import_time` comes from `FSBPYR_IMPORTTIME`.
    - `run_command = "import _fsbpyr_boot; _fsbpyr_boot.run()"`.
 6. `Py_InitializeFromConfig`. CPython imports `encodings` and `linecache` from our frozen table.
 7. `Py_RunMain` → `_fsbpyr_boot.run()`:
@@ -331,11 +336,15 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
 ```
 pyproject.toml              name=fsbpyr, requires-python>=3.14, deps=[packaging],
                             scripts: fsbpyr = "fsbpyr.cli:main", build backend: uv_build
-launcher/
-  main.c                    startup sequence (§3.3)
-  fsbpyr_module.c           _fsbpyr built-in module (§3.1)
-  format.h                  C mirror of payload/format.py
+stubs/_fsbpyr.pyi          type stub of the C module (for mypy)
 src/fsbpyr/
+  launcher/                 C sources, package data (D18)
+    main.c                  startup sequence (§3.3)
+    module.c                _fsbpyr built-in module (§3.1)
+    payload.c, payload.h    O(1) validation, bounds-checked records, binary search
+    format.h, launcher.h    C mirror of payload/format.py; shared declarations
+    vendor/zstd/            zstd 1.5.7 public headers (BSD); libzstd.a comes from PBS
+  assemble.py               runtime + boot + app content -> executable
   cli.py                    argparse: build | inspect | runtime
   config.py                 [tool.fsbpyr] + CLI merge (tomllib)
   project.py                project discovery, pyproject/requires-python, lock-source selection
@@ -349,6 +358,7 @@ src/fsbpyr/
   payload/format.py         struct layouts and constants (single source of truth)
   payload/writer.py         deterministic assembly + zstd
   payload/reader.py         pure-Python reader (inspect, Runtime.from_self, tests)
+  payload/convert.py        payload -> spec with stored blobs copied verbatim
   runtime/registry.py       self / cached / build resolution
   runtime/pbs.py            PBS download, verify, PYTHON.json
   runtime/stub.py           clang driver for the launcher
@@ -435,7 +445,7 @@ criteria are automated tests unless noted. Sizes are S, M or L.
   - malformed and truncated payloads are rejected (property tests)
   - coverage of `payload/` is ≥ 90%
 
-### Phase 2 — Launcher and runtime build (L)
+### Phase 2 — Launcher and runtime build (L) — **DONE 2026-10-07**
 
 - `launcher/main.c`, `fsbpyr_module.c`, `format.h`, plus the struct-layout agreement test.
 - `runtime/pbs.py`, `stub.py`, `stdlib.py`, `registry.py`, and the `fsbpyr runtime build`
@@ -445,6 +455,14 @@ criteria are automated tests unless noted. Sizes are S, M or L.
   - a binary built from the runtime alone runs `import json, argparse, ssl, sqlite3`
   - `strace` shows no stdlib file access
   - `hello` startup p50 is ≤ 1.15× `python3.14 -I -S -c pass`
+- **Result (2026-10-07, dev machine):**
+  - a no-op app starts in 4.57 ms p50, against 4.83 ms for `python3.14 -I -S -c pass`
+    (0.94×, with verified startup modules; 4.49 ms unverified)
+  - an app importing argparse takes 10.54 ms, against 10.75 ms for plain CPython
+  - a run importing json, argparse, ssl, sqlite3, decimal and hashlib makes 16 file syscalls
+    and accesses no stdlib file on disk
+  - runtime build: 51 s (full-LTO link plus stdlib compile); app size 27 MB (19.4 MB stub)
+  - the format gained a STARTUP section, so the launcher never scans the MODULES table
 
 ### Phase 3 — Import system (M)
 
@@ -602,6 +620,9 @@ allow-system-libs = []
 
 Environment variables honored by built apps (never `PYTHON*`):
 `FSBPYR_CACHE_DIR`, `FSBPYR_TRACE`, `FSBPYR_IMPORTTIME`, `FSBPYR_VERIFY`, `FSBPYR_SELFTEST`.
+Whoever controls the environment can make an app import-only (`FSBPYR_SELFTEST`) or print
+import timings; this was accepted in the Phase 2 review, since that party could equally set
+`LD_PRELOAD`.
 
 ## 10. Risks
 
