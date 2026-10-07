@@ -1,5 +1,6 @@
 """Runtime cache: build, save, load and locate runtimes (plan D3, §3.7)."""
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -16,7 +17,7 @@ from ..payload.convert import spec_from_payload
 from ..payload.reader import Executable, Payload
 from ..payload.spec import File, Module, PayloadSpec
 from ..payload.writer import encode_payload
-from . import pbs, pins, stdlib, stub
+from . import pbs, pins, stdlib, stub, sysroot
 from .toolchain import find_toolchain
 
 BOOT_PACKAGES = ("_fsbpyr_boot", "_fsbpyr_rt")  # regenerated for every build, never runtime content
@@ -69,7 +70,9 @@ def host_triple() -> str:
 
 
 def runtime_id(pin: pins.PbsPin) -> str:
-    identity = f"{stub.launcher_digest()}\0{pin.name}\0{pin.sha256}\0{LAYOUT_VERSION}"
+    sysroot_pin = pins.sysroot_for(pin.triple)
+    identity = "\0".join((stub.launcher_digest(), pin.name, pin.sha256, sysroot_pin.identity,
+                          str(LAYOUT_VERSION)))  # fmt: skip
     digest = hashlib.sha256(identity.encode()).hexdigest()[:12]
     return f"cp{pin.python.replace('.', '')}-{pin.triple}-{digest}"
 
@@ -238,7 +241,10 @@ def build_runtime(
     log(f"fetching {pin.name}")
     dist = pbs.fetch(pin, cache)
     toolchain = find_toolchain(dist.llvm_major, explicit=clang)
-    log(f"linking launcher with {toolchain.clang} (full LTO, this takes about a minute)")
+    sysroot_pin = pins.sysroot_for(pin.triple)
+    log(f"fetching glibc {sysroot_pin.glibc} sysroot {sysroot_pin.name}")
+    toolchain = dataclasses.replace(toolchain, sysroot=sysroot.fetch_sysroot(sysroot_pin, cache))
+    log(f"linking launcher with {toolchain.clang} (full LTO, this takes a minute or two)")
     with tempfile.TemporaryDirectory(prefix="fsbpyr-stub-") as tmp:
         stub_path = Path(tmp) / _STUB
         stub.build_stub(dist, toolchain, stub_path)

@@ -13,7 +13,9 @@ from .assemble import App, build_executable
 from .classify import classify
 from .closure import SiteIndex, resolve_entry
 from .config import BuildConfig
+from .elf import ElfError, glibc_requirement
 from .project import LockSource, Project
+from .runtime import pins
 from .runtime.registry import Runtime, select_runtime
 from .staging import StagingOptions, find_installer, run_plan, staging_plan
 
@@ -32,6 +34,7 @@ class BuildResult:
     entrypoint: str
     size: int
     warnings: tuple[str, ...]
+    glibc: str | None = None  # the oldest glibc the app runs on, "2.25"
 
 
 def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
@@ -39,6 +42,31 @@ def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
     known = {m.name for m in (*app.modules, *runtime.modules)}
     if module not in known:
         raise BuildError(f"entry point module {module!r} is not part of the application")
+
+
+def _version(value: tuple[int, int]) -> str:
+    return f"{value[0]}.{value[1]}"
+
+
+def glibc_report(
+    stub: bytes, natives: tuple[tuple[int, int], str] | None, *, baseline: tuple[int, int]
+) -> tuple[str | None, list[str]]:
+    """The app's glibc requirement (the stub's, raised by bundled native code) and a warning
+    when a native file needs more than the baseline its wheels were chosen for."""
+    try:
+        own = glibc_requirement(stub)
+    except ElfError:
+        own = None
+    needs = [own] if own is not None else []
+    warnings = []
+    if natives is not None:
+        needs.append(natives[0])
+        if natives[0] > max(own or baseline, baseline):
+            warnings.append(
+                f"{natives[1]} needs glibc {_version(natives[0])}, more than the "
+                f"{_version(baseline)} baseline; on older systems it fails when imported"
+            )
+    return (_version(max(needs)) if needs else None), warnings
 
 
 def check_output(output: Path) -> None:
@@ -82,7 +110,9 @@ def build(
     installer = find_installer(source, TARGET_PYTHON, project.directory, config.interpreter)
     log(f"staging {project.name or project.directory.name} from {source.value}")
     with tempfile.TemporaryDirectory(prefix="fsbpyr-stage-") as tmp:
-        options = StagingOptions(TARGET_PYTHON, config.extras, config.offline, config.requirements)
+        baseline = pins.sysroot_for(runtime.tag.partition("-")[2])  # the stub's glibc (D25)
+        options = StagingOptions(TARGET_PYTHON, config.extras, config.offline, config.requirements,
+                                 platform=baseline.platform)  # fmt: skip
         plan = staging_plan(project, source, installer, Path(tmp), options)
         wheel = run_plan(plan, project.directory)
         index = SiteIndex.scan(plan.site)
@@ -106,6 +136,8 @@ def build(
             "(they come from the lock or requirements file)"
         )
     warnings += content.warnings
+    glibc, glibc_warnings = glibc_report(runtime.stub, content.glibc, baseline=baseline.baseline)
+    warnings += glibc_warnings
     app = App(
         app_name,
         entrypoint,
@@ -115,6 +147,7 @@ def build(
         build_info=(
             ("lock", source.value),
             ("dists", sorted(f"{d.name}=={d.version}" for d in content.dists)),
+            ("glibc", glibc),
         ),
     )
     _check_entry_module(entrypoint, app, runtime)
@@ -125,4 +158,4 @@ def build(
     build_executable(runtime, app, output)
     if config.smoke:
         smoke_test(output, app_name)
-    return BuildResult(output, app_name, entrypoint, output.stat().st_size, tuple(warnings))
+    return BuildResult(output, app_name, entrypoint, output.stat().st_size, tuple(warnings), glibc)

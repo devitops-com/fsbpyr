@@ -124,7 +124,7 @@ def link_inputs(dist: PbsDist, archive_members: set[str]) -> LinkInputs:
     )
 
 
-def _sha256(path: Path) -> str:
+def sha256_of(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         while chunk := handle.read(_CHUNK):
@@ -132,19 +132,22 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _download(pin: PbsPin, target: Path) -> None:
+def download(url: str, sha256: str, target: Path) -> None:
+    """Download ``url`` to ``target`` (atomically), checking its pinned SHA-256."""
+    if not url.startswith("https://"):
+        raise PbsError(f"refusing to download {url}: only https URLs are pinned")
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=target.parent, delete=False, suffix=".part") as out:
         partial = Path(out.name)
         try:
-            with urllib.request.urlopen(pin.url, timeout=60) as response:  # noqa: S310 pinned https
+            with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310 pinned https
                 shutil.copyfileobj(response, out, _CHUNK)
         except BaseException:
             partial.unlink(missing_ok=True)
             raise
-    if _sha256(partial) != pin.sha256:
+    if sha256_of(partial) != sha256:
         partial.unlink()
-        raise PbsError(f"SHA-256 mismatch for {pin.url}")
+        raise PbsError(f"SHA-256 mismatch for {url}")
     partial.replace(target)
 
 
@@ -155,8 +158,8 @@ def fetch(pin: PbsPin, cache: Path) -> PbsDist:
     if (dest / "python" / "PYTHON.json").exists():
         return PbsDist.load(dest / "python")
     if not archive.exists():
-        _download(pin, archive)
-    elif _sha256(archive) != pin.sha256:
+        download(pin.url, pin.sha256, archive)
+    elif sha256_of(archive) != pin.sha256:
         raise PbsError(f"cached {archive} does not match its pinned SHA-256; delete it")
     dest.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(dir=dest.parent, prefix=".extract-"))

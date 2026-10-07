@@ -1,5 +1,6 @@
 """PBS fetch (download, verification, extraction) and the runtime build orchestration."""
 
+import dataclasses
 import hashlib
 import io
 import json
@@ -11,9 +12,10 @@ from pathlib import Path
 
 import pytest
 
+from fsbpyr.cli import main
 from fsbpyr.payload.format import ModuleFlag, ModuleKind
 from fsbpyr.payload.spec import Blob, Module
-from fsbpyr.runtime import pbs, registry, stdlib, stub
+from fsbpyr.runtime import pbs, pins, registry, stdlib, stub, sysroot
 from fsbpyr.runtime.pins import PbsPin, pin_for
 from fsbpyr.runtime.toolchain import Toolchain
 
@@ -128,7 +130,15 @@ def test_build_runtime_orchestrates_and_caches(
     monkeypatch.setattr(pbs, "fetch", fetch)
     monkeypatch.setattr(registry, "find_toolchain", lambda major, explicit: Toolchain(
         Path("/usr/bin/clang-22"), Path("/usr/bin/ld.lld-22"), major))  # fmt: skip
-    monkeypatch.setattr(stub, "build_stub", lambda d, t, out: out.write_bytes(b"STUB"))
+    linked_against: list[Path] = []
+    monkeypatch.setattr(sysroot, "fetch_sysroot", lambda pin, cache: cache / "sysroots" / pin.name)
+
+    def build_stub(dist: pbs.PbsDist, toolchain: Toolchain, out: Path) -> None:
+        assert toolchain.sysroot is not None
+        linked_against.append(toolchain.sysroot)
+        out.write_bytes(b"STUB")
+
+    monkeypatch.setattr(stub, "build_stub", build_stub)
     monkeypatch.setattr(stdlib, "fragment", lambda d: ((boot,), ()))
     messages: list[str] = []
 
@@ -141,9 +151,20 @@ def test_build_runtime_orchestrates_and_caches(
     )
     assert registry.find_runtime("3.14", cache=tmp_path) == runtime
     assert registry.list_runtimes(tmp_path) == [(runtime.runtime_id, "3.14.8")]
+    assert linked_against == [tmp_path / "sysroots" / "debian10-glibc2.28-x86_64"]  # stubbed
+
     again = registry.build_runtime("3.14", cache=tmp_path, log=messages.append)
     assert again == runtime and calls == ["fetch"]
     assert messages[-1].endswith("is already built")
+
+
+def test_runtime_id_depends_on_the_glibc_sysroot(monkeypatch: pytest.MonkeyPatch) -> None:
+    pin = pin_for("3.14", "x86_64-unknown-linux-gnu")
+    before = registry.runtime_id(pin)
+    other = dataclasses.replace(pins.sysroot_for(pin.triple), name="debian11-glibc2.31")
+    monkeypatch.setitem(pins.SYSROOTS, pin.triple, other)
+
+    assert registry.runtime_id(pin) != before
 
 
 def test_find_runtime_explains_how_to_build(tmp_path: Path) -> None:
@@ -157,3 +178,25 @@ def test_cache_root_honours_environment(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.delenv("FSBPYR_CACHE_DIR")
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
     assert registry.cache_root() == tmp_path / "xdg" / "fsbpyr"
+
+
+def test_runtime_id_depends_on_the_pinned_packages(monkeypatch: pytest.MonkeyPatch) -> None:
+    pin = pin_for("3.14", "x86_64-unknown-linux-gnu")
+    before = registry.runtime_id(pin)
+    current = pins.sysroot_for(pin.triple)
+    other = dataclasses.replace(current, packages=current.packages[:-1])  # same name
+    monkeypatch.setitem(pins.SYSROOTS, pin.triple, other)
+
+    assert registry.runtime_id(pin) != before
+
+
+def test_runtime_build_reports_sysroot_failures(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail(python: str, clang: Path | None = None) -> None:
+        raise sysroot.SysrootError("cannot download https://example.invalid/libc6.deb")
+
+    monkeypatch.setattr(registry, "build_runtime", fail)
+
+    assert main(["runtime", "build"]) == 1
+    assert "fsbpyr: error: cannot download" in capsys.readouterr().err

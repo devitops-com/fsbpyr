@@ -19,6 +19,7 @@ class Toolchain:
     clang: Path
     lld: Path
     major: int
+    sysroot: Path | None = None  # glibc headers and libraries to link against (Phase 6c)
 
 
 def clang_major(version_text: str) -> int | None:

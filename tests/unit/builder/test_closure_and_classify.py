@@ -584,3 +584,15 @@ def test_pth_files_with_the_same_name_or_missing_do_not_break_the_build(site: Pa
                        include_source=True)  # fmt: skip
 
     assert any("gone.pth" in w and "missing" in w for w in content.warnings)
+
+
+def test_the_highest_glibc_requirement_of_native_files_is_recorded(site: Path) -> None:
+    _dist(site, "fast", "1.0", {"fast/__init__.py": b"",
+                                EXT: make_elf(versions=(("libc.so.6", ("GLIBC_2.17",)),)),
+                                "fast/_new.abi3.so": make_elf(
+                                    versions=(("libc.so.6", ("GLIBC_2.34",)),))})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["fast"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    assert content.glibc == ((2, 34), "fast/_new.abi3.so")

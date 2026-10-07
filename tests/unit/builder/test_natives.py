@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from fsbpyr.elf import DynamicInfo, ElfError, dynamic_info
+from fsbpyr.elf import DynamicInfo, ElfError, dynamic_info, glibc_requirement, needed_versions
 from fsbpyr.natives import NativeError, closures
 
 from ...support.elf import DT_NEEDED, make_elf
@@ -145,3 +145,54 @@ def test_needed_entries_with_a_slash_are_rejected() -> None:
 
     with pytest.raises(NativeError, match="path"):  # ld.so would resolve it against the cwd
         closures(natives, {"p/_x.so"}, allowed=frozenset({"sub/liba.so"}))
+
+
+# --- symbol versions (glibc requirement, Phase 6c) ------------------------------------------
+
+
+def test_required_symbol_versions_are_read() -> None:
+    data = make_elf(needed=("libc.so.6", "libm.so.6"),
+                    versions=(("libc.so.6", ("GLIBC_2.2.5", "GLIBC_2.17")),
+                              ("libm.so.6", ("GLIBC_2.29",))))  # fmt: skip
+
+    assert needed_versions(data) == {"GLIBC_2.2.5", "GLIBC_2.17", "GLIBC_2.29"}
+    assert glibc_requirement(data) == (2, 29)
+    assert glibc_requirement(make_elf()) is None
+
+
+def test_host_binaries_report_their_glibc_requirement() -> None:
+    ls = Path("/bin/ls")
+    if not ls.exists():
+        pytest.skip("no /bin/ls")
+
+    requirement = glibc_requirement(ls.read_bytes())
+
+    assert requirement is not None and requirement >= (2, 2)
+
+
+def test_version_tables_are_parsed_with_bounded_work() -> None:
+    entries = tuple(("libc.so.6", ("GLIBC_2.17",) * 300) for _ in range(300))  # 90000 entries
+
+    with pytest.raises(ElfError, match="version"):
+        needed_versions(make_elf(versions=entries))
+
+
+def test_glibc_abi_markers_count_as_their_release() -> None:
+    data = make_elf(versions=(("libc.so.6", ("GLIBC_2.17", "GLIBC_ABI_DT_RELR")),))
+
+    assert glibc_requirement(data) == (2, 36)  # DT_RELR support arrived in glibc 2.36
+
+
+def test_malformed_version_tables_do_not_affect_dependency_checks() -> None:
+    data = bytearray(make_elf(needed=("libc.so.6",), versions=(("libc.so.6", ("GLIBC_2.17",)),)))
+    verneed = data.index(struct.pack("<HH", 1, 1))
+    struct.pack_into("<I", data, verneed + 8, 0x7FFFFFF0)  # vn_aux far outside the file
+
+    assert dynamic_info(bytes(data)).needed == ("libc.so.6",)
+    with pytest.raises(ElfError):
+        glibc_requirement(bytes(data))
+
+
+def test_overlong_strings_are_rejected() -> None:
+    with pytest.raises(ElfError, match="string"):
+        dynamic_info(make_elf(needed=("x" * 5000,)))

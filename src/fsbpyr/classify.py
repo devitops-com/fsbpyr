@@ -12,7 +12,7 @@ from pathlib import Path, PurePosixPath
 
 from . import bytecode
 from .closure import InstalledDist
-from .elf import is_elf
+from .elf import ElfError, glibc_requirement, is_elf
 from .natives import NativeError, closures
 from .payload.format import (
     MAX_MEMORY_BLOB,
@@ -59,6 +59,7 @@ class Content:
     files: tuple[File, ...]
     dists: tuple[Dist, ...]
     warnings: tuple[str, ...]
+    glibc: tuple[tuple[int, int], str] | None = None  # newest need of a native file, and the file
 
 
 def module_name(rel: str) -> tuple[str, bool] | None:
@@ -349,6 +350,18 @@ class _Collector:
                 "fs-packages"
             )
 
+    def glibc(self) -> tuple[tuple[int, int], str] | None:
+        """The newest glibc a packaged native file needs, and that file."""
+        found = []
+        for rel, data in sorted(self.natives.items()):
+            try:
+                requirement = glibc_requirement(data)
+            except ElfError:
+                continue  # an unreadable version table: the requirement stays a lower bound
+            if requirement is not None:
+                found.append((requirement, rel))
+        return max(found, default=None)
+
     def namespaces(self) -> list[Module]:
         """Implicit namespace packages: identifier directories without __init__.py, named
         relative to site-packages and then to each .pth root (as sys.path orders them)."""
@@ -395,4 +408,5 @@ def classify(
             Dist(d.name, d.dist_info, d.version) for d in sorted(dists, key=lambda d: d.name)
         ),
         warnings=tuple(collector.warnings),
+        glibc=collector.glibc(),
     )

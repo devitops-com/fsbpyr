@@ -4,8 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from fsbpyr.build import BuildError, smoke_test
+from fsbpyr.build import BuildError, glibc_report, smoke_test
 from fsbpyr.cli import main
+
+from ...support.elf import make_elf
 
 
 def _script(path: Path, body: str) -> Path:
@@ -43,3 +45,29 @@ def test_output_must_not_be_a_directory(tmp_path: Path) -> None:
     with pytest.raises(BuildError, match="is a directory"):
         check_output(tmp_path)
     check_output(tmp_path / "new")
+
+
+STUB_2_25 = make_elf(versions=(("libc.so.6", ("GLIBC_2.2.5", "GLIBC_2.25")),))
+
+
+@pytest.mark.parametrize(
+    ("natives", "expected", "warns"),
+    [
+        (None, "2.25", False),
+        (((2, 17), "a/_x.so"), "2.25", False),
+        (((2, 28), "a/_x.so"), "2.28", False),  # within the baseline the wheels were chosen for
+        (((2, 34), "a/_new.so"), "2.34", True),
+    ],
+)
+def test_glibc_requirement_is_the_highest_of_stub_and_natives(
+    natives: tuple[tuple[int, int], str] | None, expected: str, warns: bool
+) -> None:
+    requirement, warnings = glibc_report(STUB_2_25, natives, baseline=(2, 28))
+
+    assert requirement == expected
+    assert bool(warnings) is warns
+    assert not warnings or "a/_new.so needs glibc 2.34, more than the 2.28 baseline" in warnings[0]
+
+
+def test_glibc_requirement_of_an_unreadable_stub_is_unknown() -> None:
+    assert glibc_report(b"\x7fELF-fake", None, baseline=(2, 28)) == (None, [])

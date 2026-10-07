@@ -56,7 +56,8 @@ Spike code lives in `spikes/`. Build outputs go to `spikes/.out/`, which is git-
 8. **glibc requirement.** A stub linked on this host needs **GLIBC_2.38** (`fmod@2.38`,
    `hypot@2.35`, and `pthread_*`/`sem_*`/`shm_*`/`__libc_start_main@2.34`), even though the PBS
    objects target 2.17. Symbol versions bind to the host glibc at link time. A portable baseline
-   needs a link against an old-glibc sysroot (Phase 9). This confirms the risk listed in the plan.
+   needs a link against an old-glibc sysroot (moved to Phase 6c, D25; done: the stub now needs
+   GLIBC_2.25). This confirms the risk listed in the plan.
 9. **SSL defaults.** `openssl_cafile=/etc/ssl/cert.pem` does not exist on Debian;
    `openssl_capath=/etc/ssl/certs` does. Real HTTPS verification has not been tested yet; that
    happens in Phase 6.

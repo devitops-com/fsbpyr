@@ -258,6 +258,33 @@ def test_target_installs(
     assert plan.copy == (work / "src" if installer is PIP else None)
 
 
+@pytest.mark.parametrize(
+    ("source", "installer", "flagged"),
+    [
+        (LockSource.UV_LOCK, UV, [True, True]),  # uv accepts the project's own linux wheel
+        (LockSource.PYLOCK, UV, [True, True]),
+        (LockSource.REQUIREMENTS, UV, [True, True]),
+        (LockSource.UNLOCKED, UV, [True]),
+        (LockSource.REQUIREMENTS, PIP, [False, False]),  # pip would refuse every sdist
+    ],
+)
+def test_dependency_wheels_are_chosen_for_the_glibc_baseline(
+    tmp_path: Path, source: LockSource, installer: Installer, flagged: list[bool]
+) -> None:
+    files = {"requirements.txt": "click==8.1.8\n", "pylock.toml": "", "uv.lock": ""}
+    project = Project.load(_project(tmp_path, PYPROJECT, **files))
+    options = StagingOptions("3.14", platform="x86_64-manylinux_2_28")
+
+    plan = staging_plan(project, source, installer, tmp_path / "w", options)
+
+    platform = ["--python-platform", "x86_64-manylinux_2_28"]
+    assert [_contains(command, platform) for command in plan.install] == flagged
+
+
+def _contains(command: list[str], part: list[str]) -> bool:
+    return any(command[i : i + len(part)] == part for i in range(len(command)))
+
+
 def test_unlocked_install_keeps_extras_and_offline_pip_uses_no_index(tmp_path: Path) -> None:
     project = Project.load(_project(tmp_path, PYPROJECT))
 

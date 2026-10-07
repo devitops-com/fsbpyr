@@ -191,7 +191,8 @@ def test_link_inputs_cover_builtin_modules_only(tmp_path: Path) -> None:
 def test_stub_command_links_statically_as_pie(tmp_path: Path) -> None:
     dist = _fake_dist(tmp_path)
     inputs = link_inputs(dist, {"_ssl.o", "sha2module.o", "mathmodule.o"})
-    toolchain = Toolchain(clang=Path("/x/clang-22"), lld=Path("/x/ld.lld-22"), major=22)
+    toolchain = Toolchain(clang=Path("/x/clang-22"), lld=Path("/x/ld.lld-22"), major=22,
+                          sysroot=Path("/s/sysroot"))  # fmt: skip
     sources = [Path("/src/main.c"), Path("/src/payload.c")]
 
     cmd = stub_command(dist, inputs, toolchain, sources, tmp_path / "stub")
@@ -206,6 +207,7 @@ def test_stub_command_links_statically_as_pie(tmp_path: Path) -> None:
         "-Wl,--export-dynamic-symbol=Py*",
         "-Wl,--export-dynamic-symbol=_Py*",
         "-DFSBPYR_BYTECODE_MAGIC=0x0a0d0e2bu",
+        "--sysroot=/s/sysroot",  # glibc 2.28, not the build host's (Phase 6c)
         "-s",
     ):
         assert flag in cmd
@@ -231,7 +233,8 @@ def test_ar_rejects_bad_member_sizes(tmp_path: Path, size: bytes) -> None:
 def test_stub_command_hardens_launcher_code(tmp_path: Path) -> None:
     dist = _fake_dist(tmp_path)
     inputs = link_inputs(dist, set())
-    toolchain = Toolchain(clang=Path("/x/clang-22"), lld=Path("/x/ld.lld-22"), major=22)
+    toolchain = Toolchain(clang=Path("/x/clang-22"), lld=Path("/x/ld.lld-22"), major=22,
+                          sysroot=Path("/s/sysroot"))  # fmt: skip
 
     cmd = stub_command(dist, inputs, toolchain, [Path("/src/main.c")], tmp_path / "stub")
 

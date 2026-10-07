@@ -81,7 +81,9 @@ def _build(args: argparse.Namespace) -> int:
         return 1
     for warning in result.warnings:
         print(f"fsbpyr: warning: {warning}", file=sys.stderr)
-    print(f"fsbpyr: built {result.output} ({result.size / 1e6:.1f} MB, entry {result.entrypoint})")
+    glibc = f", glibc >= {result.glibc}" if result.glibc else ""
+    print(f"fsbpyr: built {result.output} ({result.size / 1e6:.1f} MB, entry "
+          f"{result.entrypoint}{glibc})")  # fmt: skip
     return 0
 
 
@@ -91,6 +93,7 @@ def _runtime(args: argparse.Namespace) -> int:
         registry,
         stdlib,
         stub,
+        sysroot,
         toolchain,
     )
 
@@ -107,6 +110,7 @@ def _runtime(args: argparse.Namespace) -> int:
         pbs.PbsError,
         stub.StubBuildError,
         stdlib.StdlibError,
+        sysroot.SysrootError,
         OSError,
     ) as exc:
         print(f"fsbpyr: error: {exc}", file=sys.stderr)

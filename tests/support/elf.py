@@ -3,6 +3,7 @@
 import struct
 
 DT_NULL, DT_NEEDED, DT_STRTAB, DT_STRSZ, DT_SONAME, DT_RPATH, DT_RUNPATH = 0, 1, 5, 10, 14, 15, 29
+DT_VERNEED, DT_VERNEEDNUM = 0x6FFFFFFE, 0x6FFFFFFF
 
 
 def make_elf(
@@ -13,6 +14,7 @@ def make_elf(
     soname: str | None = None,
     machine: int = 62,
     dynamic: bool = True,
+    versions: tuple[tuple[str, tuple[str, ...]], ...] = (),
 ) -> bytes:
     """Minimal ELF64 shared object: one PT_LOAD over the file (vaddr == offset + 0x1000)."""
     strings = bytearray(b"\0")
@@ -26,10 +28,20 @@ def make_elf(
     for tag, value in ((DT_RPATH, rpath), (DT_RUNPATH, runpath), (DT_SONAME, soname)):
         if value is not None:
             entries.append((tag, add(value)))
+    verneed = bytearray()  # Elf64_Verneed entries, each followed by its Elf64_Vernaux entries
+    for i, (library, names) in enumerate(versions):
+        last = i == len(versions) - 1
+        verneed += struct.pack("<HHIII", 1, len(names), add(library), 16,
+                               0 if last else 16 + 16 * len(names))  # fmt: skip
+        for j, name in enumerate(names):
+            verneed += struct.pack("<IHHII", 0, 0, 0, add(name), 0 if j == len(names) - 1 else 16)
     base = 0x1000
     phoff, phnum = 64, 2
     strtab_off = phoff + 56 * phnum
-    dyn_off = strtab_off + len(strings) + (-len(strings) % 8)
+    verneed_off = strtab_off + len(strings) + (-len(strings) % 8)
+    dyn_off = verneed_off + len(verneed)
+    if versions:
+        entries += [(DT_VERNEED, base + verneed_off), (DT_VERNEEDNUM, len(versions))]
     entries += [(DT_STRTAB, base + strtab_off), (DT_STRSZ, len(strings)), (DT_NULL, 0)]
     dyn = b"".join(struct.pack("<qQ", tag, value) for tag, value in entries)
     size = dyn_off + len(dyn)
@@ -39,5 +51,6 @@ def make_elf(
     dyn_seg = struct.pack("<IIQQQQQQ", 2 if dynamic else 4, 6, dyn_off, base + dyn_off,
                           base + dyn_off, len(dyn), len(dyn), 8)  # fmt: skip
     image = bytearray(header + load + dyn_seg + strings)
-    image.extend(bytes(dyn_off - len(image)))
+    image.extend(bytes(verneed_off - len(image)))
+    image += verneed
     return bytes(image + dyn)

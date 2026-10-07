@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.9, 2026-10-07. Phases 0–6 and 6b (except D23) are complete; Phase 6c is next; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.10, 2026-10-07. Phases 0–6, 6b (except D23) and 6c are complete; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -754,7 +754,7 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
     `.pth` reading, self-hosting reading `/proc/self/exe`, and a stricter `(deleted)` rule
   - **open: interpreter re-exec (D23)** was not implemented in this phase
 
-### Phase 6c — Portable glibc baseline (M) — moved from Phase 9 (D25)
+### Phase 6c — Portable glibc baseline (M) — moved from Phase 9 (D25) — **DONE 2026-10-07**
 
 - Link the stub against an old glibc instead of the host's (S1 found `GLIBC_2.38`). A short
   spike picks between host clang with an extracted old-glibc sysroot and a podman build image
@@ -769,6 +769,35 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
   - the reported requirement matches the highest versioned symbol found in the stub and the
     extracted natives
   - self-hosting fixed point and startup budget still hold
+- **Result (2026-10-07):** all exit criteria hold; 551 tests pass, coverage 93%.
+  - spike: host clang with a sysroot extracted from five pinned Debian 10 packages (glibc
+    2.28, GCC 8 runtime objects, kernel headers); no container is needed. Debian's absolute
+    symlinks (`libpthread.so -> /lib/...`) first resolved to the build host's glibc 2.41,
+    whose `libpthread` is an empty stub: they are rewritten relative to the sysroot. glibc
+    2.17 was not pursued: it would need RPM unpacking for RHEL 7, which is past end of life
+  - the stub now needs **glibc 2.25** (GLIBC_2.38 before); the runtime id includes the
+    sysroot pin; linking takes about 100 s instead of about 50 s
+  - uv chose cryptography's manylinux_2_34 wheel on this host, so `heavy` needed glibc 2.34.
+    Every uv install now passes `--python-platform x86_64-manylinux_2_28` (from the runtime's
+    sysroot pin; uv also accepts the project's own locally built wheel with it). A dependency
+    without such a wheel is built from its sdist on the build host. The pip fallback is not
+    filtered (pip would refuse every sdist), and the build warns when a native file needs more
+    than the 2.28 baseline
+  - `fsbpyr build` reports the requirement (`glibc >= 2.25`), stores it in the build info,
+    and reads it from DT_VERNEED of the stub and every bundled native file
+  - `hello`, `heavy` and `compat` (every check except the two HTTP clients, which need the
+    test's local server) run in Debian 12, Ubuntu 22.04, Rocky 8 and Rocky 9 containers; the
+    reported requirement equals `llvm-objdump`'s highest GLIBC version over the stub and the
+    natives, and is at most 2.28 (`tests/e2e/test_portability.py`)
+  - startup: `hello` 1.11x bare `python3.14 -I -S`, inside the 1.15x budget
+  - clang-22 takes `crt*.o` and `libgcc` from the sysroot's GCC 8 (checked with `-###`)
+  - reviews (code and security; no CRITICAL or HIGH findings) led to: symbol-version parsing
+    with one shared work budget, deduplicated names and a 4096-byte string limit, kept apart
+    from the dependency checks; the sysroot directory and the runtime id keyed by a digest of
+    the pinned packages, not just their name; the verified bytes are the extracted bytes;
+    extraction failures reported as such; https-only downloads; `fsbpyr runtime build`
+    reporting sysroot errors; the glibc warning measured against the 2.28 baseline (the
+    manylinux_2_28 cryptography wheel no longer warns); `GLIBC_ABI_DT_RELR` counted as 2.36
 
 ### Phase 7 — Compression profiles and benchmarks (M)
 

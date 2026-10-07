@@ -46,6 +46,10 @@ class StagingOptions:
     extras: tuple[str, ...] = ()
     offline: bool = False
     requirements: str | None = None
+    # uv's --python-platform (x86_64-manylinux_2_28): wheels for the runtime's glibc baseline
+    # rather than the build host's. A dependency without such a wheel is built from its sdist.
+    # pip would refuse every sdist with a platform, so it does not get one.
+    platform: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +123,10 @@ def local_packages(lock: Path, exclude: str | None) -> list[str]:
     return names
 
 
+def _platform(options: StagingOptions) -> list[str]:
+    return ["--python-platform", options.platform] if options.platform else []
+
+
 def _uv_build(uv: Path, work: Path, project: Project, options: StagingOptions) -> list[str]:
     command = [str(uv), "build", "--out-dir", str(work / "wheel"), "--python", options.python]
     return command + ["--offline"] * options.offline + ["--quiet", str(project.directory)]
@@ -136,9 +144,9 @@ def _uv_sync_plan(project: Project, uv: Path, work: Path, options: StagingOption
     for name in local_packages(root / "uv.lock", project.name):
         sync += ["--reinstall-package", name]
     sync += [arg for extra in options.extras for arg in ("--extra", extra)]
-    sync += ["--offline"] * options.offline + ["--quiet"]
+    sync += _platform(options) + ["--offline"] * options.offline + ["--quiet"]
     wheel = [str(uv), "pip", "install", "--python", str(stage / "bin" / "python"), "--no-deps"]
-    wheel += ["--offline"] * options.offline + ["--quiet", WHEEL]
+    wheel += _platform(options) + ["--offline"] * options.offline + ["--quiet", WHEEL]
     return StagingPlan(
         site=stage / "lib" / f"python{options.python}" / "site-packages",
         build=_uv_build(uv, work, project, options),
@@ -164,7 +172,8 @@ def staging_plan(
     if installer.uv is not None:
         build = _uv_build(installer.uv, work, project, options)
         base = [str(installer.uv), "pip", "install", "--target", str(stage)]
-        base += ["--python", options.python] + ["--offline"] * options.offline + ["--quiet"]
+        base += ["--python", options.python, *_platform(options)]
+        base += ["--offline"] * options.offline + ["--quiet"]
     elif installer.python is not None and source is not LockSource.PYLOCK:
         pip = [str(installer.python), "-m", "pip"]
         flags = ["--quiet", "--disable-pip-version-check"] + ["--no-index"] * options.offline

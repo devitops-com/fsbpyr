@@ -56,6 +56,8 @@ def stub_command(
         os.fspath(toolchain.clang),
         f"--target={dist.triple}",
         *COMPILE_FLAGS,
+        # a glibc baseline instead of the build host's (D25)
+        *([f"--sysroot={toolchain.sysroot}"] if toolchain.sysroot is not None else []),
         f"--ld-path={toolchain.lld}",
         f"-DFSBPYR_BYTECODE_MAGIC=0x{magic:08x}u",
         f"-I{dist.include}",
