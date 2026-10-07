@@ -2,6 +2,9 @@
  *
  *   find_module(name)  -> (index, kind, flags, code, source, file, dist, path) | None
  *   find_file(path)    -> (index, kind, flags, mode, blob, dist, closure) | None
+ *   file_at(index)     -> (index, kind, flags, mode, blob, dist, closure, path)
+ *   closure(word)      -> FILES indices of the closure starting at CLOSURES word ``word``
+ *   blob_info(blob)    -> (size, SHA-256 of the uncompressed content | None)
  *   list_dir(path)     -> sorted names directly below a directory ('' is the root)
  *   is_dir(path)       -> whether any file lives below a directory (O(log n))
  *   list_modules(pre)  -> [(name, kind)] direct children of "pkg." ('' is the top level)
@@ -65,6 +68,68 @@ static PyObject *find_file(PyObject *self, PyObject *arg) {
     if (!fsb_get_file(&fsb_self, index, &f)) return corrupt("file", index);
     return Py_BuildValue("(IIIIIII)", index, (unsigned)f.kind, (unsigned)f.flags,
                          (unsigned)f.mode, f.blob, f.dist, f.closure);
+}
+
+/* Record index argument: 0 with *index set; -1 with an error set. */
+static int index_arg(PyObject *arg, const char *what, uint32_t *index) {
+    unsigned long value = PyLong_AsUnsignedLong(arg);
+    if (value == (unsigned long)-1 && PyErr_Occurred()) return -1;
+    if (value > UINT32_MAX) {
+        corrupt(what, value);
+        return -1;
+    }
+    *index = (uint32_t)value;
+    return 0;
+}
+
+static PyObject *file_at(PyObject *self, PyObject *arg) {
+    (void)self;
+    uint32_t index;
+    struct fsb_file f;
+    const char *path;
+    if (index_arg(arg, "file", &index) < 0) return NULL;
+    if (!fsb_get_file(&fsb_self, index, &f) || !fsb_str(&fsb_self, f.path, &path))
+        return corrupt("file", index);
+    return Py_BuildValue("(IIIIIIIs#)", index, (unsigned)f.kind, (unsigned)f.flags,
+                         (unsigned)f.mode, f.blob, f.dist, f.closure, path,
+                         (Py_ssize_t)f.path.length);
+}
+
+/* Members of one closure: a count n >= 1, then n strictly ascending FILES indices. */
+static PyObject *closure(PyObject *self, PyObject *arg) {
+    (void)self;
+    uint32_t start, count, member, previous = 0;
+    if (index_arg(arg, "closure", &start) < 0) return NULL;
+    uint64_t files = fsb_count(&fsb_self, FSB_SECTION_FILES);
+    if (!fsb_get_word(&fsb_self, start, &count) || count == 0 || count > files)
+        return corrupt("closure", start);
+    PyObject *members = PyTuple_New(count);
+    for (uint32_t i = 0; members != NULL && i < count; i++) {
+        uint64_t word = (uint64_t)start + 1 + i;
+        if (word > UINT32_MAX || !fsb_get_word(&fsb_self, (uint32_t)word, &member) ||
+            member >= files || (i > 0 && member <= previous)) {
+            Py_DECREF(members);
+            return corrupt("closure", start);
+        }
+        previous = member;
+        PyObject *item = PyLong_FromUnsignedLong(member);
+        if (item == NULL) Py_CLEAR(members);
+        else PyTuple_SET_ITEM(members, i, item);
+    }
+    return members;
+}
+
+static PyObject *blob_info(PyObject *self, PyObject *arg) {
+    (void)self;
+    uint32_t index;
+    struct fsb_blob b;
+    uint8_t digest[FSB_DIGEST_SIZE];
+    if (index_arg(arg, "blob", &index) < 0) return NULL;
+    if (!fsb_get_blob(&fsb_self, index, &b)) return corrupt("blob", index);
+    if (b.digest == FSB_NONE) return Py_BuildValue("(KO)", (unsigned long long)b.size, Py_None);
+    if (!fsb_get_digest(&fsb_self, b.digest, digest)) return corrupt("digest of blob", index);
+    return Py_BuildValue("(Ky#)", (unsigned long long)b.size, (const char *)digest,
+                         (Py_ssize_t)FSB_DIGEST_SIZE);
 }
 
 /* Keys of ``section`` starting with key[0:length], followed by ``separator`` when the key is
@@ -287,6 +352,9 @@ static PyObject *stats(PyObject *self, PyObject *noargs) {
 static PyMethodDef methods[] = {
     {"find_module", find_module, METH_O, "Look up a module record by dotted name."},
     {"find_file", find_file, METH_O, "Look up a file record by site-relative path."},
+    {"file_at", file_at, METH_O, "File record by index, with its path."},
+    {"closure", closure, METH_O, "FILES indices of a closure (by CLOSURES word index)."},
+    {"blob_info", blob_info, METH_O, "(size, SHA-256 or None) of a blob's content."},
     {"read", read_blob, METH_O, "Return the uncompressed content of a blob."},
     {"list_dir", list_dir, METH_O, "Sorted names directly below a payload directory."},
     {"is_dir", is_dir, METH_O, "Whether any payload file lives below a directory."},

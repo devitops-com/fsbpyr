@@ -13,7 +13,7 @@ NAMES = [
 ]  # fmt: skip
 FILES = [
     "pkg/cli.py", "pkg/data/table.json", "pkg/data/sub/x.txt", "demo-1.0.dist-info/METADATA",
-    "missing", "", "pkg", "pkg/data", "\ud800",
+    "native.libs/_ext.so", "native.libs/libdep.so", "missing", "", "pkg", "pkg/data", "\ud800",
 ]  # fmt: skip
 DIRS = [
     "", "pkg", "pkg/data", "pkg/data/sub", "ns", "missing", "pkg/cli.py", "\ud800", "pkg/",
@@ -71,6 +71,11 @@ def run(fsb: Any) -> dict[str, Any]:
             blobs.add(record[1][5])
     out["reads"] = {str(b): _outcome(fsb.read, b) for b in sorted(blobs)}
     out["bad_reads"] = {repr(b): _outcome(fsb.read, b) for b in BAD_BLOBS}
+    out["blob_info"] = {str(b): _outcome(fsb.blob_info, b) for b in [*sorted(blobs), *BAD_BLOBS]}
+    count = fsb.info()["files"]
+    out["file_at"] = [_outcome(fsb.file_at, i) for i in [*range(count), count, *BAD_BLOBS]]
+    words = sorted({f[6] for f in (fsb.file_at(i) for i in range(count)) if f[6] != fsb.NONE})
+    out["closures"] = [_outcome(fsb.closure, w) for w in [*words, *range(1, 4), *BAD_BLOBS]]
     info = dict(fsb.info())
     info["generation_id"] = info["generation_id"].hex()
     out["info"] = info

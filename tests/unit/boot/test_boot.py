@@ -5,9 +5,11 @@ import importlib.metadata
 import importlib.resources
 import importlib.util
 import io
+import json
 import os
 import posix
 import sys
+import types
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
@@ -16,23 +18,9 @@ from typing import Any, cast
 import pytest
 
 from fsbpyr.assemble import build_executable
-from fsbpyr.runtime.registry import Runtime
 
 from ...support.apps import demo_app
-from ...support.standin import StandIn
-
-BOOT_DIR = Path(__file__).parents[3] / "src" / "fsbpyr" / "boot"
-FAKE_RUNTIME = Runtime(
-    tag="cp314-x86_64-unknown-linux-gnu",
-    runtime_id="cp314-x86_64-unknown-linux-gnu-test",
-    python_version="3.14.8",
-    hexversion=0x030E08F0,
-    bytecode_magic=importlib.util.MAGIC_NUMBER,
-    extension_suffixes=(".cpython-314-x86_64-linux-gnu.so", ".abi3.so", ".so"),
-    stub=b"\x7fELF-fake",
-    modules=(),
-    files=(),
-)
+from .conftest import FAKE_RUNTIME
 
 
 @pytest.fixture(scope="module")
@@ -40,23 +28,6 @@ def executable(tmp_path_factory: pytest.TempPathFactory) -> Path:
     out = tmp_path_factory.mktemp("boot") / "demo"
     build_executable(FAKE_RUNTIME, demo_app(), out)
     return out
-
-
-@pytest.fixture
-def boot(executable: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
-    standin = StandIn(executable)
-    monkeypatch.setitem(sys.modules, "_fsbpyr", standin)
-    monkeypatch.syspath_prepend(str(BOOT_DIR))
-    for name in [n for n in sys.modules if n == "_fsbpyr_rt" or n.startswith("_fsbpyr_rt.")]:
-        monkeypatch.delitem(sys.modules, name)
-    spec = importlib.util.spec_from_file_location("_fsbpyr_boot", BOOT_DIR / "_fsbpyr_boot.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    yield module
-    for name in [n for n in sys.modules if n == "_fsbpyr_rt" or n.startswith("_fsbpyr_rt.")]:
-        del sys.modules[name]
-    standin.close()
 
 
 def _load(boot: ModuleType, name: str) -> ModuleType:
@@ -295,6 +266,30 @@ def test_run_selftest_installs_import_machinery(
     assert boot.META_FINDER in sys.meta_path
     assert sys.excepthook is boot._excepthook
     assert capsys.readouterr().out == "fsbpyr selftest ok: demo\n"
+
+
+@pytest.mark.usefixtures("isolated_sys")
+def test_trace_reports_payload_modules_by_dist_at_exit(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registered: list[Any] = []
+    monkeypatch.setattr("atexit.register", registered.append)
+    monkeypatch.setitem(posix.environ, b"FSBPYR_SELFTEST", b"1")
+    monkeypatch.setitem(posix.environ, b"FSBPYR_TRACE", b"1")
+    boot.run()  # the selftest imports the entry module
+    for name in ("pkg", "pkg.cli"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+
+    assert len(registered) == 1
+    registered[0]()
+
+    line = capsys.readouterr().err.strip()
+    assert line.startswith("fsbpyr-trace ")
+    report = json.loads(line.removeprefix("fsbpyr-trace "))
+    assert report["modules"]["demo"] == ["pkg", "pkg.cli"]
+    assert "entry" in report["modules"][""]  # modules without a distribution
+    assert report["extracted"] == []
+    assert set(report) >= {"reads", "stored_bytes", "decompressed_bytes"}
 
 
 def test_excepthook_hides_only_leading_boot_frames(

@@ -203,11 +203,15 @@ def test_stub_command_links_statically_as_pie(tmp_path: Path) -> None:
         "-pie",
         "-fPIE",
         "--ld-path=/x/ld.lld-22",
-        "-Wl,--export-dynamic",
+        "-Wl,--export-dynamic-symbol=Py*",
+        "-Wl,--export-dynamic-symbol=_Py*",
         "-DFSBPYR_BYTECODE_MAGIC=0x0a0d0e2bu",
         "-s",
     ):
         assert flag in cmd
+    # only the Python C API is exported: extensions must not bind to the stub's static zlib,
+    # OpenSSL or libffi in place of the copies their wheels bundle
+    assert "-Wl,--export-dynamic" not in cmd
     group = cmd[cmd.index("-Wl,--start-group") + 1 : cmd.index("-Wl,--end-group")]
     assert group[0] == str(inputs.libpython)
     assert cmd[-2:] == ["-lpthread", "-lm"]

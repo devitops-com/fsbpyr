@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.5, 2026-10-07. Phases 0–4 are complete; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.6, 2026-10-07. Phases 0–5 are complete; Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -89,7 +89,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | # | Decision | Rationale | Rejected alternatives |
 |---|----------|-----------|-----------------------|
 | D1 | The native launcher is written in **C** (about 800 LOC) | libpython is C and needs clang anyway (D2). This gives minimal native work at startup | Rust: adds cargo for code that mostly calls C APIs |
-| D2 | **CPython is statically linked into the launcher** from PBS `pgo+lto-full` (clang/lld ≥ 22, `--target=x86_64-unknown-linux-gnu`, `-flto=full`, `-Wl,--export-dynamic` so manylinux wheels resolve `Py*` symbols from the executable). Link inputs: libpython.a, the HACL objects of modules registered in `config.c`, and the static libraries listed in `PYTHON.json` (S1) | Runtime is directly loadable (manifest Fig. 1). PGO+LTO speed. PBS already handles the static dependencies and the glibc 2.17 baseline | Shared libpython extracted to the cache (extracts the runtime on first run). memfd + dlopen (copies MBs on every start). Building CPython and its dependencies ourselves (large effort) |
+| D2 | **CPython is statically linked into the launcher** from PBS `pgo+lto-full` (clang/lld ≥ 22, `--target=x86_64-unknown-linux-gnu`, `-flto=full`; only `Py*`/`_Py*` are exported (`--export-dynamic-symbol`, Phase 5) so manylinux wheels resolve the C API from the executable but never bind to the stub's static zlib, OpenSSL or libffi). Link inputs: libpython.a, the HACL objects of modules registered in `config.c`, and the static libraries listed in `PYTHON.json` (S1) | Runtime is directly loadable (manifest Fig. 1). PGO+LTO speed. PBS already handles the static dependencies and the glibc 2.17 baseline | Shared libpython extracted to the cache (extracts the runtime on first run). memfd + dlopen (copies MBs on every start). Building CPython and its dependencies ourselves (large effort) |
 | D3 | A **runtime** is: the *stub* (launcher + static CPython, an ELF) + a precompiled *stdlib payload fragment* + `runtime.json`. It is built once per (Python minor, platform, launcher version) and cached | App builds become concatenation: no compiler and no network needed | Compile per app |
 | D4 | **Every fsbpyr binary carries its own runtime.** When `fsbpyr build` targets the same Python minor, it reuses its own stub bytes and the already-compressed stdlib frames from its own executable (`Runtime.from_self()`) | Makes R2/R3 work without a toolchain. Fast builds | — |
 | D5 | **Inputs come from a fresh staging install driven by the project's lock** (§3.6). uv projects: `uv sync --frozen --no-dev --no-editable` into a throwaway staging venv. pip projects: `--target` install from `pylock.toml`, then a pinned requirements file, then `[project.dependencies]` (unlocked, with a warning), plus the project itself installed `--no-deps`. The developer's venv is never read or modified | Reproducible from the lock. No dev dependencies. The project is installed non-editable, so its package data is correct. uv and pip do all resolving and building | Reading the developer's venv (not reproducible, editable installs, dev deps). Our own resolver |
@@ -240,19 +240,21 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
 - **Runtime.** The extension's `find_spec` uses `FsbpyrExtensionLoader`. It materializes the
   closure, then delegates to `importlib.machinery.ExtensionFileLoader(name, <gen>/site/<path>)`,
   which uses the normal `dlopen`.
-- **Cache root:** `$FSBPYR_CACHE_DIR`, or `${XDG_CACHE_HOME:-$HOME/.cache}/<app>/runtime/<generation_id>/`.
+- **Cache root:** `$FSBPYR_CACHE_DIR`, or `${XDG_CACHE_HOME:-$HOME/.cache}/<app>`; the generation
+  directory is `<root>/runtime/<first 32 hex digits of generation_id>/`.
 - **Materialization steps:**
   1. Open the generation directory with `O_DIRECTORY|O_NOFOLLOW` and create subdirectories
-     through `dir_fd` operations (mode 0700). Refuse symlinks. The root must be owned by the
-     effective uid and must not be group- or other-writable.
+     through `dir_fd` operations (mode 0700). Refuse symlinks. Every directory must be owned by
+     the effective uid; those below the root are forced to 0700 (the root's mode is left
+     alone, since `FSBPYR_CACHE_DIR` may name a directory of the user's).
   2. If the target exists as a regular file owned by the effective uid and its size matches,
      it is a cache hit.
-  3. Otherwise create a temp file `.<name>.<pid>.<rand>` with `O_CREAT|O_EXCL|O_NOFOLLOW`,
+  3. Otherwise create a temp file `.fsbpyr-<pid>-<rand>` with `O_CREAT|O_EXCL|O_NOFOLLOW`,
      mode 0600. Stream-decompress into it (`_fsbpyr.stream(blob)`) while hashing. Check size
      and SHA-256, `fchmod 0500`, `fsync`, then `rename` into place. Racing writers produce
      identical content, so the last rename wins harmlessly and no lock is needed.
-  4. Self-heal: if `dlopen` fails, re-hash the cached file. On a mismatch, unlink it,
-     re-extract once and retry.
+  4. Self-heal: if `dlopen` of the extension fails (not an `ImportError` raised by its own
+     initialization), re-hash the cached closure. Replace mismatches and retry once.
 - **Garbage collection (Phase 8):** `.last-used` is touched at most once a day. Generations
   unused for more than 30 days are removed opportunistically under a non-blocking `flock`.
 - **FS_REQUIRED packages** (from config or built-in rules): on first import, the package's
@@ -315,7 +317,7 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
    - libpython
    - selected built-in extension objects and a generated inittab
    - the static libraries listed in `PYTHON.json`, excluding `_tkinter`, tcl/tk and X11
-   - `-Wl,--export-dynamic`
+   - `-Wl,--export-dynamic-symbol=Py*` and `=_Py*` (Phase 5; was `--export-dynamic`)
    - `-lpthread -ldl -lutil -lm -lrt`
 
    Spike S1 measures PIE vs non-PIE startup.
@@ -547,7 +549,7 @@ criteria are automated tests unless noted. Sizes are S, M or L.
     - CLI: `fsbpyr build [DIR] --entry -o --requirements --extra --interpreter --offline
       --no-source --no-smoke`; the other options arrive with their phases
 
-### Phase 5 — Native extensions and the cache (L)
+### Phase 5 — Native extensions and the cache (L) — **DONE 2026-10-07**
 
 - `elf.py`, `natives.py`, `FsbpyrExtensionLoader`, materialization, self-heal, generation id.
 - **Exit** (manifest §14), using fixture `heavy` (numpy, orjson, cryptography, pydantic):
@@ -558,6 +560,58 @@ criteria are automated tests unless noted. Sizes are S, M or L.
   - a corrupted cached `.so` gets repaired
   - a release that changes only Python code reuses the generation; a native change creates a
     new one
+- **Result (2026-10-07):** all exit criteria hold (`tests/e2e/test_natives.py`):
+  - `heavy --help` loads no module of numpy, orjson, cryptography, cffi, pydantic or
+    pydantic-core, extracts nothing and does not even create the cache directory
+  - the first `heavy np` extracts five files, all numpy's (`_multiarray_umath`,
+    `_umath_linalg`, OpenBLAS, gfortran, quadmath); the second run extracts nothing
+  - 32 concurrent first runs into an empty cache all succeed and leave no temporary files
+  - a cached `_multiarray_umath` zeroed in place (same size) makes `dlopen` fail; it is
+    re-hashed, re-extracted and the import succeeds
+  - a Python-only rebuild keeps the generation id and extracts nothing; a native change gives
+    a new id (unit test of `generation_id`)
+  - measured on the dev machine: `heavy` is 57.5 MB and builds in about 2 s from a warm uv
+    cache; `heavy --help` about 24 ms; `heavy np` about 60 ms warm, about 100 ms cold (about
+    40 MB extracted)
+  - implementation notes that deviate from the text above:
+    - closures may also list NATIVE_EXT records (an extension may link against another
+      extension's shared object); NATIVE_EXT/NATIVE_LIB blobs must carry a digest
+    - blobs are decompressed in memory (`_fsbpyr.read`, at most 1 GiB) and written out, not
+      streamed; `_fsbpyr.stream` is left for Phase 8
+    - the loader is `_fsbpyr_rt.native.PayloadExtensionLoader`, imported only when an
+      extension is; the extension's `__file__` is its cache path
+    - only shared objects an extension can reach are dependency-checked; others (for example
+      libraries loaded with ctypes) are packaged unchecked. `.so` files that are not ELF are
+      kept as data with a warning
+    - compiled package `__init__` files (Cython) are EXTENSION records whose file is
+      `__init__.<suffix>`; their `__path__` stays in the payload. Name clashes follow
+      CPython's FileFinder order (package before module, extension suffixes before `.py`)
+    - the stub exports only `Py*`/`_Py*` (D2): 1903 symbols instead of 3132, none from zlib,
+      OpenSSL or libffi
+    - `heavy model` (pydantic → zoneinfo → `sysconfig`) found that the runtime lacked
+      `_sysconfigdata__linux_x86_64-linux-gnu`: module-name parts may now contain `-`, and
+      `LAYOUT_VERSION` is 3
+    - `--allow-system-lib` overrides `allow-system-libs`, like every other option; app names
+      must be a single path component (they name the cache directory)
+    - `FSBPYR_TRACE=1` prints one `fsbpyr-trace {json}` line on stderr at exit: payload
+      modules per distribution, extracted paths and the read counters. There are no
+      per-distribution byte counters, so "0 bytes from those dists" is checked as "no module
+      of those dists loaded"
+    - a failed `dlopen` from a `noexec` cache gets a hint to set `FSBPYR_CACHE_DIR`
+    - native files over 1 GiB fail the build: without streaming they cannot be extracted
+    - shared objects with importable names (`pkg/libfoo.so`) are extension modules, as in
+      CPython; libraries an app loads with ctypes need FS_REQUIRED (Phase 6)
+    - temp files of killed processes stay until generation GC (Phase 8)
+  - reviews (code and security; no CRITICAL or HIGH findings) led to: `$ORIGIN` expanded
+    only as a whole token and correctly for top-level extensions (`_x.so` with
+    `$ORIGIN/x.libs` was wrongly rejected); `DT_NEEDED` entries containing `/` rejected;
+    payload paths and the app name re-checked before touching the cache; self-heal limited
+    to `dlopen` failures; the user's cache root no longer chmod-ed; temp names that fit any
+    file name
+  - accepted risk (security review M1): the cache root's ancestors are trusted, like the
+    variables that name them (D20). A root inside a directory other users can write lets
+    them swap the tree between the checks and `dlopen`; the default `~/.cache/<app>` is not
+    affected
 
 ### Phase 6 — Compatibility layer (M)
 

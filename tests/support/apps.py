@@ -39,6 +39,7 @@ def main():
     "probe.py": (SUPPORT / "probe.py").read_text(),
 }
 NAMESPACES = ("ns", "pkg.data", "pkg.data.sub")  # dirs without __init__.py
+NATIVE_EXT, NATIVE_LIB = "native.libs/_ext.so", "native.libs/libdep.so"
 RESOURCES = {
     "pkg/data/table.json": b'{"k": 1}',
     "pkg/data/sub/x.txt": b"x",
@@ -75,6 +76,11 @@ def demo_app(entrypoint: str = "entry:main") -> App:
     files = [f for _, f in built]
     files += [File(p, FileKind.RESOURCE, Blob.zstd(d), dist="demo") for p, d in RESOURCES.items()]
     files += [File(p, FileKind.METADATA, Blob.zstd(d), dist="demo") for p, d in METADATA.items()]
+    files += [  # never loaded: they exercise file_at / closure / blob_info
+        File(NATIVE_EXT, FileKind.NATIVE_EXT, Blob.zstd(b"\x7fELF ext", digest=True),
+             mode=0o755, closure=(NATIVE_LIB,)),
+        File(NATIVE_LIB, FileKind.NATIVE_LIB, Blob.zstd(b"\x7fELF lib", digest=True), mode=0o755),
+    ]  # fmt: skip
     return App(
         "demo",
         entrypoint,

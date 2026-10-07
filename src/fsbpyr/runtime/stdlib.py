@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..bytecode import canonicalize
-from ..payload.format import FileKind, ModuleFlag, ModuleKind
+from ..payload.format import FileKind, ModuleFlag, ModuleKind, is_module_part
 from ..payload.spec import Blob, File, Module
 from .pbs import PbsDist
 
@@ -51,7 +51,7 @@ def _module_name(rel: Path) -> tuple[str, bool] | None:
     is_package = parts[-1] == "__init__"
     if is_package:
         parts.pop()
-    if not parts or not all(part.isidentifier() for part in parts):
+    if not parts or not all(is_module_part(part) for part in parts):
         return None
     return ".".join(parts), is_package
 

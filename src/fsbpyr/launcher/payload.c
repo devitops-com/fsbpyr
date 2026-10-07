@@ -136,6 +136,14 @@ bool fsb_get_startup(const struct fsb_payload *p, uint32_t position, uint32_t *m
     return get_record(p, FSB_SECTION_STARTUP, position, module);
 }
 
+bool fsb_get_word(const struct fsb_payload *p, uint32_t index, uint32_t *word) {
+    return get_record(p, FSB_SECTION_CLOSURES, index, word);
+}
+
+bool fsb_get_digest(const struct fsb_payload *p, uint32_t index, uint8_t digest[FSB_DIGEST_SIZE]) {
+    return get_record(p, FSB_SECTION_DIGESTS, index, digest);
+}
+
 bool fsb_zstd_frame_ok(const uint8_t *src, uint64_t stored, uint64_t size) {
     static const uint8_t magic[4] = {0x28, 0xb5, 0x2f, 0xfd};
     if (stored < 6 || memcmp(src, magic, sizeof magic) != 0 || !(src[4] & 0x04)) return false;

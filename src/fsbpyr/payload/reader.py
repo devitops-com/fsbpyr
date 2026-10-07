@@ -24,6 +24,7 @@ from .format import (
     MAX_BLOB_SIZE,
     MAX_MODE,
     MODULE,
+    NATIVE_KINDS,
     NONE,
     PAGE_SIZE,
     RECORD_SIZE,
@@ -148,6 +149,8 @@ class Payload:
         self._dists = self._parse_dists()
         self._files = self._parse_files()
         for file in self._files:
+            if file.kind in NATIVE_KINDS and self._blobs[file.blob].digest == NONE:
+                raise PayloadError(f"native file {file.path!r} has no digest")
             if file.closure != NONE:
                 self._check_closure(file)
         self._modules = self._parse_modules()
@@ -319,9 +322,11 @@ class Payload:
     def _check_closure(self, owner: FileRecord) -> None:
         members = self._closure_members(owner.closure)
         if owner.kind is not FileKind.NATIVE_EXT or any(
-            self._files[m].kind is not FileKind.NATIVE_LIB for m in members
+            self._files[m].kind not in NATIVE_KINDS for m in members
         ):
             raise PayloadError(f"invalid closure of {owner.path!r}: kinds")
+        if owner.index in members:
+            raise PayloadError(f"invalid closure of {owner.path!r}: lists itself")
 
     # --- access ----------------------------------------------------------------------------
 

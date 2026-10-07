@@ -9,11 +9,9 @@ import types
 from pathlib import Path
 from typing import Any
 
-from fsbpyr.payload.format import NONE
+from fsbpyr.payload.format import MAX_MEMORY_BLOB, NONE
 from fsbpyr.payload.format import PayloadError as _ReaderError
 from fsbpyr.payload.reader import Executable
-
-MAX_MEMORY_BLOB = 1 << 30
 
 
 class PayloadError(ValueError):
@@ -27,6 +25,17 @@ def _key(value: object) -> str | None:
         value.encode()
     except UnicodeEncodeError:
         return None
+    return value
+
+
+def _index(value: object, what: str) -> int:
+    """Mirror of index_arg(): TypeError / OverflowError like PyLong_AsUnsignedLong."""
+    if not isinstance(value, int):
+        raise TypeError("expected int")
+    if value < 0 or value >= 2**64:
+        raise OverflowError(f"{what} index out of range")
+    if value > 0xFFFFFFFF:
+        raise PayloadError(f"corrupt executable payload: {what} {value}")
     return value
 
 
@@ -59,16 +68,35 @@ class StandIn(types.ModuleType):
         return (record.index, int(record.kind), int(record.flags), record.mode, record.blob,
                 record.dist, record.closure)  # fmt: skip
 
-    def read(self, blob: object) -> bytes:
-        if not isinstance(blob, int):
-            raise TypeError("expected int")
-        if blob < 0 or blob >= 2**64:
-            raise OverflowError("blob index out of range")
+    def file_at(self, index: object) -> tuple[Any, ...]:
         try:
-            record = self._payload.blob(blob)
+            record = self._payload.files()[_index(index, "file")]
+        except IndexError:
+            raise PayloadError(f"corrupt executable payload: file {index}") from None
+        return (record.index, int(record.kind), int(record.flags), record.mode, record.blob,
+                record.dist, record.closure, record.path)  # fmt: skip
+
+    def closure(self, word: object) -> tuple[int, ...]:
+        try:
+            return self._payload.closure(_index(word, "closure"))
+        except _ReaderError:
+            raise PayloadError(f"corrupt executable payload: closure {word}") from None
+
+    def blob_info(self, blob: object) -> tuple[int, bytes | None]:
+        try:
+            record = self._payload.blob(_index(blob, "blob"))
+            digest = None if record.digest == NONE else self._payload.digest(record.digest)
+            return record.size, digest
+        except _ReaderError:
+            raise PayloadError(f"corrupt executable payload: blob {blob}") from None
+
+    def read(self, blob: object) -> bytes:
+        index = _index(blob, "blob")
+        try:
+            record = self._payload.blob(index)
             if record.size > MAX_MEMORY_BLOB:
-                raise PayloadError(f"corrupt executable payload: blob too large {blob}")
-            return self._payload.read_blob(blob)
+                raise PayloadError(f"corrupt executable payload: blob too large {index}")
+            return self._payload.read_blob(index)
         except _ReaderError as exc:
             raise PayloadError(f"corrupt executable payload: {exc}") from None
 

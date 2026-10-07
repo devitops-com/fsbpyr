@@ -139,9 +139,12 @@ Because the table is sorted, listing a directory is a prefix range scan.
 ### CLOSURES
 
 A sequence of u32 words. A closure starts at a word index `i`: `words[i] = n` (n ≥ 1), followed
-by `n` FILES indices in strictly ascending order. Closures list the bundled shared libraries that
-must be materialized together with a NATIVE_EXT file. Only NATIVE_EXT records carry a closure,
-every member is a NATIVE_LIB record, and a record never lists itself.
+by `n` FILES indices in strictly ascending order. Closures list the bundled shared objects that
+must be materialized together with a NATIVE_EXT file (its transitive `DT_NEEDED` dependencies
+inside the payload). Only NATIVE_EXT records carry a closure, every member is a NATIVE_LIB or
+NATIVE_EXT record (an extension may link against another extension's shared object), and a record
+never lists itself. The blob of every NATIVE_EXT and NATIVE_LIB record has a digest, which the
+runtime verifies after extraction.
 
 ### DIGESTS
 
@@ -165,7 +168,9 @@ this short list to build CPython's frozen-module table, so it never scans the MO
 - Every blob must be 16-byte aligned, lie inside the blob data area, and have `size` ≤ 2^40.
   For codec none, `stored_size == size`.
 - FILES paths, module paths and `dist_info` paths obey the path rules above. Module names are
-  dotted Python identifiers. Dist names are canonical.
+  dotted names whose parts are Python identifiers once `-` is read as `_`: CPython imports file
+  stems such as `_sysconfigdata__linux_x86_64-linux-gnu` through `importlib.import_module`.
+  Dist names are canonical.
 - The module kind invariants (including zstd code frames), the STARTUP rule (the STARTUP section
   lists exactly the flagged modules) and the closure rules hold.
 - Every zstd frame a reader decompresses must have the content-checksum flag set.

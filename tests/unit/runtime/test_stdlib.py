@@ -45,6 +45,7 @@ def test_collect_classifies_modules_and_resources(tmp_path: Path) -> None:
             "turtledemo/x.py",
             "__phello__/spam.py",
             "dir.with.dots/x.py",
+            "_sysconfigdata__linux_x86_64-linux-gnu.py",
         ],
     )
 
@@ -52,6 +53,11 @@ def test_collect_classifies_modules_and_resources(tmp_path: Path) -> None:
 
     assert tree == StdlibTree(
         modules=(
+            (
+                "_sysconfigdata__linux_x86_64-linux-gnu",
+                "_sysconfigdata__linux_x86_64-linux-gnu.py",
+                False,
+            ),
             ("json", "json/__init__.py", True),
             ("json.decoder", "json/decoder.py", False),
             ("os", "os.py", False),

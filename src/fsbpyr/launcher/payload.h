@@ -37,6 +37,9 @@ bool fsb_get_module(const struct fsb_payload *payload, uint32_t index, struct fs
 bool fsb_get_file(const struct fsb_payload *payload, uint32_t index, struct fsb_file *out);
 bool fsb_get_dist(const struct fsb_payload *payload, uint32_t index, struct fsb_dist *out);
 bool fsb_get_startup(const struct fsb_payload *payload, uint32_t position, uint32_t *module);
+bool fsb_get_word(const struct fsb_payload *payload, uint32_t index, uint32_t *word); /* CLOSURES */
+bool fsb_get_digest(const struct fsb_payload *payload, uint32_t index,
+                    uint8_t digest[FSB_DIGEST_SIZE]);
 
 /* Key (name or path) of record ``index`` of a sorted table; false if out of range or corrupt. */
 bool fsb_record_key(const struct fsb_payload *payload, enum fsb_section section, uint64_t index,

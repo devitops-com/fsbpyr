@@ -20,7 +20,7 @@ from . import pbs, pins, stdlib, stub
 from .toolchain import find_toolchain
 
 BOOT_PACKAGES = ("_fsbpyr_boot", "_fsbpyr_rt")  # regenerated for every build, never runtime content
-LAYOUT_VERSION = 2  # bump when the stdlib selection or the runtime directory layout changes
+LAYOUT_VERSION = 3  # bump when the stdlib selection or the runtime directory layout changes
 _STUB = "stub"
 _STDLIB = "stdlib.fsbp"
 _META = "runtime.json"

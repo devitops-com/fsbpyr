@@ -26,7 +26,12 @@ COMPILE_FLAGS = (
     "-std=c11", "-O2", "-flto=full", "-fPIE", "-pie", "-D_GNU_SOURCE",
     "-fstack-protector-strong", "-D_FORTIFY_SOURCE=2", "-Wall", "-Wextra",
 )  # fmt: skip
-LINK_FLAGS = ("-Wl,--export-dynamic", "-Wl,-z,noexecstack", "-Wl,-z,relro", "-Wl,-z,now", "-s")
+# Export only the Python C API that extension modules link against: exporting everything would
+# let wheel libraries bind to the static zlib, OpenSSL or libffi linked into the stub.
+LINK_FLAGS = (
+    "-Wl,--export-dynamic-symbol=Py*", "-Wl,--export-dynamic-symbol=_Py*",
+    "-Wl,-z,noexecstack", "-Wl,-z,relro", "-Wl,-z,now", "-s",
+)  # fmt: skip
 
 
 class StubBuildError(RuntimeError):

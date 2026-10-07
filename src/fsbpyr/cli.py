@@ -35,6 +35,8 @@ def _add_build(commands: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     build.add_argument("-o", "--output", type=Path, help="executable path (default: dist/NAME)")
     build.add_argument("--requirements", help="pinned requirements file (pip projects)")
     build.add_argument("--extra", dest="extras", action="append", help="project extra (repeat)")
+    build.add_argument("--allow-system-lib", dest="allowed_system_libs", action="append",
+                       metavar="SONAME", help="allow this host library (repeat)")  # fmt: skip
     build.add_argument("--interpreter", type=Path, help="Python 3.14 that runs pip (without uv)")
     build.add_argument("--offline", action="store_true", default=None, help="no network access")
     build.add_argument("--no-source", dest="include_source", action="store_false", default=None,
@@ -62,6 +64,9 @@ def _build(args: argparse.Namespace) -> int:
             output=args.output.resolve() if args.output else None,
             requirements=args.requirements,
             extras=tuple(args.extras) if args.extras else None,
+            allowed_system_libs=(
+                tuple(args.allowed_system_libs) if args.allowed_system_libs else None
+            ),
             interpreter=args.interpreter,
             offline=args.offline,
             include_source=args.include_source,

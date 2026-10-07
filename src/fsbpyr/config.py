@@ -6,7 +6,7 @@ from typing import Any
 
 from .project import Project
 
-_LATER_PHASES = {"profile": "Phase 7", "fs-packages": "Phase 6", "allow-system-libs": "Phase 5"}
+_LATER_PHASES = {"profile": "Phase 7", "fs-packages": "Phase 6"}
 
 
 class ConfigError(ValueError):
@@ -23,12 +23,20 @@ class BuildConfig:
     interpreter: Path | None = None
     offline: bool = False
     smoke: bool = True
+    allowed_system_libs: tuple[str, ...] = ()  # sonames extensions may load from the host
 
 
 def _expect(key: str, value: Any, kind: type | tuple[type, ...]) -> Any:
     if not isinstance(value, kind):
         raise ConfigError(f"[tool.fsbpyr] {key} has the wrong type: {value!r}")
     return value
+
+
+def _soname(key: str, value: Any) -> str:
+    name: str = _expect(key, value, str)
+    if not name or "/" in name:
+        raise ConfigError(f"[tool.fsbpyr] {key} entry {name!r} is not a library file name")
+    return name
 
 
 def _from_tool(project: Project) -> dict[str, Any]:
@@ -45,10 +53,13 @@ def _from_tool(project: Project) -> dict[str, Any]:
             values["extras"] = tuple(_expect(key, extra, str) for extra in extras)
         elif key == "include-source":
             values["include_source"] = _expect(key, value, bool)
+        elif key == "allow-system-libs":
+            libs = _expect(key, value, list)
+            values["allowed_system_libs"] = tuple(_soname(key, lib) for lib in libs)
         else:
             raise ConfigError(
                 f"unknown [tool.fsbpyr] key {key!r}; supported: entry, output, requirements, "
-                "extras, include-source"
+                "extras, include-source, allow-system-libs"
             )
     return values
 

@@ -19,6 +19,7 @@ from .format import (
     MAX_MODE,
     MAX_STRTAB_SIZE,
     MODULE,
+    NATIVE_KINDS,
     NONE,
     PAGE_SIZE,
     TABLE_ALIGN,
@@ -119,6 +120,8 @@ def _check_header(spec: PayloadSpec) -> None:
         raise PayloadError("bytecode_magic must be 4 bytes")
     if not 0 <= spec.python_hexversion <= 0xFFFFFFFF:
         raise PayloadError("python_hexversion out of range")
+    if "/" in spec.app_name or spec.app_name in ("", ".", "..") or "\0" in spec.app_name:
+        raise PayloadError(f"app name {spec.app_name!r} is not a single path component")
 
 
 def _check_unique(kind: str, keys: list[str]) -> None:
@@ -149,6 +152,8 @@ def _check_files(files: tuple[File, ...], dists: set[str]) -> None:
             raise PayloadError(f"file mode {oct(file.mode)} not allowed for {file.path!r}")
         if file.dist is not None and file.dist not in dists:
             raise PayloadError(f"unknown dist {file.dist!r} for {file.path!r}")
+        if file.kind in NATIVE_KINDS and file.blob.sha256 is None:
+            raise PayloadError(f"native file {file.path!r} needs a digest (Blob.zstd(digest=True))")
         _check_closure(file, known)
     directories = {p.rsplit("/", i)[0] for p in paths for i in range(1, p.count("/") + 1)}
     clashes = sorted(directories & known.keys())
@@ -165,8 +170,8 @@ def _check_closure(file: File, files: dict[str, File]) -> None:
         raise PayloadError(f"closure of {file.path!r} has duplicates or itself")
     for member in file.closure:
         target = files.get(member)
-        if target is None or target.kind is not FileKind.NATIVE_LIB:
-            raise PayloadError(f"closure of {file.path!r}: {member!r} is not a NATIVE_LIB file")
+        if target is None or target.kind not in NATIVE_KINDS:
+            raise PayloadError(f"closure of {file.path!r}: {member!r} is not a native file")
 
 
 def _check_module(module: Module, files: dict[str, File], dists: set[str]) -> None:

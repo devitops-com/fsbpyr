@@ -46,8 +46,8 @@ def _replace_string(raw: bytes, old: str, new: str) -> bytes:
 def _two_lib_spec_raw() -> bytes:
     libs = ("x.libs/a.so", "x.libs/b.so")
     files = (
-        File("x/_e.so", FileKind.NATIVE_EXT, Blob.raw(b"e"), closure=libs),
-        *(File(p, FileKind.NATIVE_LIB, Blob.raw(p.encode())) for p in libs),
+        File("x/_e.so", FileKind.NATIVE_EXT, Blob.raw(b"e", digest=True), closure=libs),
+        *(File(p, FileKind.NATIVE_LIB, Blob.raw(p.encode(), digest=True)) for p in libs),
     )
     return encode_payload(make_spec(files=files, modules=(), dists=()))
 
@@ -118,7 +118,7 @@ def test_reader_rejects_invalid_module_name() -> None:
     raw = encode_payload(make_spec())
 
     with pytest.raises(PayloadError, match="module name"):
-        Payload(_replace_string(raw, "nspkg", "n-pkg"))
+        Payload(_replace_string(raw, "nspkg", "n pkg"))
 
 
 def test_reader_rejects_non_canonical_dist_name() -> None:
@@ -182,7 +182,7 @@ def test_executable_rejects_nonzero_trailer_flags() -> None:
 @pytest.mark.parametrize(
     "words",
     [(2, 1, 0), (2, 0, 0), (2, 0, 2), (5, 0, 1)],
-    ids=["unsorted", "duplicate", "self-not-lib", "overrun"],
+    ids=["unsorted", "duplicate", "self", "overrun"],
 )
 def test_reader_rejects_bad_closures(words: tuple[int, int, int]) -> None:
     raw = _two_lib_spec_raw()  # files: 0 x.libs/a.so, 1 x.libs/b.so, 2 x/_e.so -> [2, 0, 1]
@@ -203,8 +203,8 @@ def test_reader_rejects_bad_closures(words: tuple[int, int, int]) -> None:
 )
 def test_writer_rejects_bad_closures(closure: tuple[str, ...]) -> None:
     files = (
-        File("x/_e.so", FileKind.NATIVE_EXT, Blob.raw(b"e"), closure=closure),
-        File("x.libs/a.so", FileKind.NATIVE_LIB, Blob.raw(b"a")),
+        File("x/_e.so", FileKind.NATIVE_EXT, Blob.raw(b"e", digest=True), closure=closure),
+        File("x.libs/a.so", FileKind.NATIVE_LIB, Blob.raw(b"a", digest=True)),
         File("x/res", FileKind.RESOURCE, Blob.raw(b"r")),
     )
 
@@ -215,7 +215,7 @@ def test_writer_rejects_bad_closures(closure: tuple[str, ...]) -> None:
 def test_writer_rejects_closure_on_non_extension() -> None:
     files = (
         File("x/res", FileKind.RESOURCE, Blob.raw(b"r"), closure=("x.libs/a.so",)),
-        File("x.libs/a.so", FileKind.NATIVE_LIB, Blob.raw(b"a")),
+        File("x.libs/a.so", FileKind.NATIVE_LIB, Blob.raw(b"a", digest=True)),
     )
 
     with pytest.raises(PayloadError, match="closure"):
@@ -286,3 +286,16 @@ def test_reader_rejects_zstd_frame_without_checksum() -> None:
 
     with pytest.raises(PayloadError, match="checksum"):
         payload.read_blob(record.blob)
+
+
+def test_closure_may_name_another_extension() -> None:
+    files = (
+        File("x/_a.so", FileKind.NATIVE_EXT, Blob.raw(b"a", digest=True), closure=("x/_b.so",)),
+        File("x/_b.so", FileKind.NATIVE_EXT, Blob.raw(b"b", digest=True)),
+    )
+
+    payload = Payload(encode_payload(make_spec(files=files, modules=(), dists=())))
+
+    owner = payload.find_file("x/_a.so")
+    assert owner is not None
+    assert [payload.files()[i].path for i in payload.closure(owner.closure)] == ["x/_b.so"]

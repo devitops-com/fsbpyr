@@ -3,12 +3,14 @@
 import csv
 import re
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 
 from . import bytecode
 from .closure import InstalledDist
-from .payload.format import FileKind, ModuleKind
+from .elf import is_elf
+from .natives import NativeError, closures
+from .payload.format import MAX_MEMORY_BLOB, FileKind, ModuleKind
 from .payload.spec import Blob, Dist, File, Module
 
 # Written by installers, not by the wheel: they embed paths, timestamps or the installer's name,
@@ -19,6 +21,7 @@ INSTALLER_FILES = frozenset({
 
 
 _SHARED_OBJECT = re.compile(r"\.so(\.\d+)*$")
+_NATIVE_MODE = 0o755  # fixed: the installer's umask must not leak into the build
 
 
 class ClassifyError(RuntimeError):
@@ -42,6 +45,20 @@ def module_name(rel: str) -> tuple[str, bool] | None:
     if not parts or not all(part.isidentifier() for part in parts):
         return None
     return ".".join(parts), is_package
+
+
+def extension_name(rel: str, suffixes: tuple[str, ...]) -> tuple[str, bool, int] | None:
+    """Dotted name, is-package flag (``__init__`` compiled by Cython and the like) and suffix
+    rank of an extension module file, if importable."""
+    for rank, suffix in enumerate(suffixes):
+        if rel.endswith(suffix):
+            parts = rel[: -len(suffix)].split("/")
+            is_package = len(parts) > 1 and parts[-1] == "__init__"
+            if is_package:
+                parts.pop()
+            if all(part.isidentifier() for part in parts):
+                return ".".join(parts), is_package, rank
+    return None
 
 
 def _record_path(line: str) -> str:
@@ -71,7 +88,10 @@ class _Collector:
         self.modules: dict[str, Module] = {}
         self.files: dict[str, File] = {}
         self.owners: dict[str, str] = {}  # path -> dist
-        self.natives: list[str] = []
+        self.natives: dict[str, bytes] = {}  # ELF shared objects, path -> content
+        # CPython's FileFinder order: a package directory before a module file, and within
+        # each, extension suffixes in order before .py. Lower wins.
+        self.ranks: dict[str, tuple[bool, int]] = {}  # module -> (not package, loader rank)
         self.warnings: list[str] = []
         self.broken: set[str] = set()  # package directories whose __init__.py does not compile
 
@@ -103,10 +123,12 @@ class _Collector:
                 f"{dist.name}: {rel} ignored (.pth files do not run in executables)"
             )
             return
-        if rel.endswith(self.suffixes) or _SHARED_OBJECT.search(rel):
-            self.natives.append(rel)
-            return
         data = path.read_bytes()
+        if rel.endswith(self.suffixes) or _SHARED_OBJECT.search(rel):
+            if is_elf(data):
+                self._add_native(dist, rel, data)
+                return
+            self.warnings.append(f"{dist.name}: {rel} kept as data (not an ELF shared object)")
         named = module_name(rel) if rel.endswith(".py") else None
         if named is not None and self._add_module(dist, rel, named, data):
             return
@@ -124,11 +146,8 @@ class _Collector:
                 self.broken.add(rel.rpartition("/")[0])
             return False
         kind = ModuleKind.PACKAGE if named[1] else ModuleKind.MODULE
-        existing = self.modules.get(named[0])
-        if existing is not None:
-            self.warnings.append(f"{named[0]} is provided by {existing.dist} and {dist.name}")
-            if existing.kind is ModuleKind.PACKAGE:  # CPython's path finder prefers packages
-                return False
+        if not self._prevails(named[0], (not named[1], len(self.suffixes)), dist.name):
+            return False
         source = Blob.zstd(data) if self.include_source else None
         self.modules[named[0]] = Module(named[0], rel, kind, code=Blob.code(code),
                                         source=source, dist=dist.name)  # fmt: skip
@@ -136,6 +155,41 @@ class _Collector:
             self.files[rel] = File(rel, FileKind.SOURCE, source, dist=dist.name)
         self.owners[rel] = dist.name
         return True
+
+    def _prevails(self, name: str, rank: tuple[bool, int], dist: str) -> bool:
+        """Record ``name``'s rank if it beats the module already registered under that name."""
+        existing = self.modules.get(name)
+        if existing is not None:
+            self.warnings.append(f"{name} is provided by {existing.dist} and {dist}")
+            if self.ranks[name] <= rank:
+                return False
+            displaced = self.files.get(existing.path)
+            if displaced is not None and displaced.kind is FileKind.SOURCE:  # now plain data
+                self.files[existing.path] = replace(displaced, kind=FileKind.RESOURCE)
+        self.ranks[name] = rank
+        return True
+
+    def _add_native(self, dist: InstalledDist, rel: str, data: bytes) -> None:
+        self.natives[rel] = data
+        self.owners[rel] = dist.name
+        named = extension_name(rel, self.suffixes)
+        if named is not None and self._prevails(named[0], (not named[1], named[2]), dist.name):
+            self.modules[named[0]] = Module(named[0], rel, ModuleKind.EXTENSION, file=rel,
+                                            dist=dist.name)  # fmt: skip
+
+    def add_natives(self, allowed: frozenset[str]) -> None:
+        """NATIVE_EXT files (backing an extension module) and NATIVE_LIB files, with closures."""
+        extensions = {m.path for m in self.modules.values() if m.kind is ModuleKind.EXTENSION}
+        try:
+            needs = closures(self.natives, extensions, allowed=allowed)
+        except NativeError as exc:
+            raise ClassifyError(str(exc)) from exc
+        for rel, data in self.natives.items():
+            if len(data) > MAX_MEMORY_BLOB:  # extraction reads a blob whole (no streaming yet)
+                raise ClassifyError(f"{rel} is too large to bundle ({len(data)} bytes)")
+            kind = FileKind.NATIVE_EXT if rel in extensions else FileKind.NATIVE_LIB
+            self.files[rel] = File(rel, kind, Blob.zstd(data, digest=True), mode=_NATIVE_MODE,
+                                   dist=self.owners[rel], closure=needs.get(rel, ()))  # fmt: skip
 
     def _add_file(self, dist: InstalledDist, rel: str, kind: FileKind, data: bytes) -> None:
         self.files[rel] = File(rel, kind, Blob.zstd(data), dist=dist.name)
@@ -160,14 +214,16 @@ class _Collector:
 
 
 def classify(
-    dists: list[InstalledDist], *, extension_suffixes: tuple[str, ...], include_source: bool
+    dists: list[InstalledDist],
+    *,
+    extension_suffixes: tuple[str, ...],
+    include_source: bool,
+    allowed_system_libs: frozenset[str] = frozenset(),
 ) -> Content:
     collector = _Collector(extension_suffixes, include_source)
     for dist in sorted(dists, key=lambda d: d.name):
         collector.add_dist(dist)
-    if collector.natives:
-        listed = ", ".join(sorted(collector.natives)[:10])
-        raise ClassifyError(f"native extensions are not supported yet (Phase 5): {listed}")
+    collector.add_natives(allowed_system_libs)
     modules = [*collector.modules.values(), *collector.namespaces()]
     return Content(
         modules=tuple(sorted(modules, key=lambda m: m.name)),

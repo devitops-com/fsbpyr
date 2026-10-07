@@ -141,6 +141,23 @@ def test_unknown_or_later_phase_keys_are_rejected(tmp_path: Path) -> None:
         load_config(Project.load(_project(tmp_path, text)))
 
 
+def test_allowed_system_libs_come_from_tool_table_or_cli(tmp_path: Path) -> None:
+    project = Project.load(_project(tmp_path, PYPROJECT + 'allow-system-libs = ["libssl.so.3"]\n'))
+
+    assert load_config(project).allowed_system_libs == ("libssl.so.3",)
+    assert load_config(project, allowed_system_libs=("libpq.so.5",)).allowed_system_libs == (
+        "libpq.so.5",
+    )
+
+
+@pytest.mark.parametrize("value", ['"libssl.so.3"', '["/usr/lib/libssl.so.3"]', '[""]'])
+def test_allowed_system_libs_must_be_sonames(tmp_path: Path, value: str) -> None:
+    project = Project.load(_project(tmp_path, PYPROJECT + f"allow-system-libs = {value}\n"))
+
+    with pytest.raises(ConfigError, match=r"allow-system-libs (has the wrong type|entry)"):
+        load_config(project)
+
+
 # --- staging ---------------------------------------------------------------------------------
 
 UV = Installer(uv=Path("/u/uv"), python=None)

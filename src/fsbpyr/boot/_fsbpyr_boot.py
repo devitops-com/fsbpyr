@@ -47,6 +47,12 @@ def _directory(path: str) -> str:
     return path.rpartition("/")[0]
 
 
+def _is_extension_package(name: str) -> bool:
+    """A compiled ``__init__`` (Cython and the like) makes an extension module a package."""
+    record = _fsbpyr.find_module(name)
+    return record is not None and record[7].rpartition("/")[2].startswith("__init__.")
+
+
 class PayloadLoader(_LoaderBase):
     """Loads pure-Python modules and packages from payload records (spec.loader_state)."""
 
@@ -131,7 +137,12 @@ class PayloadPathFinder:
             spec.submodule_search_locations = [_PREFIX + path]
             return spec
         if kind == EXTENSION:
-            return None  # native extensions arrive in Phase 5
+            from _fsbpyr_rt.native import (  # type: ignore[import-not-found]  # noqa: PLC0415
+                extension_spec,
+            )
+
+            native: ModuleSpec = extension_spec(fullname, record, _PREFIX)
+            return native
         spec = ModuleSpec(
             fullname, LOADER, origin=_PREFIX + path, loader_state=record, is_package=kind == PACKAGE
         )
@@ -145,7 +156,11 @@ class PayloadPathFinder:
         regular packages, not namespace directories."""
         for name, kind in _fsbpyr.list_modules(self._prefix):
             if kind != NAMESPACE and not (self.directory == "" and name in _INTERNAL):
-                yield prefix + name, kind == PACKAGE
+                yield (
+                    prefix + name,
+                    kind == PACKAGE
+                    or (kind == EXTENSION and _is_extension_package(self._prefix + name)),
+                )
 
     def invalidate_caches(self) -> None:
         pass
@@ -238,6 +253,12 @@ def run() -> None:
     sys.meta_path.insert(position, META_FINDER)
     if sys.excepthook is sys.__excepthook__:
         sys.excepthook = _excepthook
+    if posix.environ.get(b"FSBPYR_TRACE"):
+        import atexit  # noqa: PLC0415
+
+        from _fsbpyr_rt.trace import report  # type: ignore[import-not-found]  # noqa: PLC0415
+
+        atexit.register(report)
     entrypoint = INFO["entrypoint"]
     if posix.environ.get(b"FSBPYR_SELFTEST"):
         _resolve(entrypoint)  # import the module and look the attribute up, without calling

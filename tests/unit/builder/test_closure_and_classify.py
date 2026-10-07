@@ -14,6 +14,8 @@ from fsbpyr.classify import ClassifyError, classify
 from fsbpyr.closure import ClosureError, SiteIndex, resolve_entry
 from fsbpyr.payload.format import FileKind, ModuleKind
 
+from ...support.elf import make_elf
+
 PROJECT_DIR = Path("/work/hello")
 
 
@@ -192,13 +194,49 @@ def test_pth_files_are_reported_not_packaged(site: Path) -> None:
     assert any("stray.pth" in w for w in content.warnings)
 
 
-def test_native_extensions_are_rejected_until_phase_5(site: Path) -> None:
-    _dist(site, "fast", "1.0", {"fast/_speed.cpython-314-x86_64-linux-gnu.so": b"\x7fELF"})
+EXT = "fast/_speed.cpython-314-x86_64-linux-gnu.so"
+SUFFIXES = (".cpython-314-x86_64-linux-gnu.so", ".abi3.so", ".so")
+
+
+def _native_site(site: Path, ext_needs: tuple[str, ...] = ("libhelper-1.so", "libc.so.6")) -> None:
+    _dist(site, "fast", "1.0", {
+        "fast/__init__.py": b"",
+        EXT: make_elf(needed=ext_needs, rpath="$ORIGIN/../fast.libs"),
+        "fast.libs/libhelper-1.so": make_elf(needed=("libm.so.6",)),
+        "fast/plugins.abi3.so": make_elf(),
+        "fast/data.so.txt": b"not native",
+    })  # fmt: skip
+
+
+def test_native_extensions_become_extension_modules_with_closures(site: Path) -> None:
+    _native_site(site)
     index = SiteIndex.scan(site)
 
-    with pytest.raises(ClassifyError, match="_speed"):
-        classify([index.dists["fast"]], extension_suffixes=(".cpython-314-x86_64-linux-gnu.so",),
-                 include_source=True)  # fmt: skip
+    content = classify([index.dists["fast"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    modules = {m.name: m for m in content.modules}
+    assert modules["fast._speed"].kind is ModuleKind.EXTENSION
+    assert modules["fast._speed"].file == EXT and modules["fast._speed"].code is None
+    assert modules["fast.plugins"].kind is ModuleKind.EXTENSION
+    files = {f.path: f for f in content.files}
+    ext = files[EXT]
+    assert ext.kind is FileKind.NATIVE_EXT and ext.closure == ("fast.libs/libhelper-1.so",)
+    assert ext.blob.sha256 is not None and ext.mode & 0o500 == 0o500
+    lib = files["fast.libs/libhelper-1.so"]
+    assert lib.kind is FileKind.NATIVE_LIB and lib.blob.sha256 is not None
+    assert files["fast/data.so.txt"].kind is FileKind.RESOURCE
+
+
+def test_unresolved_native_dependency_fails_the_build(site: Path) -> None:
+    _native_site(site, ext_needs=("libssl.so.3",))
+    index = SiteIndex.scan(site)
+
+    with pytest.raises(ClassifyError, match=r"libssl\.so\.3"):
+        classify([index.dists["fast"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    content = classify([index.dists["fast"]], extension_suffixes=SUFFIXES, include_source=True,
+                       allowed_system_libs=frozenset({"libssl.so.3"}))  # fmt: skip
+    assert any(m.name == "fast._speed" for m in content.modules)
 
 
 def _decompress(blob: object) -> bytes:
@@ -246,10 +284,75 @@ def test_so_detection_matches_shared_objects_only(site: Path) -> None:
                                  "notes.libs/libz.so.1.2.13": b"\x7fELF"})  # fmt: skip
     index = SiteIndex.scan(site)
 
-    with pytest.raises(ClassifyError) as raised:
-        classify([index.dists["notes"]], extension_suffixes=(".so",), include_source=True)
+    content = classify([index.dists["notes"]], extension_suffixes=(".so",), include_source=True)
 
-    assert "libz.so.1.2.13" in str(raised.value) and "readme.so.txt" not in str(raised.value)
+    kinds = {f.path: f.kind for f in content.files}
+    assert kinds["notes.libs/libz.so.1.2.13"] is FileKind.NATIVE_LIB
+    assert kinds["notes/readme.so.txt"] is FileKind.RESOURCE
+
+
+def test_extension_wins_over_same_named_source_module(site: Path) -> None:
+    _dist(site, "dual", "1.0", {"dual/__init__.py": b"", "dual/_impl.py": b"PURE = True\n",
+                                "dual/_impl.abi3.so": make_elf(),
+                                f"dual/_impl{SUFFIXES[0]}": make_elf()})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["dual"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    impl = next(m for m in content.modules if m.name == "dual._impl")
+    assert impl.kind is ModuleKind.EXTENSION  # CPython's FileFinder order, first suffix first
+    assert impl.file == "dual/_impl.cpython-314-x86_64-linux-gnu.so"
+    kinds = {f.path: f.kind for f in content.files}
+    assert kinds["dual/_impl.abi3.so"] is FileKind.NATIVE_LIB  # shadowed, never imported
+    assert kinds["dual/_impl.py"] is FileKind.RESOURCE
+
+
+def test_package_directory_wins_over_same_named_extension(site: Path) -> None:
+    _dist(site, "both", "1.0", {"both/__init__.py": b"", f"both{SUFFIXES[0]}": make_elf(),
+                                "both/libbar-2.so": make_elf()})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["both"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    assert {m.name: m.kind for m in content.modules} == {"both": ModuleKind.PACKAGE}
+    kinds = {f.path: f.kind for f in content.files}
+    assert kinds[f"both{SUFFIXES[0]}"] is FileKind.NATIVE_LIB  # shadowed by the package
+    assert kinds["both/libbar-2.so"] is FileKind.NATIVE_LIB  # not an importable name
+
+
+def test_native_files_too_large_to_load_fail_the_build(
+    site: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _native_site(site)
+    monkeypatch.setattr("fsbpyr.classify.MAX_MEMORY_BLOB", 100)
+    index = SiteIndex.scan(site)
+
+    with pytest.raises(ClassifyError, match="too large"):
+        classify([index.dists["fast"]], extension_suffixes=SUFFIXES, include_source=True)
+
+
+def test_compiled_package_init_is_an_extension_package(site: Path) -> None:
+    _dist(site, "cy", "1.0", {f"cy/__init__{SUFFIXES[0]}": make_elf(), "cy/__init__.py": b"",
+                              "cy/helpers.py": b"X = 1\n"})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["cy"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    modules = {m.name: m for m in content.modules}
+    assert modules["cy"].kind is ModuleKind.EXTENSION  # beats __init__.py, as in FileFinder
+    assert modules["cy"].file == f"cy/__init__{SUFFIXES[0]}"
+    assert modules["cy.helpers"].kind is ModuleKind.MODULE
+
+
+def test_non_elf_shared_object_is_kept_as_data(site: Path) -> None:
+    _dist(site, "odd", "1.0", {"odd/__init__.py": b"", "odd/_stub.so": b"INPUT(-lfoo)\n"})
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["odd"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    assert {f.path: f.kind for f in content.files}["odd/_stub.so"] is FileKind.RESOURCE
+    assert all(m.name != "odd._stub" for m in content.modules)
+    assert any("not an ELF" in w for w in content.warnings)
 
 
 def test_package_wins_over_same_named_module_from_another_dist(site: Path) -> None:

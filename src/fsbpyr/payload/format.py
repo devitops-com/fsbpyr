@@ -90,6 +90,10 @@ class FileKind(IntEnum):
     METADATA = 5
 
 
+MAX_MEMORY_BLOB = 1 << 30  # largest blob _fsbpyr.read() returns (launcher/module.c)
+NATIVE_KINDS = frozenset({FileKind.NATIVE_EXT, FileKind.NATIVE_LIB})  # extracted to disk, digested
+
+
 class FileFlag(IntFlag):
     FS_REQUIRED = 1
 
@@ -117,8 +121,14 @@ def check_path(path: str) -> None:
     encode_text(path)
 
 
+def is_module_part(part: str) -> bool:
+    """An identifier, or a file stem with hyphens that only ``importlib.import_module`` reaches
+    (sysconfig's ``_sysconfigdata__linux_x86_64-linux-gnu``)."""
+    return part.replace("-", "_").isidentifier()
+
+
 def check_module_name(name: str) -> None:
-    if not name or not all(part.isidentifier() for part in name.split(".")):
+    if not name or not all(is_module_part(part) for part in name.split(".")):
         raise PayloadError(f"invalid module name {name!r}")
 
 
