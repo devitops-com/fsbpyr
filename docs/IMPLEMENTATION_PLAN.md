@@ -786,9 +786,13 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
   - `fsbpyr build` reports the requirement (`glibc >= 2.25`), stores it in the build info,
     and reads it from DT_VERNEED of the stub and every bundled native file
   - `hello`, `heavy` and `compat` (every check except the two HTTP clients, which need the
-    test's local server) run in Debian 12, Ubuntu 22.04, Rocky 8 and Rocky 9 containers; the
-    reported requirement equals `llvm-objdump`'s highest GLIBC version over the stub and the
-    natives, and is at most 2.28 (`tests/e2e/test_portability.py`)
+    test's local server) run in 13 distributions, glibc 2.28 to 2.44: Debian 10, 11, 12 and
+    13, Ubuntu 20.04, 22.04 and 24.04, Rocky 8 and 9, Amazon Linux 2023, openSUSE Leap 15.6,
+    Fedora and Arch. The reported requirement equals `llvm-objdump`'s highest GLIBC version
+    over the stub and the natives, and is at most 2.28 (`tests/e2e/test_portability.py`)
+  - without uv (pip path, `heavy` from a hash-pinned requirements.txt) pip chose
+    cryptography's manylinux_2_34 wheel: the build reported `glibc >= 2.34` with a warning, and
+    on Debian 10 and Rocky 8 everything but `heavy crypto` worked (`GLIBC_2.30 not found`)
   - startup: `hello` 1.11x bare `python3.14 -I -S`, inside the 1.15x budget
   - clang-22 takes `crt*.o` and `libgcc` from the sysroot's GCC 8 (checked with `-###`)
   - reviews (code and security; no CRITICAL or HIGH findings) led to: symbol-version parsing

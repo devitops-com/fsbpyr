@@ -24,7 +24,21 @@ OBJDUMP = shutil.which("llvm-objdump-22") or shutil.which("llvm-objdump")
 pytestmark = [pytest.mark.slow, pytest.mark.skipif(PODMAN is None, reason="needs podman")]
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "projects"
-IMAGES = ("debian:12", "ubuntu:22.04", "rockylinux:8", "rockylinux:9")
+IMAGES = (  # glibc 2.28 (the baseline) up to the newest releases
+    "docker.io/library/debian:10",  # 2.28
+    "docker.io/library/rockylinux:8",  # 2.28
+    "docker.io/library/debian:11",  # 2.31
+    "docker.io/library/ubuntu:20.04",  # 2.31
+    "docker.io/library/rockylinux:9",  # 2.34
+    "docker.io/library/amazonlinux:2023",  # 2.34
+    "docker.io/library/ubuntu:22.04",  # 2.35
+    "docker.io/library/debian:12",  # 2.36
+    "docker.io/opensuse/leap:15.6",  # 2.38
+    "docker.io/library/ubuntu:24.04",  # 2.39
+    "docker.io/library/debian:13",  # 2.41
+    "docker.io/library/fedora:latest",  # 2.43
+    "docker.io/library/archlinux:latest",  # 2.44
+)
 COMMANDS = {  # (binary, arguments) -> expected stdout; the HTTP checks need the host's network
     ("hello", "5 x"): "hello ['5', 'x']",
     **{("heavy", check): out for check, out in HEAVY.items()},
@@ -56,7 +70,7 @@ def test_apps_run_on_older_distributions(apps: Path, image: str) -> None:
     )
     result = subprocess.run(
         [PODMAN or "podman", "run", "--rm", "-v", f"{apps}:/apps:ro,Z",
-         f"docker.io/library/{image}", "sh", "-c", script],
+         image, "sh", "-c", script],
         capture_output=True, text=True, timeout=900, check=False,
     )  # fmt: skip
 
