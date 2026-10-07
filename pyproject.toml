@@ -1,6 +1,6 @@
 [project]
 name = "fsbpyr"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Fast single-binary Python CLI runtime and packager"
 authors = [{ name = "Kresimir Sparavec", email = "ksparavec@devitops.com" }]
 license = "MIT"
@@ -53,6 +53,7 @@ ignore = ["PLR2004"]
 "src/fsbpyr/boot/**" = ["S302"]  # unmarshals code from its own payload
 "src/fsbpyr/runtime/**" = ["S603"]  # runs the pinned interpreter and the located toolchain
 "src/fsbpyr/staging.py" = ["S603"]  # runs uv with argument lists, never a shell
+"src/fsbpyr/vcs.py" = ["S603"]  # runs git (found on PATH) with argument lists
 
 [tool.mypy]
 strict = true

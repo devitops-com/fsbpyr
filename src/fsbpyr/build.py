@@ -18,6 +18,7 @@ from .project import LockSource, Project
 from .runtime import pins
 from .runtime.registry import Runtime, select_runtime
 from .staging import StagingOptions, find_uv, run_plan, staging_plan
+from .vcs import git_state
 
 TARGET_PYTHON = "3.14"
 _SMOKE_TIMEOUT = 120
@@ -148,6 +149,7 @@ def build(
             ("lock", source.value),
             ("dists", sorted(f"{d.name}=={d.version}" for d in content.dists)),
             ("glibc", glibc),
+            ("git", git_state(project.directory, warn=warnings.append)),
         ),
     )
     _check_entry_module(entrypoint, app, runtime)

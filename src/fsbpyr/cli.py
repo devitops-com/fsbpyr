@@ -4,17 +4,29 @@ import argparse
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-
-from . import __version__
+from typing import Any
 
 DEFAULT_PYTHON = "3.14"
+
+
+class _Version(argparse.Action):
+    """--version: computed only when asked, since a source checkout runs git for it."""
+
+    def __init__(self, option_strings: Sequence[str], dest: str, **_: Any) -> None:
+        super().__init__(option_strings, dest, nargs=0, help="show the version and exit")
+
+    def __call__(self, parser: argparse.ArgumentParser, *_: Any) -> None:
+        from .vcs import own_version  # noqa: PLC0415  keep the other commands free of git
+
+        print(own_version())
+        parser.exit()
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fsbpyr", description="Package Python CLI projects as fast single-file executables."
     )
-    parser.add_argument("--version", action="version", version=f"fsbpyr {__version__}")
+    parser.add_argument("--version", action=_Version)
     commands = parser.add_subparsers(dest="command")
     _add_build(commands)
     runtime = commands.add_parser("runtime", help="manage runtimes (native stub + stdlib)")

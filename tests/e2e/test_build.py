@@ -15,12 +15,14 @@ import pytest
 from fsbpyr.cli import main
 from fsbpyr.payload.reader import Executable
 from fsbpyr.runtime.registry import Runtime
+from fsbpyr.vcs import git_state, version_string
 
 pytestmark = pytest.mark.slow
 
 ROOT = Path(__file__).parents[2]
 FIXTURES = ROOT / "tests" / "fixtures" / "projects"
 UV = shutil.which("uv")
+GIT = shutil.which("git")
 
 
 @pytest.fixture(autouse=True)
@@ -138,9 +140,15 @@ def test_developer_venv_is_never_touched(tmp_path: Path) -> None:
 
 
 def test_self_hosting_reaches_a_fixed_point(tmp_path: Path) -> None:
-    """stage1 (venv) -> stage2 -> stage3 with only uv on PATH and an empty cache."""
+    """stage1 (venv) -> stage2 -> stage3 with only uv (and git, whose commit the build records
+    for --version) on PATH and an empty cache."""
     assert UV is not None
-    env = {**os.environ, "PATH": str(Path(UV).parent), "FSBPYR_CACHE_DIR": str(tmp_path / "c")}
+    if GIT is None:
+        pytest.skip("needs git: the build records the commit for --version")
+    (tmp_path / "git").mkdir()
+    (tmp_path / "git" / "git").symlink_to(GIT)
+    path = os.pathsep.join([str(Path(UV).parent), str(tmp_path / "git")])
+    env = {**os.environ, "PATH": path, "FSBPYR_CACHE_DIR": str(tmp_path / "c")}
     venv_before = _tree(ROOT / ".venv")
     stages = [tmp_path / f"stage{n}" for n in (1, 2, 3)]
 
@@ -158,6 +166,8 @@ def test_self_hosting_reaches_a_fixed_point(tmp_path: Path) -> None:
     data = [stage.read_bytes() for stage in stages]
     assert data[1] == data[2], "stage2 and stage3 differ"
     assert data[0] == data[1], "stage1 and stage2 differ"
+    version = _run(stages[2], "--version")  # recorded by the build: the binary has no git
+    assert version.stdout == version_string(git_state(ROOT)) + "\n"
     assert not (tmp_path / "c" / "runtimes").exists()  # the binary used its own runtime
     assert _tree(ROOT / ".venv") == venv_before
 
