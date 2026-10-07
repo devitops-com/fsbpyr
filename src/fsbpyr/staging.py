@@ -5,10 +5,12 @@ every build picks wheels for the runtime's glibc baseline. The project itself is
 into a wheel *out of tree*: uv builds an sdist and then a wheel from it, so stale in-tree build
 directories (setuptools ``build/``) or cached builds can never leak into the executable, and
 the developer's tree is never written to. Dependencies are installed from the lock into a
-private location (a uv project environment, or a ``--target`` directory), then the fresh wheel
-is installed without dependencies. The developer's virtual environment is never read or
-modified. Every command runs in the project directory, so relative paths in requirements files
-resolve as the user expects.
+throwaway virtual environment (a uv project environment, or one made by ``uv venv``), then the
+fresh wheel is installed without dependencies. In a venv, the console scripts the installer
+writes (whose ``#!`` names whichever interpreter uv picked) stay outside site-packages, so the
+executable does not depend on the build host's Pythons. The developer's virtual environment is
+never read or modified. Every command runs in the project directory, so relative paths in
+requirements files resolve as the user expects.
 """
 
 import os
@@ -124,21 +126,24 @@ def staging_plan(
     if source is LockSource.UV_LOCK:
         return _uv_sync_plan(project, uv, work, options)
     stage = work / "stage"
+    site = stage / "lib" / f"python{options.python}" / "site-packages"
     build = _uv_build(uv, work, project, options)
-    base = [str(uv), "pip", "install", "--target", str(stage)]
-    base += ["--python", options.python, *_platform(options)]
-    base += ["--offline"] * options.offline + ["--quiet"]
+    offline = ["--offline"] * options.offline
+    venv = [str(uv), "venv", "--python", options.python, *offline, "--quiet", str(stage)]
+    base = [str(uv), "pip", "install", "--python", str(stage / "bin" / "python")]
+    base += [*_platform(options), *offline, "--quiet"]
     wheel_dir = work / "wheel"
+    env = {"UV_VENV_SEED": "0"}  # a seeded venv would ship pip, depending on the environment
     if source is LockSource.UNLOCKED:
         extras = f"[{','.join(options.extras)}]" if options.extras else ""
-        return StagingPlan(stage, build, [[*base, WHEEL + extras]], wheel_dir)
+        return StagingPlan(site, build, [venv, [*base, WHEEL + extras]], wheel_dir, env)
     if source is LockSource.PYLOCK:
         lock, hashes = project.directory / LockSource.PYLOCK.value, []
     else:
         lock = project.requirements_path(options.requirements)
         hashes = ["--require-hashes"] if "--hash=" in lock.read_text() else []
-    install = [[*base, *hashes, "-r", str(lock)], [*base, "--no-deps", WHEEL]]
-    return StagingPlan(stage, build, install, wheel_dir)
+    install = [venv, [*base, *hashes, "-r", str(lock)], [*base, "--no-deps", WHEEL]]
+    return StagingPlan(site, build, install, wheel_dir, env)
 
 
 def _run(command: list[str], cwd: Path, env: dict[str, str]) -> None:

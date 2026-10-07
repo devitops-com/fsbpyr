@@ -92,7 +92,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D2 | **CPython is statically linked into the launcher** from PBS `pgo+lto-full` (clang/lld ≥ 22, `--target=x86_64-unknown-linux-gnu`, `-flto=full`; only `Py*`/`_Py*` are exported (`--export-dynamic-symbol`, Phase 5) so manylinux wheels resolve the C API from the executable but never bind to the stub's static zlib, OpenSSL or libffi). Link inputs: libpython.a, the HACL objects of modules registered in `config.c`, and the static libraries listed in `PYTHON.json` (S1) | Runtime is directly loadable (manifest Fig. 1). PGO+LTO speed. PBS already handles the static dependencies and the glibc 2.17 baseline | Shared libpython extracted to the cache (extracts the runtime on first run). memfd + dlopen (copies MBs on every start). Building CPython and its dependencies ourselves (large effort) |
 | D3 | A **runtime** is: the *stub* (launcher + static CPython, an ELF) + a precompiled *stdlib payload fragment* + `runtime.json`. It is built once per (Python minor, platform, launcher version) and cached | App builds become concatenation: no compiler and no network needed | Compile per app |
 | D4 | **Every fsbpyr binary carries its own runtime.** When `fsbpyr build` targets the same Python minor, it reuses its own stub bytes and the already-compressed stdlib frames from its own executable (`Runtime.from_self()`) | Makes R2/R3 work without a toolchain. Fast builds | — |
-| D5 | **Inputs come from a fresh staging install driven by the project's lock** (§3.6). uv projects: `uv sync --frozen --no-dev --no-editable` into a throwaway staging venv. pip projects (installed by uv, D26): `--target` install from `pylock.toml`, then a pinned requirements file, then `[project.dependencies]` (unlocked, with a warning), plus the project itself installed `--no-deps`. The developer's venv is never read or modified | Reproducible from the lock. No dev dependencies. The project is installed non-editable, so its package data is correct. uv does all resolving and building (D26) | Reading the developer's venv (not reproducible, editable installs, dev deps). Our own resolver |
+| D5 | **Inputs come from a fresh staging install driven by the project's lock** (§3.6). uv projects: `uv sync --frozen --no-dev --no-editable` into a throwaway staging venv. pip projects (installed by uv, D26): `uv venv` plus `uv pip install` into a throwaway venv from `pylock.toml`, then a pinned requirements file, then `[project.dependencies]` (unlocked, with a warning), plus the project itself installed `--no-deps`. The developer's venv is never read or modified | Reproducible from the lock. No dev dependencies. The project is installed non-editable, so its package data is correct. uv does all resolving and building (D26) | Reading the developer's venv (not reproducible, editable installs, dev deps). Our own resolver |
 | D6 | Imports hook in through **`sys.path_hooks` + one virtual `sys.path` entry** (as zipimport does), plus a `sys.meta_path` `DistributionFinder` for `importlib.metadata` | `pkgutil.iter_modules`, `importlib.util.find_spec` and PEP 420 namespace packages work through the stock PathFinder | Pure meta-path finder |
 | D7 | **Index lookups happen in C** (built-in module `_fsbpyr`, binary search over sorted tables mapped with mmap). The index is never turned into Python dicts | Startup must not scale with the number of packaged files (M2) | Python dict built at boot (O(N) on every start) |
 | D8 | **Startup-critical modules** (`encodings*`, `linecache`, the boot module) are listed in the STARTUP section. The launcher decompresses them once (checksum-verified zstd frames, one shared context, about 0.08 ms) and hands them to CPython through a `PyImport_FrozenModules` table built at run time | No filesystem access during init. No launcher rebuild when boot code changes. `marshal` never sees corrupt bytes: the Phase 2 review showed raw startup blobs crashed CPython on bit flips | Raw blobs referenced straight from the mmap (zero-copy but unverified). Freezing into the C source |
@@ -286,13 +286,20 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
    | Lock source | Command |
    |-------------|---------|
    | `uv.lock` | `UV_PROJECT_ENVIRONMENT=<staging> uv sync --frozen --no-dev --no-editable --python 3.14 [--extra X…]`. Honours `[tool.uv.sources]`, indexes and workspaces. The project is installed non-editable |
-   | `pylock.toml` (PEP 751) | `uv pip install --target <staging> --python 3.14 -r pylock.toml`, then the project with `--no-deps` |
-   | pinned requirements (`--requirements FILE`, default `requirements.txt`) | `uv pip install --target <staging> -r FILE` (`--require-hashes` when hashes are present), then the project with `--no-deps` |
+   | `pylock.toml` (PEP 751) | `uv venv <staging> --python 3.14`, `uv pip install --python <staging>/bin/python -r pylock.toml`, then the project with `--no-deps` |
+   | pinned requirements (`--requirements FILE`, default `requirements.txt`) | the same venv, `uv pip install ... -r FILE` (`--require-hashes` when hashes are present), then the project with `--no-deps` |
    | none | install the project with dependencies resolved fresh from `[project.dependencies]`. Prints the warning **"unlocked build — not reproducible"** |
 
    The installer is always uv (D26): without uv on PATH the build stops with installation
    instructions. Every install passes `--python-platform` for the runtime's glibc baseline
-   (`x86_64-manylinux_2_28`, Phase 6c). `--offline` is passed through.
+   (`x86_64-manylinux_2_28`, Phase 6c). `--offline` is passed through. Every source installs
+   into a venv, never `--target`: the console scripts an installer writes carry a `#!` naming
+   whichever Python uv picked (an active venv, the project's `.venv`), and in a venv they stay
+   outside site-packages, so they never reach the executable; `UV_VENV_SEED=0` keeps a user
+   setting from seeding pip into it. Files a wheel installs outside site-packages (`.data/data`,
+   `.data/headers`) are skipped, as for uv.lock builds. The same fsbpyr binary builds
+   byte-identical executables whichever Python uv picks (an active venv, the project's `.venv`;
+   verified with aiagent, 2026-10-07).
 4. **Entry point.** Read `[console_scripts]` from the project's installed `entry_points.txt`.
    If there is one, use it. If there are several, `--entry` or config is required. `module`
    and `module:func` are also accepted.
@@ -363,7 +370,7 @@ src/fsbpyr/
   cli.py                    argparse: build | inspect | runtime
   config.py                 [tool.fsbpyr] + CLI merge (tomllib)
   project.py                project discovery, pyproject/requires-python, lock-source selection
-  staging.py                fresh install into staging (uv sync / uv pip install --target)
+  staging.py                fresh install into staging (uv sync / uv venv + uv pip install)
   closure.py                staging dist index, Requires-Dist consistency walk, markers (packaging)
   classify.py               RECORD → typed entries
   compile.py                bytecode compile (in-process / compile helper)

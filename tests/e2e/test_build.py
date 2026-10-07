@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.cli import main
+from fsbpyr.payload.reader import Executable
 from fsbpyr.runtime.registry import Runtime
 
 pytestmark = pytest.mark.slow
@@ -77,6 +78,28 @@ def test_clicky_from_each_lock_source(
     assert result.stdout.splitlines()[1].startswith("click 8.")
     unlocked_warning = "unlocked build" in capsys.readouterr().err
     assert unlocked_warning is (lock == "unlocked")
+
+
+@pytest.mark.parametrize(
+    "drop",
+    [(), ("uv.lock",), ("uv.lock", "pylock.toml"), ("uv.lock", "pylock.toml", "requirements.txt")],
+)
+def test_builds_do_not_depend_on_the_build_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, drop: tuple[str, ...]
+) -> None:
+    project = _fixture("clicky", tmp_path, drop=drop)
+    first, second = tmp_path / "first", tmp_path / "second"
+    assert main(["build", str(project), "-o", str(first), "--no-smoke"]) == 0
+    other = tmp_path / "other-venv"  # uv prefers an active virtual environment's interpreter
+    subprocess.run([UV or "uv", "venv", "--quiet", "--python", "3.14", str(other)], check=True)
+    monkeypatch.setenv("VIRTUAL_ENV", str(other))
+    monkeypatch.setenv("UV_VENV_SEED", "1")  # would add pip to a venv uv creates
+
+    assert main(["build", str(project), "-o", str(second), "--no-smoke"]) == 0
+
+    assert first.read_bytes() == second.read_bytes()
+    with Executable.open(first) as executable:  # installer-made scripts name a host Python
+        assert not [f.path for f in executable.payload.files() if f.path.startswith("bin/")]
 
 
 def test_builds_without_uv_explain_how_to_install_it(

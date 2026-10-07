@@ -185,7 +185,8 @@ UV_BUILD = [
     "--quiet",
     "{project}",
 ]
-UV_TARGET = ["/u/uv", "pip", "install", "--target", "{work}/stage", "--python", "3.14", "--quiet"]
+UV_VENV = ["/u/uv", "venv", "--python", "3.14", "--quiet", "{work}/stage"]
+UV_STAGE = ["/u/uv", "pip", "install", "--python", "{work}/stage/bin/python", "--quiet"]
 
 
 def _expand(commands: list[list[str]], work: Path, project: Path) -> list[list[str]]:
@@ -216,22 +217,27 @@ def test_uv_lock_syncs_dependencies_then_installs_the_fresh_wheel(tmp_path: Path
 @pytest.mark.parametrize(
     ("source", "install"),
     [
-        (LockSource.PYLOCK, [[*UV_TARGET, "-r", "{project}/pylock.toml"],
-                             [*UV_TARGET, "--no-deps", "{wheel}"]]),
-        (LockSource.REQUIREMENTS, [[*UV_TARGET, "--require-hashes", "-r",
-                                    "{project}/requirements.txt"],
-                                   [*UV_TARGET, "--no-deps", "{wheel}"]]),
-        (LockSource.UNLOCKED, [[*UV_TARGET, "{wheel}"]]),
+        (LockSource.PYLOCK, [UV_VENV, [*UV_STAGE, "-r", "{project}/pylock.toml"],
+                             [*UV_STAGE, "--no-deps", "{wheel}"]]),
+        (LockSource.REQUIREMENTS, [UV_VENV, [*UV_STAGE, "--require-hashes", "-r",
+                                             "{project}/requirements.txt"],
+                                   [*UV_STAGE, "--no-deps", "{wheel}"]]),
+        (LockSource.UNLOCKED, [UV_VENV, [*UV_STAGE, "{wheel}"]]),
     ],
 )  # fmt: skip
-def test_target_installs(tmp_path: Path, source: LockSource, install: list[list[str]]) -> None:
+def test_pip_projects_install_into_a_fresh_venv(
+    tmp_path: Path, source: LockSource, install: list[list[str]]
+) -> None:
+    """A venv keeps installer-made scripts (which name the interpreter uv picked) outside
+    site-packages, so they never reach the executable."""
     files = {"requirements.txt": "click==8.1.8 --hash=sha256:abc\n", "pylock.toml": ""}
     project = Project.load(_project(tmp_path, PYPROJECT, **files))
     work = tmp_path / "work"
 
     plan = staging_plan(project, source, UV, work, StagingOptions("3.14"))
 
-    assert plan.site == work / "stage" and plan.env == {}
+    assert plan.site == work / "stage" / "lib" / "python3.14" / "site-packages"
+    assert plan.env == {"UV_VENV_SEED": "0"}  # the user's environment must not add pip
     assert plan.build == _expand([UV_BUILD], work, tmp_path)[0]
     assert plan.install == _expand(install, work, tmp_path)
 
@@ -240,9 +246,9 @@ def test_target_installs(tmp_path: Path, source: LockSource, install: list[list[
     ("source", "flagged"),
     [
         (LockSource.UV_LOCK, [True, True]),  # uv accepts the project's own linux wheel
-        (LockSource.PYLOCK, [True, True]),
-        (LockSource.REQUIREMENTS, [True, True]),
-        (LockSource.UNLOCKED, [True]),
+        (LockSource.PYLOCK, [False, True, True]),  # creating the venv selects no wheels
+        (LockSource.REQUIREMENTS, [False, True, True]),
+        (LockSource.UNLOCKED, [False, True]),
     ],
 )
 def test_dependency_wheels_are_chosen_for_the_glibc_baseline(
@@ -268,8 +274,8 @@ def test_unlocked_install_keeps_extras_and_offline(tmp_path: Path) -> None:
     options = StagingOptions("3.14", ("a", "b"), offline=True)
     plan = staging_plan(project, LockSource.UNLOCKED, UV, tmp_path / "w", options)
 
-    assert plan.install[0][-1] == "{wheel}[a,b]"
-    assert "--offline" in plan.build and "--offline" in plan.install[0]
+    assert plan.install[-1][-1] == "{wheel}[a,b]"
+    assert all("--offline" in command for command in [plan.build, *plan.install])
 
 
 def test_requirements_without_hashes_do_not_require_them(tmp_path: Path) -> None:
@@ -279,7 +285,7 @@ def test_requirements_without_hashes_do_not_require_them(tmp_path: Path) -> None
         project, LockSource.REQUIREMENTS, UV, tmp_path / "w", StagingOptions("3.14")
     )
 
-    assert "--require-hashes" not in plan.install[0]
+    assert "--require-hashes" not in plan.install[1]
 
 
 def test_builds_need_uv_and_say_how_to_get_it(monkeypatch: pytest.MonkeyPatch) -> None:
