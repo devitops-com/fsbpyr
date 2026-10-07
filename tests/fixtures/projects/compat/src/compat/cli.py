@@ -31,6 +31,7 @@ def _typer(_: str | None) -> str:
 def _rich(_: str | None) -> str:
     import io
 
+    from rich.cells import cell_len
     from rich.console import Console
     from rich.table import Table
 
@@ -38,7 +39,8 @@ def _rich(_: str | None) -> str:
     table.add_row("a", "1")
     console = Console(file=io.StringIO(), width=30, color_system=None)
     console.print(table)
-    return f"rich {'│ a   │ 1     │' in console.file.getvalue()}"
+    wide = cell_len("日本") == 4  # loads a width table module named unicode17-0-0
+    return f"rich {'│ a   │ 1     │' in console.file.getvalue() and wide}"
 
 
 def _requests(url: str | None) -> str:

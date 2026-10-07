@@ -304,7 +304,9 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
    `__pycache__/` and `*.pyc`. Files not listed in any RECORD (venv scaffolding such as
    `_virtualenv.py`) are not packaged. Every directory with an identifier name and no
    `__init__.py` gets a NAMESPACE record, matching CPython's implicit namespace packages, so
-   that `importlib.resources.files("pkg.data")` works for data directories.
+   that `importlib.resources.files("pkg.data")` works for data directories. A module file's
+   stem may contain hyphens (`rich/_unicode_data/unicode17-0-0.py`), since
+   `importlib.import_module` reaches it; package directories must be identifiers.
 7. **Compile** in-process when the runtime is self; otherwise use the runtime's compile helper
    (Phase 9). Every result is canonicalized (D16). A `SyntaxError` keeps the file as a resource
    and prints a warning.

@@ -69,7 +69,7 @@ def site(tmp_path: Path) -> Path:
             "hello_app/data/greeting.txt": b"hi",
             "hello_app/__pycache__/cli.cpython-314.pyc": b"stale",
             "hello_app/broken.py": b"def (:\n",
-            "hello_app/not-a-module.py": b"x = 1\n",
+            "hello_app/not.a.module.py": b"x = 1\n",
         },
         requires=("click>=8", "colorama; sys_platform == 'win32'", "rich; extra == 'fancy'"),
         entry_points="[console_scripts]\nhello = hello_app.cli:main\n",
@@ -151,7 +151,7 @@ def test_classify_builds_modules_files_and_namespaces(site: Path) -> None:
     assert files["hello_app/data/greeting.txt"].kind is FileKind.RESOURCE
     assert files["hello_app/cli.py"].kind is FileKind.SOURCE
     assert files["hello_app/broken.py"].kind is FileKind.RESOURCE  # SyntaxError: kept as data
-    assert files["hello_app/not-a-module.py"].kind is FileKind.RESOURCE
+    assert files["hello_app/not.a.module.py"].kind is FileKind.RESOURCE
     assert not any("__pycache__" in p or p.startswith("..") for p in files)
     assert [w for w in content.warnings if "broken.py" in w]
 
@@ -277,6 +277,22 @@ def test_broken_package_init_does_not_become_a_namespace(site: Path) -> None:
     names = {m.name for m in content.modules}
     assert "oldpkg" not in names and "oldpkg.sub" not in names  # CPython cannot import it either
     assert any("oldpkg/__init__.py" in w for w in content.warnings)
+
+
+def test_hyphenated_module_files_are_modules(site: Path) -> None:
+    _dist(site, "tables", "1.0", {"tables/__init__.py": b"", "tables/unicode17-0-0.py": b"W = 1\n",
+                                  "tables/a-b.py": b"", "tables/a_b.py": b"",
+                                  "tables/my-dir/__init__.py": b"",
+                                  "tables/my-dir/x.py": b"y = 2\n"})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["tables"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    names = {m.name for m in content.modules}
+    assert "tables.unicode17-0-0" in names  # import_module() reaches it (rich's width tables)
+    assert {"tables.a-b", "tables.a_b"} <= names  # distinct modules, as in CPython
+    assert not any("my-dir" in name for name in names)  # hyphenated directories stay data
+    assert {f.path: f.kind for f in content.files}["tables/my-dir/x.py"] is FileKind.RESOURCE
 
 
 def test_so_detection_matches_shared_objects_only(site: Path) -> None:

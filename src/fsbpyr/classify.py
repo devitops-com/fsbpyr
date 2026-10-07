@@ -22,6 +22,7 @@ from .payload.format import (
     FileKind,
     ModuleFlag,
     ModuleKind,
+    is_module_part,
 )
 from .payload.spec import Blob, Dist, File, Module
 from .scan import file_relative_reads
@@ -63,12 +64,16 @@ class Content:
 
 
 def module_name(rel: str) -> tuple[str, bool] | None:
-    """Dotted name and is-package flag of a site-relative .py path, if importable."""
+    """Dotted name and is-package flag of a site-relative .py path, if importable. A module
+    file's stem may contain hyphens: ``importlib.import_module`` reaches it (rich's tables).
+    Like any module, such a file is kept as bytecode only under ``--no-source``."""
     parts = list(PurePosixPath(rel).with_suffix("").parts)
     is_package = parts[-1] == "__init__"
     if is_package:
         parts.pop()
-    if not parts or not all(part.isidentifier() for part in parts):
+    if not parts or not all(part.isidentifier() for part in parts[:-1]):
+        return None
+    if not (parts[-1].isidentifier() or (not is_package and is_module_part(parts[-1]))):
         return None
     return ".".join(parts), is_package
 
