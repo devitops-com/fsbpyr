@@ -165,7 +165,9 @@ def test_resources_traversal(boot: ModuleType) -> None:
         assert handle.read() == b'{"k": 1}'
     with table.open(encoding="utf-8") as text:
         assert isinstance(text, io.TextIOBase) and text.read() == '{"k": 1}'
-    assert str(table) == os.fspath(cast(Any, table)) == boot.ROOT + "/pkg/data/table.json"
+    on_disk = os.fspath(cast(Any, table))  # extracted, so open() and os functions work
+    assert str(table) == on_disk and on_disk.endswith("/site/pkg/data/table.json")
+    assert Path(on_disk).read_bytes() == b'{"k": 1}'
     assert table == files / "data" / "table.json" and hash(table) == hash(data / "table.json")
     assert table != data
     loose = cast(Any, table)  # Traversable's typed modes are only "r" and "rb"
@@ -228,8 +230,9 @@ def test_distribution_lookup(boot: ModuleType) -> None:
     assert [str(f) for f in files] == ["pkg/__init__.py", "pkg/cli.py", "pkg/data/table.json"]
     assert files[2].read_text() == '{"k": 1}'
     assert demo.read_text("missing.txt") is None
-    assert os.fspath(demo.locate_file("pkg/cli.py")) == boot.ROOT + "/pkg/cli.py"
-    assert os.fspath(demo._path) == boot.ROOT + "/demo-1.0.dist-info"  # PathDistribution compat
+    assert Path(os.fspath(demo.locate_file("pkg/cli.py"))).is_file()
+    assert Path(os.fspath(demo._path), "METADATA").is_file()  # PathDistribution compat
+    assert os.fspath(demo.locate_file("")) == boot.ROOT  # never the whole payload
 
 
 def test_distribution_enumeration_respects_context(boot: ModuleType) -> None:

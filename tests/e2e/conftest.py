@@ -1,6 +1,6 @@
 """End-to-end fixtures: a real runtime (built once, cached) and an app builder."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -13,6 +13,15 @@ from fsbpyr.runtime import registry
 from fsbpyr.runtime.toolchain import ToolchainError
 
 type BuildApp = Callable[[dict[str, str], str], Path]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _private_cache(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Executables run here (smoke tests included) never write the user's cache; tests that
+    need a cache of their own still pass FSBPYR_CACHE_DIR explicitly."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("FSBPYR_CACHE_DIR", str(tmp_path_factory.mktemp("app-cache")))
+        yield
 
 
 @pytest.fixture(scope="session")

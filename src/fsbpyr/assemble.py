@@ -54,15 +54,28 @@ def boot_modules() -> tuple[Module, ...]:
     return tuple(modules)
 
 
+def _identity(file: File) -> bytes:
+    content = file.blob.sha256 or hashlib.sha256(file.blob.stored).digest()
+    mode = file.mode.to_bytes(2, "little")  # cached files keep their first mode
+    return file.path.encode() + b"\0" + content + mode
+
+
 def generation_id(runtime_tag: str, files: tuple[File, ...]) -> bytes:
     """Native cache generation: runtime ABI plus identity of every extractable artifact (D10)."""
     digest = hashlib.sha256(runtime_tag.encode() + b"\0")
     for file in sorted(files, key=lambda f: f.path.encode()):
         if extractable(file.kind, file.flags):
-            identity = file.blob.sha256 or hashlib.sha256(file.blob.stored).digest()
-            mode = file.mode.to_bytes(2, "little")  # cached files keep their first mode
-            digest.update(file.path.encode() + b"\0" + identity + mode)
+            digest.update(_identity(file))
     return digest.digest()
+
+
+def resources_id(files: tuple[File, ...]) -> str:
+    """Identity of every payload file: resources extracted on demand (D27) live in a tree of
+    this build's own, so no release ever sees another release's files."""
+    digest = hashlib.sha256()
+    for file in sorted(files, key=lambda f: f.path.encode()):
+        digest.update(_identity(file))
+    return digest.hexdigest()[:32]
 
 
 def _builtin_or_frozen() -> set[str]:
@@ -107,6 +120,7 @@ def build_executable(runtime: Runtime, app: App, out: Path) -> None:
         "python": runtime.python_version,
         "fsbpyr": __version__,
         "zstd": zstd.zstd_version,
+        "resources": resources_id(all_files),
         **dict(app.build_info),
     }
     spec = PayloadSpec(

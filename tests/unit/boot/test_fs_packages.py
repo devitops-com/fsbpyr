@@ -3,12 +3,14 @@
 import importlib
 import importlib.resources
 import inspect
+import json
 import os
 import stat
 import sys
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
+from typing import Any, cast
 
 import pytest
 
@@ -77,6 +79,13 @@ def site(boot: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> I
         del sys.modules[name]
 
 
+@pytest.fixture
+def resources(site: Path, boot: ModuleType) -> Path:
+    """Where resources asked for as paths are extracted: a tree of this build's own (D27)."""
+    key = str(json.loads(boot.INFO["build_info"])["resources"])
+    return site.parents[2] / "resources" / key / "site"
+
+
 def test_nothing_is_extracted_before_the_package_is_imported(site: Path) -> None:
     importlib.import_module("plain")
 
@@ -119,6 +128,72 @@ def test_resources_and_namespaces_are_real_directories(site: Path) -> None:
     assert (
         importlib.resources.files("tpl.data.deep").joinpath("b.txt") == site / "tpl/data/deep/b.txt"
     )
+
+
+def test_as_file_extracts_resources_that_outlive_the_with_block(
+    site: Path, resources: Path
+) -> None:
+    files = importlib.resources.files("plain")
+
+    with importlib.resources.as_file(files) as directory:
+        pass
+
+    assert directory == resources / "plain"  # not a temporary copy, gone after the block
+    assert (directory / "x.txt").read_bytes() == b"x"
+    assert stat.S_IMODE((directory / "x.txt").stat().st_mode) == 0o400
+    assert not (site / "plain").exists()  # never in the tree shared by releases (D10)
+    with importlib.resources.as_file(files / "x.txt") as path:
+        assert path == resources / "plain/x.txt"
+    with pytest.raises(FileNotFoundError), importlib.resources.as_file(files / "nope"):
+        pass
+    with pytest.raises(PermissionError), importlib.resources.as_file(files / ".."):
+        pass  # the payload root: everything, natives and stdlib included
+
+
+def test_resource_paths_given_to_os_functions_are_on_disk(
+    resources: Path, boot: ModuleType
+) -> None:
+    files = importlib.resources.files("plain")
+
+    with open(files / "x.txt") as handle:  # type: ignore[call-overload]  # os.fspath
+        assert handle.read() == "x"
+    assert str(files) == f"{resources}/plain" and os.path.isdir(str(files))
+    assert str(files / "nope") == boot.ROOT + "/plain/nope"  # nothing to extract
+    assert repr(files / "x.txt") == f"PayloadTraversable({boot.ROOT + '/plain/x.txt'!r})"
+
+
+def test_paths_are_extracted_once_per_process(
+    resources: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = cast(Any, importlib.resources.files("plain"))
+    native = sys.modules["_fsbpyr_rt.native"]
+    calls: list[tuple[int, ...]] = []
+    sync = native.NativeCache.sync
+
+    def counted(cache: object, indices: tuple[int, ...], **options: bool) -> list[str]:
+        calls.append(indices)
+        return list(sync(cache, indices, **options))
+
+    monkeypatch.setattr(native.NativeCache, "sync", counted)
+
+    paths = {str(files), str(files), os.fspath(files)}
+
+    assert paths == {f"{resources}/plain"} and len(calls) == 1
+
+
+def test_unusable_caches_fail_loudly_for_paths(
+    boot: ModuleType, site: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "file").write_text("")
+    monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path / "file" / "cache"))
+    files = importlib.resources.files("plain")
+
+    with pytest.raises(OSError, match="FSBPYR_CACHE_DIR"):
+        os.fspath(cast(Any, files / "x.txt"))
+    with pytest.raises(OSError, match="FSBPYR_CACHE_DIR"), importlib.resources.as_file(files):
+        pass
+    with pytest.warns(RuntimeWarning, match="FSBPYR_CACHE_DIR"):  # str() is used in messages too
+        assert str(files / "x.txt") == boot.ROOT + "/plain/x.txt"
 
 
 def test_extraction_happens_once(site: Path, boot: ModuleType) -> None:

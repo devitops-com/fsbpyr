@@ -9,7 +9,14 @@ from pathlib import Path
 import pytest
 
 from fsbpyr import bytecode
-from fsbpyr.assemble import BOOT_MODULE, App, AssemblyError, build_executable, generation_id
+from fsbpyr.assemble import (
+    BOOT_MODULE,
+    App,
+    AssemblyError,
+    build_executable,
+    generation_id,
+    resources_id,
+)
 from fsbpyr.payload.convert import spec_from_payload
 from fsbpyr.payload.format import Codec, FileKind, ModuleFlag, ModuleKind
 from fsbpyr.payload.reader import Executable, Payload
@@ -111,6 +118,9 @@ def test_build_executable_composes_runtime_boot_and_app(tmp_path: Path) -> None:
         assert [m.name for m in payload.startup_modules()] == [BOOT_MODULE, "encodings"]
         assert {"json", "hello"} <= {m.name for m in payload.modules()}
         assert payload.generation_id == generation_id("cp314-x86_64-linux-gnu", ())
+        assert json.loads(payload.build_info)["resources"] == resources_id(
+            tuple(spec_from_payload(payload).files)
+        )
         assert json.loads(payload.build_info)["runtime"] == "cp314-x86_64-linux-gnu-0123456789ab"
 
 
@@ -140,6 +150,18 @@ def test_generation_id_depends_on_runtime_and_extractable_files() -> None:
     assert generation_id("cp314-x", (executable,)) != generation_id("cp314-x", (lib,))
     assert generation_id("cp314-y", ()) != base
     assert len(base) == 32
+
+
+def test_resources_id_covers_every_file_unlike_the_generation() -> None:
+    res = File("a/r.txt", FileKind.RESOURCE, Blob.raw(b"r"))
+    changed = dataclasses.replace(res, blob=Blob.raw(b"R"))
+    lib = File("a.libs/l.so", FileKind.NATIVE_LIB, Blob.raw(b"l", digest=True))
+
+    assert resources_id((res,)) != resources_id((changed,))  # a new release, a new tree (D27)
+    assert generation_id("cp314-x", (res,)) == generation_id("cp314-x", (changed,))  # D10
+    assert resources_id((res, lib)) != resources_id((res,))
+    assert resources_id((dataclasses.replace(res, mode=0o755),)) != resources_id((res,))
+    assert len(resources_id(())) == 32 and int(resources_id(()), 16) >= 0
 
 
 def test_runtime_load_detects_corrupted_files(tmp_path: Path) -> None:

@@ -492,6 +492,19 @@ def test_certifi_is_fs_required_without_configuration(site: Path) -> None:
     assert all(m.flags == ModuleFlag(0) for m in without.modules)
 
 
+def test_litellm_is_fs_required_without_configuration(site: Path) -> None:
+    _dist(site, "litellm", "1.100.1", {"litellm/__init__.py": b"",
+                                       "litellm/containers/endpoints.json": b"{}"})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["litellm"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    litellm = next(m for m in content.modules if m.name == "litellm")
+    assert ModuleFlag.FS_REQUIRED_ROOT in litellm.flags  # opens files next to its modules
+    endpoints = next(f for f in content.files if f.path == "litellm/containers/endpoints.json")
+    assert FileFlag.FS_REQUIRED in endpoints.flags
+
+
 # --- .pth files ------------------------------------------------------------------------------
 
 

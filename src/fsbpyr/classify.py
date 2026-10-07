@@ -40,9 +40,10 @@ _TEST_DIRECTORIES = frozenset({"tests", "test"})
 _REDUNDANT_PTH = re.compile(r"(-nspkg|^distutils-precedence)\.pth$")
 _NATIVE_MODE = 0o755  # fixed: the installer's umask must not leak into the build
 # Packages that need their data files on disk, whatever the configuration says (plan §3.5).
-# Each one was verified to fail without (Phase 6b, fixture datafiles), except certifi, which
-# hands out the path of cacert.pem: otherwise a temporary copy made again in every process.
-BUILTIN_FS_PACKAGES = frozenset({"babel", "botocore", "certifi", "matplotlib"})
+# Each one was verified to fail without (Phase 6b, fixture datafiles; litellm with aiagent),
+# except certifi, which hands out the path of cacert.pem: otherwise a temporary copy made again
+# in every process.
+BUILTIN_FS_PACKAGES = frozenset({"babel", "botocore", "certifi", "litellm", "matplotlib"})
 
 
 def _digested(blob: Blob) -> Blob:

@@ -43,7 +43,7 @@ never on a normal start.
 | 24 | 32 | `generation_id` (native cache generation, §7 of the plan) |
 | 56 | 8 | `app_name` — Str |
 | 64 | 8 | `entrypoint` — Str (`module:attr` or `module`) |
-| 72 | 8 | `build_info` — Str (JSON, read only by `inspect`) |
+| 72 | 8 | `build_info` — Str (JSON for `inspect`; the runtime reads its `resources` key, D27) |
 | 80 | 8 × 16 | section table: `(u64 offset, u64 count)` for each section below, in this order |
 
 **Str** is `(u32 offset, u32 length)` into the string table. Every string is stored as UTF-8
@@ -146,11 +146,15 @@ must be materialized together with a NATIVE_EXT file (its transitive `DT_NEEDED`
 inside the payload). Only NATIVE_EXT records carry a closure, every member is a NATIVE_LIB or
 NATIVE_EXT record (an extension may link against another extension's shared object), and a record
 never lists itself. The blob of every record the runtime extracts (NATIVE_EXT, NATIVE_LIB and
-FS_REQUIRED files) has a digest, which the runtime verifies before publishing the file.
+FS_REQUIRED files) has a digest, which the runtime verifies before publishing the file. Any other
+file may be extracted on demand when the application asks for it as a path through
+`importlib.resources` (D27); such a file may have no digest and is written as stored, exactly
+as it would be read in memory.
 
 ### DIGESTS
 
-An array of 32-byte SHA-256 digests. They are recorded for blobs that may be extracted to disk.
+An array of 32-byte SHA-256 digests. They are recorded for blobs the runtime extracts on its
+own (NATIVE_EXT, NATIVE_LIB, FS_REQUIRED). Resources extracted on demand (D27) may have none.
 
 ### STARTUP
 

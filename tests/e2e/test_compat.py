@@ -35,6 +35,7 @@ MATRIX = {
     "orjson": 'orjson {"a":[1,2]}',
     "zoneinfo": "zoneinfo 2:00:00 True",
     "sqlalchemy": "sqlalchemy 3 True",
+    "paths": "paths True True",
     "requests": "requests 200 hello",
     "httpx": "httpx 200 hello",
 }

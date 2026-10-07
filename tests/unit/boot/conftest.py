@@ -30,7 +30,8 @@ FAKE_RUNTIME = Runtime(
 
 
 @pytest.fixture
-def boot(executable: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
+def boot(executable: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
+    monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path / "cache"))  # never the user's cache
     standin = StandIn(executable)
     monkeypatch.setitem(sys.modules, "_fsbpyr", standin)
     monkeypatch.syspath_prepend(str(BOOT_DIR))

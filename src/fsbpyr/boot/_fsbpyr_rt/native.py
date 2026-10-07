@@ -116,10 +116,10 @@ def _publish(directory: int, name: str, data: bytes, mode: int) -> None:
 
 
 class NativeCache:
-    def __init__(self, root: str, generation: str) -> None:
+    def __init__(self, root: str, *chain: str) -> None:
         self.root = root
-        self.site = f"{root}/runtime/{generation}/site"
-        self._chain = ("runtime", generation, "site")
+        self.site = "/".join((root, *chain))
+        self._chain = chain
 
     def _open_site(self) -> int:
         fd = _open_root(self.root)
@@ -133,12 +133,18 @@ class NativeCache:
             fd = child
         return fd
 
-    def sync(self, files: tuple[int, ...], *, verify: bool = False) -> list[str]:
+    def sync(
+        self, files: tuple[int, ...], *, verify: bool = False, resources: bool = False
+    ) -> list[str]:
         """Extract the files (FILES indices) that are missing, or with ``verify`` whose
-        content does not match; returns the site-relative paths written."""
-        opened: dict[str, int] = {}
+        content does not match; returns the site-relative paths written. With ``resources``
+        any file may be extracted (importlib.resources asked for it on disk); one without a
+        digest is written as stored, as it is read in memory."""
+        opened: dict[str, int] = {}  # the chain of directories down to the current one
 
         def directory(rel: str) -> int:
+            for other in [o for o in opened if o and o != rel and not rel.startswith(f"{o}/")]:
+                os.close(opened.pop(other))  # left behind: big trees must not exhaust fds
             if rel not in opened:
                 if rel:
                     parent, _, name = rel.rpartition("/")
@@ -152,14 +158,16 @@ class NativeCache:
             for index in files:
                 _, kind, flags, mode, blob, _, _, rel = _fsbpyr.file_at(index)
                 size, digest = _fsbpyr.blob_info(blob)
-                extractable = kind in (NATIVE_EXT, NATIVE_LIB) or flags & FS_REQUIRED
-                if not extractable or digest is None or _unsafe(rel):
+                extractable = resources or kind in (NATIVE_EXT, NATIVE_LIB) or flags & FS_REQUIRED
+                if not extractable or (digest is None and not resources) or _unsafe(rel):
                     raise _corrupt(f"extracted file {rel!r}")
+                if verify and digest is None:  # compare the cached file with the payload's bytes
+                    digest = hashlib.sha256(_fsbpyr.read(blob)).digest()
                 parent, _, name = rel.rpartition("/")
                 if _cached(directory(parent), name, size, digest if verify else None):
                     continue
                 data = _fsbpyr.read(blob)
-                if hashlib.sha256(data).digest() != digest:
+                if digest is not None and hashlib.sha256(data).digest() != digest:
                     raise _corrupt(f"{rel!r} digest")
                 _publish(directory(parent), name, data, mode)
                 written.append(rel)
@@ -171,6 +179,8 @@ class NativeCache:
 
 
 _CACHE: list[NativeCache] = []
+_RESOURCES: list[NativeCache] = []
+_MATERIALIZED: dict[str, str] = {}  # payload path -> path on disk, extracted by this process
 
 
 def native_cache() -> NativeCache:
@@ -178,8 +188,25 @@ def native_cache() -> NativeCache:
     if not _CACHE:
         info = _fsbpyr.info()
         root = cache_directory(info["app_name"], os.environ)
-        _CACHE.append(NativeCache(root, info["generation_id"].hex()[:GENERATION_DIGITS]))
+        generation = info["generation_id"].hex()[:GENERATION_DIGITS]
+        _CACHE.append(NativeCache(root, "runtime", generation, "site"))
     return _CACHE[0]
+
+
+def resource_cache() -> NativeCache:
+    """The tree of resources extracted on demand (D27): keyed by every payload file, unlike
+    the generation, so a release never sees files another one extracted."""
+    if not _RESOURCES:
+        import json  # noqa: PLC0415  # only resources asked for as paths need it
+
+        try:
+            key = json.loads(_fsbpyr.info()["build_info"]).get("resources")
+        except (ValueError, AttributeError) as exc:
+            raise _corrupt("build info") from exc
+        if not isinstance(key, str) or len(key) != GENERATION_DIGITS or not key.isalnum():
+            raise _corrupt("resources id")
+        _RESOURCES.append(NativeCache(native_cache().root, "resources", key, "site"))
+    return _RESOURCES[0]
 
 
 def _verify_requested() -> bool:
@@ -251,6 +278,35 @@ def materialize_package(directory: str) -> str:
             name=directory.replace("/", "."),
         ) from exc
     return cache.site + "/"
+
+
+def materialize(path: str) -> str:
+    """Extract the payload file or directory at site-relative ``path`` (not the root) for
+    importlib.resources (``as_file``, ``os.fspath``); returns where it is on disk. It stays
+    there, as an installed package's files do, so code that keeps the path after ``as_file``
+    returns keeps working. Raises OSError (FileNotFoundError when ``path`` is not in the
+    payload)."""
+    verify = _verify_requested()
+    if path in _MATERIALIZED and not verify:
+        return _MATERIALIZED[path]
+    record = _fsbpyr.find_file(path) if path else None
+    files = [record[0]] if record is not None else _files_below(path) if path else []
+    if not files:
+        raise FileNotFoundError(2, "No such file in the executable payload", path)
+    try:
+        cache = resource_cache()
+        cache.sync(tuple(files), verify=verify, resources=True)
+    except NativeCacheError as exc:  # its message says what to do
+        raise OSError(f"cannot extract {path}: {exc}") from exc
+    except OSError as exc:  # same class (PermissionError, ...), with the cache and the remedy
+        root = _CACHE[0].root if _CACHE else "the cache"
+        detail = f"cannot extract {path} into {root}: {exc.strerror or exc}"
+        hint = "; set FSBPYR_CACHE_DIR to a writable directory"
+        if exc.errno is None:
+            raise OSError(detail + hint) from exc
+        raise OSError(exc.errno, detail + hint, exc.filename) from exc
+    _MATERIALIZED[path] = f"{cache.site}/{path}"
+    return _MATERIALIZED[path]
 
 
 def extension_spec(

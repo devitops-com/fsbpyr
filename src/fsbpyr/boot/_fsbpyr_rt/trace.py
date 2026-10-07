@@ -1,6 +1,6 @@
 """``FSBPYR_TRACE=1``: at exit, one JSON line on stderr describing what the run took from the
-payload: modules loaded per distribution ("" for modules without one), native files extracted
-into the cache, and the payload read counters."""
+payload: modules loaded per distribution ("" for modules without one), files extracted into the
+cache (native files, fs-packages, resources asked for as paths), and the payload read counters."""
 
 import json
 import sys

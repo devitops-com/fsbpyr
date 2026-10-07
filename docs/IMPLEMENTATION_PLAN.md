@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.11, 2026-10-07. Phases 0–6, 6b (except D23) and 6c are complete; uv is required (D26); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.12, 2026-10-07. Phases 0–6, 6b (except D23) and 6c are complete; uv is required (D26); resources reached as paths are extracted on demand (D27); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -114,6 +114,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D24 | **A runtime hint for `__file__`-relative data** (owner decision 2026-10-07): an `open` audit hook turns failures on paths inside the executable into an error that names the package and `fs-packages`. It ships only if measured overhead is below 1%; build-time warnings ship regardless | Field failures become self-explanatory | Build-time warnings only |
 | D25 | **The portable glibc baseline moves from Phase 9 to Phase 6c** (owner decision 2026-10-07) | glibc 2.38 excludes Debian 12, Ubuntu 22.04 and RHEL 8/9; benchmarks (Phase 7) should measure the stub that ships | Leaving it in Phase 9 |
 | D26 | **uv is required on the build host** (owner decision 2026-10-07): it installs every project, including pip projects (requirements.txt, unlocked); a build without uv on PATH fails with installation instructions. The pip fallback and `--interpreter` are gone | Only uv selects wheels for the runtime's glibc baseline (`--python-platform`); measured: a pip build of `heavy` picked cryptography's manylinux_2_34 wheel and failed on Debian 10 and Rocky 8 | Bundling uv inside fsbpyr; a wheels-only pip path; keeping pip with a warning |
+| D27 | **Resources reached as paths are extracted on demand** (owner decision 2026-10-07): `importlib.resources.as_file` on a payload resource yields its copy in the app cache and never deletes it; `os.fspath()`/`str()` of a payload Traversable extract the file or directory and return that path. The copies live in `<cache>/resources/<resources id>/site/<path>`, keyed by every payload file (`build_info["resources"]`), not in the generation's tree, which releases share (D10): a release never sees another release's files. Each path is extracted once per process. The payload root is refused; an unusable cache raises from `as_file`/`os.fspath` (naming `FSBPYR_CACHE_DIR`) and makes `str()` warn and keep the virtual path. Extracted copies stay on disk until cache GC (Phase 8), like native files. Unlike the stdlib's temporary copy they are read-only (files 0400, directories 0700), shared by the app's processes, and under `--no-source` hold no `.py` sources; `str(files(pkg))` names the cache while `pkg.__file__` stays inside the executable | Code written for installed packages keeps `as_file` paths after the block (aiagent's skill discovery) or hands `str(files(pkg) / dir)` to `os` functions; with this, such code needs no configuration. Only what is asked for is extracted, with the same safe publishing as native files | Temporary copies (stdlib default: the path dies with the block); requiring `fs-packages` for every such package; one tree shared with natives (stale or removed files of other releases would show) |
 
 ---
 
@@ -831,7 +832,10 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
 - An ASan/UBSan stub variant for the E2E suite.
 - Cache ownership and permission checks, `noexec` mount detection (`statvfs ST_NOEXEC`) with a
   clear message, generation GC.
-- GC also removes temporary files left by killed processes (`.fsbpyr-*` older than an hour).
+- GC also removes temporary files left by killed processes (`.fsbpyr-*` older than an hour),
+  and resource trees (D27) of releases unused for 30 days. Temporary files are created inside
+  the target directory, so code listing an extracted resource directory may see one while a
+  file is written or after a kill; moving them to a per-tree scratch directory is part of this.
 - Streaming extraction: decompress natives and FS_REQUIRED files in chunks straight into the
   temporary file, removing the whole-blob memory peak and the 1 GiB build limit (Phase 5).
 - Cache-root ancestors: walk the root's path from `/` and require every component to be owned

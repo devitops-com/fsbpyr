@@ -112,6 +112,19 @@ def _orjson(_: str | None) -> str:
     return f"orjson {orjson.dumps({'a': [1, 2]}).decode()}"
 
 
+def _paths(_: str | None) -> str:
+    import os
+    from importlib.resources import as_file, files
+
+    zoneinfo = files("tzdata") / "zoneinfo"
+    with as_file(zoneinfo / "Europe") as europe:
+        pass  # code written for installed packages may keep the path after the block
+    kept = (europe / "Zagreb").read_bytes().startswith(b"TZif")
+    with open(os.path.join(str(zoneinfo), "Asia", "Tokyo"), "rb") as handle:
+        joined = handle.read(4) == b"TZif"  # str() of a resource directory, handed to open()
+    return f"paths {kept} {joined}"
+
+
 def _zoneinfo(_: str | None) -> str:
     import zoneinfo
     from datetime import datetime
@@ -136,7 +149,7 @@ CHECKS = {
     "click": _click, "typer": _typer, "rich": _rich, "requests": _requests, "httpx": _httpx,
     "certifi": _certifi, "pydantic": _pydantic, "jinja2": _jinja2, "pyyaml": _yaml,
     "numpy": _numpy, "cryptography": _cryptography, "orjson": _orjson, "zoneinfo": _zoneinfo,
-    "sqlalchemy": _sqlalchemy,
+    "sqlalchemy": _sqlalchemy, "paths": _paths,
 }  # fmt: skip
 
 
