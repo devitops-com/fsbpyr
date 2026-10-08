@@ -563,10 +563,13 @@ def test_reads_next_to_file_are_reported_unless_fs_required(site: Path) -> None:
                                    "datapkg/tests/test_x.py": READS_DATA})  # fmt: skip
     index = SiteIndex.scan(site)
 
-    plain = classify([index.dists["datapkg"]], extension_suffixes=SUFFIXES, include_source=True)
+    quiet = classify([index.dists["datapkg"]], extension_suffixes=SUFFIXES, include_source=True)
+    plain = classify([index.dists["datapkg"]], extension_suffixes=SUFFIXES, include_source=True,
+                     hints=True)  # fmt: skip
     fs = classify([index.dists["datapkg"]], extension_suffixes=SUFFIXES, include_source=True,
-                  fs_packages=frozenset({"datapkg"}))  # fmt: skip
+                  fs_packages=frozenset({"datapkg"}), hints=True)  # fmt: skip
 
+    assert not [w for w in quiet.warnings if "__file__" in w]  # a guess: only with --hints
     hints = [w for w in plain.warnings if "__file__" in w]
     assert len(hints) == 1  # one line for the whole build
     assert "datapkg (datapkg/__init__.py:2)" in hints[0] and "fs-packages" in hints[0]
@@ -579,7 +582,7 @@ def test_file_read_hints_name_a_package_fs_packages_accepts(site: Path) -> None:
     index = SiteIndex.scan(site)
 
     content = classify([index.dists["google-cloud-x"]], extension_suffixes=SUFFIXES,
-                       include_source=True)  # fmt: skip
+                       include_source=True, hints=True)  # fmt: skip
 
     (hint,) = [w for w in content.warnings if "__file__" in w]
     assert "google.cloud.x (google/cloud/x/res.py:2)" in hint  # not the namespace 'google'

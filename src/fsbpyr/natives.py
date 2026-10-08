@@ -44,11 +44,20 @@ def _search_path(path: str, rpath: tuple[str, ...], runpath: tuple[str, ...]) ->
     return directories
 
 
+def init_symbol(path: str) -> bytes:
+    """The C string CPython looks up in an extension: ``PyInit_<name>``, where a compiled
+    package ``__init__`` takes its package's name (Cython's ``cy/__init__....so``)."""
+    directory, _, filename = path.rpartition("/")
+    stem = filename.partition(".")[0]
+    if stem == "__init__":
+        stem = directory.rpartition("/")[2]
+    return b"PyInit_" + stem.encode() + b"\0"
+
+
 def is_extension_module(path: str, data: bytes) -> bool:
     """Whether a shared object is a Python extension: it has the PyInit_ CPython would call (a
     library may still end in ``.so``, an extension suffix)."""
-    stem = posixpath.basename(path).partition(".")[0]
-    return b"PyInit_" + stem.encode() + b"\0" in data
+    return init_symbol(path) in data
 
 
 def _contains_name(data: bytes, name: bytes) -> bool:

@@ -24,6 +24,7 @@ class BuildConfig:
     smoke: bool = True
     allowed_system_libs: tuple[str, ...] = ()  # sonames extensions may load from the host
     fs_packages: tuple[str, ...] = ()  # packages whose files must exist on disk (FS_REQUIRED)
+    hints: bool = False  # also print guesses (packages that may read files next to __file__)
 
 
 def _expect(key: str, value: Any, kind: type | tuple[type, ...]) -> Any:

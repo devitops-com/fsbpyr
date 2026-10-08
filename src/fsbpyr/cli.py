@@ -31,6 +31,10 @@ def _parser() -> argparse.ArgumentParser:
     _add_build(commands)
     inspect = commands.add_parser("inspect", help="show what an executable was built from")
     inspect.add_argument("binary", type=Path, help="executable built by fsbpyr")
+    inspect.add_argument("--json", action="store_true", help="machine-readable output")
+    inspect.add_argument("--verify", action="store_true", help="check the payload's SHA-256")
+    inspect.add_argument("--all-modules", action="store_true",
+                         help="list every module, not only top-level names")  # fmt: skip
     runtime = commands.add_parser("runtime", help="manage runtimes (native stub + stdlib)")
     actions = runtime.add_subparsers(dest="action", required=True)
     build = actions.add_parser("build", help="fetch CPython, link launcher, compile stdlib")
@@ -56,6 +60,8 @@ def _add_build(commands: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     build.add_argument("--offline", action="store_true", default=None, help="no network access")
     build.add_argument("--no-source", dest="include_source", action="store_false", default=None,
                        help="do not keep Python sources in the executable")  # fmt: skip
+    build.add_argument("--hints", action="store_true", default=None,
+                       help="also list packages that may read files next to __file__")  # fmt: skip
     build.add_argument("--no-smoke", dest="smoke", action="store_false", default=None,
                        help="skip running the executable once in selftest mode")  # fmt: skip
 
@@ -86,6 +92,7 @@ def _build(args: argparse.Namespace) -> int:
             offline=args.offline,
             include_source=args.include_source,
             smoke=args.smoke,
+            hints=args.hints,
         )
         result = build(args.project, config, log=lambda message: print(f"fsbpyr: {message}"))
     except errors as exc:
@@ -100,14 +107,17 @@ def _build(args: argparse.Namespace) -> int:
 
 
 def _inspect(args: argparse.Namespace) -> int:
-    from .inspection import InspectError, describe  # noqa: PLC0415  keep --version fast
+    from .inspection import InspectError, as_json, as_text, read  # noqa: PLC0415  fast --version
 
     try:
-        lines = describe(args.binary)
+        report = read(args.binary, verify=args.verify)
     except InspectError as exc:
         print(f"fsbpyr: error: {exc}", file=sys.stderr)
         return 1
-    print("\n".join(lines))
+    if args.json:
+        print(as_json(report, all_modules=args.all_modules))
+    else:
+        print("\n".join(as_text(report, all_modules=args.all_modules)))
     return 0
 
 

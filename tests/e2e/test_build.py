@@ -5,6 +5,7 @@ Needs the cached runtime and, on the first run, network access for the fixtures'
 """
 
 import itertools
+import json
 import os
 import shutil
 import subprocess
@@ -60,6 +61,10 @@ def test_hello_from_uv_lock(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
         "app        hello 1.0.0",  # a copy outside any repository: no commit
         f"built with fsbpyr {own_version()}",
     ]
+    assert main(["inspect", "--json", "--verify", str(executable)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["verified"] is True and report["modules"]["hello"] == ["hello"]
+    assert report["shared_libraries"] == [] and "json" in report["runtime_modules"]
 
 
 @pytest.mark.parametrize(

@@ -129,6 +129,7 @@ def build(
             include_source=config.include_source,
             allowed_system_libs=frozenset(config.allowed_system_libs),
             fs_packages=frozenset(config.fs_packages),
+            hints=config.hints,
         )
     warnings += walk.warnings
     if walk.unreachable:

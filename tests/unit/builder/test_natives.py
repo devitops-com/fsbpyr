@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.elf import DynamicInfo, ElfError, dynamic_info, glibc_requirement, needed_versions
-from fsbpyr.natives import NativeError, closures
+from fsbpyr.natives import NativeError, closures, is_extension_module
 
 from ...support.elf import DT_NEEDED, make_elf
 
@@ -266,3 +266,11 @@ def test_malformed_version_tables_do_not_affect_dependency_checks() -> None:
 def test_overlong_strings_are_rejected() -> None:
     with pytest.raises(ElfError, match="string"):
         dynamic_info(make_elf(needed=("x" * 5000,)))
+
+
+def test_compiled_package_inits_are_extension_modules() -> None:
+    init = "cy/__init__.cpython-314-x86_64-linux-gnu.so"  # Cython: CPython calls PyInit_cy
+
+    assert is_extension_module(init, b"\0PyInit_cy\0")
+    assert not is_extension_module(init, b"\0PyInit___init__\0")
+    assert is_extension_module("_top.so", b"\0PyInit__top\0")

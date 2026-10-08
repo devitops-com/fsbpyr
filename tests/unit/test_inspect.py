@@ -1,6 +1,7 @@
 """fsbpyr inspect: what an executable was built from, and with which fsbpyr."""
 
 import dataclasses
+import json
 import os
 from pathlib import Path
 
@@ -10,20 +11,46 @@ import fsbpyr
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.cli import main
 from fsbpyr.payload.convert import spec_from_payload
-from fsbpyr.payload.reader import Executable
-from fsbpyr.payload.spec import Dist
+from fsbpyr.payload.format import FileKind, ModuleKind, PayloadError
+from fsbpyr.payload.reader import Executable, Payload
+from fsbpyr.payload.spec import Blob, Dist, File, Module
 from fsbpyr.payload.writer import encode_payload, write_executable
 
 from .boot.conftest import FAKE_RUNTIME
 
 COMMIT = "4f9771de" + "0" * 32
 DISTS = (Dist("aiagent", "aiagent-0.8.1.dist-info", "0.8.1"),
-         Dist("click", "click-8.2.1.dist-info", "8.2.1"))  # fmt: skip
+         Dist("click", "click-8.2.1.dist-info", "8.2.1"),
+         Dist("pyyaml", "pyyaml-6.0.2.dist-info", "6.0.2"))  # fmt: skip
+EXT = "yaml/_yaml.cpython-314-x86_64-linux-gnu.so"
+LIB = "pyyaml.libs/libyaml-0.so.2"
+PLAIN = "yaml/libhelper.so"  # ends in .so, so it is importable by name, but has no PyInit_
 
 
-def _executable(tmp_path: Path, *build_info: tuple[str, object], dists: int = 2) -> Path:
+def _module(name: str, dist: str, *, package: bool = False) -> Module:
+    path = name.replace(".", "/") + ("/__init__.py" if package else ".py")
+    kind = ModuleKind.PACKAGE if package else ModuleKind.MODULE
+    return Module(name, path, kind, code=Blob.code(b"c"), dist=dist)
+
+
+MODULES = (_module("aiagent", "aiagent", package=True), _module("aiagent.cli", "aiagent"),
+           _module("click", "click", package=True), _module("yaml", "pyyaml", package=True),
+           Module("yaml._yaml", EXT, ModuleKind.EXTENSION, file=EXT, dist="pyyaml"),
+           Module("yaml.libhelper", PLAIN, ModuleKind.EXTENSION, file=PLAIN,
+                  dist="pyyaml"))  # fmt: skip
+FILES = (File(EXT, FileKind.NATIVE_EXT, Blob.zstd(b"\x7fELF\0PyInit__yaml\0" * 64, digest=True),
+              mode=0o755, dist="pyyaml"),
+         File(PLAIN, FileKind.NATIVE_EXT, Blob.zstd(b"\x7fELF-plain", digest=True), mode=0o755,
+              dist="pyyaml"),
+         File(LIB, FileKind.NATIVE_LIB, Blob.zstd(b"\x7fELF-lib", digest=True), mode=0o755,
+              dist="pyyaml"))  # fmt: skip
+
+
+def _executable(tmp_path: Path, *build_info: tuple[str, object], dists: int = 3) -> Path:
     out = tmp_path / "aiagent"
     app = App("aiagent", "aiagent.cli:main", dists=DISTS[:dists], build_info=build_info)
+    if dists == len(DISTS):
+        app = dataclasses.replace(app, modules=MODULES, files=FILES)
     build_executable(FAKE_RUNTIME, app, out)
     return out
 
@@ -55,11 +82,11 @@ def test_inspect_shows_the_app_and_the_fsbpyr_it_was_built_with(
     lines = _inspect(executable, capsys)
 
     size = executable.stat().st_size / 1e6
-    assert lines == [
+    assert lines[:4] == [
         "app        aiagent 0.8.1 (0.8.1-4f9771de)",
         "built with fsbpyr 0.1.1-6d7ca726",
         "python     3.14.8, glibc >= 2.28",
-        f"size       {size:.1f} MB, 2 distributions",
+        f"size       {size:.1f} MB, 3 distributions",
     ]
 
 
@@ -90,6 +117,156 @@ def test_inspect_shows_what_older_builds_recorded(
         "built with fsbpyr 0.1.0",
         "python     3.14.8",
     ]
+
+
+def test_libraries_and_modules_are_listed_in_columns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COLUMNS", "200")
+    executable = _executable(tmp_path)
+
+    lines = _inspect(executable, capsys)
+
+    text = "\n".join(lines)
+    assert f"shared libraries: 2\n  {LIB}  {PLAIN}\n" in text
+    assert f"extension modules: 1\n  {EXT}\n" in text
+    modules = lines[lines.index("modules: 3 top-level names in 3 distributions") + 1]
+    assert modules.split() == ["aiagent", "click", "pyyaml:", "yaml"]  # one row on a wide screen
+    runtime = lines[lines.index("standard library and fsbpyr: 2 top-level names") + 1]
+    assert runtime.split() == ["_fsbpyr_boot", "_fsbpyr_rt"]  # fsbpyr's boot modules (no stdlib)
+
+
+def test_columns_follow_the_terminal_width(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COLUMNS", "12")
+    executable = _executable(tmp_path)
+
+    lines = _inspect(executable, capsys)
+
+    listed = lines[lines.index("modules: 3 top-level names in 3 distributions") + 1 :]
+    assert listed[:3] == ["  aiagent", "  click", "  pyyaml: yaml"]  # one per row when narrow
+
+
+def test_all_modules_lists_every_module_per_distribution(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COLUMNS", "200")
+    executable = _executable(tmp_path)
+
+    assert main(["inspect", "--all-modules", str(executable)]) == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[lines.index("aiagent 0.8.1: 2 modules") + 1].split() == ["aiagent", "aiagent.cli"]
+    assert lines[lines.index("pyyaml 6.0.2: 3 modules") + 1].split() == [
+        "yaml", "yaml._yaml", "yaml.libhelper"]  # fmt: skip
+
+
+def test_json_describes_everything(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    executable = _executable(
+        tmp_path, ("project", {"name": "aiagent", "version": "0.8.1"}),
+        ("git", {"commit": COMMIT, "tag": "v0.8.1"}), ("fsbpyr_version", "0.3.0-1a2b3c4d"),
+    )  # fmt: skip
+
+    assert main(["inspect", "--json", "--verify", str(executable)]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["app"] == {"name": "aiagent", "version": "0.8.1", "revision": "0.8.1-4f9771de"}
+    assert report["built_with"] == "0.3.0-1a2b3c4d"
+    assert report["python"] == "3.14.8" and report["verified"] is True
+    assert report["size"] == executable.stat().st_size
+    assert report["distributions"][2] == {"name": "pyyaml", "version": "6.0.2"}
+    assert report["shared_libraries"] == [LIB, PLAIN] and report["extension_modules"] == [EXT]
+    assert report["modules"]["pyyaml"] == ["yaml"] and report["all_modules"] is False
+    assert report["runtime_modules"] == ["_fsbpyr_boot", "_fsbpyr_rt"]
+    assert report["build_info"]["git"]["tag"] == "v0.8.1"
+
+
+def test_verify_checks_the_payload_digest(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    executable = _executable(tmp_path)
+    assert main(["inspect", "--verify", str(executable)]) == 0
+    assert "payload    SHA-256 verified" in capsys.readouterr().out.splitlines()
+    with Executable.open(executable) as reader:
+        offset = reader.payload_offset + reader.payload_size - 1  # last payload byte
+    data = bytearray(executable.read_bytes())
+    data[offset] ^= 0xFF
+    executable.write_bytes(bytes(data))
+
+    assert main(["inspect", "--verify", str(executable)]) == 1
+    error = capsys.readouterr().err
+    assert "is damaged or was changed after its build" in error and "digest mismatch" in error
+
+
+def test_distributions_named_like_the_runtime_or_without_modules(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COLUMNS", "200")
+    dists = (*DISTS, Dist("data-only", "data_only-1.dist-info", "1"),
+             Dist("runtime", "runtime-1.0.dist-info", "1.0"))  # fmt: skip
+    app = App("aiagent", "aiagent.cli:main", modules=(*MODULES, _module("runtime", "runtime")),
+              files=FILES, dists=dists)  # fmt: skip
+    build_executable(FAKE_RUNTIME, app, tmp_path / "app")
+
+    lines = _inspect(tmp_path / "app", capsys)
+    assert main(["inspect", "--json", "--all-modules", str(tmp_path / "app")]) == 0
+    report = json.loads(capsys.readouterr().out)
+
+    modules = lines[lines.index("modules: 4 top-level names in 5 distributions") + 1]
+    assert modules.split() == ["aiagent", "click", "data-only", "pyyaml:", "yaml", "runtime"]
+    assert report["modules"]["runtime"] == ["runtime"] and report["modules"]["data-only"] == []
+    assert report["runtime_modules"][:2] == ["_fsbpyr_boot", "_fsbpyr_rt"]
+    assert report["all_modules"] is True
+
+
+def test_damaged_or_oversized_libraries_fall_back_to_the_module_record(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def damaged(*args: object, **kwargs: object) -> bool:
+        raise PayloadError("zstd frame invalid")
+
+    monkeypatch.setattr(Payload, "contains", damaged)
+    executable = _executable(tmp_path)
+
+    assert main(["inspect", "--json", str(executable)]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["extension_modules"] == sorted([PLAIN, EXT])  # as recorded: importable
+
+
+def test_blob_search_streams_and_finds_needles_across_chunks(tmp_path: Path) -> None:
+    executable = _executable(tmp_path)
+
+    with Executable.open(executable) as reader:
+        payload = reader.payload
+        blob = next(f.blob for f in payload.files() if f.path == EXT)
+        content = payload.read_blob(blob)
+        needle = content[3:14]
+        for chunk in (1, 2, 5, 1 << 20):
+            assert payload.contains(blob, needle, chunk=chunk)
+            assert not payload.contains(blob, b"PyInit_absent\0", chunk=chunk)
+
+
+def test_blob_search_in_stored_and_damaged_blobs(tmp_path: Path) -> None:
+    raw = File("p/libraw.so", FileKind.NATIVE_LIB, Blob.raw(b"\x7fELF..PyInit_raw\0", digest=True),
+               mode=0o755)  # fmt: skip
+    app = App("x", "x:main", modules=MODULES, files=(raw, *FILES), dists=DISTS)
+    build_executable(FAKE_RUNTIME, app, tmp_path / "x")
+    with Executable.open(tmp_path / "x") as reader:
+        payload = reader.payload
+        stored = next(f.blob for f in payload.files() if f.path == "p/libraw.so")
+        zstd_blob = next(f.blob for f in payload.files() if f.path == EXT)  # compressible
+        assert payload.contains(stored, b"PyInit_raw\0", chunk=3)  # uncompressed, windowed
+        assert not payload.contains(stored, b"PyInit_other\0", chunk=3)
+        record = payload.blob(zstd_blob)
+        offset = reader.payload_offset + record.offset + record.stored_size - 2
+    data = bytearray((tmp_path / "x").read_bytes())
+    data[offset] ^= 0xFF  # inside the zstd frame: its checksum no longer matches
+    (tmp_path / "x").write_bytes(bytes(data))
+
+    with Executable.open(tmp_path / "x") as reader, pytest.raises(PayloadError):
+        reader.payload.contains(zstd_blob, b"\0never\0")
 
 
 def test_text_from_the_file_cannot_drive_the_terminal(

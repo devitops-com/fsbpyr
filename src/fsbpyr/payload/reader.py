@@ -379,6 +379,38 @@ class Payload:
             raise PayloadError(f"blob {index}: decompressed size mismatch")
         return data
 
+    def contains(self, index: int, needle: bytes, *, chunk: int = 1 << 20) -> bool:
+        """Whether the blob's content holds ``needle``, decompressing ``chunk`` bytes at a time:
+        the declared size of a hostile file is not trusted to fit in memory."""
+        record = self.blob(index)
+        stored = self._buf[record.offset : record.offset + record.stored_size]
+        keep = len(needle) - 1  # bytes of a window that may start a match across windows
+        try:
+            if record.codec is Codec.NONE:
+                for start in range(0, record.stored_size, chunk):
+                    if needle in bytes(stored[max(start - keep, 0) : start + chunk]):
+                        return True
+                return False
+            if not zstd_frame_has_checksum(stored):
+                raise PayloadError(f"blob {index}: zstd frame without content checksum")
+            decompressor, tail, produced = zstd.ZstdDecompressor(), b"", 0
+            data: bytes | memoryview = stored
+            while not decompressor.eof:
+                output = decompressor.decompress(data, max_length=chunk)
+                data = b""
+                produced += len(output)
+                if produced > record.size or (not output and decompressor.needs_input):
+                    raise PayloadError(f"blob {index}: decompressed size mismatch")
+                window = tail + output
+                if needle in window:
+                    return True
+                tail = window[-keep:] if keep else b""
+            return False
+        except zstd.ZstdError as exc:
+            raise PayloadError(f"zstd frame invalid in blob {index}: {exc}") from None
+        finally:
+            stored.release()
+
     def closure(self, index: int) -> tuple[int, ...]:
         return self._closure_members(index)
 

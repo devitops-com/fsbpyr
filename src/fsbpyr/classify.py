@@ -119,9 +119,12 @@ def _packaged(rel: str) -> bool:
 
 
 class _Collector:
-    def __init__(self, extension_suffixes: tuple[str, ...], include_source: bool) -> None:
+    def __init__(
+        self, extension_suffixes: tuple[str, ...], include_source: bool, hints: bool = False
+    ) -> None:
         self.suffixes = extension_suffixes
         self.include_source = include_source
+        self.hints = hints  # guesses (reads next to __file__): only when asked for
         self.modules: dict[str, Module] = {}
         self.files: dict[str, File] = {}
         self.owners: dict[str, str] = {}  # path -> dist
@@ -227,7 +230,8 @@ class _Collector:
             if names[0][0][1]:  # CPython cannot import this package either: no namespace stand-in
                 self.broken.add(rel.rpartition("/")[0])
             return False
-        if not _TEST_DIRECTORIES.intersection(rel.split("/")[:-1]):  # tests are never imported
+        tests = _TEST_DIRECTORIES.intersection(rel.split("/")[:-1])  # tests are never imported
+        if self.hints and not tests:
             self.reads += [(dist.name, rel, line) for line in file_relative_reads(data, rel)]
         source = Blob.zstd(data) if self.include_source else None
         added = False
@@ -319,7 +323,8 @@ class _Collector:
 
     def add_hints(self) -> None:
         """Warnings for code that probably needs its files on disk (fs-packages)."""
-        self._hint_file_reads()
+        if self.hints:
+            self._hint_file_reads()
         self._hint_unused_natives()
 
     def _hint_file_reads(self) -> None:
@@ -413,15 +418,16 @@ class _Collector:
         return list(found.values())
 
 
-def classify(
+def classify(  # noqa: PLR0913  the build options, keyword-only
     dists: list[InstalledDist],
     *,
     extension_suffixes: tuple[str, ...],
     include_source: bool,
     allowed_system_libs: frozenset[str] = frozenset(),
     fs_packages: frozenset[str] = frozenset(),
+    hints: bool = False,
 ) -> Content:
-    collector = _Collector(extension_suffixes, include_source)
+    collector = _Collector(extension_suffixes, include_source, hints)
     collector.read_pth_files(dists)
     for dist in sorted(dists, key=lambda d: d.name):
         collector.add_dist(dist)
