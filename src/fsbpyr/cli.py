@@ -1,4 +1,4 @@
-"""Command-line entry point: ``fsbpyr build`` and ``fsbpyr runtime build|list``."""
+"""Command-line entry point: ``fsbpyr build``, ``inspect`` and ``runtime build|list``."""
 
 import argparse
 import sys
@@ -29,6 +29,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action=_Version)
     commands = parser.add_subparsers(dest="command")
     _add_build(commands)
+    inspect = commands.add_parser("inspect", help="show what an executable was built from")
+    inspect.add_argument("binary", type=Path, help="executable built by fsbpyr")
     runtime = commands.add_parser("runtime", help="manage runtimes (native stub + stdlib)")
     actions = runtime.add_subparsers(dest="action", required=True)
     build = actions.add_parser("build", help="fetch CPython, link launcher, compile stdlib")
@@ -97,6 +99,18 @@ def _build(args: argparse.Namespace) -> int:
     return 0
 
 
+def _inspect(args: argparse.Namespace) -> int:
+    from .inspection import InspectError, describe  # noqa: PLC0415  keep --version fast
+
+    try:
+        lines = describe(args.binary)
+    except InspectError as exc:
+        print(f"fsbpyr: error: {exc}", file=sys.stderr)
+        return 1
+    print("\n".join(lines))
+    return 0
+
+
 def _runtime(args: argparse.Namespace) -> int:
     from .runtime import (  # noqa: PLC0415  keep --version fast
         pbs,
@@ -133,6 +147,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "build":
         return _build(args)
+    if args.command == "inspect":
+        return _inspect(args)
     if args.command == "runtime":
         return _runtime(args)
     parser.print_usage(sys.stderr)

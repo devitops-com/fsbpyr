@@ -15,7 +15,7 @@ import pytest
 from fsbpyr.cli import main
 from fsbpyr.payload.reader import Executable
 from fsbpyr.runtime.registry import Runtime
-from fsbpyr.vcs import git_state, version_string
+from fsbpyr.vcs import git_state, own_version, version_string
 
 pytestmark = pytest.mark.slow
 
@@ -55,6 +55,11 @@ def test_hello_from_uv_lock(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     result = _run(executable, "5", "x y")
     assert (result.returncode, result.stdout) == (5, "hello ['5', 'x y']\n")
     assert f"built {executable}" in capsys.readouterr().out
+    assert main(["inspect", str(executable)]) == 0
+    assert capsys.readouterr().out.splitlines()[:2] == [
+        "app        hello 1.0.0",  # a copy outside any repository: no commit
+        f"built with fsbpyr {own_version()}",
+    ]
 
 
 @pytest.mark.parametrize(

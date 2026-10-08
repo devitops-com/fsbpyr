@@ -18,7 +18,7 @@ from .project import LockSource, Project
 from .runtime import pins
 from .runtime.registry import Runtime, select_runtime
 from .staging import StagingOptions, find_uv, run_plan, staging_plan
-from .vcs import git_state
+from .vcs import git_state, own_version
 
 TARGET_PYTHON = "3.14"
 _SMOKE_TIMEOUT = 120
@@ -146,6 +146,8 @@ def build(
         files=content.files,
         dists=content.dists,
         build_info=(
+            ("project", {"name": dist.name, "version": dist.version}),
+            ("fsbpyr_version", own_version()),  # with the commit (fsbpyr inspect)
             ("lock", source.value),
             ("dists", sorted(f"{d.name}=={d.version}" for d in content.dists)),
             ("glibc", glibc),
