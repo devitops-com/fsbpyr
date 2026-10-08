@@ -587,9 +587,12 @@ def test_file_read_hints_name_a_package_fs_packages_accepts(site: Path) -> None:
              fs_packages=frozenset({"google.cloud.x"}))  # fmt: skip  # the advice works
 
 
-def test_shared_objects_no_extension_uses_are_reported(site: Path) -> None:
+def test_shared_objects_python_code_names_are_reported(site: Path) -> None:
     extension = make_elf(soname="PyInit__ext")  # the symbol name CPython looks up
-    _dist(site, "tool", "1.0", {"tool/__init__.py": b"", "tool/libplugin.so": make_elf(),
+    loader = b"import ctypes, os\nctypes.CDLL(os.path.join(HERE, 'libplugin.so.2'))\n"
+    _dist(site, "tool", "1.0", {"tool/__init__.py": loader, "tool/libplugin.so.2": make_elf(),
+                                "tool/libcapi.so.1": make_elf(),  # nothing names it
+                                "tool/libplugin_cuda.so.1": make_elf(),  # only a longer name
                                 f"tool/_ext{SUFFIXES[0]}": extension})  # fmt: skip
     index = SiteIndex.scan(site)
 
@@ -598,8 +601,35 @@ def test_shared_objects_no_extension_uses_are_reported(site: Path) -> None:
                   fs_packages=frozenset({"tool"}))  # fmt: skip
 
     hints = [w for w in plain.warnings if "no extension" in w]
-    assert len(hints) == 1 and "tool/libplugin.so" in hints[0] and "fs-packages" in hints[0]
+    assert len(hints) == 1 and "fs-packages" in hints[0]
+    assert "tool/libplugin.so.2" in hints[0]
+    assert "libcapi" not in hints[0] and "libplugin_cuda" not in hints[0]
     assert not [w for w in fs.warnings if "no extension" in w]
+
+
+def test_shared_objects_an_extension_names_are_extracted_with_it(site: Path) -> None:
+    extension = make_elf(soname="PyInit__ext") + b"\0libplugin.so\0"  # dlopen'ed by name
+    _dist(site, "tool", "1.0", {"tool/__init__.py": b"", "tool/libplugin.so": make_elf(),
+                                f"tool/_ext{SUFFIXES[0]}": extension})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["tool"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    files = {f.path: f for f in content.files}
+    assert files[f"tool/_ext{SUFFIXES[0]}"].closure == ("tool/libplugin.so",)
+    assert not [w for w in content.warnings if "no extension" in w]
+
+
+def test_libraries_another_distribution_loads_are_reported(site: Path) -> None:
+    _dist(site, "foo-libs", "1.0", {"foo_libs/libfoo.so.2": make_elf()})  # no Python code
+    _dist(site, "foo", "1.0", {"foo/__init__.py": b"ctypes.CDLL(LIBS / 'libfoo.so.2')\n"})
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["foo-libs"], index.dists["foo"]],
+                       extension_suffixes=SUFFIXES, include_source=True)  # fmt: skip
+
+    hints = [w for w in content.warnings if "no extension" in w]
+    assert len(hints) == 1 and "foo_libs/libfoo.so.2" in hints[0]
 
 
 def test_pth_files_with_the_same_name_or_missing_do_not_break_the_build(site: Path) -> None:

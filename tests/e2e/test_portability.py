@@ -52,6 +52,8 @@ COMMANDS = {  # (binary, arguments) -> expected stdout; the HTTP checks need the
     },
 }
 _GLIBC = re.compile(r"GLIBC_(\d+)\.(\d+)")
+# onnxruntime itself runs `sh -c "echo `blkid; hostname`"`; minimal images lack either command
+_NO_HOSTNAME = re.compile(r"^sh: .*(blkid|hostname): (command )?not found\n", re.MULTILINE)
 
 
 @pytest.fixture(scope="module")
@@ -86,9 +88,10 @@ def test_apps_run_on_older_distributions(apps: Path, image: str) -> None:
         capture_output=True, text=True, timeout=900, check=False,
     )  # fmt: skip
 
+    combined = _NO_HOSTNAME.sub("", result.stdout)
     sections = dict(
         (head.strip(), body.strip())
-        for head, _, body in (part.partition("\n") for part in result.stdout.split("== ")[1:])
+        for head, _, body in (part.partition("\n") for part in combined.split("== ")[1:])
     )
     for (binary, args), expected in COMMANDS.items():
         output = sections.get(f"{binary} {args}", "(missing)")

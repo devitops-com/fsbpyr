@@ -3,7 +3,9 @@ name = "heavy"
 version = "1.0.0"
 description = "fsbpyr test fixture: light CLI with heavy optional native dependencies"
 requires-python = ">=3.12"
-dependencies = ["numpy>=2", "orjson>=3.10", "cryptography>=44", "pydantic>=2.10"]
+dependencies = [
+    "numpy>=2", "orjson>=3.10", "cryptography>=44", "pydantic>=2.10", "onnxruntime>=1.30",
+]
 
 [project.scripts]
 heavy = "heavy.cli:main"

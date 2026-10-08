@@ -88,6 +88,76 @@ def test_closures_follow_rpath_transitively() -> None:
     }  # fmt: skip
 
 
+def test_libraries_an_extension_names_are_loaded_with_it() -> None:
+    """dlopen("libx_shared.so") by name, as onnxruntime's provider bridge does: no DT_NEEDED."""
+    natives = {
+        "p/capi/_x.so": make_elf(runpath="$ORIGIN/../../p.libs", soname="PyInit__x")
+        + b"\0libx_shared.so\0libr.so\0",
+        "p/capi/libx_shared.so": make_elf(needed=("libdep.so",), runpath="$ORIGIN"),
+        "p/capi/libdep.so": make_elf(),
+        "p/capi/libx.so.1": make_elf(),  # never named
+        "p.libs/libr.so": make_elf(),  # found through the RUNPATH, as dlopen would
+        "q/libx_shared.so": make_elf(),  # same name where neither dlopen nor dladdr looks
+        "p/capi/_y.so": make_elf(soname="PyInit__y") + b"\0libx_shared.so.1\0xlibdep.so\0_x.so\0",
+    }
+
+    result = closures(natives, {"p/capi/_x.so", "p/capi/_y.so"}, allowed=frozenset())
+
+    assert result == {
+        "p/capi/_x.so": ("p.libs/libr.so", "p/capi/libdep.so", "p/capi/libx_shared.so"),
+        "p/capi/_y.so": (),  # other names, and extensions are imported, not opened by name
+    }
+
+
+def test_names_are_matched_as_whole_strings_or_path_ends() -> None:
+    natives = {
+        "_top.so": make_elf(soname="PyInit__top") + b"\0xlibb.so\0/opt/x/libb.so\0",
+        "p/_x.so": make_elf(runpath="$ORIGIN/..", soname="PyInit__x") + b"\0liba.so\0",
+        "liba.so": make_elf() + b"\0libb.so\0",  # a library naming another one
+        "libb.so": make_elf() + b"\0liba.so\0libb.so\0",  # a cycle, and itself
+    }
+
+    result = closures(natives, {"_top.so", "p/_x.so"}, allowed=frozenset())
+
+    assert result == {"_top.so": ("libb.so", "liba.so")[::-1], "p/_x.so": ("liba.so", "libb.so")}
+
+
+def test_libraries_opened_by_name_that_cannot_load_are_left_out() -> None:
+    """onnxruntime-gpu's CUDA provider needs libcudart, which no wheel of the app bundles."""
+    natives = {
+        "p/_x.so": make_elf(soname="PyInit__x") + b"\0libcuda_provider.so\0libok.so\0",
+        "p/libcuda_provider.so": make_elf(needed=("libcudart.so.12",)),
+        "p/libok.so": make_elf(),
+    }
+    warnings: list[str] = []
+
+    result = closures(natives, {"p/_x.so"}, allowed=frozenset(), warn=warnings.append)
+
+    assert result == {"p/_x.so": ("p/libok.so",)}
+    assert len(warnings) == 1
+    assert "p/libcuda_provider.so" in warnings[0] and "libcudart.so.12" in warnings[0]
+    assert "p/_x.so" in warnings[0]  # where it came from
+    with pytest.raises(NativeError, match="libcudart"):  # needed by the extension itself
+        closures({**natives, "p/_y.so": make_elf(needed=("libcudart.so.12",))}, {"p/_y.so"},
+                 allowed=frozenset())  # fmt: skip
+
+
+def test_needed_chains_stay_strict_after_a_by_name_visit() -> None:
+    """libl is first reached through a library opened by name, then through NEEDED only."""
+    origin = "$ORIGIN"
+    natives = {
+        "p/_x.so": make_elf(needed=("libc1.so", "libc2.so"), runpath=origin, soname="PyInit__x"),
+        "p/libc1.so": make_elf(needed=("libl.so",), runpath=origin),
+        "p/libc2.so": make_elf(runpath=origin) + b"\0libb2.so\0",
+        "p/libb2.so": make_elf(needed=("libl.so",), runpath=origin),
+        "p/libl.so": make_elf(needed=("libm.so",), runpath=origin),
+        "p/libm.so": make_elf(needed=("libcudart.so.12",)),
+    }
+
+    with pytest.raises(NativeError, match="libcudart"):  # _x -> libc1 -> libl -> libm: all NEEDED
+        closures(natives, {"p/_x.so"}, allowed=frozenset())
+
+
 def test_runpath_takes_precedence_over_rpath() -> None:
     natives = {
         "p/_x.so": make_elf(needed=("liba.so",), rpath="$ORIGIN/old", runpath="$ORIGIN/new"),

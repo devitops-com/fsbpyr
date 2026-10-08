@@ -1,5 +1,5 @@
 """Phase 5 exit criteria: native extensions from real wheels (fixture ``heavy``: numpy, orjson,
-cryptography, pydantic), the lazy native cache, self-healing and concurrency.
+cryptography, pydantic, onnxruntime), the lazy native cache, self-healing and concurrency.
 
 Needs the cached runtime and, on the first run, network access for the fixture's wheels.
 """
@@ -26,6 +26,7 @@ EXPECTED = {
     "json": 'orjson {"a":[1,2]}',
     "crypto": "cryptography secret",
     "model": "pydantic {'x': 1, 'y': 2}",
+    "onnx": "onnxruntime [[4.0, 3.0]]",
 }
 
 
@@ -94,6 +95,20 @@ def test_every_subcommand_runs(heavy: Path, tmp_path: Path, command: str) -> Non
     stdout, _ = _run(heavy, tmp_path / "cache", command)
 
     assert stdout.strip() == EXPECTED[command]
+
+
+def test_libraries_extensions_open_by_name_are_extracted_with_them(
+    heavy: Path, tmp_path: Path
+) -> None:
+    """onnxruntime opens libonnxruntime_providers_shared.so next to its extension by name."""
+    process = _start(heavy, tmp_path / "cache", "onnx")
+    _, stderr = process.communicate(timeout=120)
+
+    assert process.returncode == 0, stderr
+    assert "provider bridge" not in stderr
+    extracted: list[str] = _trace(stderr)["extracted"]  # type: ignore[assignment]
+    assert "onnxruntime/capi/libonnxruntime_providers_shared.so" in extracted
+    assert not any(p.startswith("onnxruntime/capi/libonnxruntime.so") for p in extracted)
 
 
 def test_concurrent_first_runs_all_succeed(heavy: Path, tmp_path: Path) -> None:

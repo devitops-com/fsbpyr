@@ -32,7 +32,19 @@ def _pydantic() -> str:
     return f"pydantic {Point(x='1', y=2).model_dump()}"
 
 
-COMMANDS = {"np": _numpy, "json": _orjson, "crypto": _crypto, "model": _pydantic}
+def _onnx() -> str:
+    from importlib.resources import files
+
+    import numpy as np
+    import onnxruntime as ort
+
+    model = files("heavy").joinpath("relu_matmul.onnx").read_bytes()  # relu(x) @ w
+    session = ort.InferenceSession(model, providers=["CPUExecutionProvider"])
+    (y,) = session.run(None, {"x": np.array([[1.0, -2.0, 3.0]], dtype=np.float32)})
+    return f"onnxruntime {y.tolist()}"
+
+
+COMMANDS = {"np": _numpy, "json": _orjson, "crypto": _crypto, "model": _pydantic, "onnx": _onnx}
 
 
 def main() -> None:

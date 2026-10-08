@@ -245,7 +245,14 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
     this.
 
   Extensions that `NEEDED libpython3.X.so` are rejected with a hint. The closure is stored per
-  NATIVE_EXT.
+  NATIVE_EXT. Libraries opened by name at run time (`dlopen`) have no NEEDED entry: a bundled
+  library (not an extension, which has a `PyInit_<name>` symbol) in the object's own directory
+  or on its `$ORIGIN` search path joins the closure when the object contains its file name as a
+  C string. onnxruntime's provider bridge loads `libonnxruntime_providers_shared.so` this way
+  (v0.1.1; before, every import printed "Init provider bridge failed"). Such a library whose own
+  needs cannot be met (onnxruntime-gpu's CUDA provider without a bundled CUDA runtime) is left
+  out with a build warning instead of failing the build. A library that nothing links to or
+  names is reported only if the package's Python code names it (a likely `ctypes` load).
 - **Runtime.** The extension's `find_spec` uses `FsbpyrExtensionLoader`. It materializes the
   closure, then delegates to `importlib.machinery.ExtensionFileLoader(name, <gen>/site/<path>)`,
   which uses the normal `dlopen`.

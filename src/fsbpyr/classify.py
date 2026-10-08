@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from . import bytecode
 from .closure import InstalledDist
 from .elf import ElfError, glibc_requirement, is_elf
-from .natives import NativeError, closures
+from .natives import NativeError, closures, is_extension_module
 from .payload.format import (
     MAX_MEMORY_BLOB,
     NATIVE_KINDS,
@@ -91,6 +91,11 @@ def extension_name(rel: str, suffixes: tuple[str, ...]) -> tuple[str, bool, int]
             if all(part.isidentifier() for part in parts):
                 return ".".join(parts), is_package, rank
     return None
+
+
+def _library_stem(rel: str) -> bytes:
+    """``libx`` for ``.../libx.so.1.2``: the part code names whatever the version."""
+    return posixpath.basename(rel).partition(".so")[0].encode()
 
 
 def _record_path(line: str) -> str:
@@ -269,7 +274,8 @@ class _Collector:
         """NATIVE_EXT files (backing an extension module) and NATIVE_LIB files, with closures."""
         extensions = {m.path for m in self.modules.values() if m.kind is ModuleKind.EXTENSION}
         try:
-            needs = closures(self.natives, extensions, allowed=allowed)
+            needs = closures(self.natives, extensions, allowed=allowed,
+                             warn=self.warnings.append)  # fmt: skip
         except NativeError as exc:
             raise ClassifyError(str(exc)) from exc
         self.reached = {member for members in needs.values() for member in members}
@@ -341,20 +347,37 @@ class _Collector:
     def _hint_unused_natives(self) -> None:
         unused: dict[str, list[str]] = {}
         for rel, data in sorted(self.natives.items()):
-            stem = rel.rpartition("/")[2].partition(".")[0]
             used = (
                 rel in self.reached
                 or rel.startswith(self.fs_directories)
-                or b"PyInit_" + stem.encode() + b"\0" in data  # what CPython would call
+                or is_extension_module(rel, data)
             )
             if not used:
                 unused.setdefault(self.owners[rel], []).append(rel)
         for dist, paths in sorted(unused.items()):
-            self.warnings.append(
-                f"{dist}: {', '.join(paths[:3])}{' ...' if len(paths) > 3 else ''} loaded by no "
-                "extension module; if the package loads them itself (ctypes), add it to "
-                "fs-packages"
-            )
+            named = self._named_by_python(paths)
+            if named:
+                self.warnings.append(
+                    f"{dist}: {', '.join(named[:3])}{' ...' if len(named) > 3 else ''} loaded by "
+                    "no extension module but named by its Python code; if it loads them itself "
+                    "(ctypes), add it to fs-packages"
+                )
+
+    def _named_by_python(self, libraries: list[str]) -> list[str]:
+        """The libraries some packaged .py file names as a word, as ``ctypes.CDLL(...)`` would
+        (the loading package may be another distribution, ``foo`` loading ``foo-libs``). One
+        nothing names is simply unused from Python (onnxruntime's C API library)."""
+        patterns = {
+            rel: re.compile(rb"(?<![\w.-])" + re.escape(_library_stem(rel)) + rb"(?![\w-])")
+            for rel in libraries
+        }
+        named: set[str] = set()
+        for rel, owner in sorted(self.owners.items()):
+            if not rel.endswith(".py") or len(named) == len(patterns):
+                continue
+            source = (self.sites[owner] / rel).read_bytes()
+            named.update(lib for lib, pattern in patterns.items() if pattern.search(source))
+        return sorted(named)
 
     def glibc(self) -> tuple[tuple[int, int], str] | None:
         """The newest glibc a packaged native file needs, and that file."""
