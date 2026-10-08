@@ -128,7 +128,7 @@ def test_damaged_cached_extension_is_repaired(heavy: Path, tmp_path: Path) -> No
     (target,) = cache.rglob("_multiarray_umath.*.so")
     original = target.read_bytes()
     target.chmod(0o700)
-    target.write_bytes(b"\0" * len(original))  # same size: only a failed dlopen reveals it
+    target.write_bytes(b"\0" * len(original))  # same size: the hash before loading reveals it
 
     stdout, trace = _run(heavy, cache, "np")
 

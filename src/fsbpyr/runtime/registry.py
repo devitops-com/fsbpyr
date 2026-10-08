@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .. import __version__
 from ..payload.convert import spec_from_payload
+from ..payload.format import PayloadError
 from ..payload.reader import Executable, Payload
 from ..payload.spec import File, Module, PayloadSpec
 from ..payload.writer import encode_payload
@@ -176,6 +177,12 @@ class Runtime:
         zstd frames copied verbatim and block members as content that the next build packs
         again (no compiler, no download, no cache; plan D4)."""
         with Executable.open(path) as exe:
+            if not exe.covers_file:  # format versions 1 and 2: the stub would go unchecked
+                raise RuntimeCacheError(f"{path} has no whole-file digest (built before 0.6.0)")
+            try:
+                exe.verify()  # what goes into every app it builds must be what was built
+            except PayloadError as exc:
+                raise RuntimeCacheError(f"{path} was modified or damaged ({exc})") from exc
             payload = exe.payload
             info = json.loads(payload.build_info)
             fragment = spec_from_payload(payload)

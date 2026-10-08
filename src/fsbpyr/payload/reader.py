@@ -47,6 +47,7 @@ from .format import (
     check_module_name,
     check_path,
     extractable,
+    tree_digest,
 )
 
 type Buffer = bytes | bytearray | memoryview | mmap.mmap
@@ -560,7 +561,8 @@ class Executable:
             raise PayloadError("payload size does not match file size")
         self.payload_offset: int = offset
         self.payload_size: int = payload_size
-        self.payload_digest: bytes = digest
+        self.digest: bytes = digest
+        self.covers_file: bool = version >= 3  # the digest covers the file, not the payload
         window = self._view[offset : offset + payload_size]
         try:
             self._payload = Payload(window)
@@ -592,13 +594,16 @@ class Executable:
         return bytes(self._view[: self.payload_offset])
 
     def verify(self) -> None:
-        window = self._view[self.payload_offset : self.payload_offset + self.payload_size]
-        try:
-            actual = hashlib.sha256(window).digest()
-        finally:
-            window.release()
-        if actual != self.payload_digest:
-            raise PayloadError("payload digest mismatch")
+        """Compare the digest with the bytes: the whole file before the digest (D31), or for
+        executables of format versions 1 and 2 the payload."""
+        if self.covers_file:
+            scope, actual = "file", tree_digest(self._view[:-DIGEST_SIZE])
+        else:
+            window = self._view[self.payload_offset : self.payload_offset + self.payload_size]
+            with window:
+                scope, actual = "payload", hashlib.sha256(window).digest()
+        if actual != self.digest:
+            raise PayloadError(f"{scope} digest mismatch")
 
     def close(self) -> None:
         """Release all views and the mapping; safe to call more than once."""

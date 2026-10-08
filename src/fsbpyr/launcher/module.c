@@ -11,9 +11,11 @@
  *   find_dist(name)    -> (index, name, dist_info, version) | None;  dists() -> all of them
  *   read(blob)         -> bytes (decompressed, size-checked)
  *   info()             -> dict describing the executable
- *   stats()            -> dict of read counters (FSBPYR_TRACE, benchmarks)
+ *   stats()            -> read counters and integrity check time (FSBPYR_TRACE, benchmarks)
  */
 #include "launcher.h"
+
+#include "integrity.h"
 
 #define MAX_MEMORY_BLOB (UINT64_C(1) << 30) /* larger blobs are extracted, never read whole */
 
@@ -335,8 +337,9 @@ static PyObject *info(PyObject *self, PyObject *noargs) {
 static PyObject *stats(PyObject *self, PyObject *noargs) {
     (void)self;
     (void)noargs;
-    return Py_BuildValue("{s:K,s:K,s:K}", "reads", reads, "stored_bytes", fsb_stored_bytes,
-                         "decompressed_bytes", fsb_decompressed_bytes);
+    return Py_BuildValue("{s:K,s:K,s:K,s:K}", "reads", reads, "stored_bytes", fsb_stored_bytes,
+                         "decompressed_bytes", fsb_decompressed_bytes, "integrity_ns",
+                         fsb_integrity_ns);
 }
 
 static PyMethodDef methods[] = {
@@ -352,7 +355,7 @@ static PyMethodDef methods[] = {
     {"find_dist", find_dist, METH_O, "Look up a distribution by canonical name."},
     {"dists", dists, METH_NOARGS, "All distributions, sorted by canonical name."},
     {"info", info, METH_NOARGS, "Describe the running executable."},
-    {"stats", stats, METH_NOARGS, "Payload read counters."},
+    {"stats", stats, METH_NOARGS, "Payload read counters and the integrity check's time."},
     {NULL, NULL, 0, NULL},
 };
 

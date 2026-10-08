@@ -1,16 +1,19 @@
-"""Binary layout of the fsbpyr executable format, version 2 (normative spec: docs/format.md)."""
+"""Binary layout of the fsbpyr executable format, version 3 (normative spec: docs/format.md)."""
 
+import hashlib
 import re
 import struct
+from collections.abc import Buffer
 from enum import IntEnum, IntFlag
 
-FORMAT_VERSION = 2
-READABLE_VERSIONS = (1, 2)  # the Python reader (inspect) also reads executables of older builds
+FORMAT_VERSION = 3
+READABLE_VERSIONS = (1, 2, 3)  # the Python reader (inspect) also reads executables of older builds
 PAGE_SIZE = 4096
 BLOB_ALIGN = 16
 TABLE_ALIGN = 8
 NONE = 0xFFFFFFFF
 DIGEST_SIZE = 32
+DIGEST_LEAF = 1 << 20  # the integrity digest hashes the file in pieces of this size (D31)
 MAX_MODE = 0o777
 MAX_BLOB_SIZE = 1 << 40  # 1 TiB; keeps sizes far inside ssize_t
 MAX_STRTAB_SIZE = 0xFFFFFFFF
@@ -19,7 +22,8 @@ TRAILER_MAGIC = b"FSBPYR\x00T"
 HEADER_MAGIC = b"FSBPYR\x00H"
 ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 
-# magic, version, flags, payload_offset, payload_size, payload_sha256
+# magic, version, flags, payload_offset, payload_size, digest: the file's last 32 bytes, the
+# tree_digest of everything before them (versions 1 and 2: the payload's SHA-256)
 TRAILER = struct.Struct("<8sIIQQ32s")
 TRAILER_SIZE = TRAILER.size
 # magic, version, header_size, python_hexversion, bytecode_magic, generation_id,
@@ -109,6 +113,16 @@ class FileFlag(IntFlag):
 def extractable(kind: FileKind, flags: FileFlag) -> bool:
     """Files written to the cache at run time; they carry a SHA-256 digest."""
     return kind in NATIVE_KINDS or FileFlag.FS_REQUIRED in flags
+
+
+def tree_digest(data: Buffer) -> bytes:
+    """SHA-256 over the SHA-256 of each DIGEST_LEAF piece of ``data`` (D31): the launcher
+    hashes the pieces in parallel."""
+    root = hashlib.sha256()
+    with memoryview(data) as view:
+        for start in range(0, len(view), DIGEST_LEAF):
+            root.update(hashlib.sha256(view[start : start + DIGEST_LEAF]).digest())
+    return root.digest()
 
 
 def align(value: int, alignment: int) -> int:

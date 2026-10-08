@@ -1,4 +1,4 @@
-/* fsbpyr executable format v2 — C mirror of src/fsbpyr/payload/format.py (spec: docs/format.md).
+/* fsbpyr executable format v3 — C mirror of src/fsbpyr/payload/format.py (spec: docs/format.md).
  *
  * All integers are little-endian. Records are read with memcpy, never by casting pointers into
  * the mapping, so alignment of the mapped data never matters. tests/integration/
@@ -15,12 +15,13 @@
 #error "fsbpyr format readers assume a little-endian host"
 #endif
 
-#define FSB_FORMAT_VERSION 2u
+#define FSB_FORMAT_VERSION 3u
 #define FSB_PAGE_SIZE 4096u
 #define FSB_BLOB_ALIGN 16u
 #define FSB_TABLE_ALIGN 8u
 #define FSB_NONE 0xFFFFFFFFu
 #define FSB_DIGEST_SIZE 32u
+#define FSB_DIGEST_LEAF (UINT64_C(1) << 20) /* the integrity digest's piece size (D31) */
 #define FSB_MAX_MODE 0777u
 #define FSB_MAX_BLOB_SIZE (UINT64_C(1) << 40)
 #define FSB_MAX_BLOCK_SIZE (UINT64_C(1) << 20) /* a block holds small blobs (D30) */

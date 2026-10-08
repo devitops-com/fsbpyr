@@ -103,10 +103,38 @@ fsbpyr inspect BINARY [--json] [--verify] [--all-modules]
 ```
 
 Shows the app and its version, the fsbpyr that built it (`fsbpyr --version` prints the same
-form: `0.4.0-1a2b3c4d`), Python and glibc, the bundled shared libraries and extension modules,
-and the top-level modules of each distribution, in as many columns as the terminal fits.
-`--all-modules` lists every module, `--json` prints everything as JSON, and `--verify` checks
-the payload's SHA-256 (damage, not tampering: the digest sits in the same file).
+form: `0.4.0-1a2b3c4d`), Python and glibc, the file's digest, the bundled shared libraries and
+extension modules, and the top-level modules of each distribution, in as many columns as the
+terminal fits. `--all-modules` lists every module, `--json` prints everything as JSON, and
+`--verify` recomputes the digest.
+
+## Integrity
+
+Every executable checks its whole file before it does anything else and refuses to start if a
+single byte changed (damage to the launcher's own code can also make it crash before it gets
+to say so):
+
+```
+fsbpyr: cannot start /usr/local/bin/app: integrity check failed: the file was modified or damaged
+```
+
+The check hashes the file with SHA-256 on up to 8 threads, never more than the cores it may
+use. On a Core Ultra 9 285 with the file in the page cache it takes 2.0 ms for a 28 MB app and
+8.9 ms for 148 MB (one core: 6.9 and 38 ms; without SHA instructions: 7.1 and 30 ms). The first
+start after a reboot also reads the whole file from disk. `FSBPYR_TRACE=1` reports the time as
+`integrity_ns`. Files extracted to the cache are hashed again by every process, once, before it
+first uses them; a changed one is reported and restored.
+
+The digest can be published and checked with `fsbpyr inspect --verify BINARY` (plain `inspect`
+shows the stored value) or with standard tools:
+
+```sh
+head -c -32 app | split -b 1M --filter='openssl dgst -sha256 -binary' | sha256sum
+```
+
+What the check cannot stop is someone who can write the file and rewrites the digest too, or
+patches the check out: the code that checks is in the same file. Proving where an executable
+came from needs a signature checked with a key from outside it; signed releases are planned.
 
 ## At run time
 
@@ -118,8 +146,7 @@ an app asks for as a path are extracted there too. Environment variables the exe
 | Variable | |
 |---|---|
 | `FSBPYR_CACHE_DIR` | cache directory |
-| `FSBPYR_VERIFY=1` | re-check extracted files against their SHA-256 on use |
-| `FSBPYR_TRACE=1` | print what the run loaded and extracted, as JSON on stderr |
+| `FSBPYR_TRACE=1` | print what the run loaded and extracted, and how long the integrity check took, as JSON on stderr |
 
 ## Versions
 

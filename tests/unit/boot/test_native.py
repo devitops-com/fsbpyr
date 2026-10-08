@@ -129,15 +129,21 @@ def _damage(path: Path) -> None:
     path.chmod(0o500)
 
 
-def test_verify_repairs_damaged_files(boot: types.ModuleType, native: types.ModuleType) -> None:
+def test_a_later_process_rehashes_and_restores_a_modified_file(
+    boot: types.ModuleType, native: types.ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
     spec = _speed_spec(boot)
+    native.native_cache().sync(_files(spec))
+    native._CACHE.clear()  # a new process
     cache = native.native_cache()
-    cache.sync(_files(spec))
-    _damage(Path(cache.site) / LIB)
+    assert cache.sync(_files(spec)) == []
+    _damage(Path(cache.site) / LIB)  # same size, other content
+    native._CACHE.clear()
+    cache = native.native_cache()
 
-    assert cache.sync(_files(spec)) == []  # same size: trusted until loading fails
-    assert cache.sync(_files(spec), verify=True) == [LIB]
+    assert cache.sync(_files(spec)) == [LIB]
     assert (Path(cache.site) / LIB).read_bytes() == CONTENT[LIB]
+    assert f"fsbpyr: {cache.site}/{LIB} was modified" in capsys.readouterr().err
 
 
 class _FakeDlopen(ExtensionFileLoader):
@@ -160,10 +166,46 @@ def _loader(native: types.ModuleType, spec: importlib.machinery.ModuleSpec) -> E
     return loader
 
 
-def test_failed_load_self_heals_once(boot: types.ModuleType, native: types.ModuleType) -> None:
+def test_an_unreadable_cached_file_is_replaced(
+    boot: types.ModuleType, native: types.ModuleType
+) -> None:
+    spec = _speed_spec(boot)
+    native.native_cache().sync(_files(spec))
+    (Path(native.native_cache().site) / LIB).chmod(0o000)
+    native._CACHE.clear()  # a new process
+
+    assert native.native_cache().sync(_files(spec)) == [LIB]
+    assert (Path(native.native_cache().site) / LIB).read_bytes() == CONTENT[LIB]
+
+
+def test_each_process_hashes_a_cached_file_once(
+    boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Extensions share libraries (scipy: one 25 MB OpenBLAS for 19 of them)."""
+    spec = _speed_spec(boot)
+    native.native_cache().sync(_files(spec))
+    native._CACHE.clear()  # a new process
+    hashed: list[str] = []
+    real = native._cached
+
+    def counted(directory: int, name: str, size: int, digest: bytes) -> bool | None:
+        hashed.append(name)
+        return bool(real(directory, name, size, digest))
+
+    monkeypatch.setattr(native, "_cached", counted)
+    cache = native.native_cache()
+
+    assert cache.sync(_files(spec)) == cache.sync(_files(spec)) == []
+    assert len(hashed) == len(_files(spec))
+
+
+def test_a_modified_file_is_restored_before_loading(
+    boot: types.ModuleType, native: types.ModuleType
+) -> None:
     spec = _speed_spec(boot)
     native.native_cache().sync(_files(spec))
     _damage(Path(native.native_cache().site) / EXT)
+    native._CACHE.clear()  # a new process
 
     module = _loader(native, spec).create_module(spec)
 
@@ -215,6 +257,7 @@ def test_cache_tree_is_private_and_must_be_ours(
     assert stat.S_IMODE((root / "runtime").stat().st_mode) == 0o700
 
     monkeypatch.setattr(os, "geteuid", lambda: os.getuid() + 1)
+    native._CACHE.clear()  # a process of another user
     with pytest.raises(native.NativeCacheError, match="owned by another user"):
         native.native_cache().sync(_files(spec))
 
@@ -265,12 +308,12 @@ def test_import_errors_raised_by_the_module_itself_do_not_trigger_a_rehash(
     class Loader(native.PayloadExtensionLoader, InitFails):  # type: ignore[misc,name-defined]
         pass
 
-    verified: list[bool] = []
+    synced: list[tuple[int, ...]] = []
     real_sync = native.NativeCache.sync
 
-    def sync(self: Any, files: tuple[int, ...], *, verify: bool = False) -> list[str]:
-        verified.append(verify)
-        result: list[str] = real_sync(self, files, verify=verify)
+    def sync(self: Any, files: tuple[int, ...]) -> list[str]:
+        synced.append(files)
+        result: list[str] = real_sync(self, files)
         return result
 
     monkeypatch.setattr(native.NativeCache, "sync", sync)
@@ -278,7 +321,7 @@ def test_import_errors_raised_by_the_module_itself_do_not_trigger_a_rehash(
 
     with pytest.raises(ModuleNotFoundError, match="optional_dep"):
         factory(spec.name, spec.origin, _files(spec)).create_module(spec)
-    assert verified == [False]
+    assert synced == [_files(spec)]
 
 
 def test_unwritable_cache_is_reported_with_a_hint(
@@ -301,12 +344,13 @@ def test_unsafe_app_names_never_reach_the_filesystem(native: types.ModuleType) -
             native.cache_directory(app, {"XDG_CACHE_HOME": "/x"})
 
 
-def test_verify_env_rehashes_cache_hits_before_loading(
+def test_cache_hits_are_rehashed_before_loading(
     boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spec = _speed_spec(boot)
     native.native_cache().sync(_files(spec))
     _damage(Path(native.native_cache().site) / LIB)
+    native._CACHE.clear()  # a new process
 
     class Loads(ExtensionFileLoader):  # dlopen would not notice the damage
         def create_module(self, spec: importlib.machinery.ModuleSpec) -> types.ModuleType:
@@ -316,7 +360,6 @@ def test_verify_env_rehashes_cache_hits_before_loading(
         pass
 
     factory: Any = Loader
-    monkeypatch.setenv("FSBPYR_VERIFY", "1")
     factory(spec.name, spec.origin, _files(spec)).create_module(spec)
 
     assert (Path(native.native_cache().site) / LIB).read_bytes() == CONTENT[LIB]

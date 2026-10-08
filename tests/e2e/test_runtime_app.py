@@ -1,10 +1,12 @@
 """Phase 2 exit criteria, exercised on real executables built from the cached runtime."""
 
 import hashlib
+import json
 import os
 import shutil
 import signal
 import statistics
+import struct
 import subprocess
 import sys
 import time
@@ -12,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from fsbpyr.payload.format import Codec
+from fsbpyr.payload.format import DIGEST_LEAF, DIGEST_SIZE, TRAILER_SIZE, Codec, tree_digest
 from fsbpyr.payload.reader import Executable
 
 from .conftest import BuildApp
@@ -140,13 +142,29 @@ def _p50(argv: list[str], runs: int = 60) -> float:
     return statistics.median(samples)
 
 
+def _integrity_p50(app: Path, runs: int = 15) -> float:
+    """Seconds the launcher spent checking its file (D31), as FSBPYR_TRACE reports it."""
+    samples = []
+    for _ in range(runs):
+        stderr = _run(app, FSBPYR_TRACE="1").stderr
+        trace = json.loads(stderr.rpartition("fsbpyr-trace ")[2])
+        samples.append(trace["integrity_ns"] / 1e9)
+    return float(statistics.median(samples))
+
+
 def test_startup_is_within_budget_of_bare_cpython(build_app: BuildApp) -> None:
+    """The whole-file check costs what hashing the file costs (D31, about 20 MB for the stub);
+    everything else stays within 15% of a bare CPython start."""
     app = build_app({"noop.py": "def main():\n    return 0\n"}, "noop:main")
 
     baseline = _p50([sys.executable, "-I", "-S", "-c", "pass"])
     measured = _p50([str(app)])
+    integrity = _integrity_p50(app)
 
-    assert measured <= 1.15 * baseline, f"app {measured * 1e3:.2f} ms vs {baseline * 1e3:.2f} ms"
+    assert 0 < integrity < measured
+    assert measured - integrity <= 1.15 * baseline, (
+        f"app {measured * 1e3:.2f} ms ({integrity * 1e3:.2f} ms integrity check) "
+        f"vs {baseline * 1e3:.2f} ms")  # fmt: skip
 
 
 @pytest.mark.parametrize("damage", ["truncate", "trailer"])
@@ -158,6 +176,7 @@ def test_corrupt_executable_fails_cleanly(build_app: BuildApp, damage: str) -> N
     else:
         data[-64] ^= 0xFF
     app.write_bytes(bytes(data))
+    _restamp(app)  # past the integrity check: the trailer's own checks
 
     result = _run(app)
 
@@ -165,8 +184,96 @@ def test_corrupt_executable_fails_cleanly(build_app: BuildApp, damage: str) -> N
     assert result.stderr.startswith("fsbpyr: cannot start")
 
 
+@pytest.mark.parametrize("where", ["padding", "header", "tables", "blob data", "trailer", "digest"])
+def test_any_changed_byte_stops_the_executable_before_it_starts(
+    build_app: BuildApp, where: str
+) -> None:
+    """D31: the launcher checks the whole file before anything else, so it starts nothing."""
+    app = build_app({"x.py": "def main():\n    print('ran')\n"}, "x:main")
+    with Executable.open(app) as exe:
+        start, size = exe.payload_offset, exe.payload_size
+    end = start + size
+    position = {
+        "padding": start - 1,
+        "header": start + 30,
+        "tables": start + 300,
+        "blob data": end - 1,
+        "trailer": end + 20,
+        "digest": end + TRAILER_SIZE - 1,
+    }
+    data = bytearray(app.read_bytes())
+    data[position[where]] ^= 0x01
+    app.write_bytes(bytes(data))
+
+    result = _run(app)
+
+    assert result.returncode == 70 and result.stdout == ""
+    assert result.stderr == (f"fsbpyr: cannot start {app}: integrity check failed: "
+                             "the file was modified or damaged\n")  # fmt: skip
+
+
+def test_a_changed_byte_in_the_stub_stops_the_executable(build_app: BuildApp) -> None:
+    """The ELF section headers: inside launcher and CPython, read by no loader, so only the
+    whole-file check can notice."""
+    app = build_app({"x.py": "def main():\n    print('ran')\n"}, "x:main")
+    data = bytearray(app.read_bytes())
+    (section_headers,) = struct.unpack_from("<Q", data, 0x28)  # e_shoff
+    with Executable.open(app) as exe:
+        assert 0 < section_headers < exe.payload_offset
+    data[section_headers + 4] ^= 0x01
+    app.write_bytes(bytes(data))
+
+    result = _run(app)
+
+    assert (result.returncode, result.stdout) == (70, "")
+    assert "integrity check failed" in result.stderr
+
+
+def test_the_check_runs_on_one_core(build_app: BuildApp) -> None:
+    app = build_app({"x.py": "def main():\n    print('ran')\n"}, "x:main")
+    one = {min(os.sched_getaffinity(0))}
+
+    def pinned() -> subprocess.CompletedProcess[str]:
+        return subprocess.run([app], capture_output=True, text=True, check=False,
+                              preexec_fn=lambda: os.sched_setaffinity(0, one))  # fmt: skip
+
+    assert (pinned().returncode, pinned().stdout) == (0, "ran\n")
+    data = bytearray(app.read_bytes())
+    data[-DIGEST_SIZE] ^= 0x01
+    app.write_bytes(bytes(data))
+    assert pinned().returncode == 70
+
+
+@pytest.mark.parametrize("remainder", [0, 1, DIGEST_LEAF - 1])
+def test_launcher_and_writer_agree_on_the_digest_at_leaf_boundaries(
+    build_app: BuildApp, remainder: int
+) -> None:
+    """Zero bytes before the trailer bring the covered length to ``remainder`` past a 1 MiB
+    boundary; stamped with the writer's digest, the launcher must get past the check and stop
+    at the trailer, whose payload size no longer fits the file."""
+    app = build_app({"x.py": "def main():\n    return 0\n"}, "x:main")
+    data = app.read_bytes()
+    extra = (remainder - (len(data) - DIGEST_SIZE)) % DIGEST_LEAF
+    covered = data[:-TRAILER_SIZE] + bytes(extra) + data[-TRAILER_SIZE:-DIGEST_SIZE]
+    assert len(covered) % DIGEST_LEAF == remainder
+    app.write_bytes(covered + tree_digest(covered))
+
+    result = _run(app)
+
+    assert result.returncode == 70
+    assert "payload size does not match file size" in result.stderr, result.stderr
+
+
+def _restamp(app: Path) -> None:
+    """Rewrite the digest, as a deliberate modification would: the checks behind it run."""
+    data = bytearray(app.read_bytes())
+    data[-DIGEST_SIZE:] = tree_digest(data[:-DIGEST_SIZE])
+    app.write_bytes(bytes(data))
+
+
 def _flip_in_blob(app: Path, module: str) -> None:
-    """Flip one byte inside the stored code of ``module``: its zstd frame, or its block's."""
+    """Flip one byte inside the stored code of ``module`` (its zstd frame, or its block's) and
+    restamp the digest."""
     with Executable.open(app) as exe:
         record = exe.payload.find_module(module)
         assert record is not None
@@ -177,6 +284,7 @@ def _flip_in_blob(app: Path, module: str) -> None:
     data = bytearray(app.read_bytes())
     data[position] ^= 0x5A
     app.write_bytes(bytes(data))
+    _restamp(app)
 
 
 @pytest.mark.parametrize("module", ["_fsbpyr_boot", "encodings"])

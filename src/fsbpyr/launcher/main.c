@@ -1,10 +1,10 @@
 /* fsbpyr launcher: start the embedded CPython with startup modules served from the payload.
  *
- * Sequence (plan §3.3): map and validate the payload, check the bytecode/Python version, build
- * CPython's frozen-module table from the STARTUP section (checksum-verified decompression),
- * register _fsbpyr, configure an isolated interpreter that never probes the filesystem for the
- * stdlib, and run `_fsbpyr_boot.run()` through Py_RunMain so exit codes, SystemExit and SIGINT
- * behave exactly as in CPython.
+ * Sequence (plan §3.3): check the whole file against its digest (D31), map and validate the
+ * payload, check the bytecode/Python version, build CPython's frozen-module table from the
+ * STARTUP section (checksum-verified decompression), register _fsbpyr, configure an isolated
+ * interpreter that never probes the filesystem for the stdlib, and run `_fsbpyr_boot.run()`
+ * through Py_RunMain so exit codes, SystemExit and SIGINT behave exactly as in CPython.
  */
 #include "launcher.h"
 

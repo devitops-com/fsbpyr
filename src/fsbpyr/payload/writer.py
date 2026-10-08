@@ -1,6 +1,5 @@
 """Deterministic payload encoder and executable assembler (docs/format.md)."""
 
-import hashlib
 import os
 import tempfile
 from collections.abc import Iterable
@@ -14,6 +13,7 @@ from .format import (
     BLOCK_MEMBER_MAX,
     BLOCK_SIZE,
     CODE_BLOCK_SIZE,
+    DIGEST_SIZE,
     DIST,
     FILE,
     FORMAT_VERSION,
@@ -42,6 +42,7 @@ from .format import (
     check_path,
     encode_text,
     extractable,
+    tree_digest,
 )
 from .spec import Blob, Dist, File, Module, PayloadSpec
 
@@ -425,12 +426,14 @@ def _layout(
 
 
 def assemble(stub: bytes, payload: bytes) -> bytes:
-    """Executable image: stub, zero padding to a page boundary, payload, trailer."""
+    """Executable image: stub, zero padding to a page boundary, payload, trailer; the trailer
+    ends with the digest of everything before it (D31)."""
     offset = align(len(stub), PAGE_SIZE)
     trailer = TRAILER.pack(
-        TRAILER_MAGIC, FORMAT_VERSION, 0, offset, len(payload), hashlib.sha256(payload).digest()
+        TRAILER_MAGIC, FORMAT_VERSION, 0, offset, len(payload), bytes(DIGEST_SIZE)
     )
-    return stub + bytes(offset - len(stub)) + payload + trailer
+    image = stub + bytes(offset - len(stub)) + payload + trailer[:-DIGEST_SIZE]
+    return image + tree_digest(image)
 
 
 def write_executable(path: Path, stub: bytes, payload: bytes) -> None:

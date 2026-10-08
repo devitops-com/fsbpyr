@@ -21,6 +21,7 @@ class Stats(TypedDict):
     reads: int
     stored_bytes: int
     decompressed_bytes: int
+    integrity_ns: int
 
 def find_module(name: str, /) -> tuple[int, int, int, int, int, int, int, str] | None: ...
 def find_file(path: str, /) -> tuple[int, int, int, int, int, int, int] | None: ...

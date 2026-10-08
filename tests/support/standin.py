@@ -138,4 +138,4 @@ class StandIn(types.ModuleType):
         }
 
     def stats(self) -> dict[str, int]:
-        return {"reads": 0, "stored_bytes": 0, "decompressed_bytes": 0}
+        return {"reads": 0, "stored_bytes": 0, "decompressed_bytes": 0, "integrity_ns": 0}

@@ -1,8 +1,10 @@
 """Payload -> spec conversion, runtime cache round trip and app assembly."""
 
 import dataclasses
+import hashlib
 import importlib.util
 import json
+import struct
 import sys
 from pathlib import Path
 
@@ -18,7 +20,14 @@ from fsbpyr.assemble import (
     resources_id,
 )
 from fsbpyr.payload.convert import spec_from_payload
-from fsbpyr.payload.format import Codec, FileKind, ModuleFlag, ModuleKind
+from fsbpyr.payload.format import (
+    TRAILER,
+    TRAILER_MAGIC,
+    Codec,
+    FileKind,
+    ModuleFlag,
+    ModuleKind,
+)
 from fsbpyr.payload.reader import Executable, Payload
 from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob, Dist, File, Module, PayloadSpec
 from fsbpyr.payload.writer import encode_payload
@@ -299,3 +308,44 @@ def test_app_modules_may_not_shadow_builtin_or_frozen_modules(tmp_path: Path, na
 
     with pytest.raises(AssemblyError, match=name):
         build_executable(_runtime(), App("x", "x:main", modules=(clash,)), tmp_path / "x")
+
+
+def test_runtime_from_an_executable_without_a_whole_file_digest_is_refused(
+    tmp_path: Path,
+) -> None:
+    """Format versions 1 and 2 cover only the payload: the stub would be copied unchecked."""
+    out = tmp_path / "app"
+    app = Module("hello", "hello.py", ModuleKind.MODULE, code=Blob.code(b"c"), dist="hello")
+    build_executable(
+        _runtime(),
+        App("hello", "hello:main", modules=(app,), dists=(Dist("hello", "h", "1"),)),
+        out,
+    )
+    with Executable.open(out) as exe:
+        offset, size = exe.payload_offset, exe.payload_size
+    data = out.read_bytes()
+    payload = bytearray(data[offset : offset + size])
+    struct.pack_into("<I", payload, 8, 2)
+    digest = hashlib.sha256(payload).digest()
+    out.write_bytes(data[:offset] + payload + TRAILER.pack(TRAILER_MAGIC, 2, 0, offset, size,
+                                                           digest))  # fmt: skip
+
+    with pytest.raises(RuntimeCacheError, match="whole-file digest"):
+        Runtime.from_executable(out)
+
+
+def test_runtime_from_a_modified_executable_is_refused(tmp_path: Path) -> None:
+    """fsbpyr copies its own stub and stdlib into every app it builds: only as built."""
+    out = tmp_path / "app"
+    app = Module("hello", "hello.py", ModuleKind.MODULE, code=Blob.code(b"c"), dist="hello")
+    build_executable(
+        _runtime(),
+        App("hello", "hello:main", modules=(app,), dists=(Dist("hello", "h", "1"),)),
+        out,
+    )
+    data = bytearray(out.read_bytes())
+    data[1] ^= 0x01
+    out.write_bytes(bytes(data))
+
+    with pytest.raises(RuntimeCacheError, match="modified or damaged"):
+        Runtime.from_executable(out)

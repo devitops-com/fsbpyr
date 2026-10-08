@@ -1,8 +1,10 @@
 """fsbpyr inspect: what an executable was built from, and with which fsbpyr."""
 
 import dataclasses
+import hashlib
 import json
 import os
+import struct
 from pathlib import Path
 
 import pytest
@@ -11,7 +13,7 @@ import fsbpyr
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.cli import main
 from fsbpyr.payload.convert import spec_from_payload
-from fsbpyr.payload.format import FileKind, ModuleKind, PayloadError
+from fsbpyr.payload.format import TRAILER, TRAILER_MAGIC, FileKind, ModuleKind, PayloadError
 from fsbpyr.payload.reader import Executable, Payload
 from fsbpyr.payload.spec import Blob, Dist, File, Module
 from fsbpyr.payload.writer import encode_payload, write_executable
@@ -182,14 +184,17 @@ def test_json_describes_everything(tmp_path: Path, capsys: pytest.CaptureFixture
     assert report["build_info"]["git"]["tag"] == "v0.8.1"
 
 
-def test_verify_checks_the_payload_digest(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_verify_checks_the_file_digest(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     executable = _executable(tmp_path)
+    digest = executable.read_bytes()[-32:].hex()
+    assert main(["inspect", str(executable)]) == 0
+    assert f"digest     {digest}" in capsys.readouterr().out.splitlines()
     assert main(["inspect", "--verify", str(executable)]) == 0
-    assert "payload    SHA-256 verified" in capsys.readouterr().out.splitlines()
+    assert f"digest     {digest} verified" in capsys.readouterr().out.splitlines()
+    assert main(["inspect", "--json", str(executable)]) == 0
+    assert json.loads(capsys.readouterr().out)["digest"] == digest
     with Executable.open(executable) as reader:
-        offset = reader.payload_offset + reader.payload_size - 1  # last payload byte
+        offset = reader.payload_offset - 1  # the stub's padding: outside the payload
     data = bytearray(executable.read_bytes())
     data[offset] ^= 0xFF
     executable.write_bytes(bytes(data))
@@ -197,6 +202,28 @@ def test_verify_checks_the_payload_digest(
     assert main(["inspect", "--verify", str(executable)]) == 1
     error = capsys.readouterr().err
     assert "is damaged or was changed after its build" in error and "digest mismatch" in error
+
+
+def test_older_executables_show_a_digest_of_their_payload_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Format version 2 (fsbpyr 0.5.0): the trailer's digest covers the payload."""
+    current = _executable(tmp_path)
+    with Executable.open(current) as reader:
+        offset, size = reader.payload_offset, reader.payload_size
+    data = current.read_bytes()
+    stub, payload = data[:offset], bytearray(data[offset : offset + size])
+    struct.pack_into("<I", payload, 8, 2)
+    digest = hashlib.sha256(payload).digest()
+    older = tmp_path / "older"
+    older.write_bytes(stub + payload + TRAILER.pack(TRAILER_MAGIC, 2, 0, offset, len(payload),
+                                                    digest))  # fmt: skip
+
+    assert main(["inspect", "--verify", str(older)]) == 0
+    assert f"digest     {digest.hex()} (payload only) verified" in capsys.readouterr().out
+    assert main(["inspect", "--json", str(older)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert (report["digest"], report["digest_covers"]) == (digest.hex(), "payload")
 
 
 def test_distributions_named_like_the_runtime_or_without_modules(

@@ -1,4 +1,4 @@
-# fsbpyr executable format — version 2
+# fsbpyr executable format — version 3
 
 The single source of truth for this format is `src/fsbpyr/payload/format.py`.
 `src/fsbpyr/launcher/format.h` mirrors it, and a test checks that the two agree.
@@ -22,14 +22,45 @@ All integers are little-endian.
 | Offset | Size | Field |
 |--------|------|-------|
 | 0 | 8 | magic `FSBPYR\0T` |
-| 8 | 4 | `format_version` (= 2) |
+| 8 | 4 | `format_version` (= 3) |
 | 12 | 4 | `flags` (reserved, 0) |
 | 16 | 8 | `payload_offset` (absolute file offset) |
 | 24 | 8 | `payload_size` |
-| 32 | 32 | SHA-256 of the payload bytes |
+| 32 | 32 | `digest`: integrity digest of everything before it (versions 1 and 2: SHA-256 of the payload) |
 
-The payload digest is checked only on demand (`fsbpyr inspect --verify`, `FSBPYR_VERIFY=1`),
-never on a normal start.
+## Integrity (version 3, D31)
+
+The last 32 bytes of the file are the SHA-256 over the concatenated SHA-256 digests of each
+1 MiB piece (`DIGEST_LEAF`) of everything before them: stub, padding, payload and the first 32
+bytes of the trailer. The last piece may be shorter.
+
+- The launcher checks it before it reads any other byte of its file: before the trailer, the
+  payload or CPython. It hashes the pieces on
+  min(8, usable cores) threads, one per 4 pieces, with the SHA-256 of the static OpenSSL
+  (SHA-NI where the CPU has it). On a mismatch it prints `fsbpyr: cannot start <path>:
+  integrity check failed: the file was modified or damaged` and exits with status 70. The time
+  it took is `integrity_ns` in `FSBPYR_TRACE`.
+- `fsbpyr inspect` shows the digest; `fsbpyr inspect --verify` recomputes it. Standard tools
+  give the same digest, so a published one can be checked without trusting fsbpyr:
+
+  ```sh
+  head -c -32 app | split -b 1M --filter='openssl dgst -sha256 -binary' | sha256sum
+  tail -c 32 app | od -An -tx1 | tr -d ' \n'   # the stored digest
+  ```
+
+- What it detects: any change to the file that leaves the stored digest alone, such as
+  damage, truncation or a patch. What it cannot detect: a change that also rewrites the digest
+  or removes the check, since the checking code is in the same file. Provenance against
+  deliberate modification needs a signature checked with a key from outside the file (planned
+  with the release system). Damage to the launcher's own code can also crash it before the check
+  runs, and a file that shrinks or fails to read while it is hashed (a failing disk, a network
+  file system) ends the process with SIGBUS: both refuse to run, without the message.
+- Files extracted to the cache (natives, FS_REQUIRED packages, resources asked for as paths)
+  run outside the file, so each process hashes them against the payload once, before it first
+  uses them; a changed file is reported on stderr and restored. A file changed while a process
+  runs is noticed by the next one.
+- `fsbpyr inspect` shows the stored digest, which proves nothing by itself; `--verify` and the
+  shell recipe compute it from the bytes.
 
 ## Payload header (208 bytes, at payload offset 0)
 
@@ -176,7 +207,8 @@ this short list to build CPython's frozen-module table, so it never scans the MO
 ## Validation rules (readers MUST enforce)
 
 - Trailer and header magic and version must match. `header_size` must be 208. Trailer `flags`
-  must be 0.
+  must be 0. The launcher accepts only version 3; the Python reader also reads 1 and 2.
+- The launcher checks the integrity digest (above) before any other rule.
 - `payload_offset` must be 4096-aligned, and the file size must match exactly.
 - Every section must lie inside the payload, start after the header, be 8-byte aligned, and not
   overlap any other section.

@@ -98,7 +98,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D8 | **Startup-critical modules** (`encodings*`, `linecache`, the boot module) are listed in the STARTUP section. The launcher decompresses them once (checksum-verified zstd frames, one shared context, about 0.08 ms) and hands them to CPython through a `PyImport_FrozenModules` table built at run time | No filesystem access during init. No launcher rebuild when boot code changes. `marshal` never sees corrupt bytes: the Phase 2 review showed raw startup blobs crashed CPython on bit flips | Raw blobs referenced straight from the mmap (zero-copy but unverified). Freezing into the C source |
 | D9 | The **native cache mirrors the site-packages layout** inside the generation directory (`<gen>/site/numpy/_core/*.so`, `<gen>/site/numpy.libs/*`) | auditwheel's `$ORIGIN`-relative RUNPATHs work unchanged, so no ELF patching is needed | Flat content-addressed files + patchelf |
 | D10 | **Generation id** = SHA-256(runtime ABI ‖ platform ‖ sorted (path, sha256) of every extractable artifact), computed at build time and stored in the header | Manifest §7. Releases that change only Python code reuse the existing generation | Per-build generations |
-| D11 | **Integrity:** SHA-256 for extractable artifacts, verified on extraction. zstd frame checksums for blobs kept in memory. Whole-payload SHA-256 in the trailer, checked only by `fsbpyr inspect --verify` or `FSBPYR_VERIFY=1` | Meets manifest §11 without hashing on every import | — |
+| D11 | **Integrity:** SHA-256 for extractable artifacts, verified on extraction. zstd frame checksums for blobs kept in memory. Whole-payload SHA-256 in the trailer, checked only by `fsbpyr inspect --verify` or `FSBPYR_VERIFY=1` (superseded by D31: the whole file, on every start) | Meets manifest §11 without hashing on every import | — |
 | D12 | **Sources are kept** by default as separate zstd frames, read only for tracebacks and `inspect`. `--no-source` drops them | Size may grow, startup may not. Gives full tracebacks | — |
 | D13 | **fsbpyr itself** requires Python ≥ 3.14. Its only runtime dependency is `packaging`. zstd comes from the stdlib `compression.zstd`, TOML from `tomllib` | Small self-hosting surface. fsbpyr is pure Python, so self-hosting does not depend on native-extension support | `zstandard` package (a native dependency) |
 | D14 | **Interpreter config in built apps:** isolated (`PYTHON*` env vars ignored), `site_import=0`, `safe_path=1`, UTF-8 mode, `parse_argv=0`, `executable` = realpath of the binary. Debug knobs only through `FSBPYR_*` env vars | Deterministic startup. The app's argv stays untouched | — |
@@ -118,6 +118,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D28 | **Versions come from git tags** (owner decision 2026-10-07): releases are tagged `vX.Y.Z`, starting with v0.1.0 (a GitHub release system comes later). A fix to an existing feature bumps the patch level (0.1.1, 0.1.2, ...), a new feature the minor version (0.2.0, 0.3.0, ...), a major rewrite the major version; `[project] version` follows the tag. `fsbpyr build` records HEAD's commit and the highest `vX.Y.Z` tag pointing at it in build_info (`git`) for every project in HEAD's tree; `fsbpyr --version` prints `X.Y.Z-<8 hex>` for a tagged commit and `untagged-<8 hex>` otherwise, and `untagged-unknown` when nothing was recorded (no git, an sdist, a project copied into some other repository, a wheel installed outside a checkout). A source checkout asks git directly; a git failure such as "dubious ownership" is a build warning. Since v0.2.0 the build also records the project's name and version and the full version of the fsbpyr that built it, and `fsbpyr inspect BINARY` shows them: app name, version and commit; `built with fsbpyr X.Y.Z-<hash>`; Python and glibc; size and distribution count. Since v0.3.0 it also lists the bundled shared libraries and native extension modules (a plain `*.so` is told apart by `PyInit_<name>`, searched streaming, so a hostile file cannot make it allocate its declared size) and the top-level module names per distribution plus those of the standard library and fsbpyr (`--all-modules`: every module), each list in as many columns as the terminal fits; `--json` prints the same as JSON (`modules` per distribution, `runtime_modules`, `all_modules`), `--verify` checks the payload SHA-256 (D11), which detects damage, not deliberate tampering (the digest sits in the same file). Uncommitted changes are not marked | The executable has no git, and the project wheel is built from an sdist without `.git`, so the commit must be captured by the build. git stays optional: without it a build only lacks the commit | A VCS build-backend plugin (hatch-vcs, setuptools-scm): a second backend and PEP 440 versions (`0.1.1.dev3+g6457a95`) instead of the requested format |
 | D29 | **zstd level 9 by default; `--fast-compression` keeps level 3** (owner decision 2026-10-08; replaces the `fast`/`balanced`/`compact` profiles). Applies to every blob, the runtime's stdlib frames included (LAYOUT_VERSION 4); `--fast-compression` and `build_info["zstd_level"]` concern the app's content and, since D30, every block (small stdlib files and boot modules included); the stdlib frames left outside blocks are always level 9 | Measured on aiagent's 405 MB of content, per-file: level 3 144.6 MB in 1 s, 9 134.4 MB in 4 s, 19 126.3 MB in 62 s, 22 126.1 MB in 77 s; decompression speed does not depend on the level. The whole aiagent build goes from 14.4 s (`--fast-compression`) to 18.0 s and from 167.1 MB to 157.4 MB (0.3.0, level 3 everywhere: 167.7 MB) | Levels 19/22 (15–20× the build time for 6% more); profiles. A two-stage stub (a small loader that unpacks the 20.9 MB launcher + CPython, 6.9 MB compressed) was evaluated and rejected: unpacking costs about 23 ms per start (hello starts in 5.7 ms) or, if cached, needs a writable exec-capable cache for every app and makes a user-writable file run on every start |
 | D30 | **Small blobs are packed into shared zstd blocks** (format v2; owner decision 2026-10-08): every non-empty blob under 64 KiB except natives, keyed by content (raw or zstd, it is one member), in one stream per placement class; 64 KiB blocks for code, 256 KiB for resources, metadata and sources; readers keep the last 32 decompressed blocks. A member record (codec 2) names its block and its position | Measured on aiagent: 157.4 → 149.6 MB (−7.8 MB, −5%) for +5 ms on 130–170 ms import-heavy starts (+3–4%); hello unchanged. Variants measured: 32/256 KiB −6.4 MB +3 ms, 32/64 KiB −4.6 MB +2 ms, code unblocked −4.1 MB +2.5 ms. With 8 cached blocks, imports alternating between packages decompressed 36.5 MB instead of 16 MB. The runtime's stdlib fragment stays unblocked (apps pack it into their own blocks), and the resources id hashes content, not its representation | A zstd dictionary (−6.3 MB on small blobs, but a launcher change for less gain); profile-guided ordering of code by import order (not tried: a second build pass, and reproducibility would depend on a stable import order); 256 KiB code blocks (−10.2 MB, +17 ms) |
+| D31 | **Every executable checks its whole file before it starts** (owner decision 2026-10-08; format v3; replaces D11's "whole-payload SHA-256 checked only on demand"). The trailer ends with a SHA-256 over the SHA-256 of each 1 MiB piece of everything before it; the launcher checks it before reading anything else, on min(8, usable cores) threads (one per 4 pieces) with the static OpenSSL's low-level SHA-256 (not the one-shot `SHA256()`, which since OpenSSL 3 sets up EVP and may read `openssl.cnf`), and exits 70 on a mismatch. Files extracted to the cache are hashed by every process, once, before it first uses them (`FSBPYR_VERIFY` is gone); a changed one is reported on stderr and restored. `fsbpyr build` checks its own file again before copying the runtime out of it. Detects damage and any change that leaves the digest alone; a change that also rewrites the digest or removes the check needs a signature checked with an outside key (owner decision: with the release system, later). The startup budget (§3.3) now excludes the check | Measured in the launcher, file in the page cache (Core Ultra 9 285): 28 MB 2.0 ms (one core 6.9 ms, no SHA-NI 7.1 ms), 148 MB 8.9 ms (38 ms, 30 ms); through EVP the 28 MB check took 3.4 ms. The no-op app goes from 6.0 to 8.1 ms against 5.1–5.4 ms bare CPython; without the check it is at 1.11–1.17×. mmap beats pread (21 MB: 2.2 vs 3.1 ms); the piece size hardly matters (64 KiB to 1 MiB); 8 threads cost more than 5–6 on files under ~40 MB. Standard tools reproduce the digest (`split --filter`, `openssl dgst`, `sha256sum`) | Plain SHA-256 on one thread (31 ms per 150 MB with SHA-NI, 180 ms without); BLAKE3 (4.6 ms per 150 MB on 8 threads, but vendored C with hand-written threading and a native package for inspect); caching a verified state by inode and ctime (misses damage on disk, which changes neither); signing now (later, with releases) |
 
 ---
 
@@ -203,7 +204,9 @@ too.
    flushing and atexit.
 
 **Startup budget (dev machine):** steps 1–5 take ≤ 0.2 ms. `hello --version` is ≤ 5.6 ms p50,
-which is ≤ 1.15× bare `python3.14 -I -S -c pass`.
+which is ≤ 1.15× bare `python3.14 -I -S -c pass`. Since D31 the whole-file integrity check
+comes first and is budgeted apart: it costs what hashing the file costs (`integrity_ns` in
+`FSBPYR_TRACE`, about 2 ms for a 28 MB app); everything else keeps the 1.15× budget.
 
 ### 3.4 Pure-Python import path
 
@@ -839,7 +842,8 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
   aiagent 157.4 → 149.6 MB. Measured and set aside: a zstd dictionary (blocks gain more), and a
   two-stage stub (D29). xz -6 with the x86 filter for native files (aiagent's 162 MB: 48.7 →
   38.0 MB; decoding 1.0 s on one thread, 0.23 s on 8) becomes the opt-in `--best-compression`
-  (0.6.0); zstd 9 stays the default. Then the benchmark harness and report.
+  (0.7.0); zstd 9 stays the default. Then the benchmark harness and report. D31 (0.6.0): every
+  executable checks its whole file before it starts (format v3).
 
 - ~~`fast` / `balanced` / `compact` (manifest §10)~~ replaced by D29. Grouped frames for tiny
   modules if measurement shows a gain. Optional zstd dictionary, kept only if measured as a gain.
@@ -864,8 +868,8 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
 - Cache-root ancestors: walk the root's path from `/` and require every component to be owned
   by root or the user and not writable by others unless sticky. Closes the risk accepted in the
   Phase 5 security review (a root inside a directory other users can write).
-- `FSBPYR_VERIFY=1` also checks the payload digest (D11); so far it only re-hashes cached
-  files (Phase 6b).
+- ~~`FSBPYR_VERIFY=1` also checks the payload digest (D11)~~: D31 checks the whole file on
+  every start and re-hashes cached files in every process; `FSBPYR_VERIFY` is gone.
 - **Exit:**
   - the fuzzer and sanitizers are clean
   - security tests pass: path traversal in names, symlinked cache dirs, foreign-owned cache,
@@ -957,7 +961,8 @@ interpreter-reexec = false    # Phase 6b, D23
 ```
 
 Environment variables honored by built apps (never `PYTHON*`):
-`FSBPYR_CACHE_DIR`, `FSBPYR_TRACE`, `FSBPYR_IMPORTTIME`, `FSBPYR_VERIFY`, `FSBPYR_SELFTEST`.
+`FSBPYR_CACHE_DIR`, `FSBPYR_TRACE`, `FSBPYR_IMPORTTIME`, `FSBPYR_SELFTEST` (`FSBPYR_VERIFY`
+until D31).
 Whoever controls the environment can make an app import-only (`FSBPYR_SELFTEST`) or print
 import timings; this was accepted in the Phase 2 review, since that party could equally set
 `LD_PRELOAD`.

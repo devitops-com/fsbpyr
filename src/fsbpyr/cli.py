@@ -32,7 +32,7 @@ def _parser() -> argparse.ArgumentParser:
     inspect = commands.add_parser("inspect", help="show what an executable was built from")
     inspect.add_argument("binary", type=Path, help="executable built by fsbpyr")
     inspect.add_argument("--json", action="store_true", help="machine-readable output")
-    inspect.add_argument("--verify", action="store_true", help="check the payload's SHA-256")
+    inspect.add_argument("--verify", action="store_true", help="recompute the file's digest")
     inspect.add_argument("--all-modules", action="store_true",
                          help="list every module, not only top-level names")  # fmt: skip
     runtime = commands.add_parser("runtime", help="manage runtimes (native stub + stdlib)")

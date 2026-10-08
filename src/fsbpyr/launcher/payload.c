@@ -1,6 +1,7 @@
 /* Payload mapping, validation and lookups (see payload.h and docs/format.md). */
 #include "payload.h"
 
+#include "integrity.h"
 #include "vendor/zstd/zstd.h"
 
 #include <errno.h>
@@ -93,15 +94,18 @@ bool fsb_payload_open(struct fsb_payload *p, const char **error) {
     p->executable[n] = '\0';
     int fd = open("/proc/self/exe", O_RDONLY | O_CLOEXEC);
     struct stat st;
-    struct fsb_trailer trailer;
-    if (fd < 0 || fstat(fd, &st) != 0 || !read_trailer(fd, (uint64_t)st.st_size, &trailer)) {
+    if (fd < 0 || fstat(fd, &st) != 0) {
         *error = "cannot read own executable";
         if (fd >= 0) close(fd);
         return false;
     }
     size_t length = (size_t)n;
     strip_deleted(p->executable, &length, &st);
-    *error = check_trailer(&trailer, (uint64_t)st.st_size);
+    *error = fsb_check_integrity(fd, (uint64_t)st.st_size); /* before any byte is believed */
+    struct fsb_trailer trailer;
+    if (*error == NULL && !read_trailer(fd, (uint64_t)st.st_size, &trailer))
+        *error = "cannot read own executable";
+    if (*error == NULL) *error = check_trailer(&trailer, (uint64_t)st.st_size);
     if (*error == NULL && trailer.payload_size < sizeof p->header) *error = "payload truncated";
     void *map = MAP_FAILED;
     if (*error == NULL) {

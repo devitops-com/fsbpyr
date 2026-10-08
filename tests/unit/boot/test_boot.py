@@ -329,7 +329,7 @@ def test_trace_reports_payload_modules_by_dist_at_exit(
     assert report["modules"]["demo"] == ["pkg", "pkg.cli"]
     assert "entry" in report["modules"][""]  # modules without a distribution
     assert report["extracted"] == []
-    assert set(report) >= {"reads", "stored_bytes", "decompressed_bytes"}
+    assert set(report) >= {"reads", "stored_bytes", "decompressed_bytes", "integrity_ns"}
 
 
 def test_excepthook_hides_only_leading_boot_frames(

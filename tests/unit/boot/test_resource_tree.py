@@ -54,16 +54,13 @@ def test_large_trees_keep_few_directories_open(
     assert _open_descriptors() == baseline
 
 
-def test_verify_repairs_resources_without_a_digest(
-    native: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_resources_without_a_digest_are_rechecked_by_every_process(native: ModuleType) -> None:
     copy = Path(native.materialize("many/d007/f.txt"))
     copy.chmod(0o600)
     copy.write_bytes(b"9")  # same size, other content
     native._MATERIALIZED.clear()  # a new process
+    native._RESOURCES.clear()
 
-    assert Path(native.materialize("many/d007/f.txt")).read_bytes() == b"9"  # size check only
-    monkeypatch.setenv("FSBPYR_VERIFY", "1")
     assert Path(native.materialize("many/d007/f.txt")).read_bytes() == b"7"
 
 

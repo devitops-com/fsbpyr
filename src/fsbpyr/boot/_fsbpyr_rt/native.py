@@ -6,12 +6,15 @@ libraries unchanged. ``<cache>`` is ``$FSBPYR_CACHE_DIR`` or
 ``${XDG_CACHE_HOME:-~/.cache}/<app>``. A file is written under a temporary name, checked
 against its SHA-256 and renamed into place, so racing processes only ever see complete files
 and need no lock. Extensions are then loaded by CPython's ExtensionFileLoader (plain dlopen).
+Cached files run outside the executable's own integrity check, so every use hashes them again
+(D31): a modified file is reported and restored from the payload.
 """
 
 import contextlib
 import hashlib
 import os
 import stat
+import sys
 from _frozen_importlib import ModuleSpec
 from _frozen_importlib_external import ExtensionFileLoader
 
@@ -83,17 +86,19 @@ def _open_child(parent: int, name: str, path: str) -> int:
     return _checked(os.open(name, _DIRECTORY | os.O_NOFOLLOW, dir_fd=parent), path, private=True)
 
 
-def _cached(directory: int, name: str, size: int, digest: bytes | None) -> bool:
-    """A complete file of ours is in place (and, given ``digest``, has that content)."""
+def _cached(directory: int, name: str, size: int, digest: bytes) -> bool | None:
+    """True: a file of ours with that content is in place; None: nothing is; False: something
+    else is (a file changed after it was extracted)."""
     try:
         info = os.stat(name, dir_fd=directory, follow_symlinks=False)
     except FileNotFoundError:
-        return False
+        return None
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_size != size:
         return False
-    if digest is None:
-        return True
-    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
+    except OSError:  # unreadable: replaced like any other changed file
+        return False
     with open(fd, "rb") as file:
         return hashlib.file_digest(file, "sha256").digest() == digest
 
@@ -120,6 +125,7 @@ class NativeCache:
         self.root = root
         self.site = "/".join((root, *chain))
         self._chain = chain
+        self._checked: set[str] = set()  # site-relative paths this process hashed or wrote
 
     def _open_site(self) -> int:
         fd = _open_root(self.root)
@@ -133,13 +139,12 @@ class NativeCache:
             fd = child
         return fd
 
-    def sync(
-        self, files: tuple[int, ...], *, verify: bool = False, resources: bool = False
-    ) -> list[str]:
-        """Extract the files (FILES indices) that are missing, or with ``verify`` whose
-        content does not match; returns the site-relative paths written. With ``resources``
-        any file may be extracted (importlib.resources asked for it on disk); one without a
-        digest is written as stored, as it is read in memory."""
+    def sync(self, files: tuple[int, ...], *, resources: bool = False) -> list[str]:
+        """Extract the files (FILES indices) that are missing or whose content does not match
+        the payload's, reporting the changed ones; returns the site-relative paths written.
+        Each process hashes a file once: extensions share libraries. With ``resources`` any
+        file may be extracted (importlib.resources asked for it on disk); one without a digest
+        is compared with its bytes in the payload."""
         opened: dict[str, int] = {}  # the chain of directories down to the current one
 
         def directory(rel: str) -> int:
@@ -161,16 +166,24 @@ class NativeCache:
                 extractable = resources or kind in (NATIVE_EXT, NATIVE_LIB) or flags & FS_REQUIRED
                 if not extractable or (digest is None and not resources) or _unsafe(rel):
                     raise _corrupt(f"extracted file {rel!r}")
-                if verify and digest is None:  # compare the cached file with the payload's bytes
-                    digest = hashlib.sha256(_fsbpyr.read(blob)).digest()
-                parent, _, name = rel.rpartition("/")
-                if _cached(directory(parent), name, size, digest if verify else None):
+                if rel in self._checked:
                     continue
-                data = _fsbpyr.read(blob)
-                if digest is not None and hashlib.sha256(data).digest() != digest:
-                    raise _corrupt(f"{rel!r} digest")
-                _publish(directory(parent), name, data, mode)
-                written.append(rel)
+                data = None
+                if digest is None:  # compare the cached file with the payload's bytes
+                    data = _fsbpyr.read(blob)
+                    digest = hashlib.sha256(data).digest()
+                parent, _, name = rel.rpartition("/")
+                cached = _cached(directory(parent), name, size, digest)
+                if not cached:
+                    if cached is False:
+                        _report_changed(f"{self.site}/{rel}")
+                    if data is None:
+                        data = _fsbpyr.read(blob)
+                        if hashlib.sha256(data).digest() != digest:
+                            raise _corrupt(f"{rel!r} digest")
+                    _publish(directory(parent), name, data, mode)
+                    written.append(rel)
+                self._checked.add(rel)
         finally:
             for fd in opened.values():
                 os.close(fd)
@@ -178,9 +191,17 @@ class NativeCache:
         return written
 
 
+def _report_changed(path: str) -> None:
+    """On stderr, not as a warning: apps that silence warnings must not hide this. A closed
+    stderr must not stop the repair."""
+    if sys.stderr is not None:
+        with contextlib.suppress(OSError, ValueError):
+            sys.stderr.write(f"fsbpyr: {path} was modified after extraction; restoring it\n")
+
+
 _CACHE: list[NativeCache] = []
 _RESOURCES: list[NativeCache] = []
-_MATERIALIZED: dict[str, str] = {}  # payload path -> path on disk, extracted by this process
+_MATERIALIZED: dict[str, str] = {}  # payload path -> path on disk, checked by this process
 
 
 def native_cache() -> NativeCache:
@@ -209,11 +230,6 @@ def resource_cache() -> NativeCache:
     return _RESOURCES[0]
 
 
-def _verify_requested() -> bool:
-    """FSBPYR_VERIFY=1: re-hash cached files on use instead of trusting a matching size."""
-    return bool(os.environ.get("FSBPYR_VERIFY"))
-
-
 def _noexec(path: str) -> bool:
     try:
         return bool(os.statvfs(path).f_flag & os.ST_NOEXEC)
@@ -232,14 +248,12 @@ class PayloadExtensionLoader(ExtensionFileLoader):
     def create_module(self, spec: ModuleSpec) -> ModuleType:
         cache = native_cache()
         try:
-            cache.sync(self.files, verify=_verify_requested())
+            cache.sync(self.files)
             try:
                 return super().create_module(spec)
             except ImportError as exc:
                 if exc.path != spec.origin:  # raised by the module's own initialization
                     raise
-                if cache.sync(self.files, verify=True):  # self-heal a damaged cached file
-                    return super().create_module(spec)
                 if _noexec(cache.root):
                     raise NativeCacheError(
                         f"{exc}; the native cache {cache.root} is on a noexec mount, "
@@ -270,7 +284,7 @@ def materialize_package(directory: str) -> str:
     prefix (with "/") that the package's modules live under."""
     cache = native_cache()
     try:
-        cache.sync(tuple(_files_below(directory)), verify=_verify_requested())
+        cache.sync(tuple(_files_below(directory)))
     except OSError as exc:
         raise NativeCacheError(
             f"cannot extract {directory} into {cache.root}: {exc}; "
@@ -285,9 +299,8 @@ def materialize(path: str) -> str:
     importlib.resources (``as_file``, ``os.fspath``); returns where it is on disk. It stays
     there, as an installed package's files do, so code that keeps the path after ``as_file``
     returns keeps working. Raises OSError (FileNotFoundError when ``path`` is not in the
-    payload)."""
-    verify = _verify_requested()
-    if path in _MATERIALIZED and not verify:
+    payload). Each process checks the files on disk once, on its first request."""
+    if path in _MATERIALIZED:
         return _MATERIALIZED[path]
     record = _fsbpyr.find_file(path) if path else None
     files = [record[0]] if record is not None else _files_below(path) if path else []
@@ -295,7 +308,7 @@ def materialize(path: str) -> str:
         raise FileNotFoundError(2, "No such file in the executable payload", path)
     try:
         cache = resource_cache()
-        cache.sync(tuple(files), verify=verify, resources=True)
+        cache.sync(tuple(files), resources=True)
     except NativeCacheError as exc:  # its message says what to do
         raise OSError(f"cannot extract {path}: {exc}") from exc
     except OSError as exc:  # same class (PermissionError, ...), with the cache and the remedy

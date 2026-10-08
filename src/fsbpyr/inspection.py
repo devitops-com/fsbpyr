@@ -45,6 +45,8 @@ class Report:
     shared_libraries: list[str] = field(default_factory=list)
     extension_modules: list[str] = field(default_factory=list)
     verified: bool = False
+    digest: str = ""  # hex: of the whole file (D31), of the payload in older executables
+    covers_file: bool = True
 
 
 def _shown(value: object) -> str:
@@ -107,6 +109,7 @@ def read(path: Path, *, verify: bool = False) -> Report:
                 tuple((d.name, d.version) for d in dists),
                 {name: sorted(names) for name, names in modules.items()}, sorted(runtime),
                 sorted(libraries), sorted(extensions), verified=verify,
+                digest=executable.digest.hex(), covers_file=executable.covers_file,
             )  # fmt: skip
     except PayloadError as exc:
         raise InspectError(f"{path} is not an executable fsbpyr built ({exc})") from exc
@@ -152,6 +155,8 @@ def as_json(report: Report, *, all_modules: bool = False) -> str:
         "built_with": _built_with(report.info),
         "python": report.info.get("python"),
         "glibc": report.info.get("glibc"),
+        "digest": report.digest,
+        "digest_covers": "file" if report.covers_file else "payload",
         "verified": report.verified or None,
         "distributions": [{"name": n, "version": v} for n, v in report.dists],
         "shared_libraries": report.shared_libraries,
@@ -218,9 +223,9 @@ def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
         f"built with fsbpyr {_shown(_built_with(report.info))}",
         f"python     {_shown(report.info.get('python', UNKNOWN))}{glibc_text}",
         f"size       {report.size / 1e6:.1f} MB, {_plural(len(report.dists), 'distribution')}",
+        f"digest     {report.digest}{'' if report.covers_file else ' (payload only)'}"
+        + (" verified" if report.verified else ""),
     ]
-    if report.verified:
-        lines.append("payload    SHA-256 verified")
     lines += [
         f"shared libraries: {len(report.shared_libraries)}",
         *_columns(report.shared_libraries),
