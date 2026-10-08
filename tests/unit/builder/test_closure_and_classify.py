@@ -10,9 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from fsbpyr.classify import ClassifyError, classify
+from fsbpyr.classify import ClassifyError, classify, compile_module
 from fsbpyr.closure import ClosureError, SiteIndex, resolve_entry
 from fsbpyr.payload.format import FileFlag, FileKind, ModuleFlag, ModuleKind
+from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob
 
 from ...support.elf import make_elf
 
@@ -183,6 +184,26 @@ def test_classify_without_sources(site: Path) -> None:
 
     assert all(m.source is None for m in content.modules)
     assert not any(f.kind is FileKind.SOURCE for f in content.files)
+
+
+@pytest.mark.parametrize("level", [ZSTD_FAST_LEVEL, ZSTD_LEVEL])
+def test_content_is_compressed_at_the_build_level(site: Path, level: int) -> None:
+    text = "\n".join(f"VALUE_{i} = {i * i % 97}  # line {i}" for i in range(4000)).encode()
+    native = make_elf() + text  # a library: natives follow the level too
+    _dist(site, "big", "1.0", {"big/__init__.py": text, "big/table.txt": text,
+                               "big/libbig.so.1": native})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["big"]], extension_suffixes=SUFFIXES, include_source=True,
+                       level=level)  # fmt: skip
+
+    assert Blob.zstd(text, level=ZSTD_FAST_LEVEL).stored != Blob.zstd(text, level=ZSTD_LEVEL).stored
+    files = {f.path: f for f in content.files}
+    assert files["big/table.txt"].blob.stored == Blob.zstd(text, level=level).stored
+    assert files["big/libbig.so.1"].blob.stored == Blob.zstd(native, level=level).stored
+    assert files["big/__init__.py"].blob.stored == Blob.zstd(text, level=level).stored  # source
+    module = next(m for m in content.modules if m.name == "big")
+    assert module.code == Blob.code(compile_module(text, "big/__init__.py"), level=level)
 
 
 def test_pth_files_are_reported_not_packaged(site: Path) -> None:

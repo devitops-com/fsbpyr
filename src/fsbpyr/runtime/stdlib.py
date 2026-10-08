@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ..bytecode import canonicalize
 from ..payload.format import FileKind, ModuleFlag, ModuleKind, is_module_part
-from ..payload.spec import Blob, File, Module
+from ..payload.spec import ZSTD_LEVEL, Blob, File, Module
 from .pbs import PbsDist
 
 EXCLUDED_DIRS = frozenset({
@@ -14,7 +14,6 @@ EXCLUDED_DIRS = frozenset({
     "lib-dynload", "__phello__",
 })  # fmt: skip
 _FAILED = 0xFFFFFFFF
-_ZSTD_LEVEL = 3
 
 # Runs under the PBS interpreter (-I -S): compile each listed file and frame the marshal data.
 # stdin: NUL-separated pairs of (relative path, co_filename).
@@ -144,23 +143,23 @@ def fragment(dist: PbsDist) -> tuple[tuple[Module, ...], tuple[File, ...]]:
         source = (dist.stdlib / rel).read_bytes()
         raw = compiled[rel]
         if raw is None:  # not valid Python for this version: ship it as a plain resource
-            files.append(File(rel, FileKind.RESOURCE, Blob.zstd(source, level=_ZSTD_LEVEL)))
+            files.append(File(rel, FileKind.RESOURCE, Blob.zstd(source, level=ZSTD_LEVEL)))
             continue
         code = canonicalize(raw)
         is_startup = name in startup
-        source_blob = Blob.zstd(source, level=_ZSTD_LEVEL)
+        source_blob = Blob.zstd(source, level=ZSTD_LEVEL)
         modules.append(Module(
             name,
             rel,
             ModuleKind.PACKAGE if is_package else ModuleKind.MODULE,
-            code=Blob.code(code, level=_ZSTD_LEVEL),
+            code=Blob.code(code, level=ZSTD_LEVEL),
             source=source_blob,
             flags=ModuleFlag.STARTUP if is_startup else ModuleFlag(0),
         ))  # fmt: skip
         files.append(File(rel, FileKind.SOURCE, source_blob))
     for rel in tree.resources:
         data = (dist.stdlib / rel).read_bytes()
-        files.append(File(rel, FileKind.RESOURCE, Blob.zstd(data, level=_ZSTD_LEVEL)))
+        files.append(File(rel, FileKind.RESOURCE, Blob.zstd(data, level=ZSTD_LEVEL)))
     missing = startup - {m.name for m in modules}
     if missing:
         raise StdlibError(f"startup modules missing from the stdlib selection: {sorted(missing)}")

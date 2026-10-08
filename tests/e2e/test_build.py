@@ -9,12 +9,14 @@ import json
 import os
 import shutil
 import subprocess
+from compression import zstd
 from pathlib import Path
 
 import pytest
 
 from fsbpyr.cli import main
 from fsbpyr.payload.reader import Executable
+from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob
 from fsbpyr.runtime.registry import Runtime
 from fsbpyr.vcs import git_state, own_version, version_string
 
@@ -64,6 +66,7 @@ def test_hello_from_uv_lock(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert main(["inspect", "--json", "--verify", str(executable)]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["verified"] is True and report["modules"]["hello"] == ["hello"]
+    assert report["build_info"]["zstd_level"] == ZSTD_LEVEL
     assert report["shared_libraries"] == [] and "json" in report["runtime_modules"]
 
 
@@ -112,6 +115,21 @@ def test_builds_do_not_depend_on_the_build_environment(
     assert first.read_bytes() == second.read_bytes()
     with Executable.open(first) as executable:  # installer-made scripts name a host Python
         assert not [f.path for f in executable.payload.files() if f.path.startswith("bin/")]
+
+
+def test_stdlib_frames_are_level_9_and_fast_builds_only_change_app_content(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = next(m.code for m in runtime.modules if m.name == "argparse")
+    assert code is not None
+    assert Blob.code(zstd.decompress(code.stored), level=ZSTD_LEVEL) == code
+    project = _fixture("hello", tmp_path)
+
+    assert main(["build", str(project), "--fast-compression", "--no-smoke"]) == 0
+    capsys.readouterr()
+    assert main(["inspect", "--json", str(project / "dist" / "hello")]) == 0
+
+    assert json.loads(capsys.readouterr().out)["build_info"]["zstd_level"] == ZSTD_FAST_LEVEL
 
 
 def test_builds_without_uv_explain_how_to_install_it(

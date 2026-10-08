@@ -116,6 +116,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D26 | **uv is required on the build host** (owner decision 2026-10-07): it installs every project, including pip projects (requirements.txt, unlocked); a build without uv on PATH fails with installation instructions. The pip fallback and `--interpreter` are gone | Only uv selects wheels for the runtime's glibc baseline (`--python-platform`); measured: a pip build of `heavy` picked cryptography's manylinux_2_34 wheel and failed on Debian 10 and Rocky 8 | Bundling uv inside fsbpyr; a wheels-only pip path; keeping pip with a warning |
 | D27 | **Resources reached as paths are extracted on demand** (owner decision 2026-10-07): `importlib.resources.as_file` on a payload resource yields its copy in the app cache and never deletes it; `os.fspath()`/`str()` of a payload Traversable extract the file or directory and return that path. The copies live in `<cache>/resources/<resources id>/site/<path>`, keyed by every payload file (`build_info["resources"]`), not in the generation's tree, which releases share (D10): a release never sees another release's files. Each path is extracted once per process. The payload root is refused; an unusable cache raises from `as_file`/`os.fspath` (naming `FSBPYR_CACHE_DIR`) and makes `str()` warn and keep the virtual path. Extracted copies stay on disk until cache GC (Phase 8), like native files. Unlike the stdlib's temporary copy they are read-only (files 0400, directories 0700), shared by the app's processes, and under `--no-source` hold no `.py` sources; `str(files(pkg))` names the cache while `pkg.__file__` stays inside the executable | Code written for installed packages keeps `as_file` paths after the block (aiagent's skill discovery) or hands `str(files(pkg) / dir)` to `os` functions; with this, such code needs no configuration. Only what is asked for is extracted, with the same safe publishing as native files | Temporary copies (stdlib default: the path dies with the block); requiring `fs-packages` for every such package; one tree shared with natives (stale or removed files of other releases would show) |
 | D28 | **Versions come from git tags** (owner decision 2026-10-07): releases are tagged `vX.Y.Z`, starting with v0.1.0 (a GitHub release system comes later). A fix to an existing feature bumps the patch level (0.1.1, 0.1.2, ...), a new feature the minor version (0.2.0, 0.3.0, ...), a major rewrite the major version; `[project] version` follows the tag. `fsbpyr build` records HEAD's commit and the highest `vX.Y.Z` tag pointing at it in build_info (`git`) for every project in HEAD's tree; `fsbpyr --version` prints `X.Y.Z-<8 hex>` for a tagged commit and `untagged-<8 hex>` otherwise, and `untagged-unknown` when nothing was recorded (no git, an sdist, a project copied into some other repository, a wheel installed outside a checkout). A source checkout asks git directly; a git failure such as "dubious ownership" is a build warning. Since v0.2.0 the build also records the project's name and version and the full version of the fsbpyr that built it, and `fsbpyr inspect BINARY` shows them: app name, version and commit; `built with fsbpyr X.Y.Z-<hash>`; Python and glibc; size and distribution count. Since v0.3.0 it also lists the bundled shared libraries and native extension modules (a plain `*.so` is told apart by `PyInit_<name>`, searched streaming, so a hostile file cannot make it allocate its declared size) and the top-level module names per distribution plus those of the standard library and fsbpyr (`--all-modules`: every module), each list in as many columns as the terminal fits; `--json` prints the same as JSON (`modules` per distribution, `runtime_modules`, `all_modules`), `--verify` checks the payload SHA-256 (D11), which detects damage, not deliberate tampering (the digest sits in the same file). Uncommitted changes are not marked | The executable has no git, and the project wheel is built from an sdist without `.git`, so the commit must be captured by the build. git stays optional: without it a build only lacks the commit | A VCS build-backend plugin (hatch-vcs, setuptools-scm): a second backend and PEP 440 versions (`0.1.1.dev3+g6457a95`) instead of the requested format |
+| D29 | **zstd level 9 by default; `--fast-compression` keeps level 3** (owner decision 2026-10-08; replaces the `fast`/`balanced`/`compact` profiles). Applies to every blob, the runtime's stdlib frames included (LAYOUT_VERSION 4); `--fast-compression` and `build_info["zstd_level"]` concern the app's content only, since stdlib frames and boot modules are always level 9 | Measured on aiagent's 405 MB of content, per-file: level 3 144.6 MB in 1 s, 9 134.4 MB in 4 s, 19 126.3 MB in 62 s, 22 126.1 MB in 77 s; decompression speed does not depend on the level. The whole aiagent build goes from 14.4 s (`--fast-compression`) to 18.0 s and from 167.1 MB to 157.4 MB (0.3.0, level 3 everywhere: 167.7 MB) | Levels 19/22 (15–20× the build time for 6% more); profiles. A two-stage stub (a small loader that unpacks the 20.9 MB launcher + CPython, 6.9 MB compressed) was evaluated and rejected: unpacking costs about 23 ms per start (hello starts in 5.7 ms) or, if cached, needs a writable exec-capable cache for every app and makes a user-writable file run on every start |
 
 ---
 
@@ -292,7 +293,7 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
    otherwise the cache, otherwise fail with an error that suggests
    `fsbpyr runtime build --python X.Y`.
 3. **Staging install.** Install into `build/fsbpyr/staging/<key>/`. `<key>` hashes the lock
-   file, the profile and the extras, so an unchanged lock reuses the staging directory. The
+   file and the extras, so an unchanged lock reuses the staging directory. The
    lock source is chosen in this order:
 
    | Lock source | Command |
@@ -331,7 +332,7 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
    and prints a warning.
 8. **Natives.** Run the ELF analysis, compute closures, check the allowlist and compute the
    generation id.
-9. **Compress** according to the profile. Stdlib frames from the runtime are reused verbatim.
+9. **Compress** at the build's zstd level (D29). Stdlib frames from the runtime are reused verbatim.
 10. **Assemble** stub ‖ pad ‖ payload ‖ trailer into a temp file, `chmod 0755`, and atomically
     rename it to `dist/<name>`.
 11. **Smoke test.** Run `<out>` with `FSBPYR_SELFTEST=1`. Boot checks the tables and imports
@@ -831,8 +832,15 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
 
 ### Phase 7 — Compression profiles and benchmarks (M)
 
-- `fast` / `balanced` / `compact` (manifest §10). Grouped frames for tiny modules if
-  measurement shows a gain. Optional zstd dictionary, kept only if measured as a gain.
+- **Progress (2026-10-08):** D29 replaces the profiles: level 9 by default, `--fast-compression`
+  (or `fast-compression = true`) for level 3. aiagent: 167.7 MB → 157.4 MB (140.0 MB with
+  `--no-source`, now documented in `README.md`). Measured, not yet decided: a 112 KB zstd
+  dictionary trained on the app's small blobs shrinks them by 12% (53.2 → 46.6 MB at level 19,
+  about 5% of the payload); it needs a format and launcher change. The benchmark harness and
+  report are still to do.
+
+- ~~`fast` / `balanced` / `compact` (manifest §10)~~ replaced by D29. Grouped frames for tiny
+  modules if measurement shows a gain. Optional zstd dictionary, kept only if measured as a gain.
 - Benchmark harness (§8) and CI regression gate.
 - Evaluate an opt-in "fast exit" (flush stdio, run atexit, then `_exit`). S2 measured
   interpreter finalization at about 0.83 ms of a 4.8 ms run.
@@ -925,7 +933,7 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
 ```
 fsbpyr build [PROJECT_DIR] [--entry NAME | module | module:func] [-o OUT]
              [--requirements FILE] [--offline]
-             [--profile fast|balanced|compact] [--extra NAME]... [--no-source]
+             [--fast-compression] [--extra NAME]... [--no-source]
              [--fs-package NAME]... [--allow-system-lib SONAME]... [--no-smoke]
              [--hints] [--interpreter-reexec]
 fsbpyr inspect BINARY [--json] [--verify] [--all-modules]   # D28, v0.3.0
@@ -938,9 +946,9 @@ fsbpyr --version                 # 0.1.0-6457a95b at tag v0.1.0, else untagged-6
 entry = "mytool"              # console script name, "pkg.mod", or "pkg.mod:func"
 output = "dist/mytool"
 requirements = "requirements.txt"   # pip projects without pylock.toml; ignored when uv.lock exists
-profile = "balanced"
 extras = []
 include-source = true
+fast-compression = false      # D29: zstd level 3 instead of 9
 fs-packages = []
 allow-system-libs = []
 interpreter-reexec = false    # Phase 6b, D23

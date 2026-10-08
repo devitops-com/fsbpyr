@@ -24,7 +24,7 @@ from .payload.format import (
     ModuleKind,
     is_module_part,
 )
-from .payload.spec import Blob, Dist, File, Module
+from .payload.spec import ZSTD_LEVEL, Blob, Dist, File, Module
 from .scan import file_relative_reads
 
 # Written by installers, not by the wheel: they embed paths, timestamps or the installer's name,
@@ -120,8 +120,13 @@ def _packaged(rel: str) -> bool:
 
 class _Collector:
     def __init__(
-        self, extension_suffixes: tuple[str, ...], include_source: bool, hints: bool = False
+        self,
+        extension_suffixes: tuple[str, ...],
+        include_source: bool,
+        hints: bool = False,
+        level: int = ZSTD_LEVEL,
     ) -> None:
+        self.level = level  # zstd level of every blob
         self.suffixes = extension_suffixes
         self.include_source = include_source
         self.hints = hints  # guesses (reads next to __file__): only when asked for
@@ -233,12 +238,12 @@ class _Collector:
         tests = _TEST_DIRECTORIES.intersection(rel.split("/")[:-1])  # tests are never imported
         if self.hints and not tests:
             self.reads += [(dist.name, rel, line) for line in file_relative_reads(data, rel)]
-        source = Blob.zstd(data) if self.include_source else None
+        source = Blob.zstd(data, level=self.level) if self.include_source else None
         added = False
         for (name, is_package), entry in names:
             if self._prevails(name, (entry, not is_package, len(self.suffixes)), dist.name):
                 kind = ModuleKind.PACKAGE if is_package else ModuleKind.MODULE
-                self.modules[name] = Module(name, rel, kind, code=Blob.code(code),
+                self.modules[name] = Module(name, rel, kind, code=Blob.code(code, level=self.level),
                                             source=source, dist=dist.name)  # fmt: skip
                 added = True
         if not added:
@@ -287,11 +292,12 @@ class _Collector:
             if len(data) > MAX_MEMORY_BLOB:  # extraction reads a blob whole (no streaming yet)
                 raise ClassifyError(f"{rel} is too large to bundle ({len(data)} bytes)")
             kind = FileKind.NATIVE_EXT if rel in extensions else FileKind.NATIVE_LIB
-            self.files[rel] = File(rel, kind, Blob.zstd(data, digest=True), mode=_NATIVE_MODE,
+            self.files[rel] = File(rel, kind, Blob.zstd(data, level=self.level, digest=True),
+                                   mode=_NATIVE_MODE,
                                    dist=self.owners[rel], closure=needs.get(rel, ()))  # fmt: skip
 
     def _add_file(self, dist: InstalledDist, rel: str, kind: FileKind, data: bytes) -> None:
-        self.files[rel] = File(rel, kind, Blob.zstd(data), dist=dist.name)
+        self.files[rel] = File(rel, kind, Blob.zstd(data, level=self.level), dist=dist.name)
         self.owners[rel] = dist.name
 
     def mark_fs_packages(self, configured: frozenset[str], namespaces: list[Module]) -> None:
@@ -426,8 +432,9 @@ def classify(  # noqa: PLR0913  the build options, keyword-only
     allowed_system_libs: frozenset[str] = frozenset(),
     fs_packages: frozenset[str] = frozenset(),
     hints: bool = False,
+    level: int = ZSTD_LEVEL,
 ) -> Content:
-    collector = _Collector(extension_suffixes, include_source, hints)
+    collector = _Collector(extension_suffixes, include_source, hints, level)
     collector.read_pth_files(dists)
     for dist in sorted(dists, key=lambda d: d.name):
         collector.add_dist(dist)

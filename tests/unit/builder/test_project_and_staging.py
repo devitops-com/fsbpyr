@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.config import BuildConfig, ConfigError, load_config
+from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL
 from fsbpyr.project import LockSource, Project, ProjectError
 from fsbpyr.staging import (
     StagingError,
@@ -133,11 +134,21 @@ def test_tool_table_supplies_defaults(tmp_path: Path) -> None:
     assert config.output is None and config.smoke is True
 
 
-def test_unknown_or_later_phase_keys_are_rejected(tmp_path: Path) -> None:
-    text = PYPROJECT + 'profile = "compact"\n'
+def test_unknown_keys_are_rejected(tmp_path: Path) -> None:
+    text = PYPROJECT + 'profile = "compact"\n'  # replaced by fast-compression (Phase 7)
 
-    with pytest.raises(ConfigError, match="profile"):
+    with pytest.raises(ConfigError, match=r"unknown .*'profile'.*fast-compression"):
         load_config(Project.load(_project(tmp_path, text)))
+
+
+def test_fast_compression_can_be_configured(tmp_path: Path) -> None:
+    text = PYPROJECT + "fast-compression = true\n"
+
+    fast = load_config(Project.load(_project(tmp_path, text)))
+    default = load_config(Project.load(_project(tmp_path, PYPROJECT)))
+
+    assert (fast.fast_compression, fast.zstd_level) == (True, ZSTD_FAST_LEVEL)
+    assert (default.fast_compression, default.zstd_level) == (False, ZSTD_LEVEL)
 
 
 def test_allowed_system_libs_come_from_tool_table_or_cli(tmp_path: Path) -> None:

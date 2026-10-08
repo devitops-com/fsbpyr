@@ -20,7 +20,7 @@ from fsbpyr.assemble import (
 from fsbpyr.payload.convert import spec_from_payload
 from fsbpyr.payload.format import Codec, FileKind, ModuleFlag, ModuleKind
 from fsbpyr.payload.reader import Executable, Payload
-from fsbpyr.payload.spec import Blob, Dist, File, Module, PayloadSpec
+from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob, Dist, File, Module, PayloadSpec
 from fsbpyr.payload.writer import encode_payload
 from fsbpyr.runtime import registry
 from fsbpyr.runtime.registry import Runtime, RuntimeCacheError, check_owner, secure_directory
@@ -171,6 +171,26 @@ def test_runtime_load_detects_corrupted_files(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeCacheError, match="corrupt"):
         Runtime.load(tmp_path / "rt")
+
+
+def test_runtimes_of_an_older_layout_are_refused(tmp_path: Path) -> None:
+    """A layout change (D29: stdlib frames at level 9) must never reuse an old runtime."""
+    _runtime().save(tmp_path / "rt")
+    meta_path = tmp_path / "rt" / "runtime.json"
+    meta = json.loads(meta_path.read_text())
+    assert meta["layout"] == registry.LAYOUT_VERSION == 4
+    meta_path.write_text(json.dumps({**meta, "layout": 3}))
+
+    with pytest.raises(RuntimeCacheError, match="old layout"):
+        Runtime.load(tmp_path / "rt")
+
+
+def test_blobs_default_to_the_build_level() -> None:
+    text = "\n".join(f"row {i} {i * 7 % 13}" for i in range(5000)).encode()
+
+    assert Blob.zstd(text).stored == Blob.zstd(text, level=ZSTD_LEVEL).stored
+    assert Blob.zstd(text).stored != Blob.zstd(text, level=ZSTD_FAST_LEVEL).stored
+    assert Blob.code(text) == Blob.code(text, level=ZSTD_LEVEL)
 
 
 def test_save_keeps_a_complete_runtime_written_concurrently(tmp_path: Path) -> None:

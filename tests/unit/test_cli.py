@@ -92,6 +92,22 @@ def test_build_hints_are_opt_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert seen == [False, True]
 
 
+def test_fast_compression_is_opt_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    seen: list[bool] = []
+
+    def build(project: Path, config: object, **kwargs: object) -> None:
+        seen.append(config.fast_compression)  # type: ignore[attr-defined]
+        raise OSError("stop here")
+
+    monkeypatch.setattr("fsbpyr.build.build", build)
+
+    main(["build", str(tmp_path)])
+    main(["build", str(tmp_path), "--fast-compression"])
+
+    assert seen == [False, True]
+
+
 def test_runtime_list_on_empty_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

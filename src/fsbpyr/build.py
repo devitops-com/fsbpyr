@@ -123,6 +123,7 @@ def build(
         walk = index.walk(dist, extras=config.extras, python_version=runtime.python_version)
         app_name, entrypoint = resolve_entry(dist, config.entry)
         log(f"collecting {len(index.dists)} distributions")
+        level = config.zstd_level
         content = classify(
             list(index.dists.values()),
             extension_suffixes=runtime.extension_suffixes,
@@ -130,6 +131,7 @@ def build(
             allowed_system_libs=frozenset(config.allowed_system_libs),
             fs_packages=frozenset(config.fs_packages),
             hints=config.hints,
+            level=level,
         )
     warnings += walk.warnings
     if walk.unreachable:
@@ -152,6 +154,7 @@ def build(
             ("lock", source.value),
             ("dists", sorted(f"{d.name}=={d.version}" for d in content.dists)),
             ("glibc", glibc),
+            ("zstd_level", level),  # of the app's content
             ("git", git_state(project.directory, warn=warnings.append)),
         ),
     )

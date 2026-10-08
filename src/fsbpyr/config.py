@@ -4,9 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL
 from .project import Project
-
-_LATER_PHASES = {"profile": "Phase 7"}
 
 
 class ConfigError(ValueError):
@@ -25,6 +24,12 @@ class BuildConfig:
     allowed_system_libs: tuple[str, ...] = ()  # sonames extensions may load from the host
     fs_packages: tuple[str, ...] = ()  # packages whose files must exist on disk (FS_REQUIRED)
     hints: bool = False  # also print guesses (packages that may read files next to __file__)
+    fast_compression: bool = False  # zstd level 3 instead of 9 for app content (D29)
+
+    @property
+    def zstd_level(self) -> int:
+        """Level of the app's blobs; the runtime's stdlib frames come prebuilt at level 9."""
+        return ZSTD_FAST_LEVEL if self.fast_compression else ZSTD_LEVEL
 
 
 def _expect(key: str, value: Any, kind: type | tuple[type, ...]) -> Any:
@@ -50,8 +55,6 @@ def _package(key: str, value: Any) -> str:
 def _from_tool(project: Project) -> dict[str, Any]:
     values: dict[str, Any] = {}
     for key, value in project.tool.items():
-        if key in _LATER_PHASES:
-            raise ConfigError(f"[tool.fsbpyr] {key} is not supported yet ({_LATER_PHASES[key]})")
         if key in ("entry", "requirements"):
             values[key] = _expect(key, value, str)
         elif key == "output":
@@ -61,6 +64,8 @@ def _from_tool(project: Project) -> dict[str, Any]:
             values["extras"] = tuple(_expect(key, extra, str) for extra in extras)
         elif key == "include-source":
             values["include_source"] = _expect(key, value, bool)
+        elif key == "fast-compression":
+            values["fast_compression"] = _expect(key, value, bool)
         elif key == "allow-system-libs":
             libs = _expect(key, value, list)
             values["allowed_system_libs"] = tuple(_soname(key, lib) for lib in libs)
@@ -70,7 +75,7 @@ def _from_tool(project: Project) -> dict[str, Any]:
         else:
             raise ConfigError(
                 f"unknown [tool.fsbpyr] key {key!r}; supported: entry, output, requirements, "
-                "extras, include-source, allow-system-libs, fs-packages"
+                "extras, include-source, fast-compression, allow-system-libs, fs-packages"
             )
     return values
 

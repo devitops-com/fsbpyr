@@ -15,6 +15,11 @@ from .format import (
 )
 
 ZSTD_MIN_LEVEL, ZSTD_MAX_LEVEL = 1, 22
+# Builds and the runtime's stdlib frames (Phase 7). On aiagent's 405 MB of content: level 3
+# gives 144.6 MB in 1 s, 9 gives 134.4 MB in 4 s, 19 gives 126.3 MB in 62 s; decompression
+# speed is the same. `fsbpyr build --fast-compression` keeps level 3.
+ZSTD_LEVEL = 9
+ZSTD_FAST_LEVEL = 3
 NO_MODULE_FLAGS = ModuleFlag(0)
 NO_FILE_FLAGS = FileFlag(0)
 
@@ -41,14 +46,14 @@ class Blob:
         return cls(data, len(data), Codec.NONE, _digest(data, digest))
 
     @classmethod
-    def code(cls, data: bytes, *, level: int = 3) -> Blob:
+    def code(cls, data: bytes, *, level: int = ZSTD_LEVEL) -> Blob:
         """Marshalled code: always a checksummed zstd frame, so corruption is detected before
         ``marshal.loads`` (which is not safe against corrupt input) ever sees the bytes."""
         return cls.zstd(data, level=level, allow_raw=False)
 
     @classmethod
     def zstd(
-        cls, data: bytes, *, level: int = 3, digest: bool = False, allow_raw: bool = True
+        cls, data: bytes, *, level: int = ZSTD_LEVEL, digest: bool = False, allow_raw: bool = True
     ) -> Blob:
         """One zstd frame with content size and checksum; stored raw if that is not smaller
         (unless ``allow_raw`` is false)."""

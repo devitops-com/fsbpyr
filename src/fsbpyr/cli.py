@@ -59,7 +59,10 @@ def _add_build(commands: argparse._SubParsersAction[argparse.ArgumentParser]) ->
                        help="package whose files must exist on disk (repeat)")  # fmt: skip
     build.add_argument("--offline", action="store_true", default=None, help="no network access")
     build.add_argument("--no-source", dest="include_source", action="store_false", default=None,
-                       help="do not keep Python sources in the executable")  # fmt: skip
+                       help="leave out .py sources (bytecode only): smaller, but tracebacks show "
+                            "no source lines and inspect.getsource() fails")  # fmt: skip
+    build.add_argument("--fast-compression", action="store_true", default=None,
+                       help="app content at zstd level 3, not 9: faster, larger")  # fmt: skip
     build.add_argument("--hints", action="store_true", default=None,
                        help="also list packages that may read files next to __file__")  # fmt: skip
     build.add_argument("--no-smoke", dest="smoke", action="store_false", default=None,
@@ -93,6 +96,7 @@ def _build(args: argparse.Namespace) -> int:
             include_source=args.include_source,
             smoke=args.smoke,
             hints=args.hints,
+            fast_compression=args.fast_compression,
         )
         result = build(args.project, config, log=lambda message: print(f"fsbpyr: {message}"))
     except errors as exc:
