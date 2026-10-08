@@ -28,7 +28,8 @@ class BuildConfig:
 
     @property
     def zstd_level(self) -> int:
-        """Level of the app's blobs; the runtime's stdlib frames come prebuilt at level 9."""
+        """Level of the app's blobs and of every block (D30); the runtime's stdlib frames that
+        stay outside blocks come prebuilt at level 9."""
         return ZSTD_FAST_LEVEL if self.fast_compression else ZSTD_LEVEL
 
 

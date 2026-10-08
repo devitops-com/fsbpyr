@@ -164,6 +164,26 @@ def test_resources_id_covers_every_file_unlike_the_generation() -> None:
     assert len(resources_id(())) == 32 and int(resources_id(()), 16) >= 0
 
 
+@pytest.mark.parametrize("level", [ZSTD_FAST_LEVEL, ZSTD_LEVEL])
+def test_blocks_are_compressed_at_the_apps_level(tmp_path: Path, level: int) -> None:
+    body = b"".join(b"line %d of a module\n" % i for i in range(2000))
+    app = Module("hello", "hello.py", ModuleKind.MODULE, code=Blob.code(body), dist="hello")
+    out = tmp_path / "app"
+
+    build_executable(_runtime(), App("hello", "hello:main", modules=(app,), zstd_level=level,
+                                     dists=(Dist("hello", "h", "1"),)), out)  # fmt: skip
+
+    with Executable.open(out) as executable:
+        payload = executable.payload
+        record = payload.find_module("hello")
+        assert record is not None and payload.blob(record.code).codec is Codec.BLOCK
+        block = payload.blob(payload.blob(record.code).offset)
+        content = payload.read_blob(block.index)
+        assert (
+            payload.stored(block.index) == Blob.zstd(content, level=level, allow_raw=False).stored
+        )
+
+
 def test_runtime_load_detects_corrupted_files(tmp_path: Path) -> None:
     _runtime().save(tmp_path / "rt")
     stub = tmp_path / "rt" / "stub"
@@ -243,8 +263,12 @@ def test_runtime_from_executable_recovers_the_embedded_runtime(tmp_path: Path) -
 
     embedded = Runtime.from_executable(out)
 
-    assert embedded.modules == runtime.modules  # app and boot modules are not runtime content
-    assert embedded.files == runtime.files
+    def content(modules: tuple[Module, ...]) -> list[tuple[str, bytes | None]]:
+        """Blobs packed into blocks come back raw: compare what they hold."""
+        return [(m.name, m.code.content() if m.code else None) for m in modules]
+
+    assert content(embedded.modules) == content(runtime.modules)  # no app or boot modules
+    assert [f.blob.content() for f in embedded.files] == [f.blob.content() for f in runtime.files]
     assert (embedded.tag, embedded.runtime_id, embedded.python_version) == (
         runtime.tag, runtime.runtime_id, runtime.python_version)  # fmt: skip
     assert embedded.extension_suffixes == runtime.extension_suffixes

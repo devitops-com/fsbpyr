@@ -62,7 +62,7 @@ def _add_build(commands: argparse._SubParsersAction[argparse.ArgumentParser]) ->
                        help="leave out .py sources (bytecode only): smaller, but tracebacks show "
                             "no source lines and inspect.getsource() fails")  # fmt: skip
     build.add_argument("--fast-compression", action="store_true", default=None,
-                       help="app content at zstd level 3, not 9: faster, larger")  # fmt: skip
+                       help="zstd level 3, not 9: faster, larger")  # fmt: skip
     build.add_argument("--hints", action="store_true", default=None,
                        help="also list packages that may read files next to __file__")  # fmt: skip
     build.add_argument("--no-smoke", dest="smoke", action="store_false", default=None,

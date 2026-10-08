@@ -117,7 +117,7 @@ def test_builds_do_not_depend_on_the_build_environment(
         assert not [f.path for f in executable.payload.files() if f.path.startswith("bin/")]
 
 
-def test_stdlib_frames_are_level_9_and_fast_builds_only_change_app_content(
+def test_stdlib_frames_are_level_9_and_fast_builds_record_level_3(
     tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
 ) -> None:
     code = next(m.code for m in runtime.modules if m.name == "argparse")

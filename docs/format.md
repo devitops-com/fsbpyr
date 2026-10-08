@@ -1,4 +1,4 @@
-# fsbpyr executable format — version 1
+# fsbpyr executable format — version 2
 
 The single source of truth for this format is `src/fsbpyr/payload/format.py`.
 `src/fsbpyr/launcher/format.h` mirrors it, and a test checks that the two agree.
@@ -22,7 +22,7 @@ All integers are little-endian.
 | Offset | Size | Field |
 |--------|------|-------|
 | 0 | 8 | magic `FSBPYR\0T` |
-| 8 | 4 | `format_version` (= 1) |
+| 8 | 4 | `format_version` (= 2) |
 | 12 | 4 | `flags` (reserved, 0) |
 | 16 | 8 | `payload_offset` (absolute file offset) |
 | 24 | 8 | `payload_size` |
@@ -36,7 +36,7 @@ never on a normal start.
 | Offset | Size | Field |
 |--------|------|-------|
 | 0 | 8 | magic `FSBPYR\0H` |
-| 8 | 4 | `format_version` (= 1) |
+| 8 | 4 | `format_version` (= 2) |
 | 12 | 4 | `header_size` (= 208) |
 | 16 | 4 | `python_hexversion` of the target CPython (`PY_VERSION_HEX`) |
 | 20 | 4 | bytecode magic (`importlib.util.MAGIC_NUMBER`) |
@@ -73,10 +73,10 @@ The MODULES, FILES and DISTS tables are sorted strictly ascending by their key's
 
 | Offset | Size | Field |
 |--------|------|-------|
-| 0 | 8 | `offset` of the stored bytes |
-| 8 | 8 | `stored_size` |
+| 0 | 8 | `offset` of the stored bytes; codec 2: index of the block |
+| 8 | 8 | `stored_size`; codec 2: position of the content inside the block |
 | 16 | 8 | `size` (uncompressed) |
-| 24 | 1 | `codec`: 0 = none, 1 = zstd (a single frame with content checksum) |
+| 24 | 1 | `codec`: 0 = none, 1 = zstd (one frame with content size and checksum), 2 = in a block |
 | 25 | 3 | reserved (0) |
 | 28 | 4 | `digest`: index into DIGESTS (SHA-256 of the uncompressed data) or NONE |
 
@@ -85,8 +85,18 @@ The MODULES, FILES and DISTS tables are sorted strictly ascending by their key's
 - `size` is at most 2^40 (1 TiB).
 - Blob order on disk: startup code, module code, resources, sources, natives. Within each
   class, blobs are ordered by the first path that references them.
-- Identical blobs are stored once.
+- Identical blobs are stored once; in blocks, identical content is one member whether the spec
+  gave it raw or as a zstd frame.
 - For codec none, `stored_size == size`.
+- **Blocks (version 2, D30).** A blob of codec 2 has no stored bytes of its own: its content is
+  the `size` bytes at `stored_size` in the content of block `offset`, a zstd blob of at most
+  `MAX_BLOCK_SIZE` (1 MiB); the writer references blocks only from members. The writer packs
+  every non-empty blob under 64 KiB except natives into blocks, one stream per placement class
+  (startup code, code, resources and metadata, sources) filled in blob order: 64 KiB blocks for
+  code, which an import decompresses whole, and 256 KiB for the rest. Block records follow all other blob records; a
+  block's data sits where its first member would. Readers keep recently decompressed blocks
+  (the launcher the last 32), since a package's modules share blocks. Blocks make payloads about
+  5% smaller (aiagent: 157.4 → 149.6 MB) for about 3% more startup time on import-heavy apps.
 
 ### MODULES record (40 B), keyed by dotted module name
 
@@ -110,8 +120,10 @@ Invariants:
 - EXTENSION has `file` pointing at a NATIVE_EXT record, and no `code`.
 - FS_REQUIRED_ROOT marks regular packages (PACKAGE) only: on first import every file below the
   package's directory is extracted, and the package's modules get `__file__`/`__path__` there.
-- Every `code` blob is a zstd frame with the content-checksum flag set. `marshal.loads` is not
-  safe against corrupt input, so integrity is verified before bytecode is ever unmarshalled.
+- Every `code` blob is a zstd frame with the content-checksum flag set, or a member of a block
+  (itself such a frame). `marshal.loads` is not safe against corrupt input, so the bytes it gets
+  have passed a checksum. The checksum covers a block's content, not which slice of it a member
+  selects: like every table field, a member's position and size are not checksummed.
   STARTUP code is decompressed once by the launcher into memory that it then hands to CPython's
   frozen-module table.
 
@@ -172,16 +184,21 @@ this short list to build CPython's frozen-module table, so it never scans the MO
 - Every index field must be NONE or in range. Enum fields must hold known values, and flag
   fields must hold known bits only. Reserved fields must be 0.
 - Every blob must be 16-byte aligned, lie inside the blob data area, and have `size` ≤ 2^40.
-  For codec none, `stored_size == size`.
+  For codec none, `stored_size == size`. A blob of codec 2 instead names a block (in range, codec
+  zstd, `size` ≤ 1 MiB) and lies inside its content (`stored_size + size` ≤ the block's
+  `size`); codec 2 is invalid in version 1.
 - FILES paths, module paths and `dist_info` paths obey the path rules above. Module names are
   dotted names whose parts are Python identifiers once `-` is read as `_`: CPython imports file
   stems such as `_sysconfigdata__linux_x86_64-linux-gnu` through `importlib.import_module`.
   Dist names are canonical.
-- The module kind invariants (including zstd code frames), the STARTUP rule (the STARTUP section
-  lists exactly the flagged modules) and the closure rules hold.
-- Every zstd frame a reader decompresses must have the content-checksum flag set.
+- The module kind invariants (including checksummed code: a zstd frame, or inside a block), the
+  STARTUP rule (the STARTUP section lists exactly the flagged modules) and the closure rules
+  hold.
+- Every zstd frame a reader decompresses must have the content-checksum flag set, declare its
+  content size, equal to `size`, and end where its stored bytes end.
 - On decompression, the output must be exactly `size` bytes, with no trailing data, and must
-  pass the zstd checksum. Readers never allocate more than `size + 1` bytes.
+  pass the zstd checksum. Readers never allocate more than `size + 1` bytes for a blob, and a
+  member's whole block (at most `MAX_BLOCK_SIZE`).
 - Tables must be strictly sorted.
 
 ## Determinism

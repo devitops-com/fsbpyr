@@ -75,6 +75,7 @@ def make_spec(**overrides: object) -> PayloadSpec:
             ),
         ),
         "dists": (Dist("demo", "demo-1.0.dist-info", "1.0"),),
+        "blocks": False,  # every blob a frame of its own; blocks: test_blocks.py and the fuzzers
     }
     fields.update(overrides)
     return PayloadSpec(**fields)  # type: ignore[arg-type]

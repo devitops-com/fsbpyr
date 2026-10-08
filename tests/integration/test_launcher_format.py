@@ -25,6 +25,8 @@ int main(void) {
            FSB_FORMAT_VERSION, FSB_PAGE_SIZE, FSB_BLOB_ALIGN, FSB_NONE);
     printf("const sections %d\nconst max_blob %llu\n", FSB_SECTION_COUNT,
            (unsigned long long)FSB_MAX_BLOB_SIZE);
+    printf("const codec_block %d\nconst max_block %llu\n", FSB_CODEC_BLOCK,
+           (unsigned long long)FSB_MAX_BLOCK_SIZE);
     FIELD(fsb_header, python_hexversion); FIELD(fsb_header, bytecode_magic);
     FIELD(fsb_header, generation_id); FIELD(fsb_header, app_name); FIELD(fsb_header, sections);
     FIELD(fsb_blob, codec); FIELD(fsb_blob, digest);
@@ -70,6 +72,8 @@ def test_constants_match(probe: dict[str, tuple[int, ...]]) -> None:
     assert probe["const none"] == (fmt.NONE,)
     assert probe["const sections"] == (len(fmt.Section),)
     assert probe["const max_blob"] == (fmt.MAX_BLOB_SIZE,)
+    assert probe["const codec_block"] == (fmt.Codec.BLOCK,)
+    assert probe["const max_block"] == (fmt.MAX_BLOCK_SIZE,)
 
 
 def _offset(layout: str, index: int) -> int:
@@ -106,4 +110,4 @@ def test_field_offsets_match(
 
 def test_probe_header_matches_packaged_header() -> None:
     packaged = importlib.resources.files("fsbpyr.launcher").joinpath("format.h")
-    assert Path(str(packaged)).read_bytes().startswith(b"/* fsbpyr executable format v1")
+    assert Path(str(packaged)).read_bytes().startswith(b"/* fsbpyr executable format v2")

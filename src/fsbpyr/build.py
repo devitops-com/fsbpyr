@@ -154,9 +154,10 @@ def build(
             ("lock", source.value),
             ("dists", sorted(f"{d.name}=={d.version}" for d in content.dists)),
             ("glibc", glibc),
-            ("zstd_level", level),  # of the app's content
+            ("zstd_level", level),  # of the app's content and of every block
             ("git", git_state(project.directory, warn=warnings.append)),
         ),
+        zstd_level=level,
     )
     _check_entry_module(entrypoint, app, runtime)
     output = (config.output or project.directory / "dist" / app_name).resolve()

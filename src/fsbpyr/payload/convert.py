@@ -1,6 +1,7 @@
-"""Turn a payload back into a spec, keeping every stored blob byte-for-byte (no recompression)."""
+"""Turn a payload back into a spec, keeping every stored blob byte-for-byte (no recompression);
+a blob inside a block comes back as its raw content, which the writer packs again."""
 
-from .format import NONE
+from .format import NONE, Codec
 from .reader import Payload
 from .spec import Blob, Dist, File, Module, PayloadSpec
 
@@ -10,6 +11,8 @@ def _blob(payload: Payload, index: int) -> Blob | None:
         return None
     record = payload.blob(index)
     digest = None if record.digest == NONE else payload.digest(record.digest)
+    if record.codec is Codec.BLOCK:
+        return Blob(payload.read_blob(index), record.size, Codec.NONE, digest)
     return Blob(payload.stored(index), record.size, record.codec, digest)
 
 
@@ -55,6 +58,7 @@ def spec_from_payload(payload: Payload) -> PayloadSpec:
             for f in files
         ),
         dists=tuple(Dist(d.name, d.dist_info, d.version) for d in dists),
+        blocks=any(b.codec is Codec.BLOCK for b in payload.blobs()),
     )
 
 

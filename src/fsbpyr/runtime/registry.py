@@ -107,6 +107,7 @@ class Runtime:
                 "",
                 modules=self.modules,
                 files=self.files,
+                blocks=False,  # frames kept as built: every app build packs them into its blocks
             )
             (staging / _STDLIB).write_bytes(encode_payload(fragment))
             meta = {
@@ -171,8 +172,9 @@ class Runtime:
 
     @classmethod
     def from_executable(cls, path: Path) -> Runtime:
-        """The runtime embedded in an fsbpyr executable: its stub bytes and the stdlib frames,
-        copied verbatim (no compiler, no download, no cache; plan D4)."""
+        """The runtime embedded in an fsbpyr executable: its stub bytes and the stdlib blobs,
+        zstd frames copied verbatim and block members as content that the next build packs
+        again (no compiler, no download, no cache; plan D4)."""
         with Executable.open(path) as exe:
             payload = exe.payload
             info = json.loads(payload.build_info)

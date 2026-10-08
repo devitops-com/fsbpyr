@@ -40,13 +40,13 @@ static void check_versions(void) {
         fatal("payload targets a different Python version");
 }
 
-/* Decompress (and so checksum-verify) one startup module: marshal must never see corrupt bytes. */
+/* Decompress (and so checksum-verify: a zstd frame, or the block it lies in) one startup module:
+ * marshal never sees bytes that failed a checksum. A member's position and size, like every table
+ * field, are not checksummed (docs/format.md). */
 static const unsigned char *startup_code(const struct fsb_blob *b) {
-    const uint8_t *src = fsb_self.base + b->offset;
-    if (!fsb_zstd_frame_ok(src, b->stored_size, b->size)) fatal("corrupt startup module");
     unsigned char *code = malloc((size_t)b->size);
     if (code == NULL) fatal("out of memory");
-    if (!fsb_zstd_decompress(code, b->size, src, b->stored_size)) fatal("corrupt startup module");
+    if (!fsb_read_blob(&fsb_self, b, code)) fatal("corrupt startup module");
     return code;
 }
 
@@ -62,7 +62,7 @@ static const struct _frozen *startup_table(void) {
         const char *name;
         if (!fsb_get_startup(&fsb_self, i, &index) || !fsb_get_module(&fsb_self, index, &m) ||
             !(m.flags & FSB_MODULE_STARTUP) || !fsb_get_blob(&fsb_self, m.code, &b) ||
-            b.codec != FSB_CODEC_ZSTD || b.size == 0 || b.size > MAX_STARTUP_CODE ||
+            b.codec == FSB_CODEC_NONE || b.size == 0 || b.size > MAX_STARTUP_CODE ||
             !fsb_str(&fsb_self, m.name, &name))
             fatal("invalid startup module");
         table[i].name = name;

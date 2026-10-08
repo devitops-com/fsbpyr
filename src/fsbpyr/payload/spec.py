@@ -41,6 +41,14 @@ class Blob:
         if self.sha256 is not None and len(self.sha256) != 32:
             raise PayloadError("blob digest must be 32 bytes")
 
+    def content(self) -> bytes:
+        return self.stored if self.codec is Codec.NONE else zstd.decompress(self.stored)
+
+    def content_digest(self) -> bytes:
+        """SHA-256 of the content, whatever the representation (a block member comes back raw
+        from a payload, the same content as a zstd frame from a build)."""
+        return self.sha256 or hashlib.sha256(self.content()).digest()
+
     @classmethod
     def raw(cls, data: bytes, *, digest: bool = False) -> Blob:
         return cls(data, len(data), Codec.NONE, _digest(data, digest))
@@ -115,3 +123,5 @@ class PayloadSpec:
     modules: tuple[Module, ...] = field(default=())
     files: tuple[File, ...] = field(default=())
     dists: tuple[Dist, ...] = field(default=())
+    blocks: bool = True  # pack small blobs into shared zstd blocks (D30)
+    zstd_level: int = ZSTD_LEVEL  # of the blocks

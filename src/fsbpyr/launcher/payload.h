@@ -57,6 +57,15 @@ bool fsb_zstd_frame_ok(const uint8_t *src, uint64_t stored, uint64_t size);
  * decompression context; false on any error. Callers hold the GIL once Python is running. */
 bool fsb_zstd_decompress(void *dst, uint64_t size, const uint8_t *src, uint64_t stored);
 
+/* Read blob ``b`` (from fsb_get_blob) into dst[b->size]: copied, decompressed (checksum
+ * verified), or sliced out of its block, which is decompressed once into a small cache since a
+ * package's modules share blocks. False on any corruption. Callers hold the GIL once Python is
+ * running. */
+bool fsb_read_blob(const struct fsb_payload *payload, const struct fsb_blob *b, void *dst);
+
+/* Payload bytes read and bytes decompressed so far, blocks included (FSBPYR_TRACE). */
+extern unsigned long long fsb_stored_bytes, fsb_decompressed_bytes;
+
 /* Binary search by key bytes; returns the record index or FSB_NONE. */
 uint32_t fsb_find_module(const struct fsb_payload *payload, const char *name, size_t length);
 uint32_t fsb_find_file(const struct fsb_payload *payload, const char *path, size_t length);

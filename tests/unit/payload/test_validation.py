@@ -175,11 +175,16 @@ def raw() -> bytes:
     return encode_payload(make_spec())
 
 
+@pytest.fixture(params=[False, True], ids=["frames", "blocks"])
+def any_raw(request: pytest.FixtureRequest) -> bytes:
+    return encode_payload(make_spec(blocks=request.param))
+
+
 @pytest.mark.parametrize(
     ("offset", "fmt", "value", "message"),
     [
         (0, "<8s", b"NOTMAGIC", "magic"),
-        (8, "<I", 2, "version"),
+        (8, "<I", 3, "version"),
         (12, "<I", 191, "header size"),
     ],
 )
@@ -347,9 +352,9 @@ def test_trailer_struct_is_64_bytes() -> None:
     flips=st.lists(st.tuples(st.integers(min_value=0), st.integers(1, 255)), min_size=1, max_size=4)
 )
 def test_random_corruption_only_raises_payload_error(
-    raw: bytes, flips: list[tuple[int, int]]
+    any_raw: bytes, flips: list[tuple[int, int]]
 ) -> None:
-    corrupted = bytearray(raw)
+    corrupted = bytearray(any_raw)
     for position, mask in flips:
         corrupted[position % len(corrupted)] ^= mask
     try:
@@ -372,10 +377,10 @@ def test_random_corruption_only_raises_payload_error(
     )
 )
 def test_random_u64_overwrites_only_raise_payload_error(
-    raw: bytes, writes: list[tuple[int, int]]
+    any_raw: bytes, writes: list[tuple[int, int]]
 ) -> None:
-    corrupted = bytearray(raw)
-    tables_end = len(raw) // 2  # header and tables live in the first part of this payload
+    corrupted = bytearray(any_raw)
+    tables_end = len(any_raw) // 2  # header and tables live in the first part of this payload
     for position, value in writes:
         offset = (position % (tables_end - 8)) & ~7
         struct.pack_into("<Q", corrupted, offset, value)

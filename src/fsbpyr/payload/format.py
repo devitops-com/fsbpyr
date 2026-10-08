@@ -1,10 +1,11 @@
-"""Binary layout of the fsbpyr executable format, version 1 (normative spec: docs/format.md)."""
+"""Binary layout of the fsbpyr executable format, version 2 (normative spec: docs/format.md)."""
 
 import re
 import struct
 from enum import IntEnum, IntFlag
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
+READABLE_VERSIONS = (1, 2)  # the Python reader (inspect) also reads executables of older builds
 PAGE_SIZE = 4096
 BLOB_ALIGN = 16
 TABLE_ALIGN = 8
@@ -68,6 +69,13 @@ RECORD_SIZE = {
 class Codec(IntEnum):
     NONE = 0
     ZSTD = 1
+    BLOCK = 2  # v2: content inside a block (a zstd blob holding many small blobs, D30)
+
+
+BLOCK_SIZE = 256 * 1024  # blocks of sources and data, rarely read
+CODE_BLOCK_SIZE = 64 * 1024  # blocks of bytecode: an import decompresses the whole block
+BLOCK_MEMBER_MAX = 64 * 1024  # smaller blobs (outside natives) go into blocks
+MAX_BLOCK_SIZE = 1 << 20  # largest block readers accept (bounds the memory of a member read)
 
 
 class ModuleKind(IntEnum):

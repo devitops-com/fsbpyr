@@ -42,7 +42,7 @@ from. The output defaults to `dist/<console-script-name>`.
 | `--allow-system-lib SONAME` | let native code use this library from the host (repeat) |
 | `--offline` | no network access during the build |
 | `--no-source` | leave out `.py` sources; see [Leaving out sources](#leaving-out-sources) |
-| `--fast-compression` | the app's content at zstd level 3 instead of 9: a faster build, up to ~8% larger for large apps (the runtime part is always level 9) |
+| `--fast-compression` | zstd level 3 instead of 9: a faster build, up to ~8% larger for large apps (the standard library's files of 64 KiB and more stay level 9) |
 | `--hints` | also list packages that may read files next to `__file__` (a guess) |
 | `--no-smoke` | skip the smoke test that runs the new executable once |
 

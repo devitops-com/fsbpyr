@@ -322,3 +322,40 @@ def test_reader_rejects_fs_required_root_on_a_namespace() -> None:
     with pytest.raises(PayloadError, match="FS_REQUIRED_ROOT"):
         Payload(_patch(raw, base + record.index * MODULE.size + 17, "<B",
                        int(ModuleFlag.FS_REQUIRED_ROOT)))  # fmt: skip
+
+
+def test_executable_rejects_trailer_and_header_of_different_versions() -> None:
+    image = assemble(b"STUB", encode_payload(make_spec()))
+
+    with pytest.raises(PayloadError, match="version"):
+        Executable.parse(_patch(image, len(image) - TRAILER_SIZE + 8, "<I", 1))
+
+
+@pytest.mark.parametrize("read", ["read_blob", "contains"])
+def test_reader_rejects_bytes_after_the_zstd_frame(read: str) -> None:
+    """The launcher refuses them (fsb_zstd_frame_ok): inspect must not call the file healthy."""
+    data = b"resource data " * 50
+    padded = Blob(Blob.zstd(data).stored + b"JUNKJUNK", len(data), Codec.ZSTD)
+    files = (File("r.txt", FileKind.RESOURCE, padded),)
+    payload = Payload(encode_payload(make_spec(files=files, modules=(), dists=())))
+    record = payload.find_file("r.txt")
+    assert record is not None
+
+    with pytest.raises(PayloadError, match="frame"):
+        getattr(payload, read)(record.blob, *([b"data"] if read == "contains" else []))
+
+
+@pytest.mark.parametrize("read", ["read_blob", "contains"])
+def test_reader_rejects_zstd_frame_without_content_size(read: str) -> None:
+    """The launcher refuses such a frame: inspect must not call the file healthy."""
+    data = b"resource data " * 50
+    options: dict[int, int] = {zstd.CompressionParameter.checksum_flag: 1,
+                               zstd.CompressionParameter.content_size_flag: 0}  # fmt: skip
+    unsized = Blob(zstd.compress(data, options=options), len(data), Codec.ZSTD)
+    files = (File("r.txt", FileKind.RESOURCE, unsized),)
+    payload = Payload(encode_payload(make_spec(files=files, modules=(), dists=())))
+    record = payload.find_file("r.txt")
+    assert record is not None
+
+    with pytest.raises(PayloadError, match="content size"):
+        getattr(payload, read)(record.blob, *([b"data"] if read == "contains" else []))

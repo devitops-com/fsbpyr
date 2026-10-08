@@ -18,7 +18,7 @@
 #define MAX_MEMORY_BLOB (UINT64_C(1) << 30) /* larger blobs are extracted, never read whole */
 
 static PyObject *PayloadError;
-static unsigned long long reads, stored_bytes, decompressed_bytes;
+static unsigned long long reads;
 
 static PyObject *corrupt(const char *what, unsigned long long index) {
     PyErr_Format(PayloadError, "corrupt executable payload: %s %llu", what, index);
@@ -291,17 +291,6 @@ static PyObject *dists(PyObject *self, PyObject *noargs) {
     return result;
 }
 
-static PyObject *decompress(const struct fsb_blob *b, const uint8_t *src, unsigned long index) {
-    if (!fsb_zstd_frame_ok(src, b->stored_size, b->size)) return corrupt("zstd frame of blob", index);
-    PyObject *out = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)b->size);
-    if (out == NULL) return NULL;
-    if (!fsb_zstd_decompress(PyBytes_AS_STRING(out), b->size, src, b->stored_size)) {
-        Py_DECREF(out);
-        return corrupt("zstd data of blob", index);
-    }
-    return out;
-}
-
 static PyObject *read_blob(PyObject *self, PyObject *arg) {
     (void)self;
     unsigned long index = PyLong_AsUnsignedLong(arg);
@@ -310,15 +299,16 @@ static PyObject *read_blob(PyObject *self, PyObject *arg) {
     if (index > UINT32_MAX || !fsb_get_blob(&fsb_self, (uint32_t)index, &b))
         return corrupt("blob", index);
     if (b.size > MAX_MEMORY_BLOB) return corrupt("blob too large to load into memory", index);
-    const uint8_t *src = fsb_self.base + b.offset;
-    PyObject *out = b.codec == FSB_CODEC_NONE
-                        ? PyBytes_FromStringAndSize((const char *)src, (Py_ssize_t)b.size)
-                        : decompress(&b, src, index);
-    if (out != NULL) {
-        reads++;
-        stored_bytes += b.stored_size;
-        decompressed_bytes += b.codec == FSB_CODEC_NONE ? 0 : b.size;
+    if (b.codec == FSB_CODEC_ZSTD && !fsb_zstd_frame_ok(fsb_self.base + b.offset, b.stored_size,
+                                                        b.size)) /* before allocating size */
+        return corrupt("blob data", index);
+    PyObject *out = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)b.size);
+    if (out == NULL) return NULL;
+    if (!fsb_read_blob(&fsb_self, &b, PyBytes_AS_STRING(out))) {
+        Py_DECREF(out);
+        return corrupt("blob data", index);
     }
+    reads++;
     return out;
 }
 
@@ -345,8 +335,8 @@ static PyObject *info(PyObject *self, PyObject *noargs) {
 static PyObject *stats(PyObject *self, PyObject *noargs) {
     (void)self;
     (void)noargs;
-    return Py_BuildValue("{s:K,s:K,s:K}", "reads", reads, "stored_bytes", stored_bytes,
-                         "decompressed_bytes", decompressed_bytes);
+    return Py_BuildValue("{s:K,s:K,s:K}", "reads", reads, "stored_bytes", fsb_stored_bytes,
+                         "decompressed_bytes", fsb_decompressed_bytes);
 }
 
 static PyMethodDef methods[] = {

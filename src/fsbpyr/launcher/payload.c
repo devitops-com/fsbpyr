@@ -5,6 +5,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -133,6 +134,9 @@ static bool get_record(const struct fsb_payload *p, enum fsb_section s, uint32_t
 
 bool fsb_get_blob(const struct fsb_payload *p, uint32_t index, struct fsb_blob *b) {
     if (!get_record(p, FSB_SECTION_BLOBS, index, b)) return false;
+    if (b->codec == FSB_CODEC_BLOCK) /* offset: the block's index; stored_size: the position */
+        return b->offset < fsb_count(p, FSB_SECTION_BLOBS) && b->offset <= UINT32_MAX &&
+               fits(b->stored_size, b->size, FSB_MAX_BLOCK_SIZE);
     if (b->offset % FSB_BLOB_ALIGN != 0 || b->offset < p->data_start ||
         !fits(b->offset, b->stored_size, p->size) || b->size > FSB_MAX_BLOB_SIZE)
         return false;
@@ -177,7 +181,72 @@ bool fsb_zstd_decompress(void *dst, uint64_t size, const uint8_t *src, uint64_t 
     static ZSTD_DCtx *dctx;
     if (dctx == NULL && (dctx = ZSTD_createDCtx()) == NULL) return false;
     size_t got = ZSTD_decompressDCtx(dctx, dst, (size_t)size, src, (size_t)stored);
-    return !ZSTD_isError(got) && got == size;
+    if (ZSTD_isError(got) || got != size) return false;
+    fsb_decompressed_bytes += size;
+    return true;
+}
+
+unsigned long long fsb_stored_bytes, fsb_decompressed_bytes;
+
+/* Recently decompressed blocks (D30): importing a package reads several of its modules from the
+ * same block, so each block is decompressed once while it stays among the last BLOCK_CACHE. */
+#define BLOCK_CACHE 32 /* imports alternate between packages: 8 thrashed (aiagent --help) */
+static struct block_slot {
+    uint32_t index;
+    uint64_t size;
+    uint64_t used; /* clock of the last use; 0: empty */
+    uint8_t *data; /* FSB_MAX_BLOCK_SIZE bytes once allocated */
+} blocks[BLOCK_CACHE];
+static uint64_t block_clock;
+
+static const uint8_t *block_content(const struct fsb_payload *p, uint32_t index, uint64_t *size) {
+    struct block_slot *slot = &blocks[0];
+    for (int i = 0; i < BLOCK_CACHE; i++) {
+        if (blocks[i].used != 0 && blocks[i].index == index) {
+            blocks[i].used = ++block_clock;
+            *size = blocks[i].size;
+            return blocks[i].data;
+        }
+        if (blocks[i].used < slot->used) slot = &blocks[i]; /* least recently used, or empty */
+    }
+    struct fsb_blob block;
+    if (!fsb_get_blob(p, index, &block) || block.codec != FSB_CODEC_ZSTD ||
+        block.size > FSB_MAX_BLOCK_SIZE)
+        return NULL;
+    const uint8_t *src = p->base + block.offset;
+    if (!fsb_zstd_frame_ok(src, block.stored_size, block.size)) return NULL;
+    fsb_stored_bytes += block.stored_size;
+    if (slot->data == NULL && (slot->data = malloc(FSB_MAX_BLOCK_SIZE)) == NULL) return NULL;
+    slot->used = 0; /* invalid until the content is in place */
+    if (!fsb_zstd_decompress(slot->data, block.size, src, block.stored_size)) return NULL;
+    slot->index = index;
+    slot->size = block.size;
+    slot->used = ++block_clock;
+    *size = block.size;
+    return slot->data;
+}
+
+bool fsb_read_blob(const struct fsb_payload *p, const struct fsb_blob *b, void *dst) {
+    const uint8_t *src = p->base + b->offset;
+    switch (b->codec) {
+    case FSB_CODEC_NONE:
+        memcpy(dst, src, (size_t)b->size);
+        fsb_stored_bytes += b->size;
+        return true;
+    case FSB_CODEC_ZSTD:
+        if (!fsb_zstd_frame_ok(src, b->stored_size, b->size)) return false;
+        fsb_stored_bytes += b->stored_size;
+        return fsb_zstd_decompress(dst, b->size, src, b->stored_size);
+    case FSB_CODEC_BLOCK: {
+        uint64_t size;
+        const uint8_t *block = block_content(p, (uint32_t)b->offset, &size);
+        if (block == NULL || !fits(b->stored_size, b->size, size)) return false;
+        memcpy(dst, block + b->stored_size, (size_t)b->size);
+        return true;
+    }
+    default:
+        return false;
+    }
 }
 
 /* memcmp order with the shorter string first on a common prefix (Python bytes ordering) */

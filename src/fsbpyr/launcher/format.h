@@ -1,4 +1,4 @@
-/* fsbpyr executable format v1 — C mirror of src/fsbpyr/payload/format.py (spec: docs/format.md).
+/* fsbpyr executable format v2 — C mirror of src/fsbpyr/payload/format.py (spec: docs/format.md).
  *
  * All integers are little-endian. Records are read with memcpy, never by casting pointers into
  * the mapping, so alignment of the mapped data never matters. tests/integration/
@@ -12,10 +12,10 @@
 #include <stdint.h>
 
 #if !defined(__BYTE_ORDER__) || __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error "fsbpyr format v1 readers assume a little-endian host"
+#error "fsbpyr format readers assume a little-endian host"
 #endif
 
-#define FSB_FORMAT_VERSION 1u
+#define FSB_FORMAT_VERSION 2u
 #define FSB_PAGE_SIZE 4096u
 #define FSB_BLOB_ALIGN 16u
 #define FSB_TABLE_ALIGN 8u
@@ -23,6 +23,7 @@
 #define FSB_DIGEST_SIZE 32u
 #define FSB_MAX_MODE 0777u
 #define FSB_MAX_BLOB_SIZE (UINT64_C(1) << 40)
+#define FSB_MAX_BLOCK_SIZE (UINT64_C(1) << 20) /* a block holds small blobs (D30) */
 
 #define FSB_TRAILER_MAGIC "FSBPYR\0T"
 #define FSB_HEADER_MAGIC "FSBPYR\0H"
@@ -40,7 +41,8 @@ enum fsb_section {
     FSB_SECTION_COUNT = 8,
 };
 
-enum fsb_codec { FSB_CODEC_NONE = 0, FSB_CODEC_ZSTD = 1 };
+/* BLOCK: inside a block; offset is the block's index, stored_size the position in it */
+enum fsb_codec { FSB_CODEC_NONE = 0, FSB_CODEC_ZSTD = 1, FSB_CODEC_BLOCK = 2 };
 
 enum fsb_module_kind {
     FSB_MODULE = 1,

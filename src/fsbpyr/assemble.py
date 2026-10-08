@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import __version__, bytecode
 from .payload.format import ModuleFlag, ModuleKind, extractable
-from .payload.spec import Blob, Dist, File, Module, PayloadSpec
+from .payload.spec import ZSTD_LEVEL, Blob, Dist, File, Module, PayloadSpec
 from .payload.writer import encode_payload, write_executable
 from .runtime.registry import BOOT_PACKAGES, Runtime
 
@@ -55,7 +55,7 @@ def boot_modules() -> tuple[Module, ...]:
 
 
 def _identity(file: File) -> bytes:
-    content = file.blob.sha256 or hashlib.sha256(file.blob.stored).digest()
+    content = file.blob.content_digest()
     mode = file.mode.to_bytes(2, "little")  # cached files keep their first mode
     return file.path.encode() + b"\0" + content + mode
 
@@ -99,6 +99,7 @@ class App:
     files: tuple[File, ...] = ()
     dists: tuple[Dist, ...] = ()
     build_info: tuple[tuple[str, object], ...] = ()
+    zstd_level: int = ZSTD_LEVEL  # of the blocks (D29, D30)
 
 
 def build_executable(runtime: Runtime, app: App, out: Path) -> None:
@@ -133,5 +134,6 @@ def build_executable(runtime: Runtime, app: App, out: Path) -> None:
         modules=(*runtime.modules, *boot, *app.modules),
         files=all_files,
         dists=app.dists,
+        zstd_level=app.zstd_level,
     )
     write_executable(out, runtime.stub, encode_payload(spec))

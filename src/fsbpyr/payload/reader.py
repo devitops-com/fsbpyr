@@ -4,6 +4,7 @@ import hashlib
 import mmap
 import os
 from bisect import bisect_left
+from collections import OrderedDict
 from compression import zstd
 from dataclasses import dataclass
 from itertools import pairwise
@@ -17,16 +18,17 @@ from .format import (
     DIGEST_SIZE,
     DIST,
     FILE,
-    FORMAT_VERSION,
     HEADER,
     HEADER_MAGIC,
     HEADER_SIZE,
     MAX_BLOB_SIZE,
+    MAX_BLOCK_SIZE,
     MAX_MODE,
     MODULE,
     NATIVE_KINDS,
     NONE,
     PAGE_SIZE,
+    READABLE_VERSIONS,
     RECORD_SIZE,
     TABLE_ALIGN,
     TRAILER,
@@ -132,8 +134,10 @@ class Payload:
         magic, version, header_size, self.python_hexversion = fields[:4]
         if magic != HEADER_MAGIC:
             raise PayloadError("bad header magic")
-        if version != FORMAT_VERSION:
+        if version not in READABLE_VERSIONS:
             raise PayloadError(f"unsupported format version {version}")
+        self.version: int = version
+        self._block_cache: OrderedDict[int, bytes] = OrderedDict()  # decompressed blocks
         if header_size != HEADER_SIZE:
             raise PayloadError(f"bad header size {header_size}")
         self.bytecode_magic: bytes = fields[4]
@@ -224,18 +228,31 @@ class Payload:
         for i, (offset, stored, size, codec, res8, res16, digest) in enumerate(records):
             if res8 or res16:
                 raise PayloadError(f"blob {i}: reserved fields are not zero")
-            if offset % BLOB_ALIGN:
-                raise PayloadError(f"blob {i} data is not {BLOB_ALIGN}-byte aligned")
-            if offset < self._data_start or offset + stored > len(self._buf):
-                raise PayloadError(f"blob range {i} outside the blob data area")
-            if size > MAX_BLOB_SIZE:
-                raise PayloadError(f"blob {i}: size {size} exceeds the limit")
             kind = _enum(Codec, codec, "codec")
-            if kind is Codec.NONE and stored != size:
-                raise PayloadError(f"blob {i}: stored size differs from size")
+            if kind is Codec.BLOCK:  # offset: the block's index; stored: position inside it
+                self._check_member(i, stored, size)
+            else:
+                self._check_data(i, offset, stored, size, kind)
             self._index(digest, self._digests, "digest index")
             blobs.append(BlobRecord(i, offset, stored, size, kind, digest))
+        _check_blocks(blobs)
         return tuple(blobs)
+
+    def _check_member(self, i: int, position: int, size: int) -> None:
+        if self.version < 2:
+            raise PayloadError(f"blob {i}: format version 1 has no blocks (codec 2)")
+        if size > MAX_BLOCK_SIZE or position + size > MAX_BLOCK_SIZE:
+            raise PayloadError(f"blob {i}: not inside any possible block")
+
+    def _check_data(self, i: int, offset: int, stored: int, size: int, kind: Codec) -> None:
+        if offset % BLOB_ALIGN:
+            raise PayloadError(f"blob {i} data is not {BLOB_ALIGN}-byte aligned")
+        if offset < self._data_start or offset + stored > len(self._buf):
+            raise PayloadError(f"blob range {i} outside the blob data area")
+        if size > MAX_BLOB_SIZE:
+            raise PayloadError(f"blob {i}: size {size} exceeds the limit")
+        if kind is Codec.NONE and stored != size:
+            raise PayloadError(f"blob {i}: stored size differs from size")
 
     def _parse_dists(self) -> tuple[DistRecord, ...]:
         dists = []
@@ -297,7 +314,8 @@ class Payload:
     def _check_module(self, m: ModuleRecord) -> None:
         if m.kind in (ModuleKind.MODULE, ModuleKind.PACKAGE):
             valid = m.code != NONE and m.file == NONE
-            valid = valid and self._blobs[m.code].codec is Codec.ZSTD
+            # checksummed: a zstd frame of its own, or inside a block (itself a zstd frame)
+            valid = valid and self._blobs[m.code].codec in (Codec.ZSTD, Codec.BLOCK)
         elif m.kind is ModuleKind.NAMESPACE:
             valid = m.code == m.source == m.file == NONE
         else:
@@ -357,19 +375,32 @@ class Payload:
     def stored(self, index: int) -> bytes:
         """Stored (possibly compressed) bytes, for copying a blob verbatim into a new payload."""
         record = self.blob(index)
+        if record.codec is Codec.BLOCK:
+            raise PayloadError(f"blob {index} lives inside a block: it has no stored bytes")
         return bytes(self._buf[record.offset : record.offset + record.stored_size])
 
+    def _block(self, index: int) -> bytes:
+        """A block's content, from a small cache: a package's modules share blocks."""
+        content = self._block_cache.get(index)
+        if content is None:
+            content = self._block_cache[index] = self.read_blob(index)
+            if len(self._block_cache) > 32:
+                self._block_cache.popitem(last=False)
+        self._block_cache.move_to_end(index)
+        return content
+
     def read_blob(self, index: int) -> bytes:
-        """Uncompressed content; never allocates more than ``size + 1`` bytes."""
+        """Uncompressed content; never allocates more than ``size + 1`` bytes (a member: its
+        block, at most MAX_BLOCK_SIZE)."""
         record = self.blob(index)
+        if record.codec is Codec.BLOCK:
+            return self._block(record.offset)[record.stored_size : record.stored_size + record.size]
         stored = self._buf[record.offset : record.offset + record.stored_size]
         if record.codec is Codec.NONE:
             return bytes(stored)
-        if not zstd_frame_has_checksum(stored):
-            stored.release()
-            raise PayloadError(f"blob {index}: zstd frame without content checksum")
         decompressor = zstd.ZstdDecompressor()
         try:
+            _check_frame(index, stored, record.size)
             data = decompressor.decompress(stored, max_length=record.size + 1)
         except zstd.ZstdError as exc:
             raise PayloadError(f"zstd frame invalid in blob {index}: {exc}") from None
@@ -383,6 +414,8 @@ class Payload:
         """Whether the blob's content holds ``needle``, decompressing ``chunk`` bytes at a time:
         the declared size of a hostile file is not trusted to fit in memory."""
         record = self.blob(index)
+        if record.codec is Codec.BLOCK:  # small: at most BLOCK_MEMBER_MAX in practice
+            return needle in self.read_blob(index)
         stored = self._buf[record.offset : record.offset + record.stored_size]
         keep = len(needle) - 1  # bytes of a window that may start a match across windows
         try:
@@ -391,8 +424,7 @@ class Payload:
                     if needle in bytes(stored[max(start - keep, 0) : start + chunk]):
                         return True
                 return False
-            if not zstd_frame_has_checksum(stored):
-                raise PayloadError(f"blob {index}: zstd frame without content checksum")
+            _check_frame(index, stored, record.size)
             decompressor, tail, produced = zstd.ZstdDecompressor(), b"", 0
             data: bytes | memoryview = stored
             while not decompressor.eof:
@@ -468,6 +500,28 @@ def zstd_frame_has_checksum(frame: bytes | memoryview) -> bool:
     return len(frame) >= 6 and bytes(frame[:4]) == ZSTD_MAGIC and bool(frame[4] & 0x04)
 
 
+def _check_blocks(blobs: list[BlobRecord]) -> None:
+    """Each member names a zstd blob no larger than MAX_BLOCK_SIZE and lies inside it."""
+    for member in blobs:
+        if member.codec is Codec.BLOCK:
+            block = blobs[member.offset] if member.offset < len(blobs) else None
+            if block is None or block.codec is not Codec.ZSTD or block.size > MAX_BLOCK_SIZE:
+                raise PayloadError(f"blob {member.index}: its block is not a block")
+            if member.stored_size + member.size > block.size:
+                raise PayloadError(f"blob {member.index}: reaches past the end of its block")
+
+
+def _check_frame(index: int, frame: memoryview, size: int) -> None:
+    """What the launcher requires of a zstd frame (fsb_zstd_frame_ok): a content checksum, the
+    content size in its header, and nothing after it."""
+    if not zstd_frame_has_checksum(frame):
+        raise PayloadError(f"blob {index}: zstd frame without content checksum")
+    if zstd.get_frame_size(frame) != len(frame):
+        raise PayloadError(f"blob {index}: data follows its zstd frame")
+    if zstd.get_frame_info(frame).decompressed_size != size:
+        raise PayloadError(f"blob {index}: zstd frame does not declare content size {size}")
+
+
 def _find[R](records: tuple[R, ...], keys: list[bytes], key: str) -> R | None:
     encoded = key.encode()
     i = bisect_left(keys, encoded)
@@ -496,7 +550,7 @@ class Executable:
         )
         if magic != TRAILER_MAGIC:
             raise PayloadError("bad trailer magic")
-        if version != FORMAT_VERSION:
+        if version not in READABLE_VERSIONS:
             raise PayloadError(f"unsupported format version {version}")
         if flags:
             raise PayloadError(f"unknown trailer flags {flags:#x}")
@@ -512,6 +566,8 @@ class Executable:
             self._payload = Payload(window)
         finally:
             window.release()
+        if self._payload.version != version:
+            raise PayloadError(f"trailer format version {version}, payload {self._payload.version}")
 
     @property
     def payload(self) -> Payload:

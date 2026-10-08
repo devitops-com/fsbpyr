@@ -1,5 +1,6 @@
 """Phase 2 exit criteria, exercised on real executables built from the cached runtime."""
 
+import hashlib
 import os
 import shutil
 import signal
@@ -11,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from fsbpyr.payload.format import Codec
 from fsbpyr.payload.reader import Executable
 
 from .conftest import BuildApp
@@ -164,11 +166,13 @@ def test_corrupt_executable_fails_cleanly(build_app: BuildApp, damage: str) -> N
 
 
 def _flip_in_blob(app: Path, module: str) -> None:
-    """Flip one byte inside the stored (zstd) code blob of ``module``."""
+    """Flip one byte inside the stored code of ``module``: its zstd frame, or its block's."""
     with Executable.open(app) as exe:
         record = exe.payload.find_module(module)
         assert record is not None
         blob = exe.payload.blob(record.code)
+        if blob.codec is Codec.BLOCK:
+            blob = exe.payload.blob(blob.offset)
         position = exe.payload_offset + blob.offset + blob.stored_size // 2
     data = bytearray(app.read_bytes())
     data[position] ^= 0x5A
@@ -194,6 +198,29 @@ def test_corrupt_app_module_raises_payload_error(build_app: BuildApp) -> None:
 
     assert result.returncode == 1
     assert "_fsbpyr.PayloadError: corrupt executable payload" in result.stderr
+
+
+def test_launcher_block_cache_rereads_evicted_blocks(build_app: BuildApp) -> None:
+    """Two members of each block in turn (a miss, then a hit), then every block in reverse: the
+    last 32 are hits, and with more blocks than the launcher keeps (32) the rest are decompressed
+    again after their eviction."""
+    reader = "import _fsbpyr, hashlib, sys\n\ndef main():\n    for i in sys.argv[1:]:\n" \
+             "        print(hashlib.sha256(_fsbpyr.read(int(i))).hexdigest())\n"  # fmt: skip
+    app = build_app({"x.py": reader}, "x:main")
+    with Executable.open(app) as exe:
+        by_block: dict[int, list[int]] = {}
+        for blob in exe.payload.blobs():
+            if blob.codec is Codec.BLOCK:
+                by_block.setdefault(blob.offset, []).append(blob.index)
+        order = [i for m in by_block.values() for i in (m[0], m[-1])]
+        order += [m[0] for m in reversed(by_block.values())]
+        expected = [hashlib.sha256(exe.payload.read_blob(i)).hexdigest() for i in order]
+    assert len(by_block) > 32
+
+    result = _run(app, *map(str, order))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == expected
 
 
 def test_executable_path_need_not_be_utf8(build_app: BuildApp, tmp_path: Path) -> None:
