@@ -127,15 +127,33 @@ def _download(collection: gc.Run, parent: int, name: str) -> None:
 
 
 def app_caches() -> list[Path]:
-    """The app caches to collect: directories with the marker in ${XDG_CACHE_HOME:-~/.cache},
+    """The app caches to collect: directories in ${XDG_CACHE_HOME:-~/.cache} with the marker, or
+    that may have it (gc.mark: a cache an app of an earlier version made, which marks nothing),
     and $FSBPYR_CACHE_DIR if it has one."""
     home = registry.cache_home()
-    found = sorted(p for p in home.glob("*/") if (p / gc.MARKER).is_file()) if home.is_dir() else []
+    found = sorted(p for p in home.glob("*/") if _marked(p)) if home.is_dir() else []
     if explicit := os.environ.get("FSBPYR_CACHE_DIR"):
         root = Path(os.path.abspath(explicit))  # as the boot code makes it (native.py)
         if (root / gc.MARKER).is_file() and root not in found:
             found.append(root)
     return found
+
+
+def _marked(directory: Path) -> bool:
+    """Whether ``directory`` has the marker, or may have it (made so): a directory of ours whose
+    way is trusted, holding a tree of ours (an empty one may be some other program's)."""
+    if gc.way_problem(str(directory)) is not None:
+        return False
+    try:
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)  # may be a symlink
+    except OSError:
+        return False  # not ours to read
+    try:
+        return os.fstat(fd).st_uid == os.geteuid() and gc.mark(fd, new=False)
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
 
 
 def collect_when_due(root: Path) -> gc.Report | None:

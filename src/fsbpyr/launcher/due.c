@@ -1,6 +1,8 @@
 /* The cache collection's trigger (see due.h). */
 #include "due.h"
 
+#include "way.h"
+
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -104,6 +106,13 @@ static bool due(struct stat *seen, bool *missing) {
     return ours(marker, &st);
 }
 
+/* Whether the root's way is trusted (way.h): else the collection would refuse it. */
+static bool trusted(void) {
+    char where[PATH_MAX];
+    int error;
+    return fsb_way_check(root, where, sizeof where, &error) == FSB_WAY_TRUSTED;
+}
+
 /* The stamp claimed for a run: held LOCK_EX, still as due() saw it (no other start claimed it
  * meanwhile, and no run holds it), and touched (made, if it was missing). False otherwise, or
  * if it cannot be touched (a read-only cache): no run is started. */
@@ -174,7 +183,8 @@ void fsb_collect_when_due(const char *app, size_t length, const char *argv0) {
     /* Not for a set-uid start (its environment is not to be trusted), nor as process 1 (in a
      * container: the process started would be its child, and no zombie of ours is reaped). */
     if (getauxval(AT_SECURE) || getpid() == 1 || getenv("FSBPYR_GC") != NULL ||
-        !cache_root(app, length) || !due(&seen, &missing) || !claim(&seen, missing))
+        !cache_root(app, length) || !due(&seen, &missing) || !trusted() ||
+        !claim(&seen, missing))
         return;
     start_collection(argv0);
 }

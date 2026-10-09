@@ -879,7 +879,7 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
   release's measurements; the count-based tests and the startup budget pass; fast exit is
   evaluated and dropped. **DONE 2026-10-09.**
 
-### Phase 8 — Hardening (L; D38) — **8a DONE 2026-10-09 (0.10.0), 8b DONE 2026-10-09 (0.11.0), 8c DONE 2026-10-09 (0.12.0), 8d DONE 2026-10-10 (0.13.0)**
+### Phase 8 — Hardening (L; D38) — **8a DONE 2026-10-09 (0.10.0), 8b DONE 2026-10-09 (0.11.0), 8c DONE 2026-10-09 (0.12.0), 8d DONE 2026-10-10 (0.13.0), 8e DONE 2026-10-10 (0.14.0)**
 
 Principle (owner): normal cases fast, edge and extreme cases correct, never a crash. Every
 item below gets explicit tests in the normal test run. Steps, each released on its own:
@@ -1112,6 +1112,50 @@ symlinks component by component) and require every directory on the way to be ow
 or the user and not writable by others unless sticky; tests for path traversal in names,
 symlinked cache directories, a foreign-owned cache, a cache root below a directory others can
 write, a truncated binary.
+- **Done (0.14.0):**
+  - `launcher/way.c` (`fsb_way_check`, at every `open_root`, and again, whole, whenever the
+    first walk ended at a missing part: made by us or by someone else meanwhile, it is caught)
+    walks the root's path from `/`
+    with `O_PATH` descriptors, one component at a time: a symlink, which must be root's or the
+    user's (one planted in a sticky directory is refused), has its target spliced into what is
+    left (40 at most, as the kernel); `..` goes up from the directory the walk is in; the first
+    part that does not exist ends the walk, unless a `..` follows it (refused: as the kernel
+    would, and it could lead out of what was checked); every directory on the way, the root's
+    own included, must be owned by root or the user and writable by no other user unless
+    sticky: not by others, nor by a group other than the user's primary one (a user-private
+    group is the norm; a shared one such as `staff` is refused; known limit: a shared primary
+    group, such as `users`, and ACL entries the group bits show are taken as the user's) (`FSB_CACHE_EXPOSED`: "refusing cache
+    directory X: other users may write to it"); the root must also be the user's (as before)
+  - in a user namespace other than the initial one (a sandbox), a directory owned outside it
+    shows as the overflow uid (nobody): it counts as root's, the sandbox's own layout (else
+    every cache there is refused at `/`), but only where no uid inside maps to the overflow uid
+    (`podman unshare` maps it: a real nobody could own it) and only above any directory others
+    may add to (below `/tmp`, nobody's could be anyone's); known limit: a directory of another
+    host user bound into the sandbox, above such a directory, counts as root's too
+  - `make_root` and the tool make missing parents 0755 (as far as the umask leaves it): a
+    umask of 0 no longer makes them writable by others (and then refused)
+  - `due.c` claims a collection only for a root whose way is trusted (the collector would
+    refuse it: no spawn a day for nothing)
+  - the same rule in Python (`gc.way_problem`, a `Problem`): the collector refuses a root whose
+    way fails, and so does the tool's cache (`registry.secure_directory`, which still makes its
+    own directory private rather than refusing it, through a descriptor, refuses a symlink
+    there of another user's, and checks the whole way once the directory exists); the mirror
+    uses it, and the contract compares C and mirror on each case
+  - `fsbpyr cache gc` adopts the caches apps of earlier versions made (they mark nothing): a
+    directory of ours in the cache home, its way trusted, holding only our names and a tree of
+    ours (32 hex digits, ours, with its lock or its site) gets the marker
+    (`gc.mark(..., new=False)`: an empty directory is some other program's, maybe)
+  - tests: directories others or another group may write to (at the root, on the way, through
+    a symlink, through `..`), sticky ones, our own group's, a directory and a symlink of
+    another user, a real directory of another user on this system, symlinks with trusted
+    targets, 40 and 41 symlinks, a loop, a file, a name too long, `missing/..`, relative roots
+    (the launcher's working directory), a user namespace, a root of another user (`/usr`), the
+    tool's cache and the collector refusing, parents made 0755 under umask 0; the launcher's
+    cases under ASan/UBSan as well. Path traversal in names, symlinks inside the cache, a
+    foreign-owned tool cache and truncated binaries were tested before
+    (`test_launcher_never_extracts_a_file_whose_path_could_leave_the_cache`,
+    `test_symlinks_inside_the_cache_are_refused`, `test_foreign_owner_is_refused`,
+    `test_corrupt_executable_fails_cleanly`, `test_executable_rejects_every_truncation`)
 
 - ~~`FSBPYR_VERIFY=1` also checks the payload digest (D11)~~: D31 checks the whole file on
   every start and re-hashes cached files in every process; `FSBPYR_VERIFY` is gone.
@@ -1122,6 +1166,12 @@ write, a truncated binary.
   - GC removes what D38 says and nothing else; tests cover every rule, concurrent use included
   - security tests pass: path traversal in names, symlinked cache dirs, foreign-owned cache,
     a cache root below a directory others can write, truncated binary
+- **Exit met (0.14.0, 2026-10-10):** 1228 tests pass (none skipped here), the sanitized
+  launcher's included; the fuzzer ran 10 minutes clean after each of 8c, 8d and 8e; the
+  launcher builds with `-Wvla` and the frame limit; 1 TiB (sparse) builds compressed and raw,
+  runs, streams, extracts and verifies with each process under 1 GB (34 min 51 s for the
+  three runs; not run before 0.13.0, run again before 0.14.0); GC and security tests as listed
+  under 8d and 8e
 
 ### Phase 9 — More Python versions and portability (L, later)
 

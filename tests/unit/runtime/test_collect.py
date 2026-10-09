@@ -258,18 +258,25 @@ def test_a_collection_is_due_a_day_after_the_last(
         assert collect.collect_when_due(root) is None
 
 
-def test_app_caches_are_the_marked_ones_and_fsbpyr_cache_dir(
+def test_app_caches_are_the_marked_or_markable_ones_and_fsbpyr_cache_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     for name in ("app", "theirs"):
         (tmp_path / "xdg" / name).mkdir(parents=True)
     (tmp_path / "xdg" / "app" / gc.MARKER).write_bytes(b"")
+    (tmp_path / "xdg" / "earlier" / "runtime" / ("a" * 32) / "site").mkdir(parents=True)
+    (tmp_path / "xdg" / "lookalike" / "runtime" / ("a" * 32)).mkdir(parents=True)
     (tmp_path / "explicit").mkdir()
     (tmp_path / "explicit" / gc.MARKER).write_bytes(b"")
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path / "explicit"))
 
-    assert collect.app_caches() == [tmp_path / "xdg" / "app", tmp_path / "explicit"]
+    caches = collect.app_caches()
+
+    xdg = tmp_path / "xdg"
+    assert caches == [xdg / "app", xdg / "earlier", tmp_path / "explicit"]
+    assert (xdg / "earlier" / gc.MARKER).is_file()  # an app of an earlier version marked none
+    assert not (xdg / "lookalike" / gc.MARKER).exists()
 
 
 def test_cache_gc_collects_the_tools_cache_and_every_app_cache(
@@ -282,7 +289,8 @@ def test_cache_gc_collects_the_tools_cache_and_every_app_cache(
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / gc.MARKER).write_bytes(b"")
     _item(tmp_path / "app", "runtime", "a" * 32, days=30)
-    _item(tmp_path / "theirs", "runtime", "a" * 32, days=30)  # no marker: not a cache of ours
+    _item(tmp_path / "theirs", "runtime", "a" * 32, days=30)
+    (tmp_path / "theirs" / "notes.txt").write_text("not ours")  # so never marked
 
     assert cli.main(["cache", "gc"]) == 0
 

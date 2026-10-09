@@ -1,11 +1,13 @@
 """Runtime cache: build, save, load and locate runtimes (plan D3, §3.7)."""
 
+import contextlib
 import dataclasses
 import hashlib
 import json
 import os
 import platform
 import shutil
+import stat
 import sys
 import tempfile
 from collections.abc import Callable
@@ -13,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import __version__
+from ..boot._fsbpyr_rt import gc
 from ..payload.convert import spec_from_payload
 from ..payload.format import PayloadError, tree_digest
 from ..payload.reader import Executable, Payload
@@ -41,17 +44,37 @@ def check_owner(path: Path, *, owner: int, euid: int) -> None:
 
 
 def secure_directory(path: Path) -> Path:
-    """Create ``path`` (mode 0700) or verify it: owned by us, not writable by group or others.
+    """Create ``path`` (mode 0700) or verify it: owned by us, not writable by group or others
+    (made so, through a descriptor), and the way to it from "/" trusted (gc.way_problem, D38:
+    no other user can redirect it; a symlink at ``path`` must be root's or ours).
 
     Cached stubs end up inside every executable built from them, so a cache directory that
     another user could write to would let them plant code (security review, Phase 2).
     """
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    info = path.stat()
-    check_owner(path, owner=info.st_uid, euid=os.geteuid())
-    if info.st_mode & 0o077:
-        path.chmod(0o700)
+    _trusted_way(path.parent)
+    for parent in reversed([p for p in path.parents if not p.exists()]):
+        with contextlib.suppress(FileExistsError):
+            parent.mkdir(mode=0o755)  # writable by no one else, whatever the umask
+    with contextlib.suppress(FileExistsError):
+        path.mkdir(mode=0o700)
+    link = path.lstat()
+    if stat.S_ISLNK(link.st_mode) and link.st_uid not in (0, os.geteuid()):
+        raise RuntimeCacheError(f"refusing cache directory {path}: {gc.FOREIGN}")
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        info = os.fstat(fd)
+        check_owner(path, owner=info.st_uid, euid=os.geteuid())
+        if info.st_mode & 0o077:
+            os.fchmod(fd, 0o700)
+    finally:
+        os.close(fd)
+    _trusted_way(path)  # the whole way now: a part someone else made meanwhile is caught
     return path
+
+
+def _trusted_way(path: Path) -> None:
+    if (problem := gc.way_problem(str(path))) is not None:
+        raise RuntimeCacheError(problem.text())
 
 
 def _digest(path: Path) -> str:

@@ -19,7 +19,7 @@ pytestmark = pytest.mark.slow
 
 HARNESS = Path(__file__).parents[1] / "fuzz" / "payload_fuzz.c"
 FUZZ_SECONDS = int(os.environ.get("FSBPYR_FUZZ_SECONDS", "30"))
-SOURCES = ("payload.c", "integrity.c", "parallel.c", "cache.c")
+SOURCES = ("payload.c", "integrity.c", "parallel.c", "cache.c", "way.c")
 
 
 @pytest.fixture(scope="module")

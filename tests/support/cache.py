@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from fsbpyr.boot._fsbpyr_rt.gc import MARKER, MARKER_TEXT, OURS
+from fsbpyr.boot._fsbpyr_rt.gc import MARKER, MARKER_TEXT, OURS, way_problem
 from fsbpyr.payload.format import NATIVE_KINDS, NONE, FileFlag, tree_digest
 from fsbpyr.payload.format import PayloadError as _ReaderError
 from fsbpyr.payload.reader import FileRecord, Payload
@@ -229,18 +229,28 @@ class _Sync:
         return fd
 
     def _open_root(self) -> int:
+        """cache.c's open_root(): the root's way from "/" trusted (gc.way_problem is
+        trusted_way's rule), then the root opened, created if missing, and ours."""
+        self._trusted_way()
         try:
             fd = os.open(self.root, _DIRECTORY)
         except FileNotFoundError:
             self._make_root()
+            self._trusted_way()  # again: a part someone else made meanwhile is caught
             fd = os.open(self.root, _DIRECTORY)
         return self._owned(fd, self._path(""), private=False)
 
+    def _trusted_way(self) -> None:
+        if (problem := way_problem(os.fsdecode(self.root))) is not None:
+            if problem.error:
+                raise OSError(problem.error, os.strerror(problem.error), problem.where)
+            raise CacheError(problem.text())
+
     def _make_root(self) -> None:
-        """mkdir -p: parents as the umask leaves them, the root itself 0700."""
+        """mkdir -p: parents 0755 as far as the umask leaves it, the root itself 0700."""
         for position in [i for i in range(1, len(self.root)) if self.root[i] == ord("/")]:
             with contextlib.suppress(FileExistsError):
-                os.mkdir(self.root[:position], 0o777)
+                os.mkdir(self.root[:position], 0o755)
         with contextlib.suppress(FileExistsError):
             os.mkdir(self.root, 0o700)
 

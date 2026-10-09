@@ -436,6 +436,10 @@ static int synced(const struct fsb_cache_sync *job, PyObject *root, uint8_t *mem
     case FSB_CACHE_FOREIGN:
         PyErr_Format(CacheError, "refusing cache directory %U: owned by another user", path);
         break;
+    case FSB_CACHE_EXPOSED:
+        PyErr_Format(CacheError, "refusing cache directory %U: other users may write to it",
+                     path);
+        break;
     case FSB_CACHE_SYSTEM:
         errno = job->error;
         PyErr_SetFromErrnoWithFilenameObject(PyExc_OSError, path);

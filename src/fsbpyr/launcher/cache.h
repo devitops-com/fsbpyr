@@ -39,11 +39,13 @@ enum fsb_cache_failure {
     FSB_CACHE_CORRUPT, /* a record or blob of the payload: ``reason`` of FILES index ``file`` */
     FSB_CACHE_FOREIGN, /* the directory ``path`` belongs to another user */
     FSB_CACHE_SYSTEM,  /* errno ``error`` at ``path`` */
+    FSB_CACHE_EXPOSED, /* the directory ``path``, on the root's way, is writable by others */
     FSB_CACHE_MEMORY,
 };
 
 struct fsb_cache_sync {
-    const char *root;      /* created if missing; followed if a symlink; must be ours */
+    const char *root;      /* created if missing; followed if a symlink; must be ours, and its way
+                              from "/" trusted (way.h, D38) */
     const char *chain;     /* the directories from the root down to the site: "a/b/c" */
     const uint32_t *files; /* FILES indices; in ascending order, directories are opened once */
     uint64_t count;

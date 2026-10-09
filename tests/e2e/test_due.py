@@ -25,7 +25,7 @@ DAY, HOUR = 86400, 3600
 def probe(launcher_build: LauncherBuild, tmp_path_factory: pytest.TempPathFactory) -> Path:
     out = tmp_path_factory.mktemp("probe") / "due"
     flags = ("-Wl,--wrap=statvfs", "-fsanitize=undefined", "-fno-sanitize-recover=undefined")
-    return launcher_build.compile(out, [PROBE, "due.c"], *flags)
+    return launcher_build.compile(out, [PROBE, "due.c", "way.c"], *flags)
 
 
 def _cache(root: Path, *, stamp: float | None, marked: bool = True) -> Path:

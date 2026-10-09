@@ -151,8 +151,14 @@ on first use into `${XDG_CACHE_HOME:-~/.cache}/<app>`, or `$FSBPYR_CACHE_DIR` wh
 an app asks for as a path are extracted there too. With `--best-compression` that first use
 takes longer, since xz decodes more slowly than zstd: the launcher decodes each library in
 pieces of 4 MiB on up to 8 threads (numpy's first import: about +70 ms; onnxruntime's together
-with numpy's: about +80 ms); later runs are as fast as with zstd. Environment variables the
-executable reads:
+with numpy's: about +80 ms); later runs are as fast as with zstd. Since what is extracted there
+is loaded as code, the cache directory must be yours, and it and every directory leading to it
+owned by root or by you and writable by no other user (not by others, nor by a group other
+than your primary one) unless sticky, as `/tmp` is; symlinks are followed, and must be root's
+or yours. No other user can then replace or redirect any part of it. A cache that fails this
+is refused, and the error names the directory at fault. (In a user namespace, a sandbox,
+directories whose owner is outside it show as nobody's; they count as root's where nobody is
+no user inside, and only above a directory anyone may add to, such as `/tmp`.) Environment variables the executable reads:
 
 | Variable | |
 |---|---|

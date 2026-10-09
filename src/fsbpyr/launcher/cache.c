@@ -2,6 +2,7 @@
 #include "cache.h"
 
 #include "integrity.h"
+#include "way.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -240,7 +241,7 @@ static int owned(struct state *s, int fd, bool private, const char *below, size_
     return -1;
 }
 
-/* mkdir -p of the root: its parents as the umask leaves them, the root itself 0700. */
+/* mkdir -p of the root: its parents 0755 as far as the umask leaves it, the root itself 0700. */
 static bool make_root(struct state *s) {
     char path[PATH_MAX];
     size_t length = strlen(s->job->root);
@@ -249,7 +250,7 @@ static bool make_root(struct state *s) {
     for (size_t i = 1; i < length; i++) {
         if (path[i] != '/') continue;
         path[i] = '\0';
-        int made = mkdir(path, 0777), error = errno;
+        int made = mkdir(path, 0755), error = errno; /* by no one else, whatever the umask */
         if (made != 0 && error != EEXIST) {
             s->job->failure = FSB_CACHE_SYSTEM;
             s->job->error = error;
@@ -263,14 +264,29 @@ static bool make_root(struct state *s) {
     return true;
 }
 
-/* The root, created if it is missing. It may be a symlink (FSBPYR_CACHE_DIR naming one), and its
- * mode is the user's business; it must be ours. */
+/* fsb_way_check's verdict on the root's way (way.h): TRUSTED, PARTIAL, or the failure set. */
+static enum fsb_way check_way(struct state *s) {
+    struct fsb_cache_sync *job = s->job;
+    enum fsb_way way = fsb_way_check(job->root, job->path, sizeof job->path, &job->error);
+    if (way == FSB_WAY_FOREIGN) job->failure = FSB_CACHE_FOREIGN;
+    if (way == FSB_WAY_EXPOSED) job->failure = FSB_CACHE_EXPOSED;
+    if (way == FSB_WAY_SYSTEM) job->failure = FSB_CACHE_SYSTEM;
+    if (way == FSB_WAY_MEMORY) out_of_memory(s);
+    return way;
+}
+
+/* The root, created if it is missing, once its way from "/" is trusted (trusted_way; checked
+ * again, whole, if a part was missing: a part someone else made meanwhile is caught). It may be
+ * a symlink (FSBPYR_CACHE_DIR naming one); it must be ours. */
 static bool open_root(struct state *s) {
-    int fd = open(s->job->root, DIRECTORY);
-    if (fd < 0 && errno == ENOENT) {
+    enum fsb_way way = check_way(s);
+    if (way == FSB_WAY_PARTIAL) { /* made now, by us or by someone meanwhile: checked whole */
         if (!make_root(s)) return false;
-        fd = open(s->job->root, DIRECTORY);
+        way = check_way(s);
+        if (way == FSB_WAY_PARTIAL) return failed_at(s, FSB_CACHE_SYSTEM, ENOENT, NULL, 0);
     }
+    if (way != FSB_WAY_TRUSTED) return false;
+    int fd = open(s->job->root, DIRECTORY);
     if (fd < 0) return failed_at(s, FSB_CACHE_SYSTEM, errno, NULL, 0);
     s->root = owned(s, fd, false, NULL, 0);
     return s->root >= 0;

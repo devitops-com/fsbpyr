@@ -8,6 +8,7 @@ import errno
 import fcntl
 import hashlib
 import io
+import json
 import os
 import stat
 import sys
@@ -164,6 +165,7 @@ def _syncs(fsb: Any) -> dict[str, Any]:
             "chunks": _sync_chunks(fsb, tmp),
             "deep": _sync_deep(fsb, tmp),
             "holds": _sync_holds(fsb, tmp),
+            "ways": _sync_ways(fsb, tmp),
         }
         out["descriptors left open"] = _descriptors() - descriptors
     return out
@@ -246,6 +248,40 @@ def _sync_holds(fsb: Any, tmp: str) -> dict[str, Any]:
         marked = os.path.isfile(os.path.join(root, ".fsbpyr-cache"))
         out[case] = [outcome[0][:2], marked, _locked(os.path.join(root, tree, ".lock"))]
     return out
+
+
+def _sync_ways(fsb: Any, tmp: str) -> dict[str, Any]:
+    """The root's way from "/" (D38, launcher/way.h): refused below, or at, a directory others
+    may write to (also through a symlink, or ".."), through another group's, a symlink loop, a
+    file, a name too long, or "missing/.."; fine through a sticky one, our group's, a symlink
+    to a trusted directory, or 40 symlinks. Paths below ``tmp`` written as <tmp>."""
+    base = os.path.join(tmp, "ways")
+    exposed, sticky, real, ours = (os.path.join(base, n) for n in ("open", "sticky", "real", "g"))
+    for directory, mode in ((exposed, 0o777), (sticky, 0o1777), (real, 0o700), (ours, 0o775)):
+        os.makedirs(directory)
+        os.chmod(directory, mode)
+    os.symlink(real, os.path.join(base, "good"))
+    os.symlink(exposed, os.path.join(base, "bad"))
+    os.symlink(os.path.join(base, "loop"), os.path.join(base, "loop"))
+    for i in range(41):
+        os.symlink(f"l{i - 1}" if i else "real", os.path.join(base, f"l{i}"))
+    with open(os.path.join(base, "file"), "w"):
+        pass
+    roots = {"exposed": "open/cache", "exposed root": "open", "sticky": "sticky/cache",
+             "our group": "g/cache", "good": "good", "bad": "bad/c", "loop": "loop/cache",
+             "file": "file/cache", "long": "x" * 256, "dotdot": "real/../real/x",
+             "dotdot exposed": "open/../real/x", "missing dotdot": "real/no/../../open/x",
+             "40 links": "l39/x", "41 links": "l40/x"}  # fmt: skip
+    if others := [g for g in os.getgroups() if g != os.getegid()]:
+        shared = os.path.join(base, "shared")
+        os.makedirs(shared)
+        os.chown(shared, -1, others[0])
+        os.chmod(shared, 0o775)  # noqa: S103  the case itself
+        roots["another group"] = "shared/cache"
+    files = _closure(fsb, EXT)
+    out = {case: _sync(fsb, os.path.join(base, root), files) for case, root in roots.items()}
+    written: dict[str, Any] = json.loads(json.dumps(out).replace(tmp, "<tmp>"))
+    return written
 
 
 def _locked(path: str) -> str:
