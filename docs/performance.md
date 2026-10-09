@@ -166,6 +166,75 @@ runs are the same. A first run holds the largest library it extracts in memory
 (libtorch_cpu.so, 438 MB); xz adds about 42 MB of decoder state. The training loop runs about
 9% slower than in the venv in every build; not explained yet.
 
+### The same app with 0.9.0
+
+The released 0.9.0 (the installed `fsbpyr`), measured as above in another session, where the
+venv itself ran 13% faster than in the 0.8.0 table: compare columns, not the two tables.
+
+| | venv | zstd 3 | zstd 9 | xz -6 in pieces |
+|---|---|---|---|---|
+| Size | — | 254.8 MB | 233.0 MB | 214.7 MB |
+| Build (uv staging included) | — | 16.1 s | 22.2 s | 27.4 s |
+| First run | — | 1.73 s | 1.70 s | 1.72 s |
+| First run: torch import | — | 1.11 s | 1.09 s | 1.11 s |
+| Later runs | 1.01 s | 1.08 s | 1.07 s | 1.07 s |
+| Later runs: torch import | 411 ms | 465 ms | 465 ms | 464 ms |
+| Later runs: training loop | 346 ms | 353 ms | 352 ms | 352 ms |
+| Integrity check | — | 18.1 ms | 16.3 ms | 12.2 ms |
+| Anonymous memory, later / first run | 227 MB | 231 / 440 MB | 231 / 440 MB | 231 / 483 MB |
+| RSS, later / first run | 314 MB | 578 / 631 MB | 578 / 614 MB | 577 / 637 MB |
+
+0.8.0 and 0.9.0 (zstd 9) and the venv, later runs, medians of 21 runs of each, interleaved:
+
+| | 0.8.0 | 0.9.0 | venv |
+|---|---|---|---|
+| Whole run | 1146 ms | 1066 ms | 1003 ms |
+| torch import | 543 ms | 466 ms | 411 ms |
+| Training loop | 353 ms | 351 ms | 345 ms |
+| Peak RSS | 478 MB | 577 MB | 314 MB |
+
+The training loop's 9% difference to the venv in the 0.8.0 table did not show up again (2%).
+Peak RSS grew by 99 MB with 0.9.0, anonymous memory did not: RSS counts the pages of the cached
+files mapped for the check, and passes of 1024 files keep up to 573 MB of torch's files mapped at
+once, against 480 MB with 0.8.0's 256 (computed from the cache's file sizes; libtorch_cpu.so alone
+is 438 MB). Those pages are the page cache's, clean, and released as each pass ends.
+
+### Resident memory with 0.9.1 (D36)
+
+The checks read files a leaf at a time, through a 64 KiB buffer per thread, instead of mapping
+them, and restored files are written in pieces of 1 MiB. The torch app (zstd 9), later runs, each
+build with a cache of its own written by its own first run:
+
+| Peak RSS | 0.9.0 | 0.9.1 | venv |
+|---|---|---|---|
+| Once the executable is checked (start to `main`) | 226 MB | 14 MB | — |
+| torch import (the cache check) | 576 MB | 241 MB | — |
+| Training loop | 450 MB | 348 MB | — |
+| Whole run (21 runs, interleaved) | 577 MB | 349 MB | 314 MB |
+| Whole run, time | 1067 ms | 1071 ms | 1004 ms |
+| torch import, time | 467 ms | 473 ms | 411 ms |
+
+Phases: medians of 11 runs, RSS sampled from `/proc` about every millisecond between markers
+the app writes; the split into anonymous and file-backed memory is unreliable while the hashing
+threads fault pages in, so only the total counts. Resident after the loop (`/proc/self/smaps`):
+
+| Mapping | 0.9.0 | 0.9.1 | venv |
+|---|---|---|---|
+| `libtorch_cpu.so` | 156 MB | 60 MB | 60 MB |
+| the executable / `python3.14` | 42 MB | 42 MB | 11 MB |
+| heap and anonymous | 226 MB | 226 MB | 222 MB |
+| `libtorch_python.so` | 20 MB | 13 MB | 14 MB |
+
+`libtorch_cpu.so` written whole (one `write()`), or in pieces of 4 MiB, stays in XFS's page cache
+as 2 MiB folios, which the dynamic loader maps whole: 156 MB resident. Written in pieces of 1 MiB,
+256 KiB or 64 KiB, or dropped from the page cache and read back, 60 MB.
+
+The executable's own check (`integrity_ns`, interleaved): the no-op app's 27.6 MB took 1.93 ms
+against 1.82 ms with 0.9.0 (201 runs each), the torch app's 233 MB 13.9 ms against 14.8 ms (21
+each). Reading each thread's leaves through a whole 1 MiB buffer instead of 64 KiB cost the
+no-op app's start more (the code review measured 1.94 against 1.71 ms) and left 8 MB more heap
+in the torch app (127 against 119 MB), since glibc keeps the freed buffers.
+
 ## The cache sync in the launcher (D35)
 
 `_fsbpyr.sync` walks, checks and restores cached files in C, without the GIL; Python only asks

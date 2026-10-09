@@ -1,6 +1,6 @@
 [project]
 name = "fsbpyr"
-version = "0.9.0"
+version = "0.9.1"
 description = "Fast single-binary Python CLI runtime and packager"
 authors = [{ name = "Kresimir Sparavec", email = "ksparavec@devitops.com" }]
 license = "MIT"

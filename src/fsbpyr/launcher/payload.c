@@ -299,7 +299,8 @@ struct pieces {
     atomic_bool failed;
 };
 
-static void decode_piece(void *context, uint64_t number) {
+static void decode_piece(void *context, uint64_t number, unsigned worker) {
+    (void)worker;
     struct pieces *job = context;
     const struct fsb_blob *parent = job->parent;
     uint64_t start = number * FSB_XZ_PIECE;

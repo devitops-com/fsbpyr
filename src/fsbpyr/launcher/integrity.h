@@ -14,15 +14,20 @@
 #include "format.h"
 
 /* The digests of ``count`` buffers, all their leaves hashed in one parallel pass (many small
- * cached files share the threads; a large one spreads over them); false if out of memory.
- * Reentrant: no shared state. */
-bool fsb_tree_digests(uint64_t count, const uint8_t *const data[], const uint64_t lengths[],
-                      uint8_t (*digests)[FSB_DIGEST_SIZE]);
+ * cached files share the threads; a large one spreads over them). A buffer whose data[i] is NULL
+ * is the file open as fds[i] (``fds`` may be NULL if there is none): each thread reads its
+ * leaves through a small buffer of its own, so a large file never takes its size of resident
+ * memory, as it would mapped (D36). A leaf that cannot be read whole gets a digest that cannot match.
+ * 0; EIO if some leaf could not be read (its digest is set all the same); ENOMEM if out of
+ * memory (no digest set). Reentrant: no shared state. */
+int fsb_tree_digests(uint64_t count, const uint8_t *const data[], const int fds[],
+                     const uint64_t lengths[], uint8_t (*digests)[FSB_DIGEST_SIZE]);
 
 /* The digest of data[0, length): fsb_tree_digests of one buffer. */
 bool fsb_tree_digest(const uint8_t *data, uint64_t length, uint8_t digest[FSB_DIGEST_SIZE]);
 
-/* The digest of the first ``length`` bytes of the file open as ``fd``; 0 or an errno value. */
+/* The digest of the first ``length`` bytes of the file open as ``fd``, read in leaves; 0, EIO
+ * or ENOMEM as fsb_tree_digests. */
 int fsb_file_digest(int fd, uint64_t length, uint8_t digest[FSB_DIGEST_SIZE]);
 
 /* NULL if the file open as ``fd`` (``size`` bytes) ends with the digest of everything before

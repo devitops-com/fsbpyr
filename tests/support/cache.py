@@ -8,7 +8,6 @@ checks that both behave alike.
 
 import contextlib
 import errno
-import mmap
 import os
 import stat
 import sys
@@ -25,7 +24,8 @@ class CacheError(ImportError):
 
 
 CHANGED, DONE, WRITTEN = 1, 2, 4  # outcome bits of a file
-CHECK_BATCH, SMALL_FILE, BATCH_BUFFER = 1024, 64 << 10, 16 << 20
+CHECK_BATCH, SMALL_FILE, BATCH_BUFFER, HELD_FILES = 1024, 64 << 10, 16 << 20, 64
+WRITE_PIECE = 1 << 20
 _PATH_SIZE = 4096  # cache.c: a directory path below the root, in bytes, is shorter
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
 _NEW_FILE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -117,8 +117,9 @@ class _Sync:
         self.uid = os.geteuid()
         self.root_fd = -1
         self.opened: list[tuple[str, int]] = []  # the directories below the root, in order
-        self.batch: list[tuple[_Entry, mmap.mmap | bytes]] = []
+        self.batch: list[tuple[_Entry, bytes | int]] = []  # small files' content, or descriptors
         self.buffered = 0  # bytes of small files read into the batch
+        self.held = 0  # descriptors held by the batch
 
     def run(self) -> None:
         try:
@@ -129,11 +130,12 @@ class _Sync:
             for entry in entries:
                 if entry.size <= SMALL_FILE and self.buffered + entry.size > BATCH_BUFFER:
                     self._check()
-                state, mapped = self._loaded(entry)
+                state, content = self._loaded(entry)
                 if state == _PRESENT:
-                    assert mapped is not None
-                    self.batch.append((entry, mapped))
-                    if len(self.batch) == CHECK_BATCH:
+                    assert content is not None
+                    self.batch.append((entry, content))
+                    self.held += isinstance(content, int)
+                    if len(self.batch) == CHECK_BATCH or self.held == HELD_FILES:
                         self._check()
                 else:
                     if state == _CHANGED:
@@ -141,8 +143,7 @@ class _Sync:
                     self._restore(entry)
             self._check()
         finally:
-            for _, mapped in self.batch:
-                _unmap(mapped)
+            _close(self.batch)
             for _, fd in self.opened:
                 os.close(fd)
             if self.root_fd >= 0:
@@ -236,7 +237,8 @@ class _Sync:
             fd = os.open(name, flags, dir_fd=parent)
         return self._owned(fd, path, private=True)
 
-    def _load(self, directory: int, name: str, size: int) -> tuple[int, mmap.mmap | bytes | None]:
+    def _load(self, directory: int, name: str, size: int) -> tuple[int, bytes | int | None]:
+        """cache.c's load_cached(): a small file's content, or a larger one's descriptor."""
         flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
         try:
             fd = os.open(name, flags, dir_fd=directory)
@@ -244,40 +246,51 @@ class _Sync:
             return _MISSING, None
         except OSError as exc:
             if exc.errno in (errno.EMFILE, errno.ENFILE, errno.ENOMEM):
-                raise
+                raise _NoRoom(exc.errno) from exc
             return _CHANGED, None
         try:
-            held = self._held(fd, size)
+            info = os.fstat(fd)
+            ours = stat.S_ISREG(info.st_mode) and info.st_uid == self.uid and info.st_size == size
+        except OSError:
+            ours = False
+        if ours and size > SMALL_FILE:
+            return _PRESENT, fd  # read as the pass is hashed
+        try:
+            data = self._read(fd, size) if ours else None
         finally:
             os.close(fd)
-        return (_CHANGED, None) if held is None else (_PRESENT, held)
+        return (_CHANGED, None) if data is None else (_PRESENT, data)
 
-    def _loaded(self, entry: _Entry) -> tuple[int, mmap.mmap | bytes | None]:
-        """_load(); with no address space left for a mapping, the batch is checked (and so
-        unmapped) first and the file tried once more."""
+    def _room_made(self, exc: OSError) -> bool:
+        """cache.c's room_made(): out of descriptors or memory while the batch holds files, the
+        batch is checked (its files closed) and the step tried once more."""
+        if exc.errno not in (errno.EMFILE, errno.ENFILE, errno.ENOMEM) or not self.batch:
+            return False
+        self._check()
+        return True
+
+    def _loaded(self, entry: _Entry) -> tuple[int, bytes | int | None]:
+        """_load() in the file's directory, both tried once more after _room_made()."""
         name = entry.record.path.rpartition("/")[2]
         try:
-            return self._load(self._parent(entry), name, entry.size)
-        except _NoRoom:
-            if not self.batch:
-                raise OSError(errno.ENOMEM, os.strerror(errno.ENOMEM), name) from None
-        self._check()
+            directory = self._parent(entry)
+        except OSError as exc:
+            if not self._room_made(exc):
+                raise
+            directory = self._parent(entry)
+        try:
+            return self._load(directory, name, entry.size)
+        except _NoRoom as exc:
+            error = OSError(exc.errno, os.strerror(exc.errno), name)
+        if not self._room_made(error):
+            raise error
         try:
             return self._load(self._parent(entry), name, entry.size)
-        except _NoRoom:
-            raise OSError(errno.ENOMEM, os.strerror(errno.ENOMEM), name) from None
+        except _NoRoom as exc:
+            raise OSError(exc.errno, os.strerror(exc.errno), name) from None
 
-    def _held(self, fd: int, size: int) -> mmap.mmap | bytes | None:
-        """The content of the file open as ``fd``, if it is a regular file of ours of ``size``
-        bytes: read if small, else mapped."""
-        try:
-            info = os.fstat(fd)
-        except OSError:
-            return None
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != self.uid or info.st_size != size:
-            return None
-        if size > SMALL_FILE:
-            return _mapped(fd, size)
+    def _read(self, fd: int, size: int) -> bytes | None:
+        """A small file's content, into the batch's buffer."""
         data = b""
         try:
             while len(data) < size and (more := os.read(fd, size - len(data))):
@@ -290,12 +303,12 @@ class _Sync:
         return data
 
     def _check(self) -> None:
-        batch, self.batch, self.buffered = self.batch, [], 0
+        batch, self.batch, self.buffered, self.held = self.batch, [], 0, 0
         try:
-            digests = [tree_digest(mapped) for _, mapped in batch]
+            digests = [tree_digest(c) if isinstance(c, bytes) else _file_digest(c, entry.size)
+                       for entry, c in batch]  # fmt: skip
         finally:
-            for _, mapped in batch:
-                _unmap(mapped)
+            _close(batch)
         for (entry, _), digest in zip(batch, digests, strict=True):
             if digest == entry.digest:
                 self.outcome[entry.item] |= DONE
@@ -313,21 +326,29 @@ class _Sync:
 
 
 class _NoRoom(Exception):
-    """No address space or mapping left for a file (cache.c's NO_ROOM)."""
+    """No descriptor or memory left to open a file (cache.c's NO_ROOM)."""
+
+    def __init__(self, error: int) -> None:
+        super().__init__(error)
+        self.errno = error
 
 
-def _mapped(fd: int, size: int) -> mmap.mmap | None:
+def _file_digest(fd: int, size: int) -> bytes | None:
+    """The digest of the file open as ``fd``; None if it cannot be read whole (cache.c gives a
+    digest that cannot match)."""
+    data = bytearray()
     try:
-        return mmap.mmap(fd, size, access=mmap.ACCESS_READ)
-    except OSError as exc:
-        if exc.errno == errno.ENOMEM:  # not the file's fault
-            raise _NoRoom from exc
+        while len(data) < size and (more := os.pread(fd, size - len(data), len(data))):
+            data += more
+    except OSError:
         return None
+    return tree_digest(data) if len(data) == size else None
 
 
-def _unmap(mapped: mmap.mmap | bytes) -> None:
-    if isinstance(mapped, mmap.mmap):
-        mapped.close()
+def _close(batch: list[tuple[_Entry, bytes | int]]) -> None:
+    for _, content in batch:
+        if isinstance(content, int):
+            os.close(content)
 
 
 def _publish(directory: int, name: str, data: bytes, mode: int) -> None:
@@ -343,8 +364,8 @@ def _publish(directory: int, name: str, data: bytes, mode: int) -> None:
         raise FileExistsError(17, "no temporary name left", name)
     try:
         view = memoryview(data)
-        while view:
-            view = view[os.write(fd, view) :]
+        while view:  # in pieces, as cache.c writes them
+            view = view[os.write(fd, view[:WRITE_PIECE]) :]
         os.fchmod(fd, 0o400 | (mode & 0o100))  # readable by its owner, never writable
         os.rename(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
     except BaseException:

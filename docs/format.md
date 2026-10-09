@@ -61,21 +61,21 @@ equal), for two things:
   or removes the check, since the checking code is in the same file. Provenance against
   deliberate modification needs a signature checked with a key from outside the file (planned
   with the release system). Damage to the launcher's own code can also crash it before the check
-  runs, and a file that shrinks or fails to read while it is hashed (a failing disk, a network
-  file system) ends the process with SIGBUS: both refuse to run, without the message. A cached
-  file that shrinks while it is hashed also ends the process with SIGBUS instead of being
-  restored (the file is mapped, as the executable is; reading it in pieces would be a second
-  way to hash).
+  runs, without the message. The check reads the file a leaf at a time on its threads and never
+  maps it (D36), so a file that shrinks or fails to read while it is hashed (a failing disk, a
+  network file system) fails the check like a changed one, and its size never shows in the
+  process's resident memory. A cached file that shrinks or fails to read while it is hashed
+  counts as changed and is restored.
 - Files extracted to the cache (natives, FS_REQUIRED packages, resources asked for as paths)
   run outside the file, so each process hashes them against DIGESTS once, before it first uses
-  them, with the same routine: the launcher's `_fsbpyr.sync` (D35) reads up to 1024 files of the
-  expected size (those up to 64 KiB into a buffer, larger ones mapped) and hashes them in one
-  parallel pass, and checks data about to be written the same way; a changed file, or one that
-  cannot be read, is reported on stderr and restored. When the files mapped for a pass leave no
-  address space for the next one (`ulimit -v`), the pass is checked first; running out of
-  descriptors or memory fails the run instead. A file changed while a process runs is noticed by
-  the next one. Files are written under a temporary name and renamed, without fsync:
-  one a crash left incomplete fails its check and is restored.
+  them, with the same routine: the launcher's `_fsbpyr.sync` (D35) takes up to 1024 files of the
+  expected size per parallel pass (those up to 64 KiB read into a buffer, at most 64 larger ones
+  held open and read a leaf at a time by the hashing threads, D36), and checks data about to be
+  written the same way; a changed file, or one that cannot be read, is reported on stderr and
+  restored. When the files a pass holds leave no descriptor or memory to open the next file or
+  its directories, the pass is checked first; if that is not enough, the run fails. A file changed while a process runs is
+  noticed by the next one. Files are written under a temporary name, in pieces of at most 1 MiB,
+  and renamed, without fsync: one a crash left incomplete fails its check and is restored.
 - `fsbpyr inspect` shows the stored digest, which proves nothing by itself; `--verify` and the
   shell recipe compute it from the bytes.
 

@@ -44,6 +44,8 @@ def test_c_module_and_standin_honour_the_same_contract(demo: Path) -> None:
         standin.close()
 
     assert json.loads(result.stdout) == expected
+    held = expected["sync"]["limited"][0][2:]  # both equal, and as they should be: (D36)
+    assert held == [[["ok", []], ""]] * 2  # checked, through a pass's files held open
 
 
 @pytest.mark.skipif(shutil.which("strace") is None, reason="needs strace")

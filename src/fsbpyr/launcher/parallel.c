@@ -6,7 +6,7 @@
 #include <stdatomic.h>
 #include <time.h>
 
-#define MAX_THREADS 8u /* owner decision: at most 8, never more than the usable cores */
+#define MAX_THREADS FSB_PARALLEL_MAX_THREADS
 #define SPINS_PER_YIELD 1024u
 #define SPIN_NS 2000000ull /* then sleep in pthread_join: a helper that cannot run (stopped by a
                             * debugger, stuck in a page fault) must not make the caller burn a core */
@@ -14,8 +14,13 @@
 struct job {
     uint64_t count;
     atomic_uint_fast64_t next;
-    void (*work)(void *context, uint64_t item);
+    void (*work)(void *context, uint64_t item, unsigned worker);
     void *context;
+};
+
+struct worker { /* one thread's view of the job */
+    struct job *job;
+    unsigned number;
 };
 
 static inline void spin_pause(void) {
@@ -38,9 +43,10 @@ static unsigned usable_cores(void) {
 }
 
 static void *take_items(void *arg) {
-    struct job *job = arg;
+    const struct worker *worker = arg;
+    struct job *job = worker->job;
     for (uint64_t item; (item = atomic_fetch_add(&job->next, 1)) < job->count;)
-        job->work(job->context, item);
+        job->work(job->context, item, worker->number);
     return NULL;
 }
 
@@ -49,8 +55,8 @@ static void *take_items(void *arg) {
  * stay there while every core is busy (numpy, whose OpenBLAS starts one spinning thread per
  * core right after its libraries are checked: +38 ms with joins, +4 to 7 ms spinning; Core
  * Ultra 9 285). */
-void fsb_parallel(uint64_t count, uint64_t per_thread, void (*work)(void *context, uint64_t item),
-                  void *context) {
+void fsb_parallel(uint64_t count, uint64_t per_thread,
+                  void (*work)(void *context, uint64_t item, unsigned worker), void *context) {
     struct job job = {.count = count, .work = work, .context = context};
     atomic_init(&job.next, 0);
     uint64_t wanted = per_thread ? (count + per_thread - 1) / per_thread : count;
@@ -58,10 +64,13 @@ void fsb_parallel(uint64_t count, uint64_t per_thread, void (*work)(void *contex
     if (threads > MAX_THREADS) threads = MAX_THREADS;
     if (threads > wanted) threads = (unsigned)wanted;
     pthread_t helpers[MAX_THREADS - 1];
+    struct worker workers[MAX_THREADS];
+    for (unsigned i = 0; i < MAX_THREADS; i++) workers[i] = (struct worker){&job, i};
     unsigned started = 0;
-    while (started + 1 < threads && pthread_create(&helpers[started], NULL, take_items, &job) == 0)
+    while (started + 1 < threads &&
+           pthread_create(&helpers[started], NULL, take_items, &workers[started + 1]) == 0)
         started++; /* fewer helpers if one cannot start: this thread does what is left */
-    take_items(&job); /* when it returns, every item is taken: what is left is in flight */
+    take_items(&workers[0]); /* when it returns, every item is taken: what is left is in flight */
     unsigned joined = 0;
     unsigned long long deadline = fsb_monotonic_ns() + SPIN_NS;
     for (unsigned spins = 1; joined < started; spins++) {

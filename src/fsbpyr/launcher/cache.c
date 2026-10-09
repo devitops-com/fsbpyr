@@ -10,26 +10,32 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 /* Cached files checked in one parallel pass (D32): up to CHECK_BATCH files; those up to
- * SMALL_FILE bytes are read into a buffer of BATCH_BUFFER bytes, the others mapped. Reading costs
- * a small file less than mapping it (no page faults, no munmap): torch's 12,139 files that are no
- * native library, 235 MB, took 34 ms instead of 56 (D35). */
+ * SMALL_FILE bytes are read into a buffer of BATCH_BUFFER bytes, at most HELD_FILES larger ones
+ * stay open and are read leaf by leaf on the hashing threads (D36). Reading a small file whole
+ * costs less than mapping it: torch's 12,139 files that are no native library, 235 MB, took 34 ms
+ * instead of 56 (D35); and a mapped file is resident while it is hashed: mapping torch's
+ * libraries put up to 546 MiB in the process's RSS (D36). */
 #define CHECK_BATCH 1024u
 #define SMALL_FILE (UINT64_C(64) << 10)
 #define BATCH_BUFFER (UINT64_C(16) << 20)
+#define HELD_FILES 64u
+/* Restored files are written in pieces of at most WRITE_PIECE: written whole, a 438 MB library
+ * stayed in the page cache as 2 MiB folios, which the dynamic loader maps whole, and torch's
+ * libtorch_cpu.so took 156 MB of RSS instead of 60 MB (XFS, Linux 6.12; D36). */
+#define WRITE_PIECE (UINT64_C(1) << 20)
 #define DECODER_BLOCKS 4u /* blocks a sync's own decoder keeps (D30): files restored in path order */
 #define DIRECTORY (O_RDONLY | O_DIRECTORY | O_CLOEXEC)
 #define TEMPORARY_ATTEMPTS 100u
 #define PATH_SIZE 4096u            /* a directory path below the root */
 #define MAX_DEPTH (PATH_SIZE / 2u) /* components of such a path */
 
-/* A cached file, as load_cached() finds it; NO_ROOM: it cannot be mapped for lack of address
- * space or mappings, which the files mapped for the batch so far may be taking. */
-enum { PRESENT, MISSING, CHANGED, NO_ROOM, FAILED };
+/* A cached file, as load_cached() finds it; NO_ROOM: it cannot be opened for lack of descriptors
+ * or memory, which the files held for the pass so far may be taking. */
+enum { PRESENT, MISSING, CHANGED, NO_ROOM };
 
 struct entry {        /* one file to check, its records checked */
     uint64_t item;    /* its place in job->files */
@@ -54,14 +60,16 @@ struct state {
     int fds[MAX_DEPTH + 1];
     size_t ends[MAX_DEPTH];
     char path[PATH_SIZE];
-    /* Cached files read or mapped, waiting for their parallel pass. */
+    /* Cached files read, or held open, waiting for their parallel pass. */
     unsigned batched;
     uint64_t buffered; /* bytes of ``buffer`` in use */
     uint8_t *buffer;   /* BATCH_BUFFER bytes, once a small file needs it */
     const struct entry *batch[CHECK_BATCH];
     const uint8_t *data[CHECK_BATCH];
     uint64_t lengths[CHECK_BATCH];
-    bool mapped[CHECK_BATCH];
+    int descriptors[CHECK_BATCH]; /* a file held open, or -1 */
+    unsigned held;        /* how many */
+    int no_room;          /* the errno of the last NO_ROOM */
     uint8_t digests[CHECK_BATCH][FSB_DIGEST_SIZE];
 };
 
@@ -299,50 +307,38 @@ static bool read_small(struct state *s, int fd, uint64_t size, const uint8_t **d
     return true;
 }
 
-/* PRESENT: the file is ours, of the payload's size, and its content is in *data for the batch's
- * pass (*mapped if it was mapped rather than read); MISSING: nothing is there; CHANGED:
- * something else is (not a regular file of ours, another size, unreadable or not mappable);
- * NO_ROOM: no address space or mapping left for it; FAILED: the failure is set. The descriptor is
- * closed at once: a batch holds no descriptor. */
+/* PRESENT: the file is ours, of the payload's size, and in the pass: read into *data, or, if
+ * larger than SMALL_FILE, open as *fd (until the pass is hashed); MISSING: nothing is there;
+ * CHANGED: something else is (not a regular file of ours, another size, unreadable); NO_ROOM: no
+ * descriptor or memory left to open it (s->no_room). A small file's descriptor is closed at once. */
 static int load_cached(struct state *s, int directory, const struct entry *e,
-                       const uint8_t **data, bool *mapped) {
+                       const uint8_t **data, int *fd) {
     uint64_t size = e->blob.size;
+    *data = NULL;
     /* O_NOFOLLOW: a symlink is replaced; O_NONBLOCK: a FIFO is replaced, never waited for */
-    int fd = openat(directory, base_name(e), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
-    if (fd < 0) {
-        if (errno == ENOENT) return MISSING;
-        if (errno != EMFILE && errno != ENFILE && errno != ENOMEM) return CHANGED;
-        file_failed(s, errno, e); /* out of descriptors or memory: not the file's fault */
-        return FAILED;
+    *fd = openat(directory, base_name(e), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (*fd < 0) {
+        int error = errno;
+        if (error == ENOENT) return MISSING;
+        if (error != EMFILE && error != ENFILE && error != ENOMEM) return CHANGED;
+        s->no_room = error; /* not the file's fault */
+        return NO_ROOM;
     }
     struct stat st;
     int found = CHANGED;
-    *data = NULL;
-    *mapped = false;
-    if (fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == s->uid &&
+    if (fstat(*fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == s->uid &&
         (uint64_t)st.st_size == size) {
-        if (size == 0) {
-            found = PRESENT;
-        } else if (size <= SMALL_FILE) {
-            found = read_small(s, fd, size, data) ? PRESENT : CHANGED;
-        } else {
-            void *map = mmap(NULL, (size_t)size, PROT_READ, MAP_SHARED, fd, 0);
-            if (map != MAP_FAILED) {
-                *data = map;
-                *mapped = true;
-                found = PRESENT;
-            } else if (errno == ENOMEM) { /* not the file's fault */
-                found = NO_ROOM;
-            }
-        }
+        if (size > SMALL_FILE) return PRESENT; /* read leaf by leaf as the pass is hashed */
+        found = size == 0 || read_small(s, *fd, size, data) ? PRESENT : CHANGED;
     }
-    close(fd);
+    close(*fd);
+    *fd = -1;
     return found;
 }
 
 static int write_all(int fd, const uint8_t *data, uint64_t size) {
     while (size > 0) {
-        ssize_t written = write(fd, data, size < SSIZE_MAX ? (size_t)size : SSIZE_MAX);
+        ssize_t written = write(fd, data, (size_t)(size < WRITE_PIECE ? size : WRITE_PIECE));
         if (written < 0 && errno == EINTR) continue;
         if (written < 0) return errno;
         if (written == 0) return EIO;
@@ -393,9 +389,10 @@ static bool restore(struct state *s, const struct entry *e) {
     return done;
 }
 
-static void unmap_batch(struct state *s, unsigned count) {
+static void close_batch(struct state *s, unsigned count) {
     for (unsigned i = 0; i < count; i++)
-        if (s->mapped[i]) munmap((void *)s->data[i], (size_t)s->lengths[i]);
+        if (s->descriptors[i] >= 0) close(s->descriptors[i]);
+    s->held = 0;
 }
 
 /* Hash the files of the batch in one parallel pass; restore those that differ. */
@@ -403,9 +400,11 @@ static bool check_batch(struct state *s) {
     unsigned count = s->batched;
     s->batched = 0;
     s->buffered = 0;
-    bool hashed = count == 0 || fsb_tree_digests(count, s->data, s->lengths, s->digests);
-    unmap_batch(s, count);
-    if (!hashed) return out_of_memory(s);
+    /* EIO: a file that could not be read whole has a digest that cannot match: it is restored */
+    int status =
+        count ? fsb_tree_digests(count, s->data, s->descriptors, s->lengths, s->digests) : 0;
+    close_batch(s, count);
+    if (status == ENOMEM) return out_of_memory(s);
     for (unsigned i = 0; i < count; i++) {
         const struct entry *e = s->batch[i];
         if (memcmp(s->digests[i], e->digest, FSB_DIGEST_SIZE) == 0) {
@@ -418,6 +417,17 @@ static bool check_batch(struct state *s) {
     return true;
 }
 
+/* After a failure for want of descriptors or memory while the pass holds files: check the pass,
+ * which closes them, and say whether to try once more (the failure is cleared then). */
+static bool room_made(struct state *s) {
+    struct fsb_cache_sync *job = s->job;
+    if (s->batched == 0 || job->failure != FSB_CACHE_SYSTEM ||
+        (job->error != EMFILE && job->error != ENFILE && job->error != ENOMEM))
+        return false;
+    job->failure = FSB_CACHE_OK;
+    return check_batch(s);
+}
+
 static bool sync_file(struct state *s, const struct entry *e) {
     uint64_t size = e->blob.size;
     if (size <= SMALL_FILE) { /* room in the buffer, before any directory is opened for it */
@@ -426,20 +436,22 @@ static bool sync_file(struct state *s, const struct entry *e) {
             return out_of_memory(s);
     }
     int directory = open_parent(s, e);
+    if (directory < 0 && room_made(s)) directory = open_parent(s, e);
     if (directory < 0) return false;
     unsigned at = s->batched;
-    int found = load_cached(s, directory, e, &s->data[at], &s->mapped[at]);
-    if (found == NO_ROOM && at > 0) { /* hash and unmap the batch, then try again */
-        if (!check_batch(s) || (directory = open_parent(s, e)) < 0) return false;
+    int found = load_cached(s, directory, e, &s->data[at], &s->descriptors[at]);
+    if (found == NO_ROOM) {
+        file_failed(s, s->no_room, e);
+        if (!room_made(s) || (directory = open_parent(s, e)) < 0) return false;
         at = s->batched;
-        found = load_cached(s, directory, e, &s->data[at], &s->mapped[at]);
+        found = load_cached(s, directory, e, &s->data[at], &s->descriptors[at]);
+        if (found == NO_ROOM) return file_failed(s, s->no_room, e);
     }
-    if (found == NO_ROOM) return file_failed(s, ENOMEM, e);
-    if (found == FAILED) return false;
     if (found == PRESENT) {
         s->batch[at] = e;
         s->lengths[at] = size;
-        return ++s->batched < CHECK_BATCH || check_batch(s);
+        if (s->descriptors[at] >= 0) s->held++;
+        return (++s->batched < CHECK_BATCH && s->held < HELD_FILES) || check_batch(s);
     }
     if (found == CHANGED) s->job->outcome[e->item] |= FSB_CACHE_CHANGED;
     return restore(s, e);
@@ -464,7 +476,7 @@ void fsb_cache_sync(const struct fsb_payload *payload, struct fsb_cache_sync *jo
     ok = ok && job->count > 0 && open_root(s); /* nothing to check: nothing touched */
     for (uint64_t i = 0; ok && i < job->count; i++) ok = sync_file(s, &entries[i]);
     if (ok) check_batch(s);
-    unmap_batch(s, s->batched); /* a failure left them mapped */
+    close_batch(s, s->batched); /* a failure left them open */
     while (s->depth > 0) close(s->fds[s->depth--]);
     if (s->root_open) close(s->fds[0]);
     free(s->buffer);

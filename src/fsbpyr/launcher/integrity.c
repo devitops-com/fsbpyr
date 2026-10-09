@@ -3,10 +3,11 @@
 
 #include "parallel.h"
 
+#include <assert.h>
 #include <errno.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <unistd.h>
 
 /* Leaves per thread: waking more threads costs more than they save on small files (21 MB:
@@ -35,14 +36,34 @@ static void sha256(const uint8_t *data, size_t length, uint8_t digest[FSB_DIGEST
 
 struct trees {
     uint64_t count;
-    const uint8_t *const *data;
+    const uint8_t *const *data; /* a NULL entry is read from its descriptor */
+    const int *fds;
     const uint64_t *lengths;
     const uint64_t *first; /* count + 1: the first leaf of each buffer, then the number of leaves */
     uint8_t *digests;      /* FSB_DIGEST_SIZE per leaf */
+    uint8_t *buffers;      /* READ_PIECE bytes per worker, for leaves read from a descriptor */
+    atomic_bool unreadable;
 };
 
-static void hash_leaf(void *context, uint64_t item) {
-    const struct trees *t = context;
+/* A leaf read from a descriptor is hashed READ_PIECE bytes at a time. With a whole 1 MiB leaf
+ * per thread every start paid page faults on 8 MiB of fresh memory (the code review measured
+ * the no-op app's check at 1.94 against 1.71 ms), and glibc kept the buffers once freed (the
+ * torch app's heap: 127 against 119 MB; D36). */
+#define READ_PIECE (64u << 10)
+
+/* ``size`` bytes at ``offset`` of the file open as ``fd``; false if fewer are there. */
+static bool read_piece(int fd, uint8_t *into, size_t size, uint64_t offset) {
+    for (size_t got = 0; got < size;) {
+        ssize_t n = pread(fd, into + got, size - got, (off_t)(offset + got));
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) return false;
+        got += (size_t)n;
+    }
+    return true;
+}
+
+static void hash_leaf(void *context, uint64_t item, unsigned worker) {
+    struct trees *t = context;
     uint64_t low = 0, high = t->count; /* the last buffer whose first leaf is at most ``item`` */
     while (high - low > 1) {
         uint64_t middle = low + (high - low) / 2;
@@ -53,46 +74,65 @@ static void hash_leaf(void *context, uint64_t item) {
     }
     uint64_t start = (item - t->first[low]) * FSB_DIGEST_LEAF;
     uint64_t rest = t->lengths[low] - start;
-    sha256(t->data[low] + start, (size_t)(rest < FSB_DIGEST_LEAF ? rest : FSB_DIGEST_LEAF),
-           t->digests + item * FSB_DIGEST_SIZE);
+    size_t size = (size_t)(rest < FSB_DIGEST_LEAF ? rest : FSB_DIGEST_LEAF);
+    uint8_t *digest = t->digests + item * FSB_DIGEST_SIZE;
+    if (t->data[low] != NULL) {
+        sha256(t->data[low] + start, size, digest);
+        return;
+    }
+    assert(worker < FSB_PARALLEL_MAX_THREADS);
+    uint8_t *piece = t->buffers + (size_t)worker * READ_PIECE;
+    sha256_context hashing;
+    SHA256_Init(&hashing);
+    for (size_t done = 0; done < size;) {
+        size_t part = size - done < READ_PIECE ? size - done : READ_PIECE;
+        if (!read_piece(t->fds[low], piece, part, start + done)) {
+            /* unreadable, or shorter than it was: no digest over this one can match */
+            memset(digest, 0, FSB_DIGEST_SIZE);
+            atomic_store(&t->unreadable, true);
+            return;
+        }
+        SHA256_Update(&hashing, piece, part);
+        done += part;
+    }
+    SHA256_Final(digest, &hashing);
 }
 
-bool fsb_tree_digests(uint64_t count, const uint8_t *const data[], const uint64_t lengths[],
-                      uint8_t (*digests)[FSB_DIGEST_SIZE]) {
+int fsb_tree_digests(uint64_t count, const uint8_t *const data[], const int fds[],
+                     const uint64_t lengths[], uint8_t (*digests)[FSB_DIGEST_SIZE]) {
     uint64_t *first = malloc((size_t)(count + 1) * sizeof *first);
-    if (first == NULL) return false;
+    if (first == NULL) return ENOMEM;
     first[0] = 0;
-    for (uint64_t i = 0; i < count; i++)
+    bool reads = false;
+    for (uint64_t i = 0; i < count; i++) {
         first[i + 1] = first[i] + (lengths[i] + FSB_DIGEST_LEAF - 1) / FSB_DIGEST_LEAF;
-    struct trees t = {.count = count, .data = data, .lengths = lengths, .first = first};
-    t.digests = malloc((size_t)first[count] * FSB_DIGEST_SIZE + 1); /* + 1: never malloc(0) */
-    if (t.digests == NULL) {
-        free(first);
-        return false;
+        reads = reads || (data[i] == NULL && lengths[i] > 0);
     }
-    fsb_parallel(first[count], LEAVES_PER_THREAD, hash_leaf, &t); /* all leaves of all buffers */
-    for (uint64_t i = 0; i < count; i++)
-        sha256(t.digests + first[i] * FSB_DIGEST_SIZE,
-               (size_t)(first[i + 1] - first[i]) * FSB_DIGEST_SIZE, digests[i]);
+    assert(fds != NULL || !reads);
+    struct trees t = {.count = count, .data = data, .fds = fds, .lengths = lengths, .first = first};
+    atomic_init(&t.unreadable, false);
+    t.digests = malloc((size_t)first[count] * FSB_DIGEST_SIZE + 1); /* + 1: never malloc(0) */
+    if (reads) t.buffers = malloc((size_t)FSB_PARALLEL_MAX_THREADS * READ_PIECE);
+    bool ready = t.digests != NULL && (!reads || t.buffers != NULL);
+    if (ready) {
+        fsb_parallel(first[count], LEAVES_PER_THREAD, hash_leaf, &t); /* every leaf of every one */
+        for (uint64_t i = 0; i < count; i++)
+            sha256(t.digests + first[i] * FSB_DIGEST_SIZE,
+                   (size_t)(first[i + 1] - first[i]) * FSB_DIGEST_SIZE, digests[i]);
+    }
+    free(t.buffers);
     free(t.digests);
     free(first);
-    return true;
+    return !ready ? ENOMEM : atomic_load(&t.unreadable) ? EIO : 0;
 }
 
 bool fsb_tree_digest(const uint8_t *data, uint64_t length, uint8_t digest[FSB_DIGEST_SIZE]) {
-    return fsb_tree_digests(1, &data, &length, (uint8_t (*)[FSB_DIGEST_SIZE])digest);
+    return fsb_tree_digests(1, &data, NULL, &length, (uint8_t (*)[FSB_DIGEST_SIZE])digest) == 0;
 }
 
 int fsb_file_digest(int fd, uint64_t length, uint8_t digest[FSB_DIGEST_SIZE]) {
-    if (length > SIZE_MAX) return EFBIG;
-    void *map = NULL; /* an empty file cannot be mapped, and needs no bytes */
-    if (length > 0) {
-        map = mmap(NULL, (size_t)length, PROT_READ, MAP_PRIVATE, fd, 0);
-        if (map == MAP_FAILED) return errno;
-    }
-    bool done = fsb_tree_digest(map, length, digest);
-    if (length > 0) munmap(map, (size_t)length);
-    return done ? 0 : ENOMEM;
+    const uint8_t *read_from_fd = NULL;
+    return fsb_tree_digests(1, &read_from_fd, &fd, &length, (uint8_t (*)[FSB_DIGEST_SIZE])digest);
 }
 
 unsigned long long fsb_integrity_ns;

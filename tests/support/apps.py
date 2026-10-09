@@ -96,6 +96,10 @@ BATCH = (
     | {f"batch/m{i:03}.bin": _filler(f"m{i}", 60 << 10) for i in range(300)}
     | {f"batch/edge{n}.bin": _filler(f"edge{n}", n) for n in (65535, 65536, 65537)}
 )
+# Files over 64 KiB that a check holds open, then a file whose directories need descriptors (D36).
+HELD = {f"held/a/f{i:02}.bin": _filler(f"f{i}", 70 << 10) for i in range(40)} | {
+    "held/b/c/d/e/f/x.txt": b"x"
+}
 
 
 def _bad_xz() -> list[File]:
@@ -136,6 +140,7 @@ def demo_app(entrypoint: str = "entry:main") -> App:
     files += [File(p, FileKind.METADATA, Blob.zstd(d), dist="demo") for p, d in METADATA.items()]
     files += [File(p, FileKind.RESOURCE, Blob.zstd(d)) for p, d in TREE.items()]
     files += [File(p, FileKind.RESOURCE, Blob.zstd(d)) for p, d in BATCH.items()]
+    files += [File(p, FileKind.RESOURCE, Blob.zstd(d)) for p, d in HELD.items()]
     files += [  # never loaded: they exercise file_at / closure / blob_info / sync
         File(NATIVE_EXT, FileKind.NATIVE_EXT, Blob.zstd(b"\x7fELF ext", digest=True),
              mode=0o755, closure=(NATIVE_LIB,)),

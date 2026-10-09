@@ -392,17 +392,26 @@ def _limit_leaving(free: int) -> int:
 def _sync_limited(fsb: Any, tmp: str) -> list[Any]:
     """Directories are open along the path to one file at a time: a tree wider than the
     descriptor limit leaves room for is extracted. With no descriptor left for the file once its
-    directories are open, the sync fails (EMFILE) and says so, never that the file changed."""
+    directories are open, the sync fails (EMFILE) and says so, never that the file changed. A
+    check holds files over 64 KiB open until its pass is hashed: when the next file's directories
+    find no descriptor left, the pass is checked first (D36)."""
     import resource  # noqa: PLC0415
 
-    files = fsb.files_below("tree")
+    files, held = fsb.files_below("tree"), fsb.files_below("held")
+    _sync(fsb, os.path.join(tmp, "held"), held, resources=True)  # extracted, to be checked
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     outcomes = []
-    for name, free in [("limited", 10), ("exhausted", 6)]:  # root, runtime, g, site, tree, d00
+    cases = [  # each in a cache of its own, but the checks of "held", extracted above
+        ("limited", files, 10),
+        ("exhausted", files, 6),  # root, runtime, g, site, tree, d00
+        ("held", held, 47),  # the same six (held, a), 40 files held, then b and c: no d
+        ("held", held, 30),  # 24 files held, then no descriptor for the 25th
+    ]
+    for name, chosen, free in cases:
         root = os.path.join(tmp, name)
         resource.setrlimit(resource.RLIMIT_NOFILE, (_limit_leaving(free), hard))
         try:
-            outcomes.append(_sync(fsb, root, files, resources=True))
+            outcomes.append(_sync(fsb, root, chosen, resources=True))
         finally:
             resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
     return [outcomes, len(files), _tree(os.path.join(_site(os.path.join(tmp, "limited")), "tree"))]

@@ -10,6 +10,7 @@ import statistics
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -384,12 +385,12 @@ def main():
 """
 
 
-def test_a_batch_that_fills_the_address_space_is_checked_before_the_next_file_is_mapped(
+def test_cached_files_are_checked_in_less_address_space_than_they_take(
     runtime: Runtime, tmp_path: Path
 ) -> None:
-    """D35: under an address-space limit (ulimit -v) the libraries mapped for one parallel pass
-    may leave no room for the next: they are hashed and unmapped first, never counted as changed
-    nor failing the run."""
+    """D35, D36: under an address-space limit (ulimit -v) smaller than the cached libraries, the
+    check neither counts them as changed nor fails the run: it reads them (D36); D35 mapped them,
+    and had to hash and unmap a pass before mapping more."""
     natives = tuple(File(f"x.libs/lib{i}.so", FileKind.NATIVE_LIB,
                          Blob.zstd((b"%d" % i * (64 << 20))[: 64 << 20], digest=True), mode=0o755)
                     for i in range(6))  # fmt: skip
@@ -464,6 +465,64 @@ def test_a_fork_while_a_sync_decodes_leaves_the_child_able_to_read(
     result = _run(app, str(tmp_path / "cache"))
 
     assert result.stdout == "hung 0 of 40\n", result.stderr
+
+
+_RESIDENT = """\
+import mmap, os, sys
+import _fsbpyr
+
+def peak():
+    \"\"\"MiB: peak RSS since exec (ru_maxrss includes the forked parent's).\"\"\"
+    with open("/proc/self/status") as status:
+        return next(int(line.split()[1]) for line in status if line.startswith("VmHWM:")) >> 10
+
+def resident(path):
+    \"\"\"KiB of ``path`` resident in this process (/proc/self/smaps).\"\"\"
+    total, inside = 0, False
+    for line in open("/proc/self/smaps"):
+        fields = line.split()
+        if "-" in fields[0] and ":" not in fields[0]:
+            inside = fields[-1] == path
+        elif inside and fields[0] == "Rss:":
+            total += int(fields[1])
+    return total
+
+def main():
+    started = peak()  # the executable checked itself
+    root, files, count = sys.argv[1], _fsbpyr.files_below("x.libs"), _fsbpyr.info()["files"]
+    _fsbpyr.sync(root, "runtime/g/site", files, bytearray(count), False)
+    checked = peak()
+    path = os.path.join(root, "runtime/g/site/x.libs/libbig.so")
+    with open(path, "rb") as file, mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ) as lib:
+        lib[0]  # one page, as the dynamic loader touches a library
+        print(started, checked, resident(path))
+"""
+
+
+def test_checks_read_files_without_making_them_resident(runtime: Runtime, tmp_path: Path) -> None:
+    """D36: the executable's check and the cache check read files a leaf at a time on their
+    threads instead of mapping them, so neither file's size shows in the process's RSS; a
+    restored file is written in pieces of 1 MiB, so the page cache holds it in folios no larger,
+    and touching a page of it makes kilobytes resident, not 2 MiB (156 instead of 60 MB of
+    libtorch_cpu.so for torch, written whole on XFS)."""
+    library = (bytes(range(256)) * (96 << 12))[: 96 << 20]  # 96 MiB
+    noise = random.Random(1).randbytes(64 << 20)  # noqa: S311  # test data: 64 MiB stored raw
+    files = (File("x.libs/libbig.so", FileKind.NATIVE_LIB, Blob.zstd(library, digest=True),
+                  mode=0o755),
+             File("x.data/noise.bin", FileKind.RESOURCE, Blob.zstd(noise)))  # fmt: skip
+    modules, sources = app_content({"x.py": _RESIDENT})
+    app = tmp_path / "app"
+    build_executable(runtime, App("x", "x:main", modules=modules, files=(*sources, *files)), app)
+    assert app.stat().st_size > 64 << 20
+    disk = Path("/var/tmp")  # noqa: S108  # a disk file system (tmpfs keeps small pages only)
+    with tempfile.TemporaryDirectory(dir=disk if disk.is_dir() else tmp_path) as cache:  # private
+        first = _run(app, cache)  # extracts the library
+        later = _run(app, cache)  # checks it
+
+    assert first.returncode == later.returncode == 0, first.stderr + later.stderr
+    started, checked, touched = map(int, later.stdout.split())
+    assert started < 48 and checked < 48, later.stdout  # MiB: neither file resident
+    assert 4 <= touched < 2048, later.stdout  # KiB: the page, and no 2 MiB folio for it
 
 
 def _restamp(app: Path) -> None:
