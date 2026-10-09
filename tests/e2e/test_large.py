@@ -19,13 +19,20 @@ pytestmark = pytest.mark.slow
 SIZE = int(os.environ.get("FSBPYR_LARGE_SIZE", str(5 << 30)))
 LIMIT = 1 << 30  # D38: fsbpyr's own work, whatever the input's size
 
-_APP = """\
-import json, os
-from importlib.resources import as_file, files
-
+# A process's own peak: VmHWM starts afresh at exec, where ru_maxrss keeps the peak of the
+# process that exec'd (with vfork, pytest's own: past 1 GB when the suite built a runtime).
+_PEAK = """\
 def peak():
     with open("/proc/self/status") as status:
         return next(int(line.split()[1]) for line in status if line.startswith("VmHWM:")) << 10
+"""
+
+_APP = (
+    _PEAK
+    + """\
+import json, os
+from importlib.resources import as_file, files
+
 
 def main():
     report = {"started": peak()}
@@ -40,9 +47,12 @@ def main():
     report["peak"] = peak()
     print(json.dumps(report))
 """
+)
 
-_BUILD = """\
-import json, resource, sys
+_BUILD = (
+    _PEAK
+    + """\
+import json, sys
 from pathlib import Path
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.classify import classify
@@ -62,9 +72,10 @@ with Spill(out.parent) as spill:
     files = content.files
     app = App("big", "big:main", modules=content.modules, files=files, dists=content.dists)
     build_executable(runtime, app, out)
-print(json.dumps({"peak": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss << 10,
+print(json.dumps({"peak": peak(),
                   "codec": int(next(f for f in files if f.path == "big/zeros.bin").blob.codec)}))
 """
+)
 
 
 @pytest.fixture(scope="module")
@@ -84,12 +95,15 @@ def site(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return site
 
 
-_INSPECT = """\
-import json, resource, sys
+_INSPECT = (
+    _PEAK
+    + """\
+import json, sys
 from fsbpyr.cli import main
 code = main(["inspect", "--verify", sys.argv[1]])
-print(json.dumps({"code": code, "peak": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss << 10}))
+print(json.dumps({"code": code, "peak": peak()}))
 """
+)
 
 
 @pytest.mark.parametrize("stored", ["compressed", "raw"])

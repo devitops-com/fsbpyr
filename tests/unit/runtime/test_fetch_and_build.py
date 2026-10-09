@@ -53,6 +53,7 @@ def test_fetch_extracts_a_cached_archive(tmp_path: Path) -> None:
     assert dist.version == "3.14.8"
     assert dist.root == tmp_path / "pbs" / pin.name / "python"
     assert not list((tmp_path / "pbs").glob(".extract-*"))
+    assert (tmp_path / "pbs" / pin.name / ".lock").is_file()  # held: never collected (D38)
     assert pbs.fetch(pin, tmp_path).root == dist.root  # second call reuses the extraction
 
 
@@ -152,6 +153,7 @@ def test_build_runtime_orchestrates_and_caches(
         (boot,),
     )
     assert registry.find_runtime("3.14", cache=tmp_path) == runtime
+    assert (tmp_path / "runtimes" / runtime.runtime_id / ".lock").is_file()  # held (D38)
     assert registry.list_runtimes(tmp_path) == [(runtime.runtime_id, "3.14.8")]
     assert linked_against == [tmp_path / "sysroots" / "debian10-glibc2.28-x86_64"]  # stubbed
 
@@ -180,6 +182,8 @@ def test_cache_root_honours_environment(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.delenv("FSBPYR_CACHE_DIR")
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
     assert registry.cache_root() == tmp_path / "xdg" / "fsbpyr"
+    monkeypatch.setenv("XDG_CACHE_HOME", "relative")  # ignored, as the XDG spec has it
+    assert registry.cache_root() == Path.home() / ".cache" / "fsbpyr"
 
 
 def test_runtime_id_depends_on_the_pinned_packages(monkeypatch: pytest.MonkeyPatch) -> None:

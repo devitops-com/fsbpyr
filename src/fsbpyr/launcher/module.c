@@ -15,12 +15,17 @@
  *   stats()            -> read counters and integrity check time (FSBPYR_TRACE, benchmarks)
  *   files_below(path)  -> range of the FILES indices of every file below a directory ('' is all)
  *   sync(root, chain, files, checked, resources[, written]) -> number of files written (cache.h,
- *                         D35); their site-relative paths are appended to ``written``
+ *                         D35); their site-relative paths are appended to ``written``; the first
+ *                         sync into a tree takes it for the process's life (D38)
  */
 #include "launcher.h"
 
 #include "cache.h"
 #include "integrity.h"
+
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #ifdef Py_GIL_DISABLED /* read() shares the process's zstd decoder: the GIL serializes it */
 #error "the _fsbpyr module needs a CPython with the GIL"
@@ -442,6 +447,51 @@ static int synced(const struct fsb_cache_sync *job, PyObject *root, uint8_t *mem
     return -1;
 }
 
+/* The trees this process holds (D38, cache.h): a sync takes its tree (the chain's parent, below
+ * the root) the first time, and the lock's descriptor stays open for the process's life. A lock
+ * the app closed (its descriptor gone, or naming another file now) is taken again. The GIL
+ * guards the list. */
+struct held_tree {
+    struct held_tree *next;
+    int fd;
+    dev_t dev;
+    ino_t ino;
+    size_t length;
+    char key[]; /* <root>\0<tree> */
+};
+static struct held_tree *held_trees;
+
+/* Whether the tree ``key`` is held; an entry whose lock the app closed is dropped. */
+static bool holds(const char *key, size_t length) {
+    for (struct held_tree **at = &held_trees; *at != NULL; at = &(*at)->next) {
+        struct held_tree *tree = *at;
+        if (tree->length != length || memcmp(tree->key, key, length) != 0) continue;
+        struct stat st;
+        if (fstat(tree->fd, &st) == 0 && st.st_dev == tree->dev && st.st_ino == tree->ino)
+            return true;
+        *at = tree->next; /* the descriptor is no longer ours to close */
+        PyMem_RawFree(tree);
+        return false;
+    }
+    return false;
+}
+
+/* Keep ``fd``, the lock of the tree ``key`` that a sync took; closed instead if the tree is held
+ * already (two threads took it at once), or if there is no memory to keep it: used unheld. */
+static void keep_held(const char *key, size_t length, int fd) {
+    struct stat st = {0};
+    struct held_tree *tree = NULL;
+    if (!holds(key, length) && fstat(fd, &st) == 0) tree = PyMem_RawMalloc(sizeof *tree + length);
+    if (tree == NULL) {
+        close(fd);
+        return;
+    }
+    *tree = (struct held_tree){.next = held_trees, .fd = fd, .dev = st.st_dev, .ino = st.st_ino,
+                               .length = length};
+    memcpy(tree->key, key, length);
+    held_trees = tree;
+}
+
 /* sync(root, chain, files, checked, resources[, written]): extract the files (FILES indices: a
  * range, as files_below gives, or a sequence) missing below <root>/<chain> and replace those that
  * differ from the payload (cache.h, D35), SYNC_CHUNK at a time. Each process checks a file once:
@@ -462,6 +512,8 @@ static PyObject *cache_sync(PyObject *self, PyObject *args) {
     unsigned long long count = 0;
     uint8_t *outcome = NULL;
     struct fsb_cache_sync *job = NULL;
+    char *key = NULL; /* the tree's, for held_trees */
+    size_t key_length = 0;
     Py_ssize_t chain_length, next = 0, chunk;
     const char *chain = PyUnicode_AsUTF8AndSize(chain_arg, &chain_length);
     if (chain == NULL) goto done;
@@ -484,8 +536,16 @@ static PyObject *cache_sync(PyObject *self, PyObject *args) {
     todo = PyMem_Malloc(SYNC_CHUNK * sizeof *todo);
     outcome = PyMem_Malloc(SYNC_CHUNK);
     job = PyMem_Malloc(sizeof *job);
+    const char *slash = memrchr(chain, '/', (size_t)chain_length);
+    size_t root_length = (size_t)PyBytes_GET_SIZE(root), tree = slash ? (size_t)(slash - chain) : 0;
+    key_length = root_length + 1 + tree;
+    if ((key = PyMem_Malloc(key_length)) != NULL) {
+        memcpy(key, PyBytes_AS_STRING(root), root_length);
+        key[root_length] = '\0';
+        memcpy(key + root_length + 1, chain, tree);
+    }
     if (items == NULL) goto done;
-    if (todo == NULL || outcome == NULL || job == NULL) {
+    if (todo == NULL || outcome == NULL || job == NULL || key == NULL) {
         PyErr_NoMemory();
         goto done;
     }
@@ -495,10 +555,12 @@ static PyObject *cache_sync(PyObject *self, PyObject *args) {
         memset(outcome, 0, (size_t)chunk);
         *job = (struct fsb_cache_sync){.root = PyBytes_AS_STRING(root), .chain = chain,
                                        .files = todo, .count = (uint64_t)chunk,
-                                       .resources = resources, .outcome = outcome};
+                                       .resources = resources, .outcome = outcome,
+                                       .hold = !holds(key, key_length)};
         Py_BEGIN_ALLOW_THREADS
         fsb_cache_sync(&fsb_self, job);
         Py_END_ALLOW_THREADS
+        if (job->lock >= 0) keep_held(key, key_length, job->lock);
         if (synced(job, root_text, memo.buf, written, &count) < 0) goto done;
     }
     result = PyLong_FromUnsignedLongLong(count);
@@ -507,6 +569,7 @@ done:
     PyMem_Free(todo);
     PyMem_Free(outcome);
     PyMem_Free(job);
+    PyMem_Free(key);
     Py_XDECREF(items);
     Py_XDECREF(root_text);
     Py_DECREF(root);

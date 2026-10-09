@@ -8,7 +8,15 @@
  * long for the file system fails the sync: no file can be there). A file is written under a
  * temporary name and renamed into place, so racing processes only ever see whole files and need
  * no lock. Nothing is synced to disk (D34): a file a crash left incomplete differs from its
- * digest, and the next process that uses it replaces it.
+ * digest, and the next process that uses it replaces it. Files are written in <the chain's
+ * parent>/.scratch, locked while written, and renamed from there into place: a collector
+ * removes what a killed process left there (D38).
+ *
+ * Collection (D38, _fsbpyr_rt/gc.py): the chain's parent ("runtime/<generation>") is a tree a
+ * collector may remove once no process uses it. A sync asked to (``hold``) takes the tree for
+ * the process's life once the records are checked: the root gets its marker (only a root that
+ * holds nothing but our names: one of the user's is never collected), and the tree's .lock is
+ * held LOCK_SH; the caller keeps the descriptor open.
  */
 #ifndef FSBPYR_CACHE_H
 #define FSBPYR_CACHE_H
@@ -42,6 +50,9 @@ struct fsb_cache_sync {
     bool resources;   /* any file may be extracted, and one without a digest is compared with
                          its content in the payload (importlib.resources asked for it on disk) */
     uint8_t *outcome; /* ``count`` FSB_CACHE_* bit sets, zeroed by the caller */
+    bool hold;        /* take the tree (see above) once the records are checked */
+    int lock;         /* ``hold``: the tree's lock, the caller's to keep; -1 if it cannot be held
+                         (a read-only cache, no locks: the tree is used unheld) */
     enum fsb_cache_failure failure;
     const char *reason; /* CORRUPT */
     uint32_t file;      /* CORRUPT */

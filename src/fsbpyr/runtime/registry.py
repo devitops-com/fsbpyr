@@ -19,6 +19,7 @@ from ..payload.reader import Executable, Payload
 from ..payload.spec import File, Module, PayloadSpec
 from ..payload.writer import encode_payload
 from . import pbs, pins, stdlib, stub, sysroot
+from .hold import hold
 from .toolchain import find_toolchain
 
 BOOT_PACKAGES = ("_fsbpyr_boot", "_fsbpyr_rt")  # regenerated for every build, never runtime content
@@ -57,11 +58,17 @@ def _digest(path: Path) -> str:
     return tree_digest(path.read_bytes()).hex()
 
 
+def cache_home() -> Path:
+    """${XDG_CACHE_HOME:-~/.cache}; a relative XDG_CACHE_HOME is ignored, as the XDG spec has
+    it and as the boot code does (native.cache_directory)."""
+    base = os.environ.get("XDG_CACHE_HOME", "")
+    return Path(base) if os.path.isabs(base) else Path.home() / ".cache"
+
+
 def cache_root() -> Path:
     if explicit := os.environ.get("FSBPYR_CACHE_DIR"):
         return Path(explicit)
-    base = os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache"
-    return Path(base) / "fsbpyr"
+    return cache_home() / "fsbpyr"
 
 
 def host_triple() -> str:
@@ -231,7 +238,7 @@ def find_runtime(python: str, cache: Path | None = None, *, sanitize: bool = Fal
     directory = (
         secure_directory(cache or cache_root()) / "runtimes" / runtime_id(pin, sanitize=sanitize)
     )
-    if not directory.exists():
+    if not directory.exists() or not hold(directory):  # held: no collection removes it (D38)
         if sanitize:  # a test variant (D38): the test run builds it
             raise RuntimeCacheError(f"no sanitized runtime for Python {python}")
         raise RuntimeCacheError(
@@ -252,7 +259,7 @@ def build_runtime(
     cache = secure_directory(cache or cache_root())
     pin = pins.pin_for(python, host_triple())
     directory = cache / "runtimes" / runtime_id(pin, sanitize=sanitize)
-    if (directory / _META).exists():
+    if (directory / _META).exists() and hold(directory):
         log(f"runtime {directory.name} is already built")
         return Runtime.load(directory)
     log(f"fetching {pin.name}")
@@ -281,6 +288,7 @@ def build_runtime(
         files=files,
     )
     runtime.save(directory)
+    hold(directory)
     log(f"runtime {directory.name} ready")
     return runtime
 

@@ -3,6 +3,7 @@
 
 #include "integrity.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -10,8 +11,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 /* Cached files checked in one parallel pass (D32): up to CHECK_BATCH files; those up to
@@ -36,6 +39,14 @@
  * one when it is needed, so a path of any depth takes at most OPEN_LEVELS + 1 descriptors (D38).
  * Directories this deep are rare: walking down again costs little. */
 #define OPEN_LEVELS 16u
+/* The collector's names (D38, cache.h): the root's marker, a tree's lock file and the
+ * directory files are written in before they are renamed into place. */
+#define MARKER ".fsbpyr-cache"
+#define MARKER_TEXT "fsbpyr's cache: collected by fsbpyr (D38)\n"
+#define LOCK ".lock"
+#define SCRATCH ".scratch"
+#define DAY 86400 /* a tree's lock is touched once it is this old: its mtime is the last use */
+#define HOLD_ATTEMPTS 8u /* a tree renamed away (collected) while taken: taken again */
 
 /* A cached file, as load_cached() finds it; NO_ROOM: it cannot be opened for lack of descriptors
  * or memory, which the files held for the pass so far may be taking; FAILED: the failure is set. */
@@ -62,7 +73,8 @@ struct state {
     struct fsb_cache_sync *job;
     size_t chain_length;
     uid_t uid;
-    int root; /* -1 until open */
+    int root;    /* -1 until open */
+    int scratch; /* <the chain's parent>/.scratch, once a file is written; -1 */
     /* The directories from the root down to the last one used: ``depth`` levels of ``path``. */
     struct level *levels;
     size_t depth, levels_capacity;
@@ -364,6 +376,50 @@ static int open_directory(struct state *s, const char *target, size_t length) {
     return parent;
 }
 
+/* The directory path[0, length) below the root, opened (and created) one component at a time
+ * as open_directory does, but apart from the levels: a descriptor of the caller's (the root's
+ * duplicate if ``length`` is 0), or -1 with the failure set. */
+static int walk(struct state *s, const char *path, size_t length) {
+    int fd = s->root;
+    for (size_t start = 0; start < length;) {
+        const char *slash = memchr(path + start, '/', length - start);
+        size_t end = slash ? (size_t)(slash - path) : length;
+        char name[NAME_MAX + 1];
+        int next = -1;
+        if (end - start > NAME_MAX) {
+            failed_at(s, FSB_CACHE_SYSTEM, ENAMETOOLONG, path, end);
+        } else {
+            memcpy(name, path + start, end - start);
+            name[end - start] = '\0';
+            next = open_private(s, fd, name, path, end);
+        }
+        if (fd != s->root) close(fd);
+        if (next < 0) return -1;
+        fd = next;
+        start = end + 1;
+    }
+    if (fd != s->root) return fd;
+    if ((fd = fcntl(s->root, F_DUPFD_CLOEXEC, 0)) < 0)
+        failed_at(s, FSB_CACHE_SYSTEM, errno, NULL, 0);
+    return fd;
+}
+
+/* Where files are written before they are renamed into place: <the chain's parent>/.scratch,
+ * so that a collector finds what a killed process left (D38); opened once a sync writes. */
+static int open_scratch(struct state *s) {
+    if (s->scratch >= 0) return s->scratch;
+    const char *chain = s->job->chain, *slash = memrchr(chain, '/', s->chain_length);
+    size_t parent = slash ? (size_t)(slash - chain) + 1 : 0, length = parent + strlen(SCRATCH);
+    if (!reserve((void **)&s->target, &s->target_capacity, length + 1, 1)) {
+        out_of_memory(s);
+        return -1;
+    }
+    memcpy(s->target, chain, parent);
+    memcpy(s->target + parent, SCRATCH, strlen(SCRATCH));
+    s->scratch = walk(s, s->target, length);
+    return s->scratch;
+}
+
 /* The directory the entry's file belongs in: <chain>/<its site directory>. */
 static int open_parent(struct state *s, const struct entry *e) {
     const char *slash = memrchr(e->path, '/', e->length);
@@ -439,31 +495,35 @@ static int load_cached(struct state *s, int directory, const struct entry *e,
     return found;
 }
 
-/* Write the entry's file from the payload under a temporary name, a window at a time, hashing
- * what it writes, then rename it into place if it has the payload's digest: readers see a whole
- * file or none. Not synced to disk (D34; fsync made torch's first run 42.5 s instead of 2.3 s). */
+/* Write the entry's file from the payload under a temporary name in the scratch directory,
+ * locked while it is written (a collector removes only what it can lock), a window at a time,
+ * hashing what it writes, then rename it into place if it has the payload's digest: readers see
+ * a whole file or none. Not synced to disk (D34; fsync made torch's first run 42.5 s instead of
+ * 2.3 s). */
 static bool restore(struct state *s, const struct entry *e) {
     int directory = open_parent(s, e);
-    if (directory < 0) return false;
+    int scratch = directory < 0 ? -1 : open_scratch(s);
+    if (scratch < 0) return false;
     char temporary[64];
     int fd = -1;
     for (unsigned attempt = 0; fd < 0 && attempt < TEMPORARY_ATTEMPTS; attempt++) {
         snprintf(temporary, sizeof temporary, ".fsbpyr-%ld-%lu", (long)getpid(),
                  atomic_fetch_add(&temporaries, 1));
-        fd = openat(directory, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+        fd = openat(scratch, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
                     0600);
         if (fd < 0 && errno != EEXIST) break;
     }
     if (fd < 0) return file_failed(s, errno, e);
+    flock(fd, LOCK_EX | LOCK_NB); /* a new file: nobody else holds it */
     uint8_t digest[FSB_DIGEST_SIZE];
     bool done = stream_content(s, e, fd, digest);
     if (done && memcmp(digest, e->digest, sizeof digest) != 0)
         done = corrupt(s, "digest of file", e->index);
     /* readable by its owner, executable where the payload says so, never writable */
     if (done && fchmod(fd, S_IRUSR | (e->mode & S_IXUSR)) != 0) done = file_failed(s, errno, e);
-    if (done && renameat(directory, temporary, directory, base_name(e)) != 0)
+    if (done && renameat(scratch, temporary, directory, base_name(e)) != 0)
         done = file_failed(s, errno, e);
-    if (!done) unlinkat(directory, temporary, 0);
+    if (!done) unlinkat(scratch, temporary, 0);
     close(fd);
     if (done) s->job->outcome[e->item] |= FSB_CACHE_DONE | FSB_CACHE_WRITTEN;
     return done;
@@ -542,8 +602,125 @@ static bool sync_file(struct state *s, const struct entry *e) {
     return restore(s, e);
 }
 
+/* The names a cache root may hold (the collector's gc.OURS): the app cache's and the tool's,
+ * whose root fsbpyr's own app cache shares. */
+static const char *const OURS[] = {
+    MARKER, ".gc", ".trash", "runtime", "resources", ".gc-tool", ".trash-tool", "runtimes", "pbs",
+    "sysroots", "downloads",
+};
+
+/* Whether ``kind`` (a directory of the root) holds a tree of ours: one with its lock or its site
+ * (the collector's PROOF). */
+static bool holds_a_tree(struct state *s, const char *kind) {
+    int fd = openat(s->root, kind, DIRECTORY | O_NOFOLLOW);
+    DIR *directory = fd < 0 ? NULL : fdopendir(fd);
+    if (directory == NULL) {
+        if (fd >= 0) close(fd);
+        return false;
+    }
+    bool found = false;
+    for (struct dirent *d; !found && (d = readdir(directory)) != NULL;) {
+        char path[NAME_MAX + sizeof "/site"];
+        struct stat st;
+        for (int i = 0; !found && d->d_name[0] != '.' && i < 2; i++)
+            found = snprintf(path, sizeof path, "%s/%s", d->d_name, i ? "site" : LOCK) <
+                        (int)sizeof path &&
+                    fstatat(dirfd(directory), path, &st, AT_SYMLINK_NOFOLLOW) == 0;
+    }
+    closedir(directory);
+    return found;
+}
+
+/* Whether the root may be marked: it holds nothing but our names, and is new (empty) or holds a
+ * tree of ours (a cache of an earlier version). A directory of the user's never may, even one
+ * that holds nothing but names like ours. */
+static bool markable(struct state *s) {
+    int fd = openat(s->root, ".", DIRECTORY);
+    DIR *directory = fd < 0 ? NULL : fdopendir(fd);
+    if (directory == NULL) {
+        if (fd >= 0) close(fd);
+        return false;
+    }
+    bool only = true, empty = true;
+    for (struct dirent *d; only && (d = readdir(directory)) != NULL;) {
+        if (strcmp(d->d_name, ".") == 0 || strcmp(d->d_name, "..") == 0) continue;
+        only = empty = false;
+        for (size_t i = 0; !only && i < sizeof OURS / sizeof *OURS; i++)
+            only = strcmp(d->d_name, OURS[i]) == 0;
+    }
+    closedir(directory);
+    return only && (empty || holds_a_tree(s, "runtime") || holds_a_tree(s, "resources"));
+}
+
+/* The marker at the root, the collector's leave to act on it (D38): written if it is missing and
+ * the root may be marked (markable). Best effort: a root that cannot be marked is used
+ * unmarked. */
+static void mark(struct state *s) {
+    struct stat st;
+    if (fstatat(s->root, MARKER, &st, AT_SYMLINK_NOFOLLOW) == 0 || errno != ENOENT ||
+        !markable(s))
+        return;
+    int fd = openat(s->root, MARKER, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0) return; /* marked meanwhile, or not ours to mark */
+    (void)write_window(fd, 0, (const uint8_t *)MARKER_TEXT, strlen(MARKER_TEXT), &(uint64_t){0});
+    close(fd);
+}
+
+/* Whether ``fd`` (a tree's lock, held) is still the lock at <root>/<chain[0, tree)>/.lock: a
+ * collector renames a tree away while it holds the lock exclusively. */
+static bool still_the_lock(struct state *s, int fd, size_t tree) {
+    int directory = walk(s, s->job->chain, tree);
+    struct stat held, now;
+    bool same = directory >= 0 && fstat(fd, &held) == 0 &&
+                fstatat(directory, LOCK, &now, AT_SYMLINK_NOFOLLOW) == 0 &&
+                held.st_dev == now.st_dev && held.st_ino == now.st_ino;
+    if (directory >= 0) close(directory);
+    return same;
+}
+
+/* Take the tree, the chain's parent ("runtime/<id>"), for the process's life (D38), once the
+ * records are checked and the root is open: the root marked, then the tree's .lock, opened
+ * through the checked walk, held LOCK_SH (waiting for a collector that holds it) and taken
+ * again if a collector renamed the tree away meanwhile; touched once a day old: its mtime is
+ * when the tree was last used. Best effort: a tree that cannot be held (a read-only cache, a
+ * file system without locks, a lock that is no regular file of ours, a tree collected each time
+ * it was taken) is used unheld, and a failure on the way is the sync's to meet. The lock's
+ * descriptor, or -1. */
+static int take(struct state *s) {
+    const char *chain = s->job->chain, *slash = memrchr(chain, '/', s->chain_length);
+    size_t tree = slash ? (size_t)(slash - chain) : 0;
+    int held = -1;
+    mark(s);
+    for (unsigned attempt = 0; held < 0 && attempt < HOLD_ATTEMPTS; attempt++) {
+        int directory = walk(s, chain, tree);
+        if (directory < 0) break;
+        int fd = openat(directory, LOCK,
+                        O_RDONLY | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK | O_NOCTTY, 0600);
+        int error = errno;
+        close(directory);
+        if (fd < 0 && error == ENOENT) continue; /* the tree removed meanwhile: made afresh */
+        struct stat st;
+        int locked = -1;
+        if (fd >= 0 && fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == s->uid)
+            while ((locked = flock(fd, LOCK_SH)) != 0 && errno == EINTR) {}
+        if (locked == 0 && still_the_lock(s, fd, tree)) {
+            held = fd;
+        } else if (fd >= 0) {
+            close(fd);
+        }
+        if (locked != 0) break;
+    }
+    s->job->failure = FSB_CACHE_OK; /* the walk's failure, if any: the sync meets it again */
+    struct stat st;
+    time_t now = time(NULL);
+    if (held >= 0 && fstat(held, &st) == 0 && (st.st_mtime <= now - DAY || st.st_mtime > now))
+        (void)futimens(held, NULL); /* its mtime: the tree's last use, a day at most behind */
+    return held;
+}
+
 void fsb_cache_sync(const struct fsb_payload *payload, struct fsb_cache_sync *job) {
     job->failure = FSB_CACHE_OK;
+    job->lock = -1;
     struct state *s = calloc(1, sizeof *s);
     struct entry *entries = malloc((size_t)job->count * sizeof *entries + 1);
     if (s == NULL || entries == NULL) {
@@ -556,16 +733,18 @@ void fsb_cache_sync(const struct fsb_payload *payload, struct fsb_cache_sync *jo
     s->job = job;
     s->chain_length = strlen(job->chain);
     s->uid = geteuid();
-    s->root = -1;
+    s->root = s->scratch = -1;
     bool ok = true; /* every record checked before anything on disk is touched */
     for (uint64_t i = 0; ok && i < job->count; i++) ok = prepare(s, i, &entries[i]);
     ok = ok && job->count > 0 && open_root(s); /* nothing to check: nothing touched */
+    if (ok && job->hold) job->lock = take(s);
     for (uint64_t i = 0; ok && i < job->count; i++) ok = sync_file(s, &entries[i]);
     if (ok) check_batch(s);
     close_batch(s, s->batched); /* a failure left them open */
     while (s->depth > 0)
         if (s->levels[--s->depth].fd >= 0) close(s->levels[s->depth].fd);
     if (s->root >= 0) close(s->root);
+    if (s->scratch >= 0) close(s->scratch);
     free(s->levels);
     free(s->path);
     free(s->target);

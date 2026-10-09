@@ -52,6 +52,7 @@ class NativeCache:
         self.root = root
         self.site = "/".join((root, *chain))
         self._chain = "/".join(chain)
+        self.tree = "/".join(chain[:-1])  # "runtime/<generation>": held from the first sync on
         files = _fsbpyr.info()["files"]
         self._checked = bytearray((files + 7) // 8)  # a bit per FILES index: checked here
 
@@ -194,3 +195,22 @@ def extension_spec(
     if loader.is_package(fullname):  # compiled __init__: submodules live in the payload
         spec.submodule_search_locations = [prefix + fullname.replace(".", "/")]
     return spec
+
+
+def collect(*, quiet: bool) -> None:
+    """``FSBPYR_GC=1`` (``background``: ``quiet``): collect this app's cache instead of running
+    the app (D38, _fsbpyr_rt.gc), never removing this build's own trees; exit status 1 if
+    anything could not be removed."""
+    import contextlib  # noqa: PLC0415  # only a collection needs these
+    import sys  # noqa: PLC0415
+
+    from . import gc  # noqa: PLC0415
+
+    keep = {native_cache().tree}
+    with contextlib.suppress(NativeCacheError):  # corrupt build information: no resource tree
+        keep.add(resource_cache().tree)
+    report = gc.collect(native_cache().root, keep=frozenset(keep))
+    if not quiet:
+        print(report.text(), file=sys.stderr)
+    if report.errors:
+        raise SystemExit(1)

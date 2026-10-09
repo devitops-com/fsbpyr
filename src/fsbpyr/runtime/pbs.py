@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .hold import hold
 from .pins import PbsPin
 
 _INITTAB_ENTRY = re.compile(r'\{"([A-Za-z0-9_.]+)",\s*PyInit_')
@@ -155,7 +156,7 @@ def fetch(pin: PbsPin, cache: Path) -> PbsDist:
     """Download (once), verify and extract the pinned distribution under ``cache``."""
     archive = cache / "downloads" / f"{pin.name}.tar.zst"
     dest = cache / "pbs" / pin.name
-    if (dest / "python" / "PYTHON.json").exists():
+    if (dest / "python" / "PYTHON.json").exists() and hold(dest):  # held: never collected (D38)
         return PbsDist.load(dest / "python")
     if not archive.exists():
         download(pin.url, pin.sha256, archive)
@@ -175,4 +176,5 @@ def fetch(pin: PbsPin, cache: Path) -> PbsDist:
                 raise
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+    hold(dest)
     return PbsDist.load(dest / "python")

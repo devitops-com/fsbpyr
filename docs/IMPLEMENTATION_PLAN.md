@@ -879,7 +879,7 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
   release's measurements; the count-based tests and the startup budget pass; fast exit is
   evaluated and dropped. **DONE 2026-10-09.**
 
-### Phase 8 — Hardening (L; D38) — **8a DONE 2026-10-09 (0.10.0), 8b DONE 2026-10-09 (0.11.0), 8c DONE 2026-10-09 (0.12.0)**
+### Phase 8 — Hardening (L; D38) — **8a DONE 2026-10-09 (0.10.0), 8b DONE 2026-10-09 (0.11.0), 8c DONE 2026-10-09 (0.12.0), 8d DONE 2026-10-10 (0.13.0)**
 
 Principle (owner): normal cases fast, edge and extreme cases correct, never a crash. Every
 item below gets explicit tests in the normal test run. Steps, each released on its own:
@@ -1052,6 +1052,60 @@ the same with 5 GiB (past every 32-bit size).
     same rules. `fsbpyr` checks it at its start, at most once a day (`.gc` there too).
   - The tool's cache and the app cache of fsbpyr itself (an app named `fsbpyr`) are the same
     root: the two collections touch only their own subtrees.
+- **Done (0.13.0):**
+  - as designed above, with what the code and security reviews changed (they replace the
+    design where the two differ: no `_fsbpyr.hold`, no `shutil.rmtree`, not all of `.trash`):
+    - the marker is written only into a root that holds nothing but our names and is new
+      (empty) or holds a tree or item of ours (a cache of an earlier version): a directory of
+      the user's that `FSBPYR_CACHE_DIR` names is never marked, so never collected (the README
+      says how to opt one in: the marker made by hand); the tool's cache needs the marker as
+      well (`hold()` writes it); a tree or item is ours only with its lock or what fsbpyr
+      writes in it (`gc.PROOF`: an app tree's `site`, a runtime's `runtime.json`, a
+      distribution's `python/PYTHON.json`, a sysroot's `.fsbpyr-sysroot`), and the tool's
+      collector removes only names the tool gives (runtime ids, `cpython-*` distributions,
+      sysroot identities, their downloads, its staging names)
+    - the tree is taken in the sync, once the records are checked (nothing is written for a
+      payload that is refused); `module.c` keeps the trees a process holds, and takes one again
+      if the app closed its lock; taking a tree is best effort: a read-only cache, a file system
+      without locks or a lock that is no regular file of ours leave it unheld, never failing
+    - a tree from before 0.13.0 gets its lock (with the tree's mtime as its last use) and is
+      locked before it is judged: a process taking it meanwhile waits and makes it afresh
+    - the lock is let go once the tree is renamed into the trash; the trash is emptied at the
+      end of the run, by a remover that holds three descriptors whatever the depth and makes
+      a directory it may not write to writable; only names the run gives are removed there
+    - what cannot be removed is reported and the run goes on; `fsbpyr cache gc` collects every
+      root and exits 1 if anything failed
+    - due: the stamp is claimed under its lock (one start of many starts a run; none while a
+      run holds it) and must be touched (a read-only cache starts nothing); a stamp dated ahead
+      is due; the free-space check cannot overflow; an app name the boot code refuses starts
+      nothing; the process started runs in `/` with `FSBPYR_CACHE_DIR` set to the root
+    - `FSBPYR_GC=1` or `background` collect (exit status 1 if anything could not be removed);
+      any other value runs the app
+    - locks are opened for writing where they may be (NFS emulates flock: an exclusive lock
+      needs it); a lock that cannot be taken leaves its tree alone; a lock dated ahead (the
+      clock was set back) is brought back to now
+    - not from a set-uid start, nor as process 1 (no zombie of ours goes unreaped)
+  - known limits: a process of a build older than 0.13.0 holds no lock, so its tree can go 7
+    days after it was made while one runs (the next start extracts it again); a long-running
+    process's lock is touched only when it is taken, so its tree can go soon after it ends;
+    removing a tree costs time quadratic in its depth (0.9 s at 1000 levels)
+  - the tool's cache (`runtime/collect.py`, `runtime/hold.py`): its own stamp and trash
+    (`.gc-tool`, `.trash-tool`); staging directories and partial downloads go after a day,
+    never sooner (a build or a fetch may be writing them, pressure or not); what the running
+    fsbpyr's pins name stays; `XDG_CACHE_HOME` that is not absolute is ignored, as for apps
+  - every test runs with `FSBPYR_GC=0` (tests/conftest.py) unless it asks for a collection;
+    tests/e2e/test_large.py measures each process's own peak (VmHWM: ru_maxrss kept pytest's
+    peak across the exec, past 1 GB once the suite had built a runtime)
+  - tests: each rule of both collectors (marker, age, in use, pressure, kept, items from before
+    their locks, foreign names, symlinks inside and as locks, FIFOs, stale and read-only
+    temporary files, read-only directories, 300 levels with 16 descriptors, one run at a time,
+    the trash, failures reported), a tree taken while a run removes it, marker consent, the
+    launcher's names checked against the collector's, the tool's names, `fsbpyr cache gc`;
+    due.c probed (tests/probes/due.c, statvfs wrapped): every due rule, the claim among 8
+    starts at once, the root as the boot code finds it, and the process started (descriptors,
+    session, priority, I/O class, directory, root); end to end: a held tree with its scratch,
+    `FSBPYR_GC` values, the background run a day after the last and after none, its root
+    found through XDG, a directory of the user's never marked
 
 **8e — Cache-root ancestors and security tests**: walk the root's path from `/` (following
 symlinks component by component) and require every directory on the way to be owned by root

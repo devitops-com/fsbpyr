@@ -5,6 +5,7 @@ the pure-Python stand-in; both must produce identical results (plan Phase 3).
 """
 
 import errno
+import fcntl
 import hashlib
 import io
 import os
@@ -162,6 +163,7 @@ def _syncs(fsb: Any) -> dict[str, Any]:
             "limited": _sync_limited(fsb, tmp),
             "chunks": _sync_chunks(fsb, tmp),
             "deep": _sync_deep(fsb, tmp),
+            "holds": _sync_holds(fsb, tmp),
         }
         out["descriptors left open"] = _descriptors() - descriptors
     return out
@@ -222,6 +224,43 @@ def _sync_deep(fsb: Any, tmp: str) -> list[Any]:
     finally:
         resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
     return [first, again, _tree(os.path.join(_site(root), "deep"))]
+
+
+def _sync_holds(fsb: Any, tmp: str) -> dict[str, Any]:
+    """The tree a sync takes once its records are checked (D38): a new root gets the marker and
+    the tree's lock is held; a root with a name not ours, or with names like ours but no tree of
+    ours, is not marked; a tree whose lock is no regular file is used unheld."""
+    files, tree = _closure(fsb, EXT), CHAIN.rpartition("/")[0]
+    out: dict[str, Any] = {}
+    for case in ("new", "the user's", "lookalike", "odd lock"):
+        root = os.path.join(tmp, "holds", case)
+        os.makedirs(root)
+        if case == "the user's":
+            with open(os.path.join(root, "notes.txt"), "w"):
+                pass
+        elif case == "lookalike":
+            os.makedirs(os.path.join(root, "resources", "a" * 32))
+        elif case == "odd lock":
+            os.makedirs(os.path.join(root, tree, ".lock"))
+        outcome = _sync(fsb, root, files)
+        marked = os.path.isfile(os.path.join(root, ".fsbpyr-cache"))
+        out[case] = [outcome[0][:2], marked, _locked(os.path.join(root, tree, ".lock"))]
+    return out
+
+
+def _locked(path: str) -> str:
+    """How this process holds ``path``: "held" (shared: no exclusive lock can be taken), "free",
+    or "no file"."""
+    if not os.path.isfile(path):
+        return "no file"
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return "held"
+    finally:
+        os.close(fd)
+    return "free"
 
 
 def _descriptors() -> int:

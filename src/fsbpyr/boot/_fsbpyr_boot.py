@@ -345,6 +345,12 @@ def run() -> None:
         atexit.register(report)
     if _multiprocessing_child():
         return
+    collection = posix.environ.get(b"FSBPYR_GC")  # D38: any other value runs the app
+    if collection in (b"1", b"background"):
+        from _fsbpyr_rt.native import collect  # noqa: PLC0415
+
+        collect(quiet=collection == b"background")
+        return
     entrypoint = INFO["entrypoint"]
     if posix.environ.get(b"FSBPYR_SELFTEST"):
         _resolve(entrypoint)  # import the module and look the attribute up, without calling

@@ -157,7 +157,25 @@ executable reads:
 | Variable | |
 |---|---|
 | `FSBPYR_CACHE_DIR` | cache directory |
+| `FSBPYR_GC=1` | collect the app's cache instead of running the app (see below); `0`: never collect it in the background |
 | `FSBPYR_TRACE=1` | print what the run loaded and extracted, and how long the integrity check took, as JSON on stderr |
+
+### The cache cleans itself
+
+What a running app extracted stays in use for the app's whole life; what no process has used
+for 7 days is removed. A collection is due a day after the last; each start checks that with
+one `stat`, and when one is due a detached process at idle priority collects, so the start is
+not slowed. When the file system has less than 10% free, a collection is due an hour after the
+last, and everything not in use goes. `fsbpyr` checks its own cache (runtimes, Python
+distributions, sysroots and downloads) the same way when it runs, keeping what it builds with.
+`fsbpyr cache gc` collects its own cache and every app cache now; `FSBPYR_GC=1 app` collects
+that app's.
+
+Only a cache root with the marker `.fsbpyr-cache` is ever collected, and only what fsbpyr
+made there. The marker is written into a new (empty) root, or one that holds nothing but a
+cache of an earlier version: a directory of yours that `FSBPYR_CACHE_DIR` names is never
+marked. To have such a directory collected all the same (a volume of its own, with its
+`lost+found`, say), create the marker yourself: `touch "$FSBPYR_CACHE_DIR/.fsbpyr-cache"`.
 
 ## Versions
 

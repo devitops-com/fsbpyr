@@ -8,12 +8,15 @@ checks that both behave alike.
 
 import contextlib
 import errno
+import fcntl
 import os
 import stat
 import sys
+import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from fsbpyr.boot._fsbpyr_rt.gc import MARKER, MARKER_TEXT, OURS
 from fsbpyr.payload.format import NATIVE_KINDS, NONE, FileFlag, tree_digest
 from fsbpyr.payload.format import PayloadError as _ReaderError
 from fsbpyr.payload.reader import FileRecord, Payload
@@ -28,6 +31,9 @@ CHECK_BATCH, SMALL_FILE, BATCH_BUFFER, HELD_FILES = 1024, 64 << 10, 16 << 20, 64
 WRITE_PIECE = 1 << 20
 SYNC_CHUNK = 4096  # module.c: files synced at once
 OPEN_LEVELS = 16  # cache.c: directories kept open from the root down
+LOCK, SCRATCH, DAY, HOLD_ATTEMPTS = ".lock", ".scratch", 86400, 8  # cache.c
+_LOCK_FLAGS = os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK | os.O_NOCTTY
+_HELD: dict[bytes, tuple[int, int, int]] = {}  # module.c's held_trees: key -> fd, device, inode
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
 _NEW_FILE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 _PRESENT, _MISSING, _CHANGED = range(3)
@@ -53,12 +59,17 @@ def sync(payload: Payload, root: Any, chain: Any, files: Any, checked: Any, reso
                                                    resources, written)  # fmt: skip
     records = payload.files()
     count, at = 0, 0
+    key = root_path + b"\0" + chain.rpartition("/")[0].encode()  # module.c's held_trees
     while chunk := _chunk(items, at, memo, len(records)):
         todo, at = chunk
         outcome = [0] * len(todo)
+        job = _Sync(payload, root_path, chain, [records[i] for i in todo], outcome, resources)
+        job.hold = not _holds(key)
         try:
-            _Sync(payload, root_path, chain, [records[i] for i in todo], outcome, resources).run()
+            job.run()
         finally:
+            if job.lock >= 0:
+                _keep_held(key, job.lock)
             for item, record in enumerate(records[i] for i in todo):
                 if outcome[item] & CHANGED:
                     _report(f"fsbpyr: {os.fsdecode(root_path)}/{chain}/{record.path} was "
@@ -142,7 +153,8 @@ class _Sync:
         self.payload, self.root, self.chain = payload, root, chain
         self.records, self.outcome, self.resources = records, outcome, resources
         self.uid = os.geteuid()
-        self.root_fd = -1
+        self.root_fd = self.scratch_fd = -1
+        self.hold, self.lock = False, -1  # take the tree once the records are checked (D38)
         self.levels: list[list[Any]] = []  # [name, descriptor or -1] from the root down
         self.batch: list[tuple[_Entry, bytes | int]] = []  # small files' content, or descriptors
         self.buffered = 0  # bytes of small files read into the batch
@@ -154,6 +166,7 @@ class _Sync:
             if not entries:
                 return  # nothing to check: nothing touched
             self.root_fd = self._open_root()
+            self.lock = self._take() if self.hold else -1
             for entry in entries:
                 if entry.size <= SMALL_FILE and self.buffered + entry.size > BATCH_BUFFER:
                     self._check()
@@ -176,6 +189,8 @@ class _Sync:
                     os.close(fd)
             if self.root_fd >= 0:
                 os.close(self.root_fd)
+            if self.scratch_fd >= 0:
+                os.close(self.scratch_fd)
 
     def _corrupt(self, what: str, record: FileRecord) -> CacheError:
         return CacheError(f"corrupt executable payload: {what} {record.index}")
@@ -228,6 +243,77 @@ class _Sync:
                 os.mkdir(self.root[:position], 0o777)
         with contextlib.suppress(FileExistsError):
             os.mkdir(self.root, 0o700)
+
+    def _walk(self, target: str) -> int:
+        """cache.c's walk(): ``target`` opened one component at a time apart from the levels;
+        a descriptor of the caller's."""
+        fd = self.root_fd
+        for depth, part in enumerate(target.split("/") if target else []):
+            path = self._path("/".join(target.split("/")[: depth + 1]))
+            try:
+                following = self._open_private(fd, part, path)
+            finally:
+                if fd != self.root_fd:
+                    os.close(fd)
+            fd = following
+        return os.dup(fd) if fd == self.root_fd else fd
+
+    def _scratch(self) -> int:
+        """cache.c's open_scratch(): <the chain's parent>/.scratch, once a file is written."""
+        if self.scratch_fd < 0:
+            parent = self.chain.rpartition("/")[0]
+            self.scratch_fd = self._walk(f"{parent}/{SCRATCH}" if parent else SCRATCH)
+        return self.scratch_fd
+
+    def _take(self) -> int:
+        """cache.c's take(): the root marked, then the tree's .lock held LOCK_SH, taken again if a
+        collector renamed the tree away meanwhile, touched once a day old; best effort: -1 if
+        it cannot be held (the sync meets any failure itself)."""
+        _mark(self.root_fd)
+        tree = self.chain.rpartition("/")[0]
+        for _ in range(HOLD_ATTEMPTS):
+            try:
+                directory = self._walk(tree)
+            except OSError, CacheError:
+                return -1
+            try:
+                fd = os.open(LOCK, _LOCK_FLAGS, 0o600, dir_fd=directory)
+            except FileNotFoundError:
+                continue  # the tree removed meanwhile: made afresh
+            except OSError:
+                return -1
+            finally:
+                os.close(directory)
+            held = os.fstat(fd)
+            if not (stat.S_ISREG(held.st_mode) and held.st_uid == self.uid):
+                os.close(fd)
+                return -1
+            try:
+                fcntl.flock(fd, fcntl.LOCK_SH)
+            except OSError:
+                os.close(fd)
+                return -1
+            if self._still_the_lock(fd, tree):
+                if time.time() - held.st_mtime >= DAY:
+                    with contextlib.suppress(OSError):
+                        os.utime(fd)
+                return fd
+            os.close(fd)
+        return -1
+
+    def _still_the_lock(self, fd: int, tree: str) -> bool:
+        try:
+            directory = self._walk(tree)
+        except OSError, CacheError:
+            return False
+        try:
+            now = os.stat(LOCK, dir_fd=directory, follow_symlinks=False)
+        except OSError:
+            return False
+        finally:
+            os.close(directory)
+        held = os.fstat(fd)
+        return (now.st_dev, now.st_ino) == (held.st_dev, held.st_ino)
 
     def _parent(self, entry: _Entry) -> int:
         parent = entry.record.path.rpartition("/")[0]
@@ -372,8 +458,8 @@ class _Sync:
         """cache.c's restore(): the directory, a temporary file, the content written and hashed,
         then the digest checked before the file is renamed into place."""
         directory = self._parent(entry)
-        _publish(directory, entry.record.path.rpartition("/")[2], entry.record.mode,
-                 lambda: self._checked_content(entry))  # fmt: skip
+        _publish(directory, self._scratch(), entry.record.path.rpartition("/")[2],
+                 entry.record.mode, lambda: self._checked_content(entry))  # fmt: skip
         self.outcome[entry.item] |= DONE | WRITTEN
 
     def _checked_content(self, entry: _Entry) -> bytes:
@@ -409,26 +495,106 @@ def _close(batch: list[tuple[_Entry, bytes | int]]) -> None:
             os.close(content)
 
 
-def _publish(directory: int, name: str, mode: int, content: Callable[[], bytes]) -> None:
+def _publish(directory: int, scratch: int, name: str, mode: int,
+             content: Callable[[], bytes]) -> None:  # fmt: skip
     for _ in range(_TEMPORARY_ATTEMPTS):
         _temporaries[0] += 1
         temporary = f".fsbpyr-{os.getpid()}-{_temporaries[0] - 1}"
         try:
-            fd = os.open(temporary, _NEW_FILE, 0o600, dir_fd=directory)
+            fd = os.open(temporary, _NEW_FILE, 0o600, dir_fd=scratch)
             break
         except FileExistsError:
             continue
     else:
         raise FileExistsError(17, "no temporary name left", name)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # a new file: nobody else holds it
     try:
         view = memoryview(content())
         while view:  # in pieces, as cache.c writes them (it leaves pieces of zeros as holes)
             view = view[os.write(fd, view[:WRITE_PIECE]) :]
         os.fchmod(fd, 0o400 | (mode & 0o100))  # readable by its owner, never writable
-        os.rename(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+        os.rename(temporary, name, src_dir_fd=scratch, dst_dir_fd=directory)
     except BaseException:
         with contextlib.suppress(OSError):
-            os.unlink(temporary, dir_fd=directory)
+            os.unlink(temporary, dir_fd=scratch)
         raise
+    finally:
+        os.close(fd)
+
+
+def _holds(key: bytes) -> bool:
+    """module.c's holds(): an entry whose lock the app closed is dropped."""
+    if key not in _HELD:
+        return False
+    fd, device, inode = _HELD[key]
+    try:
+        info = os.fstat(fd)
+    except OSError:
+        info = None
+    if info is not None and (info.st_dev, info.st_ino) == (device, inode):
+        return True
+    del _HELD[key]
+    return False
+
+
+def _keep_held(key: bytes, fd: int) -> None:
+    if _holds(key):
+        os.close(fd)
+        return
+    info = os.fstat(fd)
+    _HELD[key] = (fd, info.st_dev, info.st_ino)
+
+
+def take(root: bytes, chain: str) -> int:
+    """cache.c's take() for the tree <root>/<the chain's parent>, without a sync (tests)."""
+    sync = _Sync(None, root, chain, [], [], False)  # type: ignore[arg-type]  # no payload used
+    sync.root_fd = sync._open_root()
+    try:
+        return sync._take()
+    finally:
+        os.close(sync.root_fd)
+
+
+def _mark(root: int) -> None:
+    """cache.c's mark(): the marker written if it is missing and the root holds nothing but our
+    names and is new (empty) or holds a tree of ours (its lock or its site); best effort."""
+    try:
+        os.stat(MARKER, dir_fd=root, follow_symlinks=False)
+        return
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return
+    names = os.listdir(root)
+    if any(name not in OURS for name in names):
+        return
+    if names and not any(_holds_a_tree(root, kind) for kind in ("runtime", "resources")):
+        return
+    try:
+        fd = os.open(MARKER, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                     0o600, dir_fd=root)  # fmt: skip
+    except OSError:
+        return
+    try:
+        with contextlib.suppress(OSError):
+            os.write(fd, MARKER_TEXT)
+    finally:
+        os.close(fd)
+
+
+def _holds_a_tree(root: int, kind: str) -> bool:
+    """cache.c's holds_a_tree(): an entry of ``kind`` with its lock or its site."""
+    try:
+        fd = os.open(kind, _DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
+    except OSError:
+        return False
+    try:
+        for name in os.listdir(fd):
+            for inside in (LOCK, "site"):
+                with contextlib.suppress(OSError):
+                    if not name.startswith("."):
+                        os.stat(f"{name}/{inside}", dir_fd=fd, follow_symlinks=False)
+                        return True
+        return False
     finally:
         os.close(fd)

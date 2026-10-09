@@ -8,6 +8,8 @@
  */
 #include "launcher.h"
 
+#include "due.h"
+
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -111,9 +113,11 @@ static void pin_prefixes(PyConfig *config) {
 }
 
 int main(int argc, char **argv) {
-    const char *error;
+    const char *error, *app;
     if (!fsb_payload_open(&fsb_self, &error)) fatal(error);
     check_versions();
+    if (fsb_str(&fsb_self, fsb_self.header.app_name, &app)) /* before Python: no threads yet */
+        fsb_collect_when_due(app, fsb_self.header.app_name.length, argc > 0 ? argv[0] : app);
     PyImport_FrozenModules = startup_table();
     if (PyImport_AppendInittab("_fsbpyr", PyInit__fsbpyr) != 0) fatal("cannot register _fsbpyr");
 

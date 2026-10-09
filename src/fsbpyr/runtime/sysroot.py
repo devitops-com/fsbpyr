@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 
 from . import ar
+from .hold import hold
 from .pbs import PbsError, download
 from .pins import SysrootPin
 
@@ -63,7 +64,7 @@ def _package(url: str, sha256: str, cache: Path) -> tuple[str, bytes]:
 def fetch_sysroot(pin: SysrootPin, cache: Path) -> Path:
     """Download (once), verify and extract the pinned packages under ``cache``."""
     dest = cache / "sysroots" / pin.identity
-    if (dest / _DONE).exists():
+    if (dest / _DONE).exists() and hold(dest):  # held: never collected (D38)
         return dest
     packages = [_package(url, sha256, cache) for url, sha256 in pin.packages]
     dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -79,4 +80,5 @@ def fetch_sysroot(pin: SysrootPin, cache: Path) -> Path:
                 raise SysrootError(f"{dest} is incomplete; delete it") from exc
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+    hold(dest)
     return dest

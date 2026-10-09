@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from fsbpyr.boot._fsbpyr_rt import gc
 from fsbpyr.cli import main
 from fsbpyr.payload.format import NATIVE_KINDS, Codec
 from fsbpyr.payload.reader import Executable
@@ -146,7 +147,9 @@ def test_concurrent_first_runs_all_succeed(heavy: Path, tmp_path: Path) -> None:
 
     assert all(code == 0 for _, code in results), [err for (_, err), _ in results][:3]
     assert {out.strip() for (out, _), _ in results} == {EXPECTED["np"]}
-    assert not [p for p in cache.rglob(".*")]  # no temporary files left behind
+    ours = (gc.MARKER, gc.LOCK, gc.SCRATCH)  # the cache's marker, the tree's lock and scratch
+    assert not [p for p in cache.rglob(".*") if p.name not in ours]
+    assert not list(cache.rglob(f"{gc.SCRATCH}/*"))  # no temporary files left behind
 
 
 def test_damaged_cached_extension_is_repaired(heavy: Path, tmp_path: Path) -> None:

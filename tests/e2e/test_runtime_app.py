@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.assemble import App, build_executable
+from fsbpyr.boot._fsbpyr_rt import gc
 from fsbpyr.payload.format import (
     BLOB,
     DIGEST_LEAF,
@@ -211,7 +212,8 @@ def test_a_file_size_limit_fails_an_extraction_and_ends_nothing(
                             preexec_fn=limit)  # fmt: skip
 
     assert (result.returncode, result.stdout) == (0, "failed 27\n"), result.stderr  # EFBIG
-    assert not [p for p in (tmp_path / "cache").rglob("*") if p.is_file()]  # nothing left
+    left = [p.name for p in (tmp_path / "cache").rglob("*") if p.is_file()]
+    assert sorted(left) == [gc.MARKER, gc.LOCK]  # nothing but the cache's marker, the tree's lock
 
 
 @pytest.mark.sanitized

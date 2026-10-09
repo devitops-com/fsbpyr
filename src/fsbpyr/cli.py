@@ -1,6 +1,9 @@
-"""Command-line entry point: ``fsbpyr build``, ``inspect`` and ``runtime build|list``."""
+"""Command-line entry point: ``fsbpyr build``, ``inspect``, ``runtime build|list`` and
+``cache gc``."""
 
 import argparse
+import errno
+import functools
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -43,6 +46,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     build.add_argument("--clang", type=Path, help="clang to use (default: search PATH)")
     actions.add_parser("list", help="list runtimes in the cache")
+    cache = commands.add_parser("cache", help="manage fsbpyr's caches")
+    cache_actions = cache.add_subparsers(dest="action", required=True)
+    cache_actions.add_parser("gc", help="remove what nothing uses any more: from the tool's cache "
+                             "and every app cache (D38)")  # fmt: skip
     return parser
 
 
@@ -161,9 +168,52 @@ def _runtime(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cache(args: argparse.Namespace) -> int:
+    """``fsbpyr cache gc``: the tool's cache, then every app cache found (D38); 1 if anything
+    could not be removed."""
+    from .boot._fsbpyr_rt import gc  # noqa: PLC0415  keep --version fast
+    from .runtime import collect, registry  # noqa: PLC0415
+
+    del args  # one action
+    tool = registry.cache_root()
+    runs = [(tool, functools.partial(collect.collect_tool, tool))]
+    runs += [(root, functools.partial(gc.collect, str(root))) for root in collect.app_caches()]
+    failed = False
+    for root, run in runs:
+        try:
+            report = run()
+        except OSError as exc:  # the root itself: the next one is collected all the same
+            print(f"fsbpyr: collecting {root} failed: {exc}", file=sys.stderr)
+            failed = True
+            continue
+        print(report.text())
+        failed |= bool(report.errors)
+    return 1 if failed else 0
+
+
+def _collect_when_due() -> None:
+    """The tool's cache, collected at a command's start once a day (D38); a failure is reported
+    and never stops the command."""
+    from .runtime import collect, registry  # noqa: PLC0415  keep --version fast
+
+    try:
+        collect.collect_when_due(registry.cache_root())
+    except RuntimeError:
+        pass  # no home directory: no cache to collect
+    except PermissionError:
+        pass  # a cache we may not write (read-only, or not ours): not ours to collect
+    except OSError as exc:
+        if exc.errno != errno.EROFS:
+            print(f"fsbpyr: collecting the cache failed: {exc}", file=sys.stderr)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
+    if args.command in ("build", "inspect", "runtime"):
+        _collect_when_due()
+    if args.command == "cache":
+        return _cache(args)
     if args.command == "build":
         return _build(args)
     if args.command == "inspect":

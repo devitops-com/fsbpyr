@@ -124,6 +124,7 @@ def test_fetch_verifies_extracts_once_and_reuses(tmp_path: Path) -> None:
 
     assert root == cache / "sysroots" / pin.identity
     assert (root / "usr/include/stdio.h").read_bytes() == b"/* stdio */"
+    assert (root / ".lock").is_file() and (cache / ".fsbpyr-cache").is_file()  # held (D38)
     (cache / "downloads" / "libc6-dev.deb").unlink()  # not needed any more
     assert fetch_sysroot(pin, cache) == root
 
