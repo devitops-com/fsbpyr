@@ -867,8 +867,28 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
 ### Phase 8 — Hardening (M)
 
 - Bounds checks across `_fsbpyr`, and declared-size checks before allocation.
-- A libFuzzer harness on trailer/header/table parsing, run clean for 1 h.
+- **Edge-case tests** (owner decision 2026-10-09), table-driven, against both the C launcher and
+  the Python reader, in every test run:
+  - empty and tiny files: 0 bytes, shorter than the 64-byte trailer, exactly the trailer,
+    `payload_size` 0 or exactly the header;
+  - sizes and offsets at 0, 1, each limit ±1 (1 GiB read whole, 1 TiB per blob, 1 MiB per
+    block, 4 MiB per piece), 2^63 and 2^64−1; offset + size that wraps; a table count whose
+    count × record size overflows; a string at the string table's last byte, without its NUL,
+    or 2^32−1 long;
+  - compressed data that lies: a zstd frame declaring another size than its record, a tiny xz
+    stream claiming gigabytes, 0, 1 or 2^32 pieces, a block member at its block's last byte;
+  - indices: NONE (0xFFFFFFFF), the table's count and count−1, a closure listing itself or
+    longer than the table;
+  - paths: empty, `.`, `..`, `a//b`, a trailing `/`, an embedded NUL, 4095/4096/4097 bytes, a
+    component of 255/256 bytes, 2048/2049 components.
+- **A libFuzzer harness** on trailer, header, table and record parsing, seeded with the
+  edge-case inputs above (the fuzzer mutates around them: boundary integers, lengths, magic
+  values), run clean for 10 minutes before each release.
 - An ASan/UBSan stub variant for the E2E suite.
+- **Bounded stack, by construction:** the launcher has no recursion over input and no stack
+  array sized by input; the launcher build adds `-Wvla` and a frame-size limit
+  (`-Wframe-larger-than`), so any input-sized stack use fails the build. Module code from the
+  payload is unmarshalled by CPython, whose nesting limit raises instead of overflowing.
 - Cache ownership and permission checks, `noexec` mount detection (`statvfs ST_NOEXEC`) with a
   clear message, generation GC.
 - GC also removes temporary files left by killed processes (`.fsbpyr-*` older than an hour),
@@ -883,7 +903,8 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
 - ~~`FSBPYR_VERIFY=1` also checks the payload digest (D11)~~: D31 checks the whole file on
   every start and re-hashes cached files in every process; `FSBPYR_VERIFY` is gone.
 - **Exit:**
-  - the fuzzer and sanitizers are clean
+  - the edge-case tests pass; the fuzzer (10 minutes) and the sanitizers are clean; the
+    launcher builds with `-Wvla` and the frame-size limit
   - security tests pass: path traversal in names, symlinked cache dirs, foreign-owned cache,
     a cache root below a directory others can write, truncated binary
   - a native file over 1 GiB builds and loads with bounded memory
