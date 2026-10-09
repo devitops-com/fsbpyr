@@ -289,6 +289,23 @@ helper threads. A standalone program checking the 12,139 files the same way, wit
 
 Mapping a large file still wins: its pages fault in on the hashing threads, in parallel.
 
+## Fast exit (evaluated, dropped)
+
+Ending a run by flushing stdout and stderr, running the `atexit` handlers and calling `os._exit`
+instead of letting the interpreter finalize (Phase 7; medians of 21 interleaved runs, 201 for the
+no-op app):
+
+| Run | Normal exit | Fast exit |
+|---|---|---|
+| torch app (0.9.1, zstd 9) | 1070 ms | 857 ms |
+| the same script in its venv | 1004 ms | 783 ms |
+| no-op app (0.9.1) | 9.4 ms | 8.3 ms |
+
+What it saves is the libraries' own teardown, as much in a venv as in an executable. What it
+skips: buffered files the app never closed lose their data, non-daemon threads are killed,
+`__del__` methods do not run. Dropped (D37): an exit that leaves debris for something else to
+clean up is not worth it.
+
 ## Known effects
 
 - **OpenBLAS on a hybrid CPU.** numpy's OpenBLAS starts one busy-waiting thread per core at

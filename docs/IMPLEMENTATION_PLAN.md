@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.13, 2026-10-07. Phases 0–6, 6b (except D23) and 6c are complete; uv is required (D26); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.14, 2026-10-09. Phases 0–7, 6b (except D23) and 6c are complete (Phase 7 reduced by D37); uv is required (D26); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -124,6 +124,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D34 | **torch is a built-in fs-package; cached files are written without fsync and checked in batches** (owner decisions 2026-10-09). torch 2.14 runs `bin/torch_shm_manager` and loads `lib/libtorch_global_deps.so` by paths next to its `__file__` as it is imported; it found them because `str(distribution("torch").locate_file("torch"))` made the resources tree extract the whole package, a second copy of its libraries included. As a built-in fs-package its tree is extracted once into the native cache, next to its libraries. Every process still hashes every cached file once before it first uses it (D31), now up to 256 mapped files per parallel pass (`_fsbpyr.tree_digests` on `fsb_tree_digests`, the leaves of all files in one `fsb_parallel`); an fsync per file bought nothing, since a file a crash left incomplete fails its check and is restored | A CPU-only torch app (torch 2.14.1, 12,151 files, cache on XFS): first run 42.5 s → 1.34 s, cache 1.2 GB → 709 MB, later runs 895 → 620 ms (venv about 465-500 ms; the checks took about 120 ms one file at a time, about 60 ms in batches). Without the fsync alone: 2.3 s | `locate_file` returning a directory's path inside the executable (torch then fails: its `torch_shm_manager` is not on disk); checking only code each run and data when written (owner: every file, in parallel) |
 | D35 | **The cache sync runs in the launcher** (owner decision 2026-10-09): `_fsbpyr.sync(root, chain, files, checked, resources)` (`cache.c`) checks every record first (an extractable kind, a path the payload reader would accept, a blob and a digest), then, without the GIL, opens and creates the directories below the root one component at a time (never through a symlink, ours, forced to 0700, only those along the current path kept open), checks each cached file (opened `O_NOFOLLOW\|O_NONBLOCK`, then a regular file of ours of the payload's size by `fstat`; up to 64 KiB read into a 16 MiB buffer, larger ones mapped; up to 1024 files per parallel pass), and restores a missing or different file (decoded, its digest checked, written under a temporary name, `fchmod`, renamed into place). Changed files are reported on stderr once it returns, in file order. `_fsbpyr.files_below` gives an fs-package's files as the one run of the sorted table they form. Python keeps where the cache is, the record of what this process checked (a bytearray per cache, one byte per file) and the messages. A sync decodes with a zstd context and a 4-block cache of its own (`fsb_decoder`; NULL names the process's, used with the GIL held), so nothing is shared and nothing locked: a lock held by a sync while another thread forks would stay held in the child (security review; a first lock-based version hung 39 of 40 forked children in a C test). A sync with nothing to check touches nothing; a restored file is always readable by its owner; running out of descriptors fails the sync instead of counting as a changed file, and a mapping that finds no address space left (`ulimit -v`) has the pass's files checked and unmapped first, then is tried again (follow-up review: 6 libraries of 64 MiB under a limit leaving 160 MiB failed before); a SIGINT is handled once the sync returns. `module.c` refuses to build for a free-threaded CPython (`read` shares the process's decoder under the GIL); an e2e test forks 40 times while a thread syncs, and a lock put back around decoding hangs the first child. The tests' stand-in mirrors `cache.c` in Python and the contract compares both: damaged, missing, replaced and unreadable files, symlinked, foreign and shared directories, corrupt records, descriptor limits, more files than a pass holds, syncs on threads while others read. `_fsbpyr.tree_digests` is gone (the cache check was its only user); the contract checks the launcher's digests at the leaf boundaries through `sync` instead. Blobs over 1 GiB are refused, as `_fsbpyr.read` refuses them (`FSB_MAX_MEMORY_BLOB`; a build never bundles one) | torch app (12,151 cached files), later runs: torch's import 615 → 538 ms (venv 470), the whole run 1363 → 1279 ms (venv 1208); first runs 1967 → 1908 ms. The check of the 12,151 files: 80 ms with every file mapped (256 per pass), 53.5 ms as released (the 12 native libraries, 476 MB: 16 ms; the 12,139 other files, 235 MB: 65 → 38 ms). Standalone on those 12,139 files: all mapped 58 ms (55 ms with 1024 per pass); read up to 64 KiB 34 ms (1024 per pass, no `fstatat`; 36 ms with 256, 38 ms with an `fstatat` before each open); read up to 1 MiB 46 ms; one helper thread per 4 MiB of data instead of per 4 leaves, all mapped: 70 ms (`docs/performance.md`) | The walk in Python with one C call per file (the per-file Python calls were the cost); module code (`_code`) in C: of its 85 ms under cProfile for torch's 904 modules, 73 ms are `marshal.loads` and `_fsbpyr.read`, which are C already |
 | D36 | **Checks read files, never map them; restored files are written in pieces of 1 MiB** (owner decision 2026-10-09; 0.9.1). The executable's check and the cache check hash a file through its descriptor: each of up to 8 threads reads its 1 MiB leaves through a 64 KiB buffer of its own (`fsb_parallel` passes the worker's number), so a file's size never counts in the process's resident memory, as it did while the file was mapped; a leaf that cannot be read whole gets a digest that cannot match, so a file that shrinks while it is hashed fails its check instead of ending the process with SIGBUS. The cache check holds at most 64 files over 64 KiB open per pass; out of descriptors or memory while it holds some (opening a file or its directories), the pass is checked first and the step tried once more (this replaces D35's address-space retry: nothing is mapped; the security review found the directories missing at first). A read error in the executable's own check says it cannot read the file, not that it was modified; a cached file that cannot be read is restored like a changed one. A restored file is written in pieces of at most 1 MiB: written whole, torch's 438 MB libtorch_cpu.so stayed in XFS's page cache as 2 MiB folios, which the dynamic loader maps whole | torch app (zstd 9, later runs, 21 runs of each interleaved; Core Ultra 9 285, Linux 6.12, cache on XFS): peak RSS 577 → 349 MB (venv 314); by phase 226 → 14 MB once the executable is checked, 576 → 241 MB during the import (the cache check), 450 → 348 MB in the training loop, where libtorch_cpu.so holds 60 MB instead of 156 MB, as in the venv; whole run 1067 → 1071 ms, import 467 → 473 ms. The executable's check: the no-op app's 27.6 MB 1.82 → 1.93 ms (201 runs), the torch app's 233 MB 14.8 → 13.9 ms. Whole 1 MiB leaves read into a buffer per thread cost the no-op start more and left glibc 8 MB more heap (code review): 64 KiB pieces instead. The library written in 4 MiB pieces stayed at 156 MB; in 1 MiB, 256 KiB or 64 KiB pieces it took 60 MB. The executable's own pages, 42 MB against `python3.14`'s 11 MB, remain (`docs/performance.md`) | Capping the bytes mapped per pass (the peak stays at the largest file, 438 MB here); dropping a written file from the page cache (`posix_fadvise` leaves dirty pages, and the next run would read it from disk) |
+| D37 | **No more millisecond tuning; comparisons with other tools come last** (owner decision 2026-10-09). Phase 7 ends with what it has: the compression work (D29, D30, D33), the checks and the cache in the launcher (D31, D32, D35, D36), and `docs/performance.md` as the report (every release's measurements, how they were taken, where to look when a start gets slower). Regressions are caught by exact counts, not timings: the e2e tests read `FSBPYR_TRACE` (modules loaded per distribution, files extracted) and the contract the cache sync's outcomes; the one timing test stays the startup budget (1.2× bare CPython, the integrity check apart). Dropped: the benchmark harness, the 10% timing gate, the §8 speed targets, grouped frames for tiny modules, and an opt-in fast exit (it saves the libraries' teardown, about 215 ms for torch, but leaves unflushed files, killed threads and unrun finalizers behind). Comparisons with other tools (PyInstaller, a Rust and a Go CLI) move to Phase 10: there is no point in comparing unfinished work | The results are solid; a few milliseconds here or there are not worth the work, and a timing gate mostly catches noise | The §8 harness, targets and CI gate as planned |
 
 ---
 
@@ -419,12 +420,12 @@ tests/
   unit/ integration/ e2e/
   support/                  pure-Python _fsbpyr stand-in, contract battery, demo app, probe
   fixtures/projects/        hello, clicky, heavy, resources, nspkg, mp
-benchmarks/                 harness + baselines JSON
 docs/
   python_cli_runtime_manifest.pdf
   IMPLEMENTATION_PLAN.md    (this file)
   format.md                 (Phase 1)
   spikes.md                 (Phase 0 findings)
+  performance.md            measurements per release: the Phase 7 report (D37)
 ```
 
 ---
@@ -842,7 +843,7 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
     reporting sysroot errors; the glibc warning measured against the 2.28 baseline (the
     manylinux_2_28 cryptography wheel no longer warns); `GLIBC_ABI_DT_RELR` counted as 2.36
 
-### Phase 7 — Compression profiles and benchmarks (M)
+### Phase 7 — Compression and measurements (M) — **DONE 2026-10-09** (reduced by D37)
 
 - **Progress (2026-10-08):** D29 replaces the profiles: level 9 by default, `--fast-compression`
   (or `fast-compression = true`) for level 3. aiagent: 167.7 MB → 157.4 MB (140.0 MB with
@@ -850,19 +851,32 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
   aiagent 157.4 → 149.6 MB. Measured and set aside: a zstd dictionary (blocks gain more), and a
   two-stage stub (D29). xz -6 with the x86 filter for native files (aiagent's 162 MB: 48.7 →
   38.0 MB; decoding 1.0 s on one thread, 0.23 s on 8) becomes the opt-in `--best-compression`
-  (0.8.0, D33); zstd 9 stays the default. Then the benchmark harness and report. D31 (0.6.0): every
+  (0.8.0, D33); zstd 9 stays the default. D31 (0.6.0): every
   executable checks its whole file before it starts (format v3). D32 (0.7.0): extracted files
   use the same digest and routine (format v4). D35 (0.9.0): the launcher walks, checks and
   restores cached files itself (a torch app's later runs 615 → 538 ms). D36 (0.9.1): the checks read files instead of
-  mapping them (the torch app's peak RSS 577 → 349 MB). Startup timings so far are recorded in
-  `docs/performance.md`, the start of the benchmark report.
+  mapping them (the torch app's peak RSS 577 → 349 MB). Timings are recorded in
+  `docs/performance.md`, the phase's report (D37).
 
-- ~~`fast` / `balanced` / `compact` (manifest §10)~~ replaced by D29. Grouped frames for tiny
-  modules if measurement shows a gain. Optional zstd dictionary, kept only if measured as a gain.
-- Benchmark harness (§8) and CI regression gate.
-- Evaluate an opt-in "fast exit" (flush stdio, run atexit, then `_exit`). S2 measured
-  interpreter finalization at about 0.83 ms of a 4.8 ms run.
-- **Exit:** a report is committed in `benchmarks/README.md` and the targets in §8 are met.
+- ~~`fast` / `balanced` / `compact` (manifest §10)~~ replaced by D29. ~~Grouped frames for tiny
+  modules; a zstd dictionary~~: dropped (D37; the dictionary was measured and set aside).
+- ~~Benchmark harness (§8) and CI regression gate~~: dropped (D37). Regressions are caught by
+  exact counts: `tests/e2e/test_natives.py` reads `FSBPYR_TRACE` (`--help` loads no module of
+  the heavy distributions and extracts nothing; a first run extracts only the closure it needs;
+  a later run extracts nothing), `tests/e2e/test_imports.py` checks that startup imports only
+  built-in, frozen and startup modules and compares the cache sync's outcomes; the timing test
+  that stays is the startup budget (`test_startup_is_within_budget_of_bare_cpython`).
+- The report is `docs/performance.md`.
+- **Fast exit, evaluated (2026-10-09):** flushing stdout and stderr, running the `atexit`
+  handlers, then `os._exit` (21 runs of each, interleaved; 201 for the no-op app): the torch app
+  1070 → 857 ms, the same script in its venv 1004 → 783 ms, the no-op app 9.4 → 8.3 ms. What it
+  saves is the libraries' own teardown, the same in a venv, not fsbpyr's overhead. What it
+  skips: files the app opened and never closed lose their buffered data, non-daemon threads are
+  killed, `__del__` methods do not run. **Dropped** (owner decision 2026-10-09): an exit that
+  leaves debris for something else to clean up is not worth it.
+- **Exit (D37):** the compression work is released; `docs/performance.md` records each
+  release's measurements; the count-based tests and the startup budget pass; fast exit is
+  evaluated and dropped. **DONE 2026-10-09.**
 
 ### Phase 8 — Hardening (M)
 
@@ -918,6 +932,15 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
 - Then Linux aarch64, macOS (payload in a Mach-O segment so codesign works) and Windows
   (PE resource or overlay, explicit DLL search directories).
 
+### Phase 10 — Comparisons with other tools (M, last; D37)
+
+Once the work is finished, compare the same apps built and run other ways: bare
+`python3.14 -I -S -c pass`, the app from its venv, PyInstaller onefile, a Rust CLI
+(`rg --version`) and a Go CLI. Size, build time, first run, later runs, peak memory and the
+cache on disk, measured as in `docs/performance.md` (medians of interleaved runs, warm page
+cache, and cold where it matters). **Exit:** the comparison is committed in
+`docs/performance.md`.
+
 ---
 
 ## 7. Test strategy
@@ -947,25 +970,18 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
 
 ## 8. Benchmarks (manifest §13)
 
-- **Harness:** `benchmarks/run.py` launches through `posix_spawn` and measures wall time,
-  user+sys CPU, max RSS and minor/major faults (`getrusage(RUSAGE_CHILDREN)`), plus the
-  `FSBPYR_TRACE` counters (bytes read and decompressed, frames, natives loaded). Cold-cache runs
-  use `posix_fadvise(DONTNEED)` on the binary and the cache files, which needs no root.
-- **Comparisons:**
-  - `python3.14 -I -S -c pass`
-  - the same app run from its venv
-  - PyInstaller onefile
-  - a Rust CLI (`rg --version`) and a Go CLI
-- **Targets on the dev machine, p50 warm:**
+Reduced by D37 (owner decision 2026-10-09): no harness, timing gate or speed targets.
 
-  | Scenario | Target |
-  |----------|--------|
-  | `hello --version` | ≤ 1.2× bare CPython plus the integrity check (was ≤ 5.6 ms before D31) |
-  | `heavy --help` vs. the same app without the optional heavy deps | Δ ≤ 0.3 ms CPU, 0 bytes decompressed from the unused dists |
-  | first native import | dominated by decompress + write; reported, no target |
-  | subsequent native import | within 10% of the same import from a venv |
-
-- **CI gate:** fail when p50 regresses by more than 10% against the committed baseline JSON.
+- **Measurements:** `docs/performance.md` records each release that changes the launcher, the
+  payload format or the boot code: how runs are measured (medians of interleaved runs, warm page
+  cache), startup against bare CPython, the integrity check, the cache check, apps with heavy
+  native dependencies (numpy, onnxruntime, torch) against their venv, memory, and where to look
+  when a start gets slower.
+- **Regression guards:** exact counts from `FSBPYR_TRACE` in the e2e tests (modules loaded per
+  distribution, files extracted), the cache sync's outcomes in the contract, and one timing
+  test: everything but the integrity check within 1.2× bare CPython.
+- **Comparisons with other tools** (PyInstaller onefile, a Rust and a Go CLI): Phase 10, once
+  the work is finished.
 
 ## 9. CLI and config (v1)
 
