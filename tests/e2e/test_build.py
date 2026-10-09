@@ -16,7 +16,7 @@ import pytest
 
 from fsbpyr.cli import main
 from fsbpyr.payload.reader import Executable
-from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob
+from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob, stored_bytes
 from fsbpyr.runtime.registry import Runtime
 from fsbpyr.vcs import git_state, own_version, version_string
 
@@ -122,7 +122,7 @@ def test_stdlib_frames_are_level_9_and_fast_builds_record_level_3(
 ) -> None:
     code = next(m.code for m in runtime.modules if m.name == "argparse")
     assert code is not None
-    assert Blob.code(zstd.decompress(code.stored), level=ZSTD_LEVEL) == code
+    assert Blob.code(zstd.decompress(stored_bytes(code.stored)), level=ZSTD_LEVEL) == code
     project = _fixture("hello", tmp_path)
 
     assert main(["build", str(project), "--fast-compression", "--no-smoke"]) == 0

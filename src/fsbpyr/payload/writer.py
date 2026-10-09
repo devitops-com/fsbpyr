@@ -1,11 +1,14 @@
 """Deterministic payload encoder and executable assembler (docs/format.md)."""
 
+import hashlib
+import io
 import os
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from compression import zstd
 from enum import IntEnum
 from pathlib import Path
+from typing import BinaryIO
 
 from .format import (
     BLOB,
@@ -29,6 +32,7 @@ from .format import (
     TABLE_ALIGN,
     TRAILER,
     TRAILER_MAGIC,
+    TRAILER_SIZE,
     WORD,
     Codec,
     FileKind,
@@ -42,9 +46,21 @@ from .format import (
     check_path,
     encode_text,
     extractable,
+    file_digest,
     tree_digest,
 )
-from .spec import Blob, Dist, File, Module, PayloadSpec
+from .spec import (
+    EXTENT_PIECE,
+    Blob,
+    Dist,
+    Extent,
+    File,
+    Module,
+    PayloadSpec,
+    Stored,
+    stored_bytes,
+    stored_size,
+)
 
 
 class _Placement(IntEnum):
@@ -68,10 +84,19 @@ _FILE_PLACEMENT = {
 _BlobKey = tuple[bytes, int, Codec]
 
 
+def _identity(stored: Stored) -> bytes:
+    """What stands for stored bytes in a key: the bytes in memory, or an Extent's identity,
+    each tagged so that neither can be taken for the other."""
+    return b"\1" + stored.identity if isinstance(stored, Extent) else b"\0" + stored
+
+
 def _blob_key(blob: Blob) -> _BlobKey:
     if blob.codec is Codec.PIECES:  # its streams are its identity
-        return b"".join(piece.stored for piece in blob.pieces), blob.size, blob.codec
-    return blob.stored, blob.size, blob.codec
+        streams = hashlib.sha256()
+        for piece in blob.pieces:
+            streams.update(hashlib.sha256(_identity(piece.stored)).digest())
+        return streams.digest(), blob.size, blob.codec
+    return _identity(blob.stored), blob.size, blob.codec
 
 
 class _Strings:
@@ -90,13 +115,14 @@ class _Strings:
         return offset, len(encoded)
 
 
-def _content(key: _BlobKey) -> bytes:
-    stored, size, codec = key
+def _content(blob: Blob) -> bytes:
+    """The content of a block member (at most BLOCK_MEMBER_MAX bytes): raw or one zstd frame."""
+    stored = stored_bytes(blob.stored)
     try:
-        content = stored if codec is Codec.NONE else zstd.decompress(stored)
+        content = stored if blob.codec is Codec.NONE else zstd.decompress(stored)
     except zstd.ZstdError as exc:
         raise PayloadError(f"blob is not a valid zstd frame: {exc}") from None
-    if len(content) != size:
+    if len(content) != blob.size:
         raise PayloadError("blob content does not match its size")
     return content
 
@@ -106,18 +132,60 @@ def _packable(placement: _Placement, size: int) -> bool:
     return placement is not _Placement.NATIVE and 0 < size < BLOCK_MEMBER_MAX
 
 
+class _Sink:
+    """The payload's bytes go into ``out`` (a seekable binary file) from offset ``base`` on, each
+    write at its place; pieces of zeros are not written, so a file of runs of zeros is sparse
+    (D38). Nothing of a blob's data stays in memory."""
+
+    def __init__(self, out: BinaryIO, base: int) -> None:
+        self.out, self.base, self.end = out, base, 0  # end: of what was written
+
+    def write(self, offset: int, data: bytes) -> None:
+        self.out.seek(self.base + offset)
+        self.out.write(data)
+        self.end = max(self.end, offset + len(data))
+
+    def write_stored(self, offset: int, stored: Stored) -> None:
+        """Whole pieces of zeros are not written: holes are a piece or more, inside a blob of a
+        piece or more (the launcher reads such blobs from the file, not its mapping). An
+        Extent's bytes are checked against its identity as they are copied: a file that changed
+        since it was classified fails the build (OSError)."""
+        leaves = stored.leaves() if isinstance(stored, Extent) else _leaves(stored)
+        for piece, hole in leaves:
+            if not hole and piece != _ZEROS:
+                self.write(offset, piece)
+            offset += len(piece)
+
+    def finish(self, size: int) -> None:
+        """The payload is ``size`` bytes, its last ones possibly a hole."""
+        if self.end < size:
+            self.write(size - 1, b"\0")
+
+
+_ZEROS = bytes(EXTENT_PIECE)
+
+
+def _leaves(data: bytes) -> Iterator[tuple[bytes, bool]]:
+    with memoryview(data) as view:
+        for start in range(0, len(data), EXTENT_PIECE):
+            yield bytes(view[start : start + EXTENT_PIECE]), False
+
+
 class _Blobs:
     """Deduplicates blobs, assigns indices in placement order, and packs small blobs into
     blocks: one stream of blocks per placement class (startup code, code, resources, sources),
     filled in blob order, so a package's modules share blocks and an import never decompresses
     sources. Block records follow the blob records, and the records of the pieces of large xz
-    libraries (D33) follow them; a library's pieces lie where its data would."""
+    libraries (D33) follow them; a library's pieces lie where its data would. Only identities
+    and sizes are held: a block's content is gathered from its members as it is written."""
 
     def __init__(
         self, modules: Iterable[Module], files: Iterable[File], *, blocks: bool, level: int
     ) -> None:
         self._blocks_on = blocks
+        self._level = level
         self._by_content: dict[_BlobKey, _BlobKey] = {}
+        self._blob: dict[_BlobKey, Blob] = {}  # a blob of each key: where its bytes are
         rank: dict[_BlobKey, tuple[_Placement, bytes]] = {}
         digests: dict[_BlobKey, bytes] = {}
         self.pieces: dict[_BlobKey, tuple[Blob, ...]] = {}
@@ -126,6 +194,7 @@ class _Blobs:
             if blob is None:
                 return
             key = self.key(blob, placement)
+            self._blob.setdefault(key, blob)
             if blob.pieces:
                 self.pieces[key] = blob.pieces
             candidate = (placement, ref.encode())
@@ -143,9 +212,9 @@ class _Blobs:
         self.digests = [digests[k] for k in self.order if k in digests]
         self.digest_index = {k: i for i, k in enumerate(k for k in self.order if k in digests)}
         self.members: dict[_BlobKey, tuple[int, int]] = {}  # key -> (block number, position)
-        self.blocks: list[Blob] = []
+        self.blocks: list[list[_BlobKey]] = []  # the members of each block, in order
         if blocks:
-            self._pack({key: rank[key][0] for key in self.order}, level)
+            self._pack({key: rank[key][0] for key in self.order})
 
     def key(self, blob: Blob, placement: _Placement) -> _BlobKey:
         """Blobs bound for blocks are keyed by content: the same content raw or as a zstd frame
@@ -156,28 +225,27 @@ class _Blobs:
         if not (self._blocks_on and _packable(placement, blob.size)):
             return original
         if original not in self._by_content:
-            self._by_content[original] = (_content(original), blob.size, Codec.BLOCK)
+            content = hashlib.sha256(_content(blob)).digest()
+            self._by_content[original] = (content, blob.size, Codec.BLOCK)
         return self._by_content[original]
 
-    def _pack(self, placements: dict[_BlobKey, _Placement], level: int) -> None:
-        current, stream = bytearray(), None
-
-        def flush() -> None:
-            if current:
-                self.blocks.append(Blob.zstd(bytes(current), level=level, allow_raw=False))
-                current.clear()
-
+    def _pack(self, placements: dict[_BlobKey, _Placement]) -> None:
+        filled, stream = 0, None
         for key in self.order:
             placement = placements[key]
             if not _packable(placement, key[1]):
                 continue
             limit = CODE_BLOCK_SIZE if placement <= _Placement.CODE else BLOCK_SIZE
-            if placement is not stream or len(current) + key[1] > limit:
-                flush()
-                stream = placement
-            self.members[key] = (len(self.blocks), len(current))
-            current += key[0]  # keyed by content (key())
-        flush()
+            if placement is not stream or filled + key[1] > limit or not self.blocks:
+                self.blocks.append([])
+                filled, stream = 0, placement
+            self.members[key] = (len(self.blocks) - 1, filled)
+            self.blocks[-1].append(key)
+            filled += key[1]
+
+    def _block(self, number: int) -> Blob:
+        content = b"".join(_content(self._blob[key]) for key in self.blocks[number])
+        return Blob.zstd(content, level=self._level, allow_raw=False)
 
     @property
     def count(self) -> int:
@@ -186,21 +254,23 @@ class _Blobs:
     def ref(self, blob: Blob | None, placement: _Placement) -> int:
         return NONE if blob is None else self.index[self.key(blob, placement)]
 
-    def rows(self, data_start: int) -> tuple[list[bytes], bytearray]:
-        """BLOBS records and the blob data area: data in blob order, each block where its first
-        member would be."""
-        data = bytearray()
+    def write(self, sink: _Sink, data_start: int) -> tuple[list[bytes], int]:
+        """Write the blob data area into ``sink``: data in blob order, each block where its
+        first member would be. The BLOBS records, and where the data ends."""
+        end = data_start
         rows: list[bytes] = [b""] * self.count
         first_block = len(self.order)
         next_piece = first_block + len(self.blocks)
 
-        def place(stored: bytes) -> int:
-            data.extend(bytes(align(len(data), BLOB_ALIGN) - len(data)))
-            data.extend(stored)
-            return data_start + len(data) - len(stored)
+        def place(stored: Stored) -> int:
+            nonlocal end
+            at = align(end, BLOB_ALIGN)
+            sink.write_stored(at, stored)
+            end = at + stored_size(stored)
+            return at
 
         for key in self.order:
-            stored, size, codec = key
+            _, size, codec = key
             digest = self.digest_index.get(key, NONE)
             member = self.members.get(key)
             if codec is Codec.PIECES:  # the first piece's index and the number of pieces
@@ -208,23 +278,25 @@ class _Blobs:
                 rows[self.index[key]] = BLOB.pack(next_piece, len(pieces), size, codec, 0, 0,
                                                   digest)  # fmt: skip
                 for piece in pieces:
-                    rows[next_piece] = BLOB.pack(place(piece.stored), len(piece.stored),
+                    rows[next_piece] = BLOB.pack(place(piece.stored), stored_size(piece.stored),
                                                  piece.size, Codec.XZ, 0, 0, NONE)  # fmt: skip
                     next_piece += 1
                 continue
             if member is None:
-                rows[self.index[key]] = BLOB.pack(place(stored), len(stored), size, codec, 0, 0,
-                                                  digest)  # fmt: skip
+                stored = self._blob[key].stored
+                rows[self.index[key]] = BLOB.pack(place(stored), stored_size(stored), size, codec,
+                                                  0, 0, digest)  # fmt: skip
                 continue
             number, position = member
             if not rows[first_block + number]:
-                block = self.blocks[number]
+                block = self._block(number)
                 rows[first_block + number] = BLOB.pack(
-                    place(block.stored), len(block.stored), block.size, Codec.ZSTD, 0, 0, NONE
-                )
+                    place(block.stored), stored_size(block.stored), block.size, Codec.ZSTD, 0, 0,
+                    NONE
+                )  # fmt: skip
             rows[self.index[key]] = BLOB.pack(first_block + number, position, size, Codec.BLOCK,
                                               0, 0, digest)  # fmt: skip
-        return rows, data
+        return rows, end
 
 
 def _code_placement(module: Module) -> _Placement:
@@ -342,8 +414,10 @@ def _by_key[T](items: Iterable[T], key: str) -> list[T]:
     return sorted(items, key=lambda item: str(getattr(item, key)).encode())
 
 
-def encode_payload(spec: PayloadSpec) -> bytes:
-    """Encode a spec into payload bytes; identical specs always give identical bytes."""
+def write_payload(spec: PayloadSpec, out: BinaryIO, base: int = 0) -> int:
+    """Write the payload of ``spec`` into ``out`` (seekable) from offset ``base`` on: the blob
+    data streamed after the space its tables take, then the header and the tables (D38). Its
+    size; identical specs always give identical bytes."""
     _validate(spec)
     modules = _by_key(spec.modules, "name")
     files = _by_key(spec.files, "path")
@@ -397,7 +471,7 @@ def encode_payload(spec: PayloadSpec) -> bytes:
     ]
     sections = {
         Section.STRTAB: (bytes(strings.data), len(strings.data)),
-        Section.BLOBS: (b"", blobs.count),  # filled once data offsets are known
+        Section.BLOBS: (b"", blobs.count),  # written once the data's offsets are known
         Section.MODULES: (b"".join(module_rows), len(module_rows)),
         Section.FILES: (b"".join(file_rows), len(file_rows)),
         Section.DISTS: (b"".join(dist_rows), len(dist_rows)),
@@ -405,7 +479,7 @@ def encode_payload(spec: PayloadSpec) -> bytes:
         Section.DIGESTS: (b"".join(blobs.digests), len(blobs.digests)),
         Section.STARTUP: (b"".join(WORD.pack(i) for i in startup), len(startup)),
     }
-    return _layout(spec, header_strings, sections, blobs)
+    return _layout(spec, header_strings, sections, blobs, _Sink(out, base))
 
 
 def _layout(
@@ -413,7 +487,8 @@ def _layout(
     header_strings: list[tuple[int, int]],
     sections: dict[Section, tuple[bytes, int]],
     blobs: _Blobs,
-) -> bytes:
+    sink: _Sink,
+) -> int:
     cursor = HEADER_SIZE
     offsets: dict[Section, int] = {}
     for section in Section:
@@ -423,12 +498,12 @@ def _layout(
         else:
             cursor += len(sections[section][0])
     data_start = align(cursor, BLOB_ALIGN)
-    rows, data = blobs.rows(data_start)
+    rows, end = blobs.write(sink, data_start)
     sections[Section.BLOBS] = (b"".join(rows), len(rows))
-    out = bytearray(data_start)
+    head = bytearray(data_start)
     section_fields = [v for s in Section for v in (offsets[s], sections[s][1])]
     HEADER.pack_into(
-        out,
+        head,
         0,
         HEADER_MAGIC,
         FORMAT_VERSION,
@@ -441,8 +516,17 @@ def _layout(
     )
     for section in Section:
         body = sections[section][0]
-        out[offsets[section] : offsets[section] + len(body)] = body
-    return bytes(out + data)
+        head[offsets[section] : offsets[section] + len(body)] = body
+    sink.write(0, bytes(head))
+    sink.finish(end)
+    return end
+
+
+def encode_payload(spec: PayloadSpec) -> bytes:
+    """The payload of ``spec`` in memory (for specs whose blobs it can hold)."""
+    out = io.BytesIO()
+    size = write_payload(spec, out)
+    return out.getvalue()[:size]
 
 
 def assemble(stub: bytes, payload: bytes) -> bytes:
@@ -456,12 +540,24 @@ def assemble(stub: bytes, payload: bytes) -> bytes:
     return image + tree_digest(image)
 
 
-def write_executable(path: Path, stub: bytes, payload: bytes) -> None:
-    """Atomically write the assembled executable to ``path`` with mode 0755."""
+def write_executable(path: Path, stub: bytes, spec: PayloadSpec) -> None:
+    """Atomically write the executable of ``spec`` to ``path`` with mode 0755, as ``assemble``
+    lays it out: the payload streamed into the file, the digest then read back from it (D38)."""
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "wb") as out:
-            out.write(assemble(stub, payload))
+        with os.fdopen(fd, "w+b") as out:
+            out.write(stub)
+            offset = align(len(stub), PAGE_SIZE)
+            size = write_payload(spec, out, offset)
+            trailer = TRAILER.pack(TRAILER_MAGIC, FORMAT_VERSION, 0, offset, size,
+                                   bytes(DIGEST_SIZE))  # fmt: skip
+            out.seek(offset + size)
+            out.write(trailer[:-DIGEST_SIZE])
+            out.flush()
+            hashed = offset + size + TRAILER_SIZE - DIGEST_SIZE
+            digest = file_digest(out.fileno(), hashed)
+            out.seek(hashed)  # file_digest moved the descriptor's offset
+            out.write(digest)
             out.flush()
             os.fchmod(out.fileno(), 0o755)
             os.fsync(out.fileno())

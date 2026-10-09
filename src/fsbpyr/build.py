@@ -15,6 +15,7 @@ from .closure import SiteIndex, resolve_entry
 from .config import BuildConfig
 from .elf import ElfError, glibc_requirement
 from .payload.spec import XZ_PRESET
+from .payload.spill import Spill
 from .project import LockSource, Project
 from .runtime import pins
 from .runtime.registry import Runtime, select_runtime
@@ -111,6 +112,8 @@ def build(
     if source is LockSource.UNLOCKED:
         warnings.append("unlocked build: dependencies resolved now, not reproducible")
     log(f"staging {project.name or project.directory.name} from {source.value}")
+    # the staged files and the spill live until the executable is written: files too large to
+    # hold are streamed from them (D38)
     with tempfile.TemporaryDirectory(prefix="fsbpyr-stage-") as tmp:
         baseline = pins.sysroot_for(runtime.tag.partition("-")[2])  # the stub's glibc (D25)
         options = StagingOptions(TARGET_PYTHON, config.extras, config.offline, config.requirements,
@@ -123,51 +126,55 @@ def build(
         dist = index.project(name=name, directory=project.directory)
         walk = index.walk(dist, extras=config.extras, python_version=runtime.python_version)
         app_name, entrypoint = resolve_entry(dist, config.entry)
+        output = (config.output or project.directory / "dist" / app_name).resolve()
+        check_output(output)
+        output.parent.mkdir(parents=True, exist_ok=True)
         log(f"collecting {len(index.dists)} distributions")
         level = config.zstd_level
-        content = classify(
-            list(index.dists.values()),
-            extension_suffixes=runtime.extension_suffixes,
-            include_source=config.include_source,
-            allowed_system_libs=frozenset(config.allowed_system_libs),
-            fs_packages=frozenset(config.fs_packages),
-            hints=config.hints,
-            level=level,
-            xz_natives=config.best_compression,
-        )
-    warnings += walk.warnings
-    if walk.unreachable:
-        warnings.append(
-            f"packaged although not required by {dist.name}: {', '.join(walk.unreachable)} "
-            "(they come from the lock or requirements file)"
-        )
-    warnings += content.warnings
-    glibc, glibc_warnings = glibc_report(runtime.stub, content.glibc, baseline=baseline.baseline)
-    warnings += glibc_warnings
-    app = App(
-        app_name,
-        entrypoint,
-        modules=content.modules,
-        files=content.files,
-        dists=content.dists,
-        build_info=(
-            ("project", {"name": dist.name, "version": dist.version}),
-            ("fsbpyr_version", own_version()),  # with the commit (fsbpyr inspect)
-            ("lock", source.value),
-            ("dists", sorted(f"{d.name}=={d.version}" for d in content.dists)),
-            ("glibc", glibc),
-            ("zstd_level", level),  # of the app's content and of every block
-            ("native_compression", f"xz -{XZ_PRESET}" if config.best_compression else "zstd"),
-            ("git", git_state(project.directory, warn=warnings.append)),
-        ),
-        zstd_level=level,
-    )
-    _check_entry_module(entrypoint, app, runtime)
-    output = (config.output or project.directory / "dist" / app_name).resolve()
-    check_output(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    log(f"writing {output}")
-    build_executable(runtime, app, output)
+        with Spill(output.parent) as spill:
+            content = classify(
+                list(index.dists.values()),
+                extension_suffixes=runtime.extension_suffixes,
+                include_source=config.include_source,
+                allowed_system_libs=frozenset(config.allowed_system_libs),
+                fs_packages=frozenset(config.fs_packages),
+                hints=config.hints,
+                level=level,
+                xz_natives=config.best_compression,
+                spill=spill,
+            )
+            warnings += walk.warnings
+            if walk.unreachable:
+                warnings.append(
+                    f"packaged although not required by {dist.name}: "
+                    f"{', '.join(walk.unreachable)} (they come from the lock or requirements file)"
+                )
+            warnings += content.warnings
+            glibc, glibc_warnings = glibc_report(runtime.stub, content.glibc,
+                                                 baseline=baseline.baseline)  # fmt: skip
+            warnings += glibc_warnings
+            natives = f"xz -{XZ_PRESET}" if config.best_compression else "zstd"
+            app = App(
+                app_name,
+                entrypoint,
+                modules=content.modules,
+                files=content.files,
+                dists=content.dists,
+                build_info=(
+                    ("project", {"name": dist.name, "version": dist.version}),
+                    ("fsbpyr_version", own_version()),  # with the commit (fsbpyr inspect)
+                    ("lock", source.value),
+                    ("dists", sorted(f"{d.name}=={d.version}" for d in content.dists)),
+                    ("glibc", glibc),
+                    ("zstd_level", level),  # of the app's content and of every block
+                    ("native_compression", natives),
+                    ("git", git_state(project.directory, warn=warnings.append)),
+                ),
+                zstd_level=level,
+            )
+            _check_entry_module(entrypoint, app, runtime)
+            log(f"writing {output}")
+            build_executable(runtime, app, output)
     if config.smoke:
         smoke_test(output, app_name)
     return BuildResult(output, app_name, entrypoint, output.stat().st_size, tuple(warnings), glibc)

@@ -22,7 +22,8 @@ from fsbpyr.payload.format import (
     ModuleKind,
     tree_digest,
 )
-from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob
+from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob, Extent, stored_bytes
+from fsbpyr.payload.spill import Spill
 
 from ...support.apps import library
 from ...support.elf import make_elf
@@ -275,10 +276,10 @@ def _decompress(blob: object) -> bytes:
 
     assert isinstance(blob, Blob)
     if blob.codec.name == "NONE":
-        return blob.stored
+        return stored_bytes(blob.stored)
     from compression import zstd  # noqa: PLC0415
 
-    return zstd.decompress(blob.stored)
+    return zstd.decompress(stored_bytes(blob.stored))
 
 
 def test_console_script_extras_are_not_part_of_the_entry_point(site: Path) -> None:
@@ -388,6 +389,33 @@ def test_compiled_package_init_is_an_extension_package(site: Path) -> None:
     assert modules["cy"].kind is ModuleKind.EXTENSION  # beats __init__.py, as in FileFinder
     assert modules["cy"].file == f"cy/__init__{SUFFIXES[0]}"
     assert modules["cy.helpers"].kind is ModuleKind.MODULE
+
+
+@pytest.mark.parametrize("xz", [False, True])
+def test_with_a_spill_no_file_is_held_in_memory(site: Path, tmp_path: Path, xz: bool) -> None:
+    """D38: every blob's bytes go to the spill; files over 16 MiB are compressed from disk, and
+    a module that large is kept as data (compiling needs it whole). The blobs are the same."""
+    _native_site(site)
+    big = b"".join(b"%07d\n" % i for i in range(17 << 17))  # 17 MiB, compressible
+    _dist(site, "huge", "1.0", {"huge/__init__.py": b"X = 1\n", "huge/table.bin": big,
+                                "huge/generated.py": b"# " + big})  # fmt: skip
+    index = SiteIndex.scan(site)
+    dists = [index.dists["fast"], index.dists["huge"]]
+    plain = classify(dists, extension_suffixes=SUFFIXES, include_source=True, xz_natives=xz)
+    with Spill(tmp_path) as spill:
+        spilled = classify(dists, extension_suffixes=SUFFIXES, include_source=True,
+                           xz_natives=xz, spill=spill)  # fmt: skip
+
+        files = {f.path: f for f in spilled.files}
+        assert all(isinstance(f.blob.stored, Extent) or f.blob.pieces for f in spilled.files)
+        assert all(f.blob.known is not None for f in spilled.files)
+        assert {f.path: f.blob.content() for f in spilled.files} == {
+            f.path: f.blob.content() for f in plain.files
+        }
+        assert files["huge/generated.py"].kind is FileKind.RESOURCE
+        assert "huge.generated" not in {m.name for m in spilled.modules}
+        assert any("generated.py kept as data (over 16 MiB" in w for w in spilled.warnings)
+        assert {m.name for m in spilled.modules} == {m.name for m in plain.modules}
 
 
 def test_non_elf_shared_object_is_kept_as_data(site: Path) -> None:

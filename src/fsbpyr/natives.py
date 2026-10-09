@@ -11,9 +11,12 @@ on its ``$ORIGIN`` search path whose file name the object contains as a C string
 dependency too, so it is extracted next to it.
 """
 
+import contextlib
+import mmap
 import posixpath
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
+from pathlib import Path
 
 from .elf import ElfError, dynamic_info
 
@@ -32,6 +35,40 @@ _ORIGIN = re.compile(r"\$(ORIGIN(?![A-Za-z0-9_])|\{ORIGIN\})")  # as ld.so token
 
 class NativeError(ValueError):
     """A native dependency cannot be satisfied inside the executable or by the system."""
+
+
+type Native = bytes | mmap.mmap  # a native file's content: in memory, or mapped from its file
+_WINDOW = 64 << 20  # searches go a window at a time; a mapping's pages are dropped after each
+
+
+@contextlib.contextmanager
+def opened(native: bytes | Path) -> Iterator[Native]:
+    """A native file's content as it was given, or its file mapped read-only (its ELF tables are
+    read in place, a few pages; searches drop what they read): never its size of memory (D38)."""
+    if not isinstance(native, Path):
+        yield native
+        return
+    with native.open("rb") as file:
+        if file.seek(0, 2) == 0:
+            yield b""
+            return
+        mapping = mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ)
+    try:
+        yield mapping
+    finally:
+        mapping.close()
+
+
+def _found(data: Native, needle: bytes) -> Iterator[int]:
+    """Where ``needle`` starts in ``data`` (some places may come twice), a window at a time."""
+    for start in range(0, len(data), _WINDOW):
+        end = min(len(data), start + _WINDOW + len(needle) - 1)  # a match across the edge too
+        position = data.find(needle, start, end)
+        while position >= 0:
+            yield position
+            position = data.find(needle, position + 1, end)
+        if isinstance(data, mmap.mmap):
+            data.madvise(mmap.MADV_DONTNEED, start, min(_WINDOW, len(data) - start))
 
 
 def _search_path(path: str, rpath: tuple[str, ...], runpath: tuple[str, ...]) -> list[str]:
@@ -54,25 +91,19 @@ def init_symbol(path: str) -> bytes:
     return b"PyInit_" + stem.encode() + b"\0"
 
 
-def is_extension_module(path: str, data: bytes) -> bool:
+def is_extension_module(path: str, data: Native) -> bool:
     """Whether a shared object is a Python extension: it has the PyInit_ CPython would call (a
     library may still end in ``.so``, an extension suffix)."""
-    return init_symbol(path) in data
+    return next(_found(data, init_symbol(path)), None) is not None
 
 
-def _contains_name(data: bytes, name: bytes) -> bool:
+def _contains_name(data: Native, name: bytes) -> bool:
     """Whether ``data`` holds ``name`` as a whole C string, or as the last part of a path."""
-    needle = name + b"\0"
-    start = data.find(needle)
-    while start >= 0:
-        if start == 0 or data[start - 1] in b"\0/":
-            return True
-        start = data.find(needle, start + 1)
-    return False
+    return any(start == 0 or data[start - 1] in b"\0/" for start in _found(data, name + b"\0"))
 
 
 def _opened_by_name(
-    path: str, data: bytes, libraries: dict[str, list[str]], directories: list[str]
+    path: str, data: Native, libraries: dict[str, list[str]], directories: list[str]
 ) -> list[str]:
     """Bundled libraries where the loader (and code next to ``path``) looks for bare names,
     which ``path`` names: loaded with dlopen at run time."""
@@ -86,7 +117,7 @@ def _opened_by_name(
 
 def _direct_dependencies(
     path: str,
-    data: bytes,
+    data: Native,
     payload: set[str],
     libraries: dict[str, list[str]],
     allowed: frozenset[str],
@@ -119,7 +150,7 @@ def _direct_dependencies(
 
 
 def closures(
-    natives: dict[str, bytes],
+    natives: Mapping[str, bytes | Path],
     extensions: set[str],
     *,
     allowed: frozenset[str],
@@ -128,18 +159,21 @@ def closures(
     """Bundled shared objects each extension module loads, transitively (excluding itself):
     NEEDED ones, and libraries opened by name. A library opened by name whose own needs cannot
     be met (a CUDA provider without the CUDA runtime) is left out with a warning; it would not
-    load anyway, and the build must not fail over a guess."""
+    load anyway, and the build must not fail over a guess. A native given as a Path is mapped
+    from its file while it is looked into (``opened``)."""
     payload = set(natives)
     libraries: dict[str, list[str]] = {}  # directory -> shared libraries (not extensions) in it
     for path in sorted(payload):
-        if not is_extension_module(path, natives[path]):
-            libraries.setdefault(posixpath.dirname(path) or ".", []).append(path)
+        with opened(natives[path]) as data:
+            if not is_extension_module(path, data):
+                libraries.setdefault(posixpath.dirname(path) or ".", []).append(path)
     direct: dict[str, list[tuple[str, bool]]] = {}
     left_out: dict[str, str] = {}
 
     def dependencies(path: str) -> list[tuple[str, bool]]:  # only reachable objects are checked
         if path not in direct:
-            direct[path] = _direct_dependencies(path, natives[path], payload, libraries, allowed)
+            with opened(natives[path]) as data:
+                direct[path] = _direct_dependencies(path, data, payload, libraries, allowed)
         return direct[path]
 
     result = {}

@@ -146,6 +146,36 @@ def test_a_write_to_a_closed_pipe_raises(build_app: BuildApp) -> None:
     assert (result.returncode, result.stdout) == (0, "BrokenPipeError\n"), result.stderr
 
 
+_READS_AFTER_CLOSING_EVERY_DESCRIPTOR = """\
+import hashlib, os
+from importlib.resources import files
+
+def main():
+    os.closerange(3, 1 << 16)  # as daemons do: the launcher's own descriptor goes too
+    reused = os.open("/dev/null", os.O_RDONLY)  # and its number names another file now
+    print(reused, hashlib.sha256(files("x").joinpath("raw.bin").read_bytes()).hexdigest())
+"""
+
+
+@pytest.mark.sanitized
+def test_raw_blobs_are_read_after_the_app_closed_every_descriptor(
+    runtime: Runtime, tmp_path: Path
+) -> None:
+    """D38 (security review): raw blobs of a leaf or more are read from the executable, through
+    a descriptor the launcher keeps; when the app closed it (and its number was reused), the
+    launcher sees it is not the executable and opens /proc/self/exe again."""
+    content = random.Random(9).randbytes(2 * DIGEST_LEAF)  # noqa: S311  # incompressible test data
+    raw = File("x/raw.bin", FileKind.RESOURCE, Blob.raw(content))
+    modules, files = app_content({"x/__init__.py": _READS_AFTER_CLOSING_EVERY_DESCRIPTOR})
+    app = tmp_path / "app"
+    build_executable(runtime, App("x", "x:main", modules=modules, files=(*files, raw)), app)
+
+    result = _run(app, FSBPYR_CACHE_DIR=str(tmp_path / "cache"))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f"3 {hashlib.sha256(content).hexdigest()}\n"
+
+
 _EXTRACTS_UNDER_A_FILE_SIZE_LIMIT = """\
 import _fsbpyr
 from _fsbpyr_rt.native import native_cache

@@ -140,7 +140,10 @@ The MODULES, FILES and DISTS tables are sorted strictly ascending by their key's
   class, blobs are ordered by the first path that references them.
 - Identical blobs are stored once; in blocks, identical content is one member whether the spec
   gave it raw or as a zstd frame.
-- For codec none, `stored_size == size`.
+- For codec none, `stored_size == size`. A raw blob of `DIGEST_LEAF` bytes or more may hold
+  holes (D38): writers leave whole leaves of zeros unwritten, so a file of zeros stays sparse.
+  The launcher reads such blobs from the file (`pread`), never through its mapping, where a
+  hole on tmpfs would take a page of memory for every page read.
 - **xz (version 5, D33).** A blob of codec 3 is one xz stream (`--best-compression`: xz -6
   with the x86 filter, no check of its own, since the file's integrity digest covers it) that
   decodes to exactly `size` bytes, at most `XZ_PIECE`, with no data after it and at most

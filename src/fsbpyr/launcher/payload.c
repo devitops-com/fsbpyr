@@ -98,6 +98,7 @@ static const char *attach(struct fsb_payload *p, const uint8_t *base, uint64_t s
 const char *fsb_payload_parse(struct fsb_payload *p, const uint8_t *image, uint64_t size) {
     struct fsb_trailer trailer;
     memset(p, 0, sizeof *p);
+    p->fd = -1; /* an image in memory: no file */
     if (size < sizeof trailer) return "no fsbpyr payload";
     memcpy(&trailer, image + size - sizeof trailer, sizeof trailer);
     const char *error = check_trailer(&trailer, size);
@@ -132,10 +133,16 @@ bool fsb_payload_open(struct fsb_payload *p, const char **error) {
                    (off_t)trailer.payload_offset);
         if (map == MAP_FAILED) *error = "cannot map payload";
     }
-    close(fd);
-    if (*error != NULL) return false;
+    if (*error != NULL) {
+        close(fd);
+        return false;
+    }
     *error = attach(p, map, trailer.payload_size);
     p->mapped = true;
+    p->offset = trailer.payload_offset;
+    p->fd = fd; /* raw blobs are read from it (read_raw); O_CLOEXEC: no child inherits it */
+    p->dev = (uint64_t)st.st_dev;
+    p->ino = (uint64_t)st.st_ino;
     return *error == NULL;
 }
 
@@ -361,10 +368,19 @@ static bool decode_pieces(const struct fsb_payload *p, const struct fsb_blob *b,
 static bool stream_into(const struct fsb_payload *p, struct fsb_decoder *d,
                         const struct fsb_blob *b, uint8_t *dst);
 
+/* A raw blob of a leaf or more may hold holes (the writer leaves whole leaves of zeros
+ * unwritten): it is read from the file, never through the mapping, where a hole on tmpfs would
+ * take a page of memory for every page read, and a page more than tmpfs has ends the process
+ * with SIGBUS (D38). */
+static bool read_raw(const struct fsb_payload *p, const struct fsb_blob *b) {
+    return b->codec == FSB_CODEC_NONE && p->mapped && b->size >= FSB_DIGEST_LEAF;
+}
+
 bool fsb_read_blob(const struct fsb_payload *p, struct fsb_decoder *with, const struct fsb_blob *b,
                    void *dst) {
     struct fsb_decoder *d;
-    if (b->size > FSB_STREAM_WINDOW) return stream_into(p, with, b, dst);
+    errno = 0;
+    if (b->size > FSB_STREAM_WINDOW || read_raw(p, b)) return stream_into(p, with, b, dst);
     switch (b->codec) { /* offset is a data offset for NONE, ZSTD and XZ; a record index else */
     case FSB_CODEC_NONE:
         memcpy(dst, p->base + b->offset, (size_t)b->size);
@@ -403,8 +419,10 @@ struct fsb_stream {
     uint64_t frame;    /* ZSTD: content decoded so far (a seek only moves ``position``) */
     size_t consumed;   /* ZSTD: stored bytes the frame's decoding took so far */
     bool ended;        /* ZSTD: the frame was decoded to its end, checksum included */
-    uint8_t *buffer;   /* all but NONE: a window (BLOCK: its member, copied out of its block) */
+    uint8_t *buffer;   /* a window (BLOCK: its member, copied out of its block); NONE: if read */
     uint64_t capacity;
+    int file;          /* NONE, read (read_raw): the executable, once a window is asked for */
+    int error;         /* FSB_STREAM_SYSTEM: its errno */
     bool decoded; /* XZ and BLOCK: the whole content is in the buffer */
 };
 
@@ -421,12 +439,14 @@ struct fsb_stream *fsb_stream_open(const struct fsb_payload *p, struct fsb_decod
     if (b->codec == FSB_CODEC_PIECES) {
         uint64_t pieces = b->stored_size < WINDOW_PIECES ? b->stored_size : WINDOW_PIECES;
         s->capacity = pieces * FSB_XZ_PIECE;
-    } else if (b->codec == FSB_CODEC_ZSTD) {
+    } else if (b->codec == FSB_CODEC_ZSTD || read_raw(p, b)) {
         s->capacity = b->size < FSB_STREAM_WINDOW ? b->size : FSB_STREAM_WINDOW;
     } else if (b->codec != FSB_CODEC_NONE) { /* decoded whole: at most a piece (fsb_get_blob) */
         s->capacity = b->size;
     }
-    if (b->codec != FSB_CODEC_NONE && (s->buffer = malloc((size_t)s->capacity + 1)) == NULL) {
+    s->file = -1;
+    bool buffered = b->codec != FSB_CODEC_NONE || read_raw(p, b);
+    if (buffered && (s->buffer = malloc((size_t)s->capacity + 1)) == NULL) {
         free(s);
         return NULL;
     }
@@ -435,6 +455,7 @@ struct fsb_stream *fsb_stream_open(const struct fsb_payload *p, struct fsb_decod
 
 void fsb_stream_close(struct fsb_stream *s) {
     if (s == NULL) return;
+    if (s->file >= 0) close(s->file);
     ZSTD_freeDCtx(s->zstd);
     free(s->buffer);
     free(s);
@@ -516,6 +537,46 @@ static int decode_whole(struct fsb_stream *s) {
     return FSB_STREAM_DATA;
 }
 
+/* A descriptor of its own on the executable: a duplicate of the one kept open, if it still is
+ * the executable (an app may close descriptors, and the number may name another file since),
+ * else /proc/self/exe opened again; -1 with errno set. */
+static int open_self(const struct fsb_payload *p) {
+    struct stat st;
+    int fd = fcntl(p->fd, F_DUPFD_CLOEXEC, 0);
+    if (fd >= 0 && fstat(fd, &st) == 0 && (uint64_t)st.st_dev == p->dev &&
+        (uint64_t)st.st_ino == p->ino)
+        return fd;
+    if (fd >= 0) close(fd);
+    if ((fd = open("/proc/self/exe", O_RDONLY | O_CLOEXEC)) < 0) return -1;
+    if (fstat(fd, &st) == 0 && (uint64_t)st.st_dev == p->dev && (uint64_t)st.st_ino == p->ino)
+        return fd;
+    close(fd);
+    errno = ESTALE; /* not the file this process runs */
+    return -1;
+}
+
+/* ``want`` bytes of a raw blob from the stream's position, read from the executable into the
+ * buffer (read_raw): a hole reads as zeros, wherever the file is. */
+static int raw_window(struct fsb_stream *s, uint64_t want) {
+    if (s->file < 0 && (s->file = open_self(s->payload)) < 0) {
+        s->error = errno;
+        return FSB_STREAM_SYSTEM;
+    }
+    uint64_t at = s->payload->offset + s->blob.offset + s->position;
+    for (uint64_t got = 0; got < want;) {
+        ssize_t n = pread(s->file, s->buffer + got, (size_t)(want - got), (off_t)(at + got));
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) {
+            s->error = errno;
+            return FSB_STREAM_SYSTEM;
+        }
+        if (n == 0) return FSB_STREAM_CORRUPT; /* shorter than it was */
+        got += (uint64_t)n;
+    }
+    fsb_stored_bytes += want; /* read, not mapped: nothing to sweep */
+    return FSB_STREAM_DATA;
+}
+
 /* fsb_stream_next, without the stickiness of a failure. */
 static int next_window(struct fsb_stream *s, const uint8_t **data, uint64_t *length) {
     const struct fsb_blob *b = &s->blob;
@@ -529,8 +590,14 @@ static int next_window(struct fsb_stream *s, const uint8_t **data, uint64_t *len
     if (want > FSB_STREAM_WINDOW) want = FSB_STREAM_WINDOW;
     switch (b->codec) {
     case FSB_CODEC_NONE:
-        *data = s->payload->base + b->offset + s->position;
-        count_read(s->payload, want);
+        if (s->buffer == NULL) { /* small: no hole in it */
+            *data = s->payload->base + b->offset + s->position;
+            count_read(s->payload, want);
+        } else if ((status = raw_window(s, want)) != FSB_STREAM_DATA) {
+            return status;
+        } else {
+            *data = s->buffer;
+        }
         break;
     case FSB_CODEC_ZSTD:
         if ((status = zstd_window(s, want)) != FSB_STREAM_DATA) return status;
@@ -561,8 +628,12 @@ static int next_window(struct fsb_stream *s, const uint8_t **data, uint64_t *len
 int fsb_stream_next(struct fsb_stream *s, const uint8_t **data, uint64_t *length) {
     if (s->failed) return s->failed;
     int status = next_window(s, data, length);
-    if (status == FSB_STREAM_CORRUPT || status == FSB_STREAM_MEMORY) s->failed = status;
+    if (status != FSB_STREAM_DATA && status != FSB_STREAM_END) s->failed = status;
     return status;
+}
+
+int fsb_stream_error(const struct fsb_stream *s) {
+    return s->error;
 }
 
 int fsb_stream_seek(struct fsb_stream *s, uint64_t position) {
@@ -572,7 +643,7 @@ int fsb_stream_seek(struct fsb_stream *s, uint64_t position) {
     return FSB_STREAM_DATA;
 }
 
-/* A blob larger than a window, streamed into dst[b->size]. */
+/* A blob streamed into dst[b->size]; errno as fsb_read_blob's. */
 static bool stream_into(const struct fsb_payload *p, struct fsb_decoder *d,
                         const struct fsb_blob *b, uint8_t *dst) {
     struct fsb_stream *s = fsb_stream_open(p, d, b);
@@ -584,7 +655,9 @@ static bool stream_into(const struct fsb_payload *p, struct fsb_decoder *d,
         if ((status = fsb_stream_next(s, &data, &length)) == FSB_STREAM_DATA)
             memcpy(dst + at, data, (size_t)length);
     }
+    int error = status == FSB_STREAM_SYSTEM ? fsb_stream_error(s) : 0;
     fsb_stream_close(s);
+    errno = status == FSB_STREAM_MEMORY ? ENOMEM : error;
     return status == FSB_STREAM_END;
 }
 

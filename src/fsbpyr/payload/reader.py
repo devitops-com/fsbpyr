@@ -7,7 +7,7 @@ import mmap
 import os
 from bisect import bisect_left
 from collections import OrderedDict
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from compression import zstd
 from dataclasses import dataclass
 from itertools import pairwise
@@ -52,6 +52,7 @@ from .format import (
     check_module_name,
     check_path,
     extractable,
+    file_digest,
     tree_digest,
 )
 
@@ -121,9 +122,15 @@ def _check_sorted(keys: list[bytes], what: str) -> None:
 
 
 class Payload:
-    """Parses and validates every table eagerly; lookups are binary searches."""
+    """Parses and validates every table eagerly; lookups are binary searches. ``release`` is
+    told each range of blob data read through the buffer (payload offsets): an executable
+    mapped from its file drops those pages again, so that reading blobs never makes the
+    process's resident memory grow with them (D38)."""
 
-    def __init__(self, buffer: Buffer) -> None:
+    def __init__(
+        self, buffer: Buffer, *, release: Callable[[int, int], None] | None = None
+    ) -> None:
+        self._release = release or (lambda offset, length: None)
         self._buf = memoryview(buffer).cast("B")
         try:
             self._parse()
@@ -465,17 +472,19 @@ class Payload:
             if record.codec is Codec.NONE:
                 for start in range(0, record.stored_size, chunk):
                     yield bytes(stored[start : start + chunk])
+                    self._release(record.offset + start, chunk)
             else:
                 yield from self._decoded(index, record, stored, chunk=chunk)
         finally:
             stored.release()
 
-    @staticmethod
     def _decoded(
-        index: int, record: BlobRecord, stored: memoryview, *, chunk: int
+        self, index: int, record: BlobRecord, stored: memoryview, *, chunk: int
     ) -> Iterator[bytes]:
         """The content of a zstd or xz blob, at most ``chunk`` bytes at a time, held to its
-        record: never more than ``size`` bytes, and exactly one frame or stream."""
+        record: never more than ``size`` bytes, and exactly one frame or stream. The stored
+        bytes go in ``chunk`` at a time too: given whole, the decompressor would copy what it
+        has not used yet."""
         label = "xz stream" if record.codec is Codec.XZ else "zstd frame"
         decompressor: zstd.ZstdDecompressor | lzma.LZMADecompressor
         try:
@@ -484,16 +493,24 @@ class Payload:
             else:
                 _check_frame(index, stored, record.size)
                 decompressor = zstd.ZstdDecompressor()
-            data: bytes | memoryview = stored
-            produced = 0
+            produced = fed = 0
             while not decompressor.eof:
+                data: bytes | memoryview = b""
+                if decompressor.needs_input:
+                    if fed == len(stored):
+                        break  # truncated
+                    if fed:  # the input before is used up: its pages may go
+                        self._release(record.offset + fed - chunk, chunk)
+                    data = stored[fed : fed + chunk]
+                    fed += len(data)
                 output = decompressor.decompress(data, max_length=chunk)
-                data = b""
                 produced += len(output)
-                if produced > record.size or (not output and decompressor.needs_input):
+                if produced > record.size:
                     break
-                yield output
-            if produced != record.size or not decompressor.eof or decompressor.unused_data:
+                if output:
+                    yield output
+            unused = fed < len(stored) or decompressor.unused_data
+            if produced != record.size or not decompressor.eof or unused:
                 raise PayloadError(f"blob {index}: {label} does not match its record")
         except (zstd.ZstdError, lzma.LZMAError) as exc:
             raise PayloadError(f"{label} invalid in blob {index}: {exc}") from None
@@ -608,8 +625,9 @@ def _find[R](records: tuple[R, ...], keys: list[bytes], key: str) -> R | None:
 class Executable:
     """An assembled executable: stub prefix, payload, trailer."""
 
-    def __init__(self, buffer: Buffer, *, mapping: mmap.mmap | None = None) -> None:
+    def __init__(self, buffer: Buffer, *, mapping: mmap.mmap | None = None, fd: int = -1) -> None:
         self._mapping = mapping
+        self._fd = fd  # the mapped file's, for verify(): the very file read, not its path's
         self._view = memoryview(buffer).cast("B")
         self._payload: Payload | None = None
         try:
@@ -641,11 +659,27 @@ class Executable:
         self.covers_file: bool = version >= 3  # the digest covers the file, not the payload
         window = self._view[offset : offset + payload_size]
         try:
-            self._payload = Payload(window)
+            self._payload = Payload(window, release=self._dropper(offset))
         finally:
             window.release()
         if self._payload.version != version:
             raise PayloadError(f"trailer format version {version}, payload {self._payload.version}")
+
+    def _dropper(self, base: int) -> Callable[[int, int], None] | None:
+        """For a mapped file: drop a range of payload offsets from resident memory (the pages
+        are read again from the file if they are used again; the mapping is read-only)."""
+        mapping = self._mapping
+        if mapping is None:
+            return None
+        page = mmap.PAGESIZE
+
+        def drop(offset: int, length: int) -> None:
+            start = max(base + offset, 0) // page * page
+            end = min(base + offset + length, len(mapping))
+            if end > start:
+                mapping.madvise(mmap.MADV_DONTNEED, start, end - start)
+
+        return drop
 
     @property
     def payload(self) -> Payload:
@@ -663,7 +697,8 @@ class Executable:
             if os.fstat(handle.fileno()).st_size < TRAILER_SIZE:
                 raise PayloadError("truncated executable: no trailer")
             mapping = mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ)
-        return cls(mapping, mapping=mapping)
+            fd = os.dup(handle.fileno())
+        return cls(mapping, mapping=mapping, fd=fd)
 
     def stub_prefix(self) -> bytes:
         """Stub plus zero padding: everything before the payload, reusable for new payloads."""
@@ -672,7 +707,9 @@ class Executable:
     def verify(self) -> None:
         """Compare the digest with the bytes: the whole file before the digest (D31), or for
         executables of format versions 1 and 2 the payload."""
-        if self.covers_file:
+        if self.covers_file and self._fd >= 0:  # read a leaf at a time (D38)
+            scope, actual = "file", file_digest(self._fd, len(self._view) - DIGEST_SIZE)
+        elif self.covers_file:
             scope, actual = "file", tree_digest(self._view[:-DIGEST_SIZE])
         else:
             window = self._view[self.payload_offset : self.payload_offset + self.payload_size]
@@ -690,6 +727,9 @@ class Executable:
         if self._mapping is not None:
             self._mapping.close()
             self._mapping = None
+        if self._fd >= 0:
+            os.close(self._fd)
+            self._fd = -1
 
     def __enter__(self) -> Self:
         return self

@@ -18,7 +18,7 @@ from fsbpyr.payload.format import (
     tree_digest,
 )
 from fsbpyr.payload.reader import Payload
-from fsbpyr.payload.spec import Blob, File, Module, PayloadSpec
+from fsbpyr.payload.spec import Blob, File, Module, PayloadSpec, stored_bytes
 from fsbpyr.payload.writer import encode_payload
 
 from ...support.apps import library
@@ -39,13 +39,13 @@ def _encoded(blob: Blob, kind: FileKind = FileKind.NATIVE_LIB) -> bytes:
 def test_xz_blobs_hold_their_content_and_its_digest() -> None:
     blob = Blob.xz(ELF, digest=True)
 
-    assert blob.codec is Codec.XZ and len(blob.stored) < len(ELF) // 4
+    assert blob.codec is Codec.XZ and len(stored_bytes(blob.stored)) < len(ELF) // 4
     assert blob.content() == ELF and blob.sha256 == tree_digest(ELF)
 
 
 def test_xz_streams_are_standard_with_no_check_of_their_own() -> None:
     """The file's integrity digest covers them; xz -t and lzma read them as they are."""
-    stored = Blob.xz(ELF).stored
+    stored = stored_bytes(Blob.xz(ELF).stored)
 
     assert lzma.decompress(stored, format=lzma.FORMAT_XZ) == ELF
     assert stored[7] & 0x0F == lzma.CHECK_NONE  # stream flags: the check type
@@ -95,8 +95,8 @@ def test_reader_refuses_xz_blobs_of_other_files() -> None:
     [
         (Blob.xz(ELF).stored, len(ELF) - 1),  # more content than the record says
         (Blob.xz(ELF).stored, len(ELF) + 1),  # less
-        (Blob.xz(ELF).stored + b"junk", len(ELF)),  # data after the stream
-        (Blob.xz(ELF).stored[:-40], len(ELF)),  # truncated
+        (stored_bytes(Blob.xz(ELF).stored) + b"junk", len(ELF)),  # data after the stream
+        (stored_bytes(Blob.xz(ELF).stored)[:-40], len(ELF)),  # truncated
     ],
     ids=["longer", "shorter", "trailing", "truncated"],
 )

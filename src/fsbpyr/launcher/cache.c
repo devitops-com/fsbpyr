@@ -175,6 +175,7 @@ static bool stream_content(struct state *s, const struct entry *e, int fd,
         if (fd >= 0 && (error = write_window(fd, offset, data, length, &end)) != 0) break;
         offset += length;
     }
+    if (status == FSB_STREAM_SYSTEM) error = fsb_stream_error(stream); /* reading the executable */
     fsb_stream_close(stream);
     if (error != 0) return file_failed(s, error, e);
     if (status == FSB_STREAM_MEMORY) return out_of_memory(s);

@@ -19,7 +19,7 @@ from fsbpyr.payload.format import (
     ModuleKind,
 )
 from fsbpyr.payload.reader import Executable, Payload
-from fsbpyr.payload.spec import Blob, PayloadSpec
+from fsbpyr.payload.spec import Blob, PayloadSpec, stored_bytes
 from fsbpyr.payload.writer import assemble, encode_payload, write_executable
 
 from .conftest import GENERATION, MAGIC, PY_HEXVERSION, SO, make_spec
@@ -147,7 +147,7 @@ def test_blob_code_is_framed_even_when_incompressible() -> None:
     blob = Blob.code(os.urandom(64))
 
     assert blob.codec is Codec.ZSTD
-    assert len(blob.stored) > blob.size
+    assert len(stored_bytes(blob.stored)) > blob.size
 
 
 @pytest.mark.parametrize(
@@ -169,7 +169,7 @@ def test_zstd_falls_back_to_raw_when_not_smaller() -> None:
     blob = Blob.zstd(os.urandom(64))
 
     assert blob.codec is Codec.NONE
-    assert blob.stored == blob.stored[: blob.size]
+    assert stored_bytes(blob.stored) == stored_bytes(blob.stored)[: blob.size]
 
 
 def test_header_is_followed_by_tables() -> None:
@@ -208,7 +208,7 @@ def test_write_and_open_executable(tmp_path: Path) -> None:
     out.parent.mkdir()
     stub = b"\x7fELF" + bytes(100)
 
-    write_executable(out, stub, encode_payload(make_spec()))
+    write_executable(out, stub, make_spec())
 
     assert stat.S_IMODE(out.stat().st_mode) == 0o755
     assert sorted(p.name for p in out.parent.iterdir()) == ["demo"]
@@ -222,7 +222,7 @@ def test_write_executable_replaces_existing_file(tmp_path: Path) -> None:
     out = tmp_path / "demo"
     out.write_bytes(b"old")
 
-    write_executable(out, b"STUB", encode_payload(make_spec(app_name="new")))
+    write_executable(out, b"STUB", make_spec(app_name="new"))
 
     with Executable.open(out) as exe:
         assert exe.payload.app_name == "new"

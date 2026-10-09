@@ -16,7 +16,7 @@ from fsbpyr.payload.convert import spec_from_payload
 from fsbpyr.payload.format import TRAILER, TRAILER_MAGIC, FileKind, ModuleKind, PayloadError
 from fsbpyr.payload.reader import Executable, Payload
 from fsbpyr.payload.spec import Blob, Dist, File, Module
-from fsbpyr.payload.writer import encode_payload, write_executable
+from fsbpyr.payload.writer import write_executable
 
 from .boot.conftest import FAKE_RUNTIME
 
@@ -61,7 +61,7 @@ def _with_build_info(executable: Path, text: str) -> Path:
     with Executable.open(executable) as original:
         spec, stub = spec_from_payload(original.payload), original.stub_prefix()
     out = executable.with_name("tampered")
-    write_executable(out, stub, encode_payload(dataclasses.replace(spec, build_info=text)))
+    write_executable(out, stub, dataclasses.replace(spec, build_info=text))
     return out
 
 

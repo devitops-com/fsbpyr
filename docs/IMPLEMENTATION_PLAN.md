@@ -879,7 +879,7 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
   release's measurements; the count-based tests and the startup budget pass; fast exit is
   evaluated and dropped. **DONE 2026-10-09.**
 
-### Phase 8 — Hardening (L; D38) — **8a DONE 2026-10-09 (0.10.0), 8b DONE 2026-10-09 (0.11.0)**
+### Phase 8 — Hardening (L; D38) — **8a DONE 2026-10-09 (0.10.0), 8b DONE 2026-10-09 (0.11.0), 8c DONE 2026-10-09 (0.12.0)**
 
 Principle (owner): normal cases fast, edge and extreme cases correct, never a crash. Every
 item below gets explicit tests in the normal test run. Steps, each released on its own:
@@ -976,6 +976,32 @@ runs become holes. The reader, `inspect --verify` and the runtime's stdlib copy 
 A 1 TB executable (a 1 TB file of zeros stored raw, so the file is sparse) builds, checks
 itself, extracts and loads within 1 GB of RSS: run before each release; the normal test run does
 the same with 5 GiB (past every 32-bit size).
+- **Done (0.12.0):**
+  - blobs hold their bytes in memory or as an Extent (a range of a file: a staged file's own
+    bytes, or the build's spill); an Extent's identity is the tree digest of its bytes, and the
+    writer checks the bytes against it as it copies them: a file that changed while the build
+    read it fails the build (the security review found a shrunken file shipping zeros)
+  - the spill: one temporary file next to the output, unlinked at once; every blob a build
+    makes moves its bytes there; files over 16 MiB are compressed from disk a piece at a time
+    (zstd with the size pledged, xz pieces in parallel, each read from its file), their digest
+    computed as they are read; a module over 16 MiB is kept as data (compiling needs it whole)
+  - natives are paths: mapped read-only for their ELF tables, searched a window at a time
+  - the writer reserves the tables, streams the blob data after them (whole pieces of zeros
+    left as holes), builds each block as it is placed, writes the tables, then hashes the file
+    a leaf at a time (leaves in holes not read): `file_digest`, which `inspect --verify` uses
+  - the reader feeds compressed data a piece at a time and drops the mapped pages it read
+  - the launcher reads raw blobs of a leaf or more from the file, never through its mapping
+    (on tmpfs a mapped hole takes a page of memory: a sparse executable ran out of tmpfs), with
+    the descriptor it keeps (checked by device and inode: an app may close it), else
+    /proc/self/exe
+  - the runtime's stub and stdlib are read whole: they are the runtime's size, not the input's
+  - the builder still holds a record of each file and blob (a few hundred bytes each): memory
+    grows with the number of files, not with their size
+  - measured: building the torch app (Core Ultra 9 285) took 1204 MB of peak RSS, 1869 MB with
+    `--best-compression` (eight xz encoders); now 243 MB and 641 MB, in 22.4 s and 26.9 s as
+    before (22.2 s, 27.3 s); the executable is 0.3 MB larger (zstd fed a piece at a time). 1 TiB
+    (raw, sparse): built, checked, streamed and extracted in 614 s, `inspect --verify` in 32 s,
+    each within 1 GB (asserted by tests/e2e/test_large.py with FSBPYR_LARGE_SIZE)
 
 **8d — Cache GC** (D38):
 - App caches: a marker at the cache root; each generation and resource tree has a lock file
@@ -993,6 +1019,39 @@ the same with 5 GiB (past every 32-bit size).
 - The tool's cache: runtimes, Python distributions, sysroots and downloads that the running
   fsbpyr does not use and nothing used for 7 days, under the same rules; checked when `fsbpyr`
   runs, at most once a day.
+- **Design** (before the code):
+  - App cache root: `<root>/.fsbpyr-cache` (the marker, written when the launcher first uses
+    the root); trees `<root>/runtime/<32 hex>/` and `<root>/resources/<32 hex>/`, each with
+    `.lock` (held LOCK_SH by every process that syncs into the tree, for its whole life; its
+    mtime is touched when older than a day) and `.scratch/` (temporary files, held LOCK_EX while
+    written, renamed from there into `site/`); `<root>/.trash/` (trees being deleted);
+    `<root>/.gc` (GC lock, held LOCK_EX by a run; its mtime is the last run's start).
+  - Taking a tree (C, `_fsbpyr.hold`, before the process's first sync into it): open or create
+    `.lock` through the checked directory walk, LOCK_SH (waiting for a GC that holds it),
+    then check that it is still the tree's `.lock` (a GC renames the tree while it holds the
+    lock): if not, take the tree again (it is created afresh).
+  - A run (`_fsbpyr_rt.gc`, standard library only; the CLI uses the same module): only a root
+    with the marker; LOCK_EX|LOCK_NB on `.gc` (busy: return); touch `.gc`; under 10% free is
+    pressure. Each tree whose name is ours and that is a directory of ours: LOCK_EX|LOCK_NB on
+    its `.lock` (failing: in use, kept, its stale temporary files removed: each one we can lock
+    is not being written); a tree unused for 7 days, or any not in use under pressure, is
+    renamed into `.trash/` while locked, then removed (`shutil.rmtree`, which never follows a
+    symlink). A tree without `.lock` (written before 0.13.0) counts from its directory's mtime.
+    Everything in `.trash/` goes. Nothing else in the root is touched.
+  - Due (C, at the launcher's start, before Python; not when `FSBPYR_GC` is set): `stat` of
+    `<root>/.gc`; missing with the marker present, or older than a day: due; else `statvfs` of
+    the root: under 10% free and older than an hour: due. Due: touch `.gc` (no other start
+    spawns one), then fork twice, setsid, nice 19 and the idle I/O class, every descriptor
+    closed (0-2 on /dev/null), and exec the executable with `FSBPYR_GC=background`.
+  - `FSBPYR_GC=1 app` (or `background`): the boot code runs the collection of that app's cache
+    instead of the app, reports on stderr (`1`) and exits 0.
+  - `fsbpyr cache gc`: the tool's cache, then every directory with the marker in
+    `${XDG_CACHE_HOME:-~/.cache}` and `$FSBPYR_CACHE_DIR`. The tool's cache: runtimes, PBS
+    distributions, sysroots and downloads each get a `.lock` held LOCK_SH while a command uses
+    them (mtime: last use); what the running fsbpyr's pins name is kept; the rest goes by the
+    same rules. `fsbpyr` checks it at its start, at most once a day (`.gc` there too).
+  - The tool's cache and the app cache of fsbpyr itself (an app named `fsbpyr`) are the same
+    root: the two collections touch only their own subtrees.
 
 **8e — Cache-root ancestors and security tests**: walk the root's path from `/` (following
 symlinks component by component) and require every directory on the way to be owned by root

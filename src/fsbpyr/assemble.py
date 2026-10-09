@@ -13,7 +13,7 @@ from pathlib import Path
 from . import __version__, bytecode
 from .payload.format import ModuleFlag, ModuleKind, extractable
 from .payload.spec import ZSTD_LEVEL, Blob, Dist, File, Module, PayloadSpec
-from .payload.writer import encode_payload, write_executable
+from .payload.writer import write_executable
 from .runtime.registry import BOOT_PACKAGES, Runtime
 
 BOOT_MODULE, RUNTIME_PACKAGE = BOOT_PACKAGES
@@ -136,4 +136,4 @@ def build_executable(runtime: Runtime, app: App, out: Path) -> None:
         dists=app.dists,
         zstd_level=app.zstd_level,
     )
-    write_executable(out, runtime.stub, encode_payload(spec))
+    write_executable(out, runtime.stub, spec)

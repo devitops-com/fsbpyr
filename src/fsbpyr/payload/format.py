@@ -1,9 +1,12 @@
 """Binary layout of the fsbpyr executable format, version 5 (normative spec: docs/format.md)."""
 
+import errno
 import hashlib
+import os
 import re
 import struct
 from collections.abc import Buffer
+from concurrent.futures import ThreadPoolExecutor
 from enum import IntEnum, IntFlag
 
 FORMAT_VERSION = 5
@@ -126,6 +129,91 @@ def tree_digest(data: Buffer) -> bytes:
     with memoryview(data) as items, items.cast("B") as view:  # bytes, as the launcher hashes
         for start in range(0, len(view), DIGEST_LEAF):
             root.update(hashlib.sha256(view[start : start + DIGEST_LEAF]).digest())
+    return root.digest()
+
+
+DIGEST_THREADS = 8  # as the launcher (D31): at most 8, never more than the usable cores
+_PASS_LEAVES = 4096  # leaves hashed per pass: their digests are all the memory a file needs
+
+
+def is_hole(fd: int, start: int, length: int) -> bool:
+    """Whether [start, start + length) of the file open as ``fd`` lies inside a hole (SEEK_DATA,
+    which moves the descriptor's offset). Past the file's end there is no hole: OSError, the file
+    is shorter than it was."""
+    try:
+        return os.lseek(fd, start, os.SEEK_DATA) >= start + length
+    except OSError as exc:
+        if exc.errno != errno.ENXIO:  # ENXIO: no data after ``start``
+            raise
+    if os.fstat(fd).st_size < start + length:
+        raise OSError(errno.EIO, "file shorter than it was (changed while read)")
+    return True  # a hole up to the end
+
+
+class TreeHasher:
+    """tree_digest of bytes given in pieces of any size: a leaf at most is held."""
+
+    def __init__(self) -> None:
+        self._root, self._leaf, self._filled = hashlib.sha256(), hashlib.sha256(), 0
+
+    def update(self, data: Buffer) -> None:
+        with memoryview(data) as items, items.cast("B") as view:
+            start = 0
+            while start < len(view):
+                part = view[start : start + DIGEST_LEAF - self._filled]
+                self._leaf.update(part)
+                self._filled += len(part)
+                start += len(part)
+                if self._filled == DIGEST_LEAF:
+                    self.leaf(self._leaf.digest())
+                    self._leaf, self._filled = hashlib.sha256(), 0
+
+    def leaf(self, digest: bytes) -> None:
+        """A whole leaf, hashed already (``update`` must be at a leaf's start)."""
+        self._root.update(digest)
+
+    def digest(self) -> bytes:
+        if self._filled:
+            self._root.update(self._leaf.digest())
+            self._leaf, self._filled = hashlib.sha256(), 0
+        return self._root.digest()
+
+
+ZERO_LEAF = hashlib.sha256(bytes(DIGEST_LEAF)).digest()  # a leaf of zeros: a hole's
+
+
+def _leaf_digest(fd: int, start: int, length: int) -> bytes:
+    """The SHA-256 of ``length`` bytes at ``start`` of the file open as ``fd``; a leaf inside a
+    hole is zeros, and not read."""
+    if is_hole(fd, start, length):
+        return ZERO_LEAF if length == DIGEST_LEAF else hashlib.sha256(bytes(length)).digest()
+    data = os.pread(fd, length, start)
+    while len(data) < length:
+        more = os.pread(fd, length - len(data), start + len(data))
+        if not more:
+            raise OSError(errno.EIO, "file shorter than its digest's range (changed while read)")
+        data += more
+    return hashlib.sha256(data).digest()
+
+
+def file_digest(fd: int, size: int, offset: int = 0) -> bytes:
+    """tree_digest of ``size`` bytes at ``offset`` of the file open as ``fd``, read a leaf at a
+    time on up to DIGEST_THREADS threads, a pass of leaves at a time, so that neither the file's
+    size nor its pages count in memory (D38); a leaf inside a hole is not read (SEEK_DATA, which
+    moves the descriptor's offset). OSError if the file is shorter."""
+    if os.fstat(fd).st_size < offset + size:
+        raise OSError(errno.EIO, f"file shorter than {offset + size} bytes")
+    leaves = -(-size // DIGEST_LEAF)
+    root = hashlib.sha256()
+
+    def leaf(number: int) -> bytes:
+        start = number * DIGEST_LEAF
+        return _leaf_digest(fd, offset + start, min(DIGEST_LEAF, size - start))
+
+    with ThreadPoolExecutor(min(DIGEST_THREADS, os.process_cpu_count() or 1)) as pool:
+        for first in range(0, leaves, _PASS_LEAVES):
+            for digest in pool.map(leaf, range(first, min(first + _PASS_LEAVES, leaves))):
+                root.update(digest)
     return root.digest()
 
 

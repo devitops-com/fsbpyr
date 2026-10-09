@@ -1,18 +1,27 @@
 """Immutable input model for the payload writer."""
 
+import errno
 import lzma
+import os
+from collections.abc import Iterator
 from compression import zstd
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .format import (
+    DIGEST_LEAF,
     MAX_BLOB_SIZE,
     XZ_PIECE,
+    ZERO_LEAF,
     Codec,
     FileFlag,
     FileKind,
     ModuleFlag,
     ModuleKind,
     PayloadError,
+    TreeHasher,
+    file_digest,
+    is_hole,
     tree_digest,
 )
 
@@ -26,21 +35,104 @@ NO_MODULE_FLAGS = ModuleFlag(0)
 NO_FILE_FLAGS = FileFlag(0)
 
 
+EXTENT_PIECE = DIGEST_LEAF  # an extent is read this much at a time: a leaf, hashed as it comes
+
+
+@dataclass(frozen=True, slots=True)
+class Extent:
+    """``size`` bytes at ``offset`` of a file on disk: the stored data of a blob that is not
+    held in memory (D38), a large file's own bytes or what a build spilled. ``identity`` is the
+    tree_digest of the bytes: blobs are compared by it, and the bytes are checked against it
+    as they are read. ``fd``: a descriptor to read instead of the path (a spill's, which has no
+    holes and no path left)."""
+
+    path: Path
+    offset: int
+    size: int
+    identity: bytes
+    fd: int = -1
+
+    def leaves(self) -> Iterator[tuple[bytes, bool]]:
+        """The bytes, a digest leaf (EXTENT_PIECE) at a time, each with whether it is a hole
+        (zeros, not read). OSError once the bytes turn out to differ from the identity (a file
+        changed while the build read it)."""
+        fd = self.fd if self.fd >= 0 else os.open(self.path, os.O_RDONLY | os.O_CLOEXEC)
+        hashed = TreeHasher()
+        try:
+            for start in range(0, self.size, EXTENT_PIECE):
+                length = min(EXTENT_PIECE, self.size - start)
+                if self.fd < 0 and is_hole(fd, self.offset + start, length):
+                    if length == EXTENT_PIECE:
+                        hashed.leaf(ZERO_LEAF)
+                    else:
+                        hashed.update(bytes(length))
+                    yield bytes(length), True
+                    continue
+                piece = _read(fd, self.offset + start, length, self.path)
+                hashed.update(piece)
+                yield piece, False
+        finally:
+            if self.fd < 0:
+                os.close(fd)
+        if hashed.digest() != self.identity:
+            raise OSError(errno.EIO, f"{self.path} changed while the build read it")
+
+    def pieces(self) -> Iterator[bytes]:
+        return (piece for piece, _ in self.leaves())
+
+    def read(self) -> bytes:
+        """The bytes, whole: for small extents only (block members)."""
+        return b"".join(self.pieces())
+
+    @classmethod
+    def of_file(cls, path: Path) -> Extent:
+        """A whole file; its identity is its tree_digest, read a leaf at a time."""
+        fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+        try:
+            size = os.fstat(fd).st_size
+            return cls(path, 0, size, file_digest(fd, size))
+        finally:
+            os.close(fd)
+
+
+def _read(fd: int, offset: int, length: int, path: Path) -> bytes:
+    data = os.pread(fd, length, offset)
+    while len(data) < length:
+        more = os.pread(fd, length - len(data), offset + len(data))
+        if not more:
+            raise OSError(errno.EIO, f"{path} is shorter than it was (changed while built)")
+        data += more
+    return data
+
+
+type Stored = bytes | Extent
+
+
+def stored_size(stored: Stored) -> int:
+    return stored.size if isinstance(stored, Extent) else len(stored)
+
+
+def stored_bytes(stored: Stored) -> bytes:
+    return stored.read() if isinstance(stored, Extent) else stored
+
+
 @dataclass(frozen=True, slots=True)
 class Blob:
     """Stored bytes of one resource, possibly compressed, plus optionally the integrity digest of
-    its content (``tree_digest``: D32)."""
+    its content (``tree_digest``: D32). The bytes are in memory, or an Extent of a file (D38):
+    the writer streams those."""
 
-    stored: bytes
+    stored: Stored
     size: int
     codec: Codec
     sha256: bytes | None = None
     pieces: tuple[Blob, ...] = ()  # codec PIECES: xz streams of XZ_PIECE content each (D33)
+    known: bytes | None = None  # the content's tree_digest when known, but not listed (D38)
 
     def __post_init__(self) -> None:
         if not 0 <= self.size <= MAX_BLOB_SIZE:
             raise PayloadError(f"blob size {self.size} outside 0..{MAX_BLOB_SIZE}")
-        if self.codec is Codec.NONE and len(self.stored) != self.size:
+        if self.codec is Codec.NONE and stored_size(self.stored) != self.size:
             raise PayloadError("blob size does not match stored data")
         if self.codec is Codec.XZ and self.size > XZ_PIECE:
             raise PayloadError("an xz stream holds at most XZ_PIECE bytes: more is in pieces")
@@ -58,20 +150,29 @@ class Blob:
                                    "XZ_PIECE")  # fmt: skip
 
     def content(self) -> bytes:
+        """The content, whole: in memory, so for blobs whose size allows it."""
         if self.codec is Codec.PIECES:
             return b"".join(piece.content() for piece in self.pieces)
+        stored = stored_bytes(self.stored)
         if self.codec is Codec.XZ:
-            return lzma.decompress(self.stored, format=lzma.FORMAT_XZ)
-        return self.stored if self.codec is Codec.NONE else zstd.decompress(self.stored)
+            return lzma.decompress(stored, format=lzma.FORMAT_XZ)
+        return stored if self.codec is Codec.NONE else zstd.decompress(stored)
 
     def content_digest(self) -> bytes:
         """``tree_digest`` of the content, whatever the representation (a block member comes back
         raw from a payload, the same content as a zstd frame from a build)."""
-        return self.sha256 or tree_digest(self.content())
+        return self.sha256 or self.known or tree_digest(self.content())
 
     @classmethod
     def raw(cls, data: bytes, *, digest: bool = False) -> Blob:
         return cls(data, len(data), Codec.NONE, _digest(data, digest))
+
+    @classmethod
+    def raw_file(cls, path: Path, *, digest: bool = False) -> Blob:
+        """A file's bytes as they are, never read into memory: the writer streams them (D38)."""
+        extent = Extent.of_file(path)  # its identity: the content's tree_digest
+        return cls(extent, extent.size, Codec.NONE, extent.identity if digest else None,
+                   known=extent.identity)  # fmt: skip
 
     @classmethod
     def code(cls, data: bytes, *, level: int = ZSTD_LEVEL) -> Blob:
@@ -85,14 +186,7 @@ class Blob:
     ) -> Blob:
         """One zstd frame with content size and checksum; stored raw if that is not smaller
         (unless ``allow_raw`` is false)."""
-        if not ZSTD_MIN_LEVEL <= level <= ZSTD_MAX_LEVEL:
-            raise PayloadError(f"zstd level {level} out of range")
-        options: dict[int, int] = {
-            zstd.CompressionParameter.compression_level: level,
-            zstd.CompressionParameter.checksum_flag: 1,
-            zstd.CompressionParameter.content_size_flag: 1,
-        }
-        compressed = zstd.compress(data, options=options)
+        compressed = zstd.compress(data, options=zstd_options(level))
         if allow_raw and len(compressed) >= len(data):
             return cls.raw(data, digest=digest)
         return cls(compressed, len(data), Codec.ZSTD, _digest(data, digest))
@@ -115,6 +209,17 @@ class Blob:
         pieces = tuple(cls(stream, len(piece), Codec.XZ)
                        for stream, piece in zip(streams, xz_pieces(data), strict=True))  # fmt: skip
         return cls(b"", len(data), Codec.PIECES, _digest(data, digest), pieces)
+
+
+def zstd_options(level: int) -> dict[int, int]:
+    """One zstd frame with its content size and a checksum (the launcher checks both)."""
+    if not ZSTD_MIN_LEVEL <= level <= ZSTD_MAX_LEVEL:
+        raise PayloadError(f"zstd level {level} out of range")
+    return {
+        zstd.CompressionParameter.compression_level: level,
+        zstd.CompressionParameter.checksum_flag: 1,
+        zstd.CompressionParameter.content_size_flag: 1,
+    }
 
 
 XZ_PRESET = 6  # owner decision (D33): xz -6 with the x86 filter, for native files

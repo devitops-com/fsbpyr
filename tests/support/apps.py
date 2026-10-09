@@ -5,7 +5,7 @@ from pathlib import Path
 from fsbpyr import bytecode
 from fsbpyr.assemble import App
 from fsbpyr.payload.format import XZ_PIECE, Codec, FileKind, ModuleKind
-from fsbpyr.payload.spec import Blob, Dist, File, Module
+from fsbpyr.payload.spec import Blob, Dist, File, Module, stored_bytes
 
 from .contract import DIGEST_SIZES
 
@@ -111,14 +111,16 @@ def _bad_xz() -> list[File]:
     library in pieces, whole and with one piece broken."""
     good = Blob.xz(b"\x7fELF bad" * 2000)
     size = good.size
-    broken = {"libtrailing.so": (good.stored + b"junk", size),
-              "liblonger.so": (good.stored, size + 1),
-              "libtruncated.so": (good.stored[:-40], size)}  # fmt: skip
+    stream = stored_bytes(good.stored)
+    broken = {"libtrailing.so": (stream + b"junk", size),
+              "liblonger.so": (stream, size + 1),
+              "libtruncated.so": (stream[:-40], size)}  # fmt: skip
     files = [File(f"native.libs/{name}", FileKind.NATIVE_LIB,
                   Blob(stored, length, Codec.XZ, bytes(32)), mode=0o755)
              for name, (stored, length) in broken.items()]  # fmt: skip
     pieces = Blob.xz(PIECED, digest=True)  # three xz streams, decoded in parallel by the launcher
-    bad = (*pieces.pieces[:1], Blob(pieces.pieces[1].stored + b"junk", XZ_PIECE, Codec.XZ),
+    bad = (*pieces.pieces[:1],
+           Blob(stored_bytes(pieces.pieces[1].stored) + b"junk", XZ_PIECE, Codec.XZ),
            *pieces.pieces[2:])  # fmt: skip
     wrong = Blob.zstd(b"\x7fELF wrong" * 500)  # intact content, another digest
     files += [

@@ -341,17 +341,23 @@ static PyObject *read_blob(PyObject *self, PyObject *arg) {
     if (out == NULL) return NULL;
     char *dst = PyBytes_AS_STRING(out);
     bool done;
-    /* the GIL guards the process's decoder (NULL), which only blocks need; xz, pieces and
-     * streamed blobs (larger than a window: never a block) use none, so they run without */
-    if (b.codec == FSB_CODEC_XZ || b.codec == FSB_CODEC_PIECES || b.size > FSB_STREAM_WINDOW) {
+    /* the GIL guards the process's decoder (NULL), which only blocks need; xz, pieces, raw
+     * blobs read from the file and streamed ones (larger than a window: never a block) use
+     * none, so they run without */
+    if (b.codec == FSB_CODEC_XZ || b.codec == FSB_CODEC_PIECES || b.size > FSB_STREAM_WINDOW ||
+        (b.codec == FSB_CODEC_NONE && b.size >= FSB_DIGEST_LEAF)) {
         Py_BEGIN_ALLOW_THREADS
         done = fsb_read_blob(&fsb_self, NULL, &b, dst);
         Py_END_ALLOW_THREADS
     } else {
         done = fsb_read_blob(&fsb_self, NULL, &b, dst);
     }
+    int error = errno; /* fsb_read_blob's: 0 if the data is corrupt */
     if (!done) {
         Py_DECREF(out);
+        if (error == ENOMEM) return PyErr_NoMemory();
+        errno = error; /* as fsb_read_blob left it, whatever freeing ``out`` did */
+        if (error != 0) return PyErr_SetFromErrno(PyExc_OSError);
         return corrupt("blob data", index);
     }
     reads++;
@@ -529,6 +535,10 @@ static PyObject *stream_failed(StreamObject *self, int status) {
     self->start += self->offset;
     self->length = self->offset = 0;
     if (status == FSB_STREAM_MEMORY) return PyErr_NoMemory();
+    if (status == FSB_STREAM_SYSTEM) {
+        errno = fsb_stream_error(self->stream);
+        return PyErr_SetFromErrno(PyExc_OSError);
+    }
     return corrupt("blob data", self->blob);
 }
 

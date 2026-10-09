@@ -1,9 +1,11 @@
 """Minimal ELF64 reader: the dynamic-section facts needed to bundle native code (plan §3.5)."""
 
+import mmap
 import re
 import struct
 from dataclasses import dataclass
 
+type ElfData = bytes | mmap.mmap  # a file's content, or its file mapped (D38)
 _HEADER = struct.Struct("<HHIQQQIHHHHHH")  # e_type .. e_shstrndx, after e_ident[16]
 _PHDR = struct.Struct("<IIQQQQQQ")  # type, flags, offset, vaddr, paddr, filesz, memsz, align
 _DYN = struct.Struct("<qQ")
@@ -31,17 +33,17 @@ class DynamicInfo:
     soname: str | None
 
 
-def is_elf(data: bytes) -> bool:
+def is_elf(data: ElfData) -> bool:
     return data[:4] == b"\x7fELF"
 
 
-def _unpack(layout: struct.Struct, data: bytes, offset: int) -> tuple[int, ...]:
+def _unpack(layout: struct.Struct, data: ElfData, offset: int) -> tuple[int, ...]:
     if offset < 0 or offset + layout.size > len(data):
         raise ElfError("truncated ELF data")
     return layout.unpack_from(data, offset)
 
 
-def _segments(data: bytes) -> list[tuple[int, ...]]:
+def _segments(data: ElfData) -> list[tuple[int, ...]]:
     if not is_elf(data):
         raise ElfError("not an ELF file")
     if len(data) < 64 or data[4] != 2 or data[5] != 1:
@@ -65,7 +67,7 @@ def _file_offset(loads: list[tuple[int, ...]], address: int) -> int:
 class _Dynamic:
     """The parsed dynamic section of an object."""
 
-    data: bytes
+    data: ElfData
     loads: list[tuple[int, ...]]
     entries: list[tuple[int, int]]
     values: dict[int, int]
@@ -83,7 +85,7 @@ class _Dynamic:
         return self.data[start:end].decode("utf-8", errors="surrogateescape")
 
 
-def _dynamic(data: bytes) -> _Dynamic | None:
+def _dynamic(data: ElfData) -> _Dynamic | None:
     segments = _segments(data)
     loads = [s for s in segments if s[0] == PT_LOAD]
     dynamic = next((s for s in segments if s[0] == PT_DYNAMIC), None)
@@ -103,7 +105,7 @@ def _dynamic(data: bytes) -> _Dynamic | None:
     return _Dynamic(data, loads, entries, values, strtab, values.get(DT_STRSZ, 0))
 
 
-def dynamic_info(data: bytes) -> DynamicInfo:
+def dynamic_info(data: ElfData) -> DynamicInfo:
     """DT_NEEDED, DT_RPATH, DT_RUNPATH and DT_SONAME of an ELF64 x86-64 object."""
     section = _dynamic(data)
     if section is None:
@@ -123,7 +125,7 @@ def dynamic_info(data: bytes) -> DynamicInfo:
     )
 
 
-def needed_versions(data: bytes) -> frozenset[str]:
+def needed_versions(data: ElfData) -> frozenset[str]:
     """Symbol versions an object requires from its libraries (DT_VERNEED): GLIBC_2.17, ..."""
     section = _dynamic(data)
     if section is None or DT_VERNEED not in section.values:
@@ -149,7 +151,7 @@ def needed_versions(data: bytes) -> frozenset[str]:
     return frozenset(versions)
 
 
-def glibc_requirement(data: bytes) -> tuple[int, int] | None:
+def glibc_requirement(data: ElfData) -> tuple[int, int] | None:
     """The newest glibc an object needs (GLIBC_2.2.5 counts as 2.2; ABI markers as the release
     that introduced them)."""
     versions = needed_versions(data)
