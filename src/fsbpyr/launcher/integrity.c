@@ -1,29 +1,17 @@
 /* The integrity digest (see integrity.h). */
 #include "integrity.h"
 
+#include "parallel.h"
+
 #include <errno.h>
-#include <pthread.h>
-#include <sched.h>
-#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
-#include <time.h>
 #include <unistd.h>
 
-#define MAX_THREADS 8u /* owner decision: at most 8, never more than the usable cores */
 /* Leaves per thread: waking more threads costs more than they save on small files (21 MB:
  * 2.1 ms on 6 threads, 2.4 ms on 8; 150 MB: 6.6 ms on 8; Core Ultra 9 285, page cache warm). */
 #define LEAVES_PER_THREAD 4u
-#define SPINS_PER_YIELD 1024u
-#define SPIN_NS 2000000ull /* then sleep in pthread_join: a helper that cannot run (stopped by a
-                            * debugger, stuck in a page fault) must not make the caller burn a core */
-
-static inline void spin_pause(void) {
-#if defined(__x86_64__) || defined(__i386__)
-    __builtin_ia32_pause();
-#endif
-}
 
 /* OpenSSL's low-level SHA-256, linked statically for _hashlib (SHA-NI where the CPU has it).
  * Not the one-shot SHA256(): since OpenSSL 3 it goes through EVP, which sets up the library
@@ -45,78 +33,54 @@ static void sha256(const uint8_t *data, size_t length, uint8_t digest[FSB_DIGEST
     SHA256_Final(digest, &context);
 }
 
-struct tree {
-    const uint8_t *data;
-    uint64_t length; /* bytes hashed */
-    uint64_t leaves;
-    uint8_t *digests; /* FSB_DIGEST_SIZE per leaf */
-    atomic_uint_fast64_t next;
+struct trees {
+    uint64_t count;
+    const uint8_t *const *data;
+    const uint64_t *lengths;
+    const uint64_t *first; /* count + 1: the first leaf of each buffer, then the number of leaves */
+    uint8_t *digests;      /* FSB_DIGEST_SIZE per leaf */
 };
 
-static void *hash_leaves(void *arg) {
-    struct tree *t = arg;
-    for (uint64_t i; (i = atomic_fetch_add(&t->next, 1)) < t->leaves;) {
-        uint64_t start = i * FSB_DIGEST_LEAF;
-        uint64_t rest = t->length - start;
-        sha256(t->data + start, (size_t)(rest < FSB_DIGEST_LEAF ? rest : FSB_DIGEST_LEAF),
-               t->digests + i * FSB_DIGEST_SIZE);
-    }
-    return NULL;
-}
-
-static unsigned long long monotonic_ns(void) {
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    return (unsigned long long)now.tv_sec * 1000000000ull + (unsigned long long)now.tv_nsec;
-}
-
-static unsigned usable_cores(void) {
-    cpu_set_t set;
-    if (sched_getaffinity(0, sizeof set, &set) != 0) return 1;
-    int count = CPU_COUNT(&set);
-    return count > 0 ? (unsigned)count : 1;
-}
-
-/* Hash every leaf: this thread and up to MAX_THREADS - 1 helpers take the next one in turn.
- * This thread then spins on non-blocking joins for up to SPIN_NS before it sleeps in one: on a
- * hybrid CPU a thread woken from a join may land on an efficiency core and stay there while
- * every core is busy (numpy, whose OpenBLAS starts one spinning thread per core right after the
- * check: +38 ms with joins, +4 to 7 ms spinning; Core Ultra 9 285). */
-static void hash_tree(struct tree *t) {
-    uint64_t wanted = (t->leaves + LEAVES_PER_THREAD - 1) / LEAVES_PER_THREAD;
-    unsigned threads = usable_cores();
-    if (threads > MAX_THREADS) threads = MAX_THREADS;
-    if (threads > wanted) threads = (unsigned)wanted;
-    pthread_t helpers[MAX_THREADS - 1];
-    unsigned started = 0;
-    while (started + 1 < threads && pthread_create(&helpers[started], NULL, hash_leaves, t) == 0)
-        started++; /* fewer helpers if one cannot start: this thread hashes what is left */
-    hash_leaves(t); /* when it returns, every leaf is taken: what is left is in flight */
-    unsigned joined = 0;
-    unsigned long long deadline = monotonic_ns() + SPIN_NS;
-    for (unsigned spins = 1; joined < started; spins++) {
-        if (pthread_tryjoin_np(helpers[joined], NULL) == 0)
-            joined++;
-        else if (spins % SPINS_PER_YIELD != 0)
-            spin_pause();
-        else if (monotonic_ns() < deadline)
-            sched_yield(); /* a helper waiting for this core gets it; this thread stays put */
+static void hash_leaf(void *context, uint64_t item) {
+    const struct trees *t = context;
+    uint64_t low = 0, high = t->count; /* the last buffer whose first leaf is at most ``item`` */
+    while (high - low > 1) {
+        uint64_t middle = low + (high - low) / 2;
+        if (t->first[middle] <= item)
+            low = middle;
         else
-            break;
+            high = middle;
     }
-    for (; joined < started; joined++) pthread_join(helpers[joined], NULL);
+    uint64_t start = (item - t->first[low]) * FSB_DIGEST_LEAF;
+    uint64_t rest = t->lengths[low] - start;
+    sha256(t->data[low] + start, (size_t)(rest < FSB_DIGEST_LEAF ? rest : FSB_DIGEST_LEAF),
+           t->digests + item * FSB_DIGEST_SIZE);
+}
+
+bool fsb_tree_digests(uint64_t count, const uint8_t *const data[], const uint64_t lengths[],
+                      uint8_t (*digests)[FSB_DIGEST_SIZE]) {
+    uint64_t *first = malloc((size_t)(count + 1) * sizeof *first);
+    if (first == NULL) return false;
+    first[0] = 0;
+    for (uint64_t i = 0; i < count; i++)
+        first[i + 1] = first[i] + (lengths[i] + FSB_DIGEST_LEAF - 1) / FSB_DIGEST_LEAF;
+    struct trees t = {.count = count, .data = data, .lengths = lengths, .first = first};
+    t.digests = malloc((size_t)first[count] * FSB_DIGEST_SIZE + 1); /* + 1: never malloc(0) */
+    if (t.digests == NULL) {
+        free(first);
+        return false;
+    }
+    fsb_parallel(first[count], LEAVES_PER_THREAD, hash_leaf, &t); /* all leaves of all buffers */
+    for (uint64_t i = 0; i < count; i++)
+        sha256(t.digests + first[i] * FSB_DIGEST_SIZE,
+               (size_t)(first[i + 1] - first[i]) * FSB_DIGEST_SIZE, digests[i]);
+    free(t.digests);
+    free(first);
+    return true;
 }
 
 bool fsb_tree_digest(const uint8_t *data, uint64_t length, uint8_t digest[FSB_DIGEST_SIZE]) {
-    struct tree t = {.data = data, .length = length};
-    t.leaves = (length + FSB_DIGEST_LEAF - 1) / FSB_DIGEST_LEAF;
-    atomic_init(&t.next, 0);
-    t.digests = malloc((size_t)t.leaves * FSB_DIGEST_SIZE + 1); /* + 1: never malloc(0) */
-    if (t.digests == NULL) return false;
-    hash_tree(&t);
-    sha256(t.digests, (size_t)t.leaves * FSB_DIGEST_SIZE, digest);
-    free(t.digests);
-    return true;
+    return fsb_tree_digests(1, &data, &length, (uint8_t (*)[FSB_DIGEST_SIZE])digest);
 }
 
 int fsb_file_digest(int fd, uint64_t length, uint8_t digest[FSB_DIGEST_SIZE]) {
@@ -147,8 +111,8 @@ static const char *check(int fd, uint64_t size) {
 }
 
 const char *fsb_check_integrity(int fd, uint64_t size) {
-    unsigned long long start = monotonic_ns();
+    unsigned long long start = fsb_monotonic_ns();
     const char *error = check(fd, size);
-    fsb_integrity_ns = monotonic_ns() - start;
+    fsb_integrity_ns = fsb_monotonic_ns() - start;
     return error;
 }

@@ -13,7 +13,13 @@
 
 #include "format.h"
 
-/* The digest of data[0, length); false if out of memory. Reentrant: no shared state. */
+/* The digests of ``count`` buffers, all their leaves hashed in one parallel pass (many small
+ * cached files share the threads; a large one spreads over them); false if out of memory.
+ * Reentrant: no shared state. */
+bool fsb_tree_digests(uint64_t count, const uint8_t *const data[], const uint64_t lengths[],
+                      uint8_t (*digests)[FSB_DIGEST_SIZE]);
+
+/* The digest of data[0, length): fsb_tree_digests of one buffer. */
 bool fsb_tree_digest(const uint8_t *data, uint64_t length, uint8_t digest[FSB_DIGEST_SIZE]);
 
 /* The digest of the first ``length`` bytes of the file open as ``fd``; 0 or an errno value. */

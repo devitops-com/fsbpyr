@@ -1,10 +1,12 @@
 """RECORD entries -> payload modules, files and namespace packages (plan §3.6 steps 6-7)."""
 
 import csv
+import os
 import posixpath
 import re
 import warnings
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 
@@ -22,7 +24,7 @@ from .payload.format import (
     is_module_part,
     tree_digest,
 )
-from .payload.spec import ZSTD_LEVEL, Blob, Dist, File, Module
+from .payload.spec import ZSTD_LEVEL, Blob, Dist, File, Module, xz_pieces, xz_stream
 from .scan import file_relative_reads
 
 # Written by installers, not by the wheel: they embed paths, timestamps or the installer's name,
@@ -38,15 +40,34 @@ _TEST_DIRECTORIES = frozenset({"tests", "test"})
 _REDUNDANT_PTH = re.compile(r"(-nspkg|^distutils-precedence)\.pth$")
 _NATIVE_MODE = 0o755  # fixed: the installer's umask must not leak into the build
 # Packages that need their data files on disk, whatever the configuration says (plan §3.5).
-# Each one was verified to fail without (Phase 6b, fixture datafiles; litellm with aiagent),
-# except certifi, which hands out the path of cacert.pem: otherwise a temporary copy made again
-# in every process.
-BUILTIN_FS_PACKAGES = frozenset({"babel", "botocore", "certifi", "litellm", "matplotlib"})
+# Each one was verified to fail without (Phase 6b, fixture datafiles; litellm with aiagent;
+# torch 2.14: "Unable to find torch_shm_manager"), except certifi, which hands out the path of
+# cacert.pem: otherwise a temporary copy made again in every process.
+BUILTIN_FS_PACKAGES = frozenset({"babel", "botocore", "certifi", "litellm", "matplotlib",
+                                 "torch"})  # fmt: skip
 
 
 def _digested(blob: Blob) -> Blob:
     """The digest from the bytes themselves, never one the blob arrived with."""
     return replace(blob, sha256=tree_digest(blob.content()))
+
+
+_XZ_THREADS = 8  # owner decision: at most 8, never more than the usable cores
+
+
+def _native_blobs(natives: dict[str, bytes], level: int, xz: bool) -> dict[str, Blob]:
+    """zstd at ``level``, or xz (D33): the pieces of every file on min(8, cores) threads,
+    largest first (lzma releases the GIL while it compresses)."""
+    if not xz:
+        return {rel: Blob.zstd(data, level=level, digest=True) for rel, data in natives.items()}
+    pieces = {rel: xz_pieces(data) for rel, data in natives.items()}
+    jobs = sorted(((rel, n) for rel, parts in pieces.items() for n in range(len(parts))),
+                  key=lambda job: (-len(pieces[job[0]][job[1]]), job))  # fmt: skip
+    with ThreadPoolExecutor(min(_XZ_THREADS, os.process_cpu_count() or 1)) as pool:
+        streams = dict(zip(jobs, pool.map(lambda job: xz_stream(pieces[job[0]][job[1]]), jobs),
+                           strict=True))  # fmt: skip
+    return {rel: Blob.from_xz(data, [streams[rel, n] for n in range(len(pieces[rel]))],
+                              digest=True) for rel, data in natives.items()}  # fmt: skip
 
 
 class ClassifyError(RuntimeError):
@@ -123,8 +144,10 @@ class _Collector:
         include_source: bool,
         hints: bool = False,
         level: int = ZSTD_LEVEL,
+        xz_natives: bool = False,
     ) -> None:
         self.level = level  # zstd level of every blob
+        self.xz_natives = xz_natives  # native files as xz instead (D33)
         self.suffixes = extension_suffixes
         self.include_source = include_source
         self.hints = hints  # guesses (reads next to __file__): only when asked for
@@ -289,9 +312,10 @@ class _Collector:
         for rel, data in self.natives.items():
             if len(data) > MAX_MEMORY_BLOB:  # extraction reads a blob whole (no streaming yet)
                 raise ClassifyError(f"{rel} is too large to bundle ({len(data)} bytes)")
+        blobs = _native_blobs(self.natives, self.level, self.xz_natives)
+        for rel in self.natives:
             kind = FileKind.NATIVE_EXT if rel in extensions else FileKind.NATIVE_LIB
-            self.files[rel] = File(rel, kind, Blob.zstd(data, level=self.level, digest=True),
-                                   mode=_NATIVE_MODE,
+            self.files[rel] = File(rel, kind, blobs[rel], mode=_NATIVE_MODE,
                                    dist=self.owners[rel], closure=needs.get(rel, ()))  # fmt: skip
 
     def _add_file(self, dist: InstalledDist, rel: str, kind: FileKind, data: bytes) -> None:
@@ -431,8 +455,9 @@ def classify(  # noqa: PLR0913  the build options, keyword-only
     fs_packages: frozenset[str] = frozenset(),
     hints: bool = False,
     level: int = ZSTD_LEVEL,
+    xz_natives: bool = False,
 ) -> Content:
-    collector = _Collector(extension_suffixes, include_source, hints, level)
+    collector = _Collector(extension_suffixes, include_source, hints, level, xz_natives)
     collector.read_pth_files(dists)
     for dist in sorted(dists, key=lambda d: d.name):
         collector.add_dist(dist)

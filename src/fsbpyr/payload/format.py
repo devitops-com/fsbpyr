@@ -1,4 +1,4 @@
-"""Binary layout of the fsbpyr executable format, version 4 (normative spec: docs/format.md)."""
+"""Binary layout of the fsbpyr executable format, version 5 (normative spec: docs/format.md)."""
 
 import hashlib
 import re
@@ -6,14 +6,16 @@ import struct
 from collections.abc import Buffer
 from enum import IntEnum, IntFlag
 
-FORMAT_VERSION = 4
-READABLE_VERSIONS = (1, 2, 3, 4)  # the Python reader (inspect) also reads older executables
+FORMAT_VERSION = 5
+READABLE_VERSIONS = (1, 2, 3, 4, 5)  # the Python reader (inspect) also reads older executables
 PAGE_SIZE = 4096
 BLOB_ALIGN = 16
 TABLE_ALIGN = 8
 NONE = 0xFFFFFFFF
 DIGEST_SIZE = 32
 DIGEST_LEAF = 1 << 20  # the integrity digest hashes the file in pieces of this size (D31)
+XZ_MEMLIMIT = 64 << 20  # decoder memory an xz stream may ask for (xz -6 needs about 9 MiB)
+XZ_PIECE = 4 << 20  # libraries larger than this are xz in pieces of this much content (D33)
 MAX_MODE = 0o777
 MAX_BLOB_SIZE = 1 << 40  # 1 TiB; keeps sizes far inside ssize_t
 MAX_STRTAB_SIZE = 0xFFFFFFFF
@@ -74,6 +76,8 @@ class Codec(IntEnum):
     NONE = 0
     ZSTD = 1
     BLOCK = 2  # v2: content inside a block (a zstd blob holding many small blobs, D30)
+    XZ = 3  # v5: one xz stream, for native files only (--best-compression, D33)
+    PIECES = 4  # v5: the concatenated content of XZ_PIECE-sized xz streams, decoded in parallel
 
 
 BLOCK_SIZE = 256 * 1024  # blocks of sources and data, rarely read

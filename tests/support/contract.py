@@ -5,6 +5,7 @@ the pure-Python stand-in; both must produce identical results (plan Phase 3).
 """
 
 import hashlib
+import mmap
 import os
 import tempfile
 from typing import Any
@@ -16,6 +17,9 @@ NAMES = [
 FILES = [
     "pkg/cli.py", "pkg/data/table.json", "pkg/data/sub/x.txt", "demo-1.0.dist-info/METADATA",
     "native.libs/_ext.so", "native.libs/libdep.so", "missing", "", "pkg", "pkg/data", "\ud800",
+    # xz streams that do not match their record: both readers must refuse them (D33)
+    "native.libs/libtrailing.so", "native.libs/liblonger.so", "native.libs/libtruncated.so",
+    "native.libs/libpieces.so", "native.libs/libbadpiece.so",
 ]  # fmt: skip
 DIRS = [
     "", "pkg", "pkg/data", "pkg/data/sub", "ns", "missing", "pkg/cli.py", "\ud800", "pkg/",
@@ -26,8 +30,7 @@ DISTS = ["demo", "missing", ""]
 BAD_BLOBS: list[Any] = [-1, 2**32, 2**64, 10**9, "1"]
 LEAF = 1 << 20  # the integrity digest's piece size: around it, the C and Python routines agree
 DIGEST_SIZES = [0, 1, LEAF - 1, LEAF, LEAF + 1, 5 * LEAF + 3, 9 * LEAF + 1]  # 1 to 3 threads
-NOT_BUFFERS: list[Any] = [None, "text", 1]
-BAD_FDS: list[Any] = [-1, 10**6, "3", None]
+NOT_BUFFER_LISTS: list[Any] = [None, 1, ["text"], [b"ok", None], "abc"]
 NOT_STR: list[Any] = [None, 1, b"pkg"]
 
 
@@ -92,26 +95,23 @@ def run(fsb: Any) -> dict[str, Any]:
 def _digests(fsb: Any) -> dict[str, Any]:
     samples = {size: (bytes(range(251)) * (size // 251 + 1))[:size] for size in DIGEST_SIZES}
     out: dict[str, Any] = {
-        "tree_digest": {str(n): _outcome(fsb.tree_digest, data) for n, data in samples.items()},
-        "tree_digest_bad": [_outcome(fsb.tree_digest, arg) for arg in NOT_BUFFERS],
-        "file_digest_bad": [_outcome(fsb.file_digest, fd, 0) for fd in BAD_FDS],
+        "together": _outcome(fsb.tree_digests, list(samples.values())),  # one parallel pass
+        "one_by_one": [_outcome(fsb.tree_digests, [data]) for data in samples.values()],
+        "bad": [_outcome(fsb.tree_digests, arg) for arg in NOT_BUFFER_LISTS],
     }
     with tempfile.TemporaryDirectory() as directory:
-        files, other_sizes = {}, {}
+        maps = []
         for size, data in samples.items():
             path = os.path.join(directory, str(size))
             with open(path, "wb") as file:
                 file.write(data)
-            with open(path, "rb") as file:
-                file.seek(size // 2)  # the position does not matter
-                files[str(size)] = _outcome(fsb.file_digest, file.fileno(), size)
-                other_sizes[str(size)] = _outcome(fsb.file_digest, file.fileno(), size + 1)
-        out["file_digest"] = files
-        out["file_digest_other_size"] = other_sizes  # None: not the file that was expected
-        descriptor = os.open(directory, os.O_RDONLY)
-        try:
-            out["file_digest_dir"] = _outcome(fsb.file_digest, descriptor, 0)
-        finally:
-            os.close(descriptor)
-    out["same_digests"] = out["tree_digest"] == out["file_digest"]
+            with open(path, "rb") as file:  # mapped, as the cache check reads files
+                maps.append(mmap.mmap(file.fileno(), size, access=mmap.ACCESS_READ) if size
+                            else b"")  # fmt: skip
+        out["mapped"] = _outcome(fsb.tree_digests, maps)
+        for mapping in maps:
+            if isinstance(mapping, mmap.mmap):
+                mapping.close()
+    one_by_one = ["ok", ["list", *(entry[1][1] for entry in out["one_by_one"])]]
+    out["same_digests"] = out["together"] == out["mapped"] == one_by_one
     return out

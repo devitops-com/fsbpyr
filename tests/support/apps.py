@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fsbpyr import bytecode
 from fsbpyr.assemble import App
-from fsbpyr.payload.format import FileKind, ModuleKind
+from fsbpyr.payload.format import XZ_PIECE, Codec, FileKind, ModuleKind
 from fsbpyr.payload.spec import Blob, Dist, File, Module
 
 SUPPORT = Path(__file__).parent
@@ -67,6 +67,37 @@ def _module(rel: str, text: str) -> tuple[Module, File]:
     )
 
 
+def library(blocks: int) -> bytes:
+    """A compressible stand-in for a native library of ``blocks`` 4 KiB blocks, none alike."""
+    return b"".join(b"\x7fELF " + bytes([i % 251]) * 4093 + i.to_bytes(3, "little")
+                    for i in range(blocks))  # fmt: skip
+
+
+PIECED = library(2200)  # about 9 MB: three pieces of xz (D33)
+
+
+def _bad_xz() -> list[File]:
+    """xz natives whose stream does not match the record (never valid, always refused), and a
+    library in pieces, whole and with one piece broken."""
+    good = Blob.xz(b"\x7fELF bad" * 2000)
+    size = good.size
+    broken = {"libtrailing.so": (good.stored + b"junk", size),
+              "liblonger.so": (good.stored, size + 1),
+              "libtruncated.so": (good.stored[:-40], size)}  # fmt: skip
+    files = [File(f"native.libs/{name}", FileKind.NATIVE_LIB,
+                  Blob(stored, length, Codec.XZ, bytes(32)), mode=0o755)
+             for name, (stored, length) in broken.items()]  # fmt: skip
+    pieces = Blob.xz(PIECED, digest=True)  # three xz streams, decoded in parallel by the launcher
+    bad = (*pieces.pieces[:1], Blob(pieces.pieces[1].stored + b"junk", XZ_PIECE, Codec.XZ),
+           *pieces.pieces[2:])  # fmt: skip
+    files += [
+        File("native.libs/libpieces.so", FileKind.NATIVE_LIB, pieces, mode=0o755),
+        File("native.libs/libbadpiece.so", FileKind.NATIVE_LIB,
+             Blob(b"", pieces.size, Codec.PIECES, bytes(32), bad), mode=0o755),
+    ]  # fmt: skip
+    return files
+
+
 def demo_app(entrypoint: str = "entry:main") -> App:
     built = [_module(rel, text) for rel, text in SOURCES.items()]
     modules = [m for m, _ in built] + [
@@ -79,7 +110,9 @@ def demo_app(entrypoint: str = "entry:main") -> App:
     files += [  # never loaded: they exercise file_at / closure / blob_info
         File(NATIVE_EXT, FileKind.NATIVE_EXT, Blob.zstd(b"\x7fELF ext", digest=True),
              mode=0o755, closure=(NATIVE_LIB,)),
-        File(NATIVE_LIB, FileKind.NATIVE_LIB, Blob.zstd(b"\x7fELF lib", digest=True), mode=0o755),
+        File(NATIVE_LIB, FileKind.NATIVE_LIB, Blob.xz(b"\x7fELF lib" * 2000, digest=True),
+             mode=0o755),  # xz (D33): the launcher decodes it as the stand-in does
+        *_bad_xz(),
     ]  # fmt: skip
     return App(
         "demo",

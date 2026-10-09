@@ -25,6 +25,11 @@ class BuildConfig:
     fs_packages: tuple[str, ...] = ()  # packages whose files must exist on disk (FS_REQUIRED)
     hints: bool = False  # also print guesses (packages that may read files next to __file__)
     fast_compression: bool = False  # zstd level 3 instead of 9 for app content (D29)
+    best_compression: bool = False  # native files as xz -6 (D33): smaller, slower to build
+
+    def __post_init__(self) -> None:
+        if self.fast_compression and self.best_compression:
+            raise ConfigError("best-compression and fast-compression exclude each other")
 
     @property
     def zstd_level(self) -> int:
@@ -67,6 +72,8 @@ def _from_tool(project: Project) -> dict[str, Any]:
             values["include_source"] = _expect(key, value, bool)
         elif key == "fast-compression":
             values["fast_compression"] = _expect(key, value, bool)
+        elif key == "best-compression":
+            values["best_compression"] = _expect(key, value, bool)
         elif key == "allow-system-libs":
             libs = _expect(key, value, list)
             values["allowed_system_libs"] = tuple(_soname(key, lib) for lib in libs)
@@ -76,13 +83,20 @@ def _from_tool(project: Project) -> dict[str, Any]:
         else:
             raise ConfigError(
                 f"unknown [tool.fsbpyr] key {key!r}; supported: entry, output, requirements, "
-                "extras, include-source, fast-compression, allow-system-libs, fs-packages"
+                "extras, include-source, fast-compression, best-compression, "
+                "allow-system-libs, fs-packages"
             )
     return values
 
 
 def load_config(project: Project, **options: Any) -> BuildConfig:
-    """Merge: an option counts as given unless it is None (CLI flags default to None)."""
+    """Merge: an option counts as given unless it is None (CLI flags default to None). A
+    compression flag given on the command line also drops the other one from the project."""
     values = _from_tool(project)
-    values.update({key: value for key, value in options.items() if value is not None})
+    given = {key: value for key, value in options.items() if value is not None}
+    for flag, other in (("fast_compression", "best_compression"),
+                        ("best_compression", "fast_compression")):  # fmt: skip
+        if given.get(flag):
+            values.pop(other, None)
+    values.update(given)
     return BuildConfig(**values)

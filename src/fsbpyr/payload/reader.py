@@ -1,10 +1,13 @@
 """Validating payload reader (build side, inspect, tests). See docs/format.md."""
 
+import contextlib
 import hashlib
+import lzma
 import mmap
 import os
 from bisect import bisect_left
 from collections import OrderedDict
+from collections.abc import Generator, Iterator
 from compression import zstd
 from dataclasses import dataclass
 from itertools import pairwise
@@ -23,6 +26,7 @@ from .format import (
     HEADER_SIZE,
     MAX_BLOB_SIZE,
     MAX_BLOCK_SIZE,
+    MAX_MEMORY_BLOB,
     MAX_MODE,
     MODULE,
     NATIVE_KINDS,
@@ -35,6 +39,8 @@ from .format import (
     TRAILER_MAGIC,
     TRAILER_SIZE,
     WORD,
+    XZ_MEMLIMIT,
+    XZ_PIECE,
     ZSTD_MAGIC,
     Codec,
     FileFlag,
@@ -232,12 +238,23 @@ class Payload:
             kind = _enum(Codec, codec, "codec")
             if kind is Codec.BLOCK:  # offset: the block's index; stored: position inside it
                 self._check_member(i, stored, size)
+            elif kind is Codec.PIECES:  # offset: the first piece's index; stored: their number
+                self._check_parent(i, stored, size)
             else:
                 self._check_data(i, offset, stored, size, kind)
             self._index(digest, self._digests, "digest index")
             blobs.append(BlobRecord(i, offset, stored, size, kind, digest))
         _check_blocks(blobs)
+        self._piece_blobs = _check_pieces(blobs)
         return tuple(blobs)
+
+    def _check_parent(self, i: int, count: int, size: int) -> None:
+        if self.version < 5:
+            raise PayloadError(f"blob {i}: format version {self.version} has no pieces (codec 4)")
+        if size > MAX_BLOB_SIZE:
+            raise PayloadError(f"blob {i}: size {size} exceeds the limit")
+        if count < 2 or not (count - 1) * XZ_PIECE < size <= count * XZ_PIECE:
+            raise PayloadError(f"blob {i}: {count} pieces cannot hold {size} bytes")
 
     def _check_member(self, i: int, position: int, size: int) -> None:
         if self.version < 2:
@@ -254,6 +271,8 @@ class Payload:
             raise PayloadError(f"blob {i}: size {size} exceeds the limit")
         if kind is Codec.NONE and stored != size:
             raise PayloadError(f"blob {i}: stored size differs from size")
+        if kind is Codec.XZ and self.version < 5:
+            raise PayloadError(f"blob {i}: format version {self.version} has no xz (codec 3)")
 
     def _parse_dists(self) -> tuple[DistRecord, ...]:
         dists = []
@@ -273,18 +292,22 @@ class Payload:
                 raise PayloadError(f"invalid file mode {mode:#o}")
             path = self._str(off, length)
             check_path(path)
-            files.append(
-                FileRecord(
-                    i,
-                    path,
-                    _enum(FileKind, kind, "file kind"),
-                    _flags(FileFlag, flags, "file"),
-                    mode,
-                    self._index(blob, len(self._blobs), "blob index", optional=False),
-                    self._index(dist, len(self._dists), "dist index"),
-                    self._index(closure, len(self._words), "closure index"),
-                )
+            record = FileRecord(
+                i,
+                path,
+                _enum(FileKind, kind, "file kind"),
+                _flags(FileFlag, flags, "file"),
+                mode,
+                self._index(blob, len(self._blobs), "blob index", optional=False),
+                self._index(dist, len(self._dists), "dist index"),
+                self._index(closure, len(self._words), "closure index"),
             )
+            codec = self._blobs[record.blob].codec
+            if codec in (Codec.XZ, Codec.PIECES) and record.kind not in NATIVE_KINDS:
+                raise PayloadError(f"file {path!r}: only native files may be xz-compressed")
+            if record.blob in self._piece_blobs:
+                raise PayloadError(f"file {path!r}: its blob is a piece of another")
+            files.append(record)
         return tuple(files)
 
     def _parse_modules(self) -> tuple[ModuleRecord, ...]:
@@ -325,6 +348,8 @@ class Payload:
                 and m.file != NONE
                 and (self._files[m.file].kind is FileKind.NATIVE_EXT)
             )
+        if m.source != NONE and self._blobs[m.source].codec in (Codec.XZ, Codec.PIECES):
+            raise PayloadError(f"source of {m.name!r}: only native files may be xz-compressed")
         if not valid:
             raise PayloadError(f"module {m.name!r} violates the {m.kind.name} kind invariants")
         if ModuleFlag.FS_REQUIRED_ROOT in m.flags and m.kind is not ModuleKind.PACKAGE:
@@ -376,8 +401,10 @@ class Payload:
     def stored(self, index: int) -> bytes:
         """Stored (possibly compressed) bytes, for copying a blob verbatim into a new payload."""
         record = self.blob(index)
-        if record.codec is Codec.BLOCK:
-            raise PayloadError(f"blob {index} lives inside a block: it has no stored bytes")
+        if record.codec in (Codec.BLOCK, Codec.PIECES):
+            raise PayloadError(
+                f"blob {index} has no stored bytes of its own (codec {record.codec})"
+            )
         return bytes(self._buf[record.offset : record.offset + record.stored_size])
 
     def _block(self, index: int) -> bytes:
@@ -392,57 +419,83 @@ class Payload:
 
     def read_blob(self, index: int) -> bytes:
         """Uncompressed content; never allocates more than ``size + 1`` bytes (a member: its
-        block, at most MAX_BLOCK_SIZE)."""
+        block, at most MAX_BLOCK_SIZE; pieces: their contents and the joined result)."""
         record = self.blob(index)
         if record.codec is Codec.BLOCK:
             return self._block(record.offset)[record.stored_size : record.stored_size + record.size]
+        if record.size > MAX_MEMORY_BLOB:  # as the launcher: such a blob is only streamed
+            raise PayloadError(f"blob {index} is too large to read whole ({record.size} bytes)")
+        if record.codec is Codec.PIECES:
+            first, count = record.offset, record.stored_size
+            return b"".join(self.read_blob(piece) for piece in range(first, first + count))
         stored = self._buf[record.offset : record.offset + record.stored_size]
         if record.codec is Codec.NONE:
             return bytes(stored)
-        decompressor = zstd.ZstdDecompressor()
-        try:
-            _check_frame(index, stored, record.size)
-            data = decompressor.decompress(stored, max_length=record.size + 1)
-        except zstd.ZstdError as exc:
-            raise PayloadError(f"zstd frame invalid in blob {index}: {exc}") from None
+        try:  # one piece: more than ``size`` bytes is an error, never an allocation
+            return b"".join(self._decoded(index, record, stored, chunk=record.size + 1))
         finally:
             stored.release()
-        if len(data) != record.size or not decompressor.eof or decompressor.unused_data:
-            raise PayloadError(f"blob {index}: decompressed size mismatch")
-        return data
 
     def contains(self, index: int, needle: bytes, *, chunk: int = 1 << 20) -> bool:
         """Whether the blob's content holds ``needle``, decompressing ``chunk`` bytes at a time:
         the declared size of a hostile file is not trusted to fit in memory."""
-        record = self.blob(index)
-        if record.codec is Codec.BLOCK:  # small: at most BLOCK_MEMBER_MAX in practice
+        if self.blob(index).codec is Codec.BLOCK:  # small: at most BLOCK_MEMBER_MAX in practice
             return needle in self.read_blob(index)
-        stored = self._buf[record.offset : record.offset + record.stored_size]
         keep = len(needle) - 1  # bytes of a window that may start a match across windows
+        tail = b""
+        with contextlib.closing(self._chunks(index, chunk)) as chunks:
+            for output in chunks:
+                window = tail + output
+                if needle in window:
+                    return True
+                tail = window[-keep:] if keep else b""
+        return False
+
+    def _chunks(self, index: int, chunk: int) -> Generator[bytes]:
+        """The content of a blob with data of its own (pieces: one after the other), at most
+        ``chunk`` bytes at a time."""
+        record = self.blob(index)
+        if record.codec is Codec.PIECES:
+            for piece in range(record.offset, record.offset + record.stored_size):
+                yield from self._chunks(piece, chunk)
+            return
+        stored = self._buf[record.offset : record.offset + record.stored_size]
         try:
             if record.codec is Codec.NONE:
                 for start in range(0, record.stored_size, chunk):
-                    if needle in bytes(stored[max(start - keep, 0) : start + chunk]):
-                        return True
-                return False
-            _check_frame(index, stored, record.size)
-            decompressor, tail, produced = zstd.ZstdDecompressor(), b"", 0
+                    yield bytes(stored[start : start + chunk])
+            else:
+                yield from self._decoded(index, record, stored, chunk=chunk)
+        finally:
+            stored.release()
+
+    @staticmethod
+    def _decoded(
+        index: int, record: BlobRecord, stored: memoryview, *, chunk: int
+    ) -> Iterator[bytes]:
+        """The content of a zstd or xz blob, at most ``chunk`` bytes at a time, held to its
+        record: never more than ``size`` bytes, and exactly one frame or stream."""
+        label = "xz stream" if record.codec is Codec.XZ else "zstd frame"
+        decompressor: zstd.ZstdDecompressor | lzma.LZMADecompressor
+        try:
+            if record.codec is Codec.XZ:
+                decompressor = lzma.LZMADecompressor(lzma.FORMAT_XZ, memlimit=XZ_MEMLIMIT)
+            else:
+                _check_frame(index, stored, record.size)
+                decompressor = zstd.ZstdDecompressor()
             data: bytes | memoryview = stored
+            produced = 0
             while not decompressor.eof:
                 output = decompressor.decompress(data, max_length=chunk)
                 data = b""
                 produced += len(output)
                 if produced > record.size or (not output and decompressor.needs_input):
-                    raise PayloadError(f"blob {index}: decompressed size mismatch")
-                window = tail + output
-                if needle in window:
-                    return True
-                tail = window[-keep:] if keep else b""
-            return False
-        except zstd.ZstdError as exc:
-            raise PayloadError(f"zstd frame invalid in blob {index}: {exc}") from None
-        finally:
-            stored.release()
+                    break
+                yield output
+            if produced != record.size or not decompressor.eof or decompressor.unused_data:
+                raise PayloadError(f"blob {index}: {label} does not match its record")
+        except (zstd.ZstdError, lzma.LZMAError) as exc:
+            raise PayloadError(f"{label} invalid in blob {index}: {exc}") from None
 
     def closure(self, index: int) -> tuple[int, ...]:
         return self._closure_members(index)
@@ -510,6 +563,28 @@ def _check_blocks(blobs: list[BlobRecord]) -> None:
                 raise PayloadError(f"blob {member.index}: its block is not a block")
             if member.stored_size + member.size > block.size:
                 raise PayloadError(f"blob {member.index}: reaches past the end of its block")
+
+
+def _check_pieces(blobs: list[BlobRecord]) -> frozenset[int]:
+    """Each blob of pieces names consecutive xz blobs, XZ_PIECE bytes of content each but the
+    last, used by no other blob of pieces; returns their indices."""
+    pieces: set[int] = set()
+    for parent in blobs:
+        if parent.codec is not Codec.PIECES:
+            continue
+        first, count = parent.offset, parent.stored_size
+        if first + count > len(blobs):
+            raise PayloadError(f"blob {parent.index}: its pieces lie outside the blob table")
+        for number, piece in enumerate(blobs[first : first + count]):
+            last = parent.size - (count - 1) * XZ_PIECE
+            if piece.codec is not Codec.XZ or piece.size != (
+                last if number == count - 1 else XZ_PIECE
+            ):
+                raise PayloadError(f"blob {parent.index}: piece {piece.index} is not one of it")
+            if piece.index in pieces:
+                raise PayloadError(f"blob {piece.index} is a piece of two blobs")
+            pieces.add(piece.index)
+    return frozenset(pieces)
 
 
 def _check_frame(index: int, frame: memoryview, size: int) -> None:

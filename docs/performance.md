@@ -92,6 +92,51 @@ more to be loaded.
 Blocks (D30, 0.5.0) cost aiagent's `version`, `--help` and `skills list` 4.7, 5.3 and 5.6 ms
 against 0.4.0; `hello` did not change.
 
+## `--best-compression` (0.8.0)
+
+Native libraries as xz -6 with the x86 filter instead of zstd 9 (D33). Libraries over 4 MiB are
+stored in pieces of 4 MiB, each its own xz stream, so the launcher decodes one library on up to
+8 threads; the pieces of all libraries are compressed on min(8, cores) threads, largest first.
+Each xz -6 encoder holds about 55 MiB, so a build with 8 of them needs about 0.5 GiB more.
+
+| App | Size, zstd 9 | Size, xz -6 (one stream) | Size, xz -6 (4 MiB pieces) | Build, zstd 9 | Build, xz (one stream) | Build, xz (pieces) |
+|---|---|---|---|---|---|---|
+| aiagent | 149.7 MB | 139.0 MB | 140.0 MB | 18.5 s | 24.4 s | 21.1 s |
+| `heavy` | 76.5 MB | 67.9 MB | 68.8 MB | 5.2 s | 11.7 s | 7.4 s |
+
+| Run | First run, zstd | First run, xz in pieces | First run, xz, one core | Later runs, zstd | Later runs, xz |
+|---|---|---|---|---|---|
+| `heavy np` | 152.6 ms | 223.4 ms | 282.7 ms | 120.5 ms | 120.9 ms |
+| `heavy onnx` | 278.9 ms | 354.4 ms | 544.7 ms | 193.6 ms | 191.3 ms |
+| `heavy crypto` | 58.6 ms | 83.4 ms | 140.9 ms | 42.6 ms | 42.7 ms |
+| `aiagent version` | 145.4 ms | 190.3 ms | 221.1 ms | 142.3 ms | 141.7 ms |
+
+"First run" starts with an empty cache, so it decodes and writes every native the run imports;
+medians of 11 runs; "one core" runs the whole process on one CPU (`taskset -c 2`), so the
+pieces decode one after the other. Later runs (31) only check the cache. With one xz stream per library the
+first runs took 261.6 ms (`np`), 554.6 ms (`onnx`), 125.1 ms (`crypto`) and 195.7 ms (`aiagent
+version`), against 132.2, 241.8, 59.4 and 146.7 ms with zstd in that session: one library
+dominated each closure (numpy: OpenBLAS, 24 MB; onnx: its 31 MB extension) and one stream
+decodes on one thread. On `heavy`'s four largest libraries, pieces of 8, 4, 2 and 1 MiB cost
++2.2%, +3.6%, +6.4% and +9.9% of xz size and decoded in 220, 125, 87 and 75 ms against 408 ms
+for one stream each (8 threads).
+
+## A PyTorch app (0.8.0, D34)
+
+`torchopt`: CPU-only torch 2.14.1, a 100-step Adam loop; 233 MB with zstd 9; the cache on disk
+(XFS). Times are torch's import as the app measures it.
+
+| | First run | Later runs | Cache |
+|---|---|---|---|
+| Before D34: the whole package extracted twice, each file synced | 42.5 s | 895 ms | 1.2 GB |
+| Without fsync only | 2.3 s | about 920 ms | 1.2 GB |
+| torch a built-in fs-package, files checked one at a time | 1.43 s | 683 ms | 709 MB |
+| D34: torch a built-in fs-package, checks in batches | 1.34 s | 620 ms | 709 MB |
+| The same script in its venv | 1.28 s (cold) | 465–500 ms | — |
+
+Of the later runs' 620 ms, about 60 ms check 12,151 cached files (about 120 ms one at a time;
+with size checks only, 560 ms); about 95 ms more go to walking their records in Python.
+
 ## Known effects
 
 - **OpenBLAS on a hybrid CPU.** numpy's OpenBLAS starts one busy-waiting thread per core at

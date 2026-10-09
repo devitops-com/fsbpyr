@@ -13,11 +13,16 @@ def _blob(payload: Payload, index: int) -> Blob | None:
     digest = None if record.digest == NONE else payload.digest(record.digest)
     if record.codec is Codec.BLOCK:
         return Blob(payload.read_blob(index), record.size, Codec.NONE, digest)
+    if record.codec is Codec.PIECES:
+        first, count = record.offset, record.stored_size
+        pieces = tuple(Blob(payload.stored(i), payload.blob(i).size, Codec.XZ)
+                       for i in range(first, first + count))  # fmt: skip
+        return Blob(b"", record.size, Codec.PIECES, digest, pieces)
     return Blob(payload.stored(index), record.size, record.codec, digest)
 
 
 def spec_from_payload(payload: Payload) -> PayloadSpec:
-    """Only from this format version: older DIGESTS hold plain SHA-256, which a version 4 file
+    """Only from this format version: older DIGESTS hold plain SHA-256, which a current file
     would present as integrity digests, so every check of the files would fail."""
     if payload.version != FORMAT_VERSION:
         raise PayloadError(f"format version {payload.version}: only {FORMAT_VERSION} is re-encoded")

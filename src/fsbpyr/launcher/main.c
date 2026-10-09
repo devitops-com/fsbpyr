@@ -62,7 +62,8 @@ static const struct _frozen *startup_table(void) {
         const char *name;
         if (!fsb_get_startup(&fsb_self, i, &index) || !fsb_get_module(&fsb_self, index, &m) ||
             !(m.flags & FSB_MODULE_STARTUP) || !fsb_get_blob(&fsb_self, m.code, &b) ||
-            b.codec == FSB_CODEC_NONE || b.size == 0 || b.size > MAX_STARTUP_CODE ||
+            (b.codec != FSB_CODEC_ZSTD && b.codec != FSB_CODEC_BLOCK) || /* checksummed */
+            b.size == 0 || b.size > MAX_STARTUP_CODE ||
             !fsb_str(&fsb_self, m.name, &name))
             fatal("invalid startup module");
         table[i].name = name;

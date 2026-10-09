@@ -64,7 +64,7 @@ def test_tree_digest_hashes_bytes_whatever_the_item_size() -> None:
 
 
 def test_payloads_of_older_versions_are_never_reencoded() -> None:
-    """Their DIGESTS are plain SHA-256: re-encoded as version 4 they would fail every check."""
+    """Their DIGESTS are plain SHA-256: re-encoded in this version they would fail every check."""
     older = bytearray(encode_payload(make_spec()))
     struct.pack_into("<I", older, 8, 3)
 

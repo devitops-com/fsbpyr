@@ -69,6 +69,8 @@ _BlobKey = tuple[bytes, int, Codec]
 
 
 def _blob_key(blob: Blob) -> _BlobKey:
+    if blob.codec is Codec.PIECES:  # its streams are its identity
+        return b"".join(piece.stored for piece in blob.pieces), blob.size, blob.codec
     return blob.stored, blob.size, blob.codec
 
 
@@ -108,7 +110,8 @@ class _Blobs:
     """Deduplicates blobs, assigns indices in placement order, and packs small blobs into
     blocks: one stream of blocks per placement class (startup code, code, resources, sources),
     filled in blob order, so a package's modules share blocks and an import never decompresses
-    sources. Block records follow the blob records."""
+    sources. Block records follow the blob records, and the records of the pieces of large xz
+    libraries (D33) follow them; a library's pieces lie where its data would."""
 
     def __init__(
         self, modules: Iterable[Module], files: Iterable[File], *, blocks: bool, level: int
@@ -117,11 +120,14 @@ class _Blobs:
         self._by_content: dict[_BlobKey, _BlobKey] = {}
         rank: dict[_BlobKey, tuple[_Placement, bytes]] = {}
         digests: dict[_BlobKey, bytes] = {}
+        self.pieces: dict[_BlobKey, tuple[Blob, ...]] = {}
 
         def use(blob: Blob | None, placement: _Placement, ref: str) -> None:
             if blob is None:
                 return
             key = self.key(blob, placement)
+            if blob.pieces:
+                self.pieces[key] = blob.pieces
             candidate = (placement, ref.encode())
             rank[key] = min(rank.get(key, candidate), candidate)
             if blob.sha256 is not None:
@@ -175,7 +181,7 @@ class _Blobs:
 
     @property
     def count(self) -> int:
-        return len(self.order) + len(self.blocks)
+        return len(self.order) + len(self.blocks) + sum(map(len, self.pieces.values()))
 
     def ref(self, blob: Blob | None, placement: _Placement) -> int:
         return NONE if blob is None else self.index[self.key(blob, placement)]
@@ -186,6 +192,7 @@ class _Blobs:
         data = bytearray()
         rows: list[bytes] = [b""] * self.count
         first_block = len(self.order)
+        next_piece = first_block + len(self.blocks)
 
         def place(stored: bytes) -> int:
             data.extend(bytes(align(len(data), BLOB_ALIGN) - len(data)))
@@ -196,6 +203,15 @@ class _Blobs:
             stored, size, codec = key
             digest = self.digest_index.get(key, NONE)
             member = self.members.get(key)
+            if codec is Codec.PIECES:  # the first piece's index and the number of pieces
+                pieces = self.pieces[key]
+                rows[self.index[key]] = BLOB.pack(next_piece, len(pieces), size, codec, 0, 0,
+                                                  digest)  # fmt: skip
+                for piece in pieces:
+                    rows[next_piece] = BLOB.pack(place(piece.stored), len(piece.stored),
+                                                 piece.size, Codec.XZ, 0, 0, NONE)  # fmt: skip
+                    next_piece += 1
+                continue
             if member is None:
                 rows[self.index[key]] = BLOB.pack(place(stored), len(stored), size, codec, 0, 0,
                                                   digest)  # fmt: skip
@@ -256,6 +272,8 @@ def _check_files(files: tuple[File, ...], dists: set[str]) -> None:
             raise PayloadError(f"unknown dist {file.dist!r} for {file.path!r}")
         if extractable(file.kind, file.flags) and file.blob.sha256 is None:
             raise PayloadError(f"{file.path!r} is extracted at run time and needs a digest")
+        if file.blob.codec in (Codec.XZ, Codec.PIECES) and file.kind not in NATIVE_KINDS:
+            raise PayloadError(f"{file.path!r}: only native files may be xz-compressed")
         _check_closure(file, known)
     directories = {p.rsplit("/", i)[0] for p in paths for i in range(1, p.count("/") + 1)}
     clashes = sorted(directories & known.keys())
@@ -300,11 +318,13 @@ def _check_module(module: Module, files: dict[str, File], dists: set[str], *, bl
     if (
         module.code is not None
         and module.code.codec is not Codec.ZSTD
-        and not (
-            blocks and 0 < module.code.size < BLOCK_MEMBER_MAX  # packed into a checksummed block
+        and not (  # raw, packed into a checksummed block
+            blocks and module.code.codec is Codec.NONE and 0 < module.code.size < BLOCK_MEMBER_MAX
         )
     ):
         raise PayloadError(f"code of {module.name!r} must be checksummed: a zstd frame (Blob.code)")
+    if module.source is not None and module.source.codec in (Codec.XZ, Codec.PIECES):
+        raise PayloadError(f"source of {module.name!r}: only native files may be xz-compressed")
 
 
 def _validate(spec: PayloadSpec) -> None:

@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -75,3 +76,28 @@ def test_a_corrupt_resources_id_is_reported(
     with pytest.raises(OSError, match="corrupt executable payload"):
         native.materialize("many/d001/f.txt")
     assert json.loads(boot.INFO["build_info"])["resources"]  # the real one is intact
+
+
+def test_files_on_disk_are_checked_in_batches(
+    native: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One parallel pass per batch (D32); a batch holds mappings, not descriptors."""
+    native.materialize("many")
+    native._MATERIALIZED.clear()  # a new process
+    native._RESOURCES.clear()
+    batches: list[int] = []
+    digests = native._fsbpyr.tree_digests
+
+    def recorded(buffers: list[Any]) -> list[bytes]:
+        if not all(isinstance(buffer, bytes) for buffer in buffers):  # mapped files, not payload
+            batches.append(len(buffers))
+        result: list[bytes] = digests(buffers)
+        return result
+
+    monkeypatch.setattr(native._fsbpyr, "tree_digests", recorded)
+    monkeypatch.setattr(native, "_CHECK_BATCH", 7)
+
+    native.materialize("many")
+
+    assert len(batches) > 1 and max(batches) <= 7
+    assert sum(batches) == len(native._files_below("many"))

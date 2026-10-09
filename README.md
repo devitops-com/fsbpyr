@@ -43,10 +43,12 @@ from. The output defaults to `dist/<console-script-name>`.
 | `--offline` | no network access during the build |
 | `--no-source` | leave out `.py` sources; see [Leaving out sources](#leaving-out-sources) |
 | `--fast-compression` | zstd level 3 instead of 9: a faster build, up to ~8% larger for large apps (the standard library's files of 64 KiB and more stay level 9) |
+| `--best-compression` | native libraries as xz -6 instead of zstd 9: about 6.5% smaller for aiagent, a slower build, and a slower first run, which decodes them into the cache (see below); not with `--fast-compression` |
 | `--hints` | also list packages that may read files next to `__file__` (a guess) |
 | `--no-smoke` | skip the smoke test that runs the new executable once |
 
-The same settings can live in the project's `pyproject.toml`; command-line options win. The
+The same settings can live in the project's `pyproject.toml`; command-line options win (a
+compression flag on the command line also replaces the other one set in the project). The
 boolean settings below can only be switched on from the command line, so a project that sets
 them in `pyproject.toml` changes them there:
 
@@ -58,6 +60,7 @@ requirements = "requirements.txt"
 extras = ["fancy"]
 include-source = false       # same as --no-source
 fast-compression = true      # same as --fast-compression
+best-compression = true      # same as --best-compression (not both)
 fs-packages = ["mypkg.templates"]
 allow-system-libs = ["libGL.so.1"]
 ```
@@ -143,9 +146,13 @@ came from needs a signature checked with a key from outside it; signed releases 
 ## At run time
 
 Pure-Python apps run straight from the executable. Native extensions, and the packages listed
-in `fs-packages` (plus a few known ones such as certifi, botocore and litellm), are extracted
+in `fs-packages` (plus a few known ones such as certifi, botocore, litellm and torch), are extracted
 on first use into `${XDG_CACHE_HOME:-~/.cache}/<app>`, or `$FSBPYR_CACHE_DIR` when set; resources
-an app asks for as a path are extracted there too. Environment variables the executable reads:
+an app asks for as a path are extracted there too. With `--best-compression` that first use
+takes longer, since xz decodes more slowly than zstd: the launcher decodes each library in
+pieces of 4 MiB on up to 8 threads (numpy's first import: about +70 ms; onnxruntime's together
+with numpy's: about +80 ms); later runs are as fast as with zstd. Environment variables the
+executable reads:
 
 | Variable | |
 |---|---|

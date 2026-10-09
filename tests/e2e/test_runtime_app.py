@@ -14,10 +14,23 @@ from pathlib import Path
 
 import pytest
 
-from fsbpyr.payload.format import DIGEST_LEAF, DIGEST_SIZE, TRAILER_SIZE, Codec, tree_digest
+from fsbpyr.assemble import App, build_executable
+from fsbpyr.payload.format import (
+    BLOB,
+    DIGEST_LEAF,
+    DIGEST_SIZE,
+    TRAILER_SIZE,
+    Codec,
+    FileKind,
+    Section,
+    tree_digest,
+)
 from fsbpyr.payload.reader import Executable
+from fsbpyr.payload.spec import Blob, File
+from fsbpyr.runtime.registry import Runtime
 
-from .conftest import BuildApp
+from ..support.apps import library
+from .conftest import BuildApp, app_content
 
 pytestmark = pytest.mark.slow
 
@@ -262,6 +275,55 @@ def test_launcher_and_writer_agree_on_the_digest_at_leaf_boundaries(
 
     assert result.returncode == 70
     assert "payload size does not match file size" in result.stderr, result.stderr
+
+
+_READS_THE_LIBRARY = """\
+import _fsbpyr
+
+def main():
+    record = _fsbpyr.find_file("x.libs/libbig.so")
+    try:
+        data = _fsbpyr.read(record[4])
+    except _fsbpyr.PayloadError as exc:
+        print("refused", exc)
+    else:
+        print("read", len(data))
+"""
+
+
+@pytest.mark.parametrize("damage", ["intact", "count", "piece codec", "piece size"])
+def test_launcher_refuses_pieces_that_do_not_add_up(
+    runtime: Runtime, tmp_path: Path, damage: str
+) -> None:
+    """D33: records damaged and the digest restamped, as a deliberate change would; the
+    launcher checks a library's pieces as it decodes them, in parallel."""
+    data = library(2300)  # three pieces
+    big = File("x.libs/libbig.so", FileKind.NATIVE_LIB, Blob.xz(data, digest=True), mode=0o755)
+    modules, files = app_content({"x.py": _READS_THE_LIBRARY})
+    app = tmp_path / "app"
+    build_executable(runtime, App("x", "x:main", modules=modules, files=(*files, big)), app)
+    raw = bytearray(app.read_bytes())
+    with Executable.open(app) as exe:
+        start = exe.payload_offset
+        record = exe.payload.find_file("x.libs/libbig.so")
+        assert record is not None
+        parent = exe.payload.blob(record.blob)
+    blobs_at = start + struct.unpack_from("<Q", raw, start + 80 + 16 * Section.BLOBS)[0]
+    parent_at, first_at = blobs_at + parent.index * BLOB.size, blobs_at + parent.offset * BLOB.size
+    if damage == "count":
+        struct.pack_into("<Q", raw, parent_at + 8, 4)  # four pieces cannot hold three pieces' size
+    elif damage == "piece codec":
+        struct.pack_into("<B", raw, first_at + 24, Codec.ZSTD)
+    elif damage == "piece size":
+        struct.pack_into("<Q", raw, first_at + 16, (4 << 20) - 1)
+    app.write_bytes(bytes(raw))
+    _restamp(app)
+
+    result = _run(app)
+
+    assert result.returncode == 0, result.stderr
+    expected = f"read {len(data)}" if damage == "intact" else "refused corrupt executable payload"
+    assert result.stdout.startswith(expected), result.stdout
 
 
 def _restamp(app: Path) -> None:

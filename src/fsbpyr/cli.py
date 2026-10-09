@@ -61,8 +61,12 @@ def _add_build(commands: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     build.add_argument("--no-source", dest="include_source", action="store_false", default=None,
                        help="leave out .py sources (bytecode only): smaller, but tracebacks show "
                             "no source lines and inspect.getsource() fails")  # fmt: skip
-    build.add_argument("--fast-compression", action="store_true", default=None,
-                       help="zstd level 3, not 9: faster, larger")  # fmt: skip
+    compression = build.add_mutually_exclusive_group()
+    compression.add_argument("--fast-compression", action="store_true", default=None,
+                             help="zstd level 3, not 9: faster, larger")  # fmt: skip
+    compression.add_argument("--best-compression", action="store_true", default=None,
+                             help="native libraries as xz -6: smaller; slower to build and to "
+                                  "extract on first use")  # fmt: skip
     build.add_argument("--hints", action="store_true", default=None,
                        help="also list packages that may read files next to __file__")  # fmt: skip
     build.add_argument("--no-smoke", dest="smoke", action="store_false", default=None,
@@ -97,6 +101,7 @@ def _build(args: argparse.Namespace) -> int:
             smoke=args.smoke,
             hints=args.hints,
             fast_compression=args.fast_compression,
+            best_compression=args.best_compression,
         )
         result = build(args.project, config, log=lambda message: print(f"fsbpyr: {message}"))
     except errors as exc:

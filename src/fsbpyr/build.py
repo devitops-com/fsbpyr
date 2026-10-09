@@ -14,6 +14,7 @@ from .classify import classify
 from .closure import SiteIndex, resolve_entry
 from .config import BuildConfig
 from .elf import ElfError, glibc_requirement
+from .payload.spec import XZ_PRESET
 from .project import LockSource, Project
 from .runtime import pins
 from .runtime.registry import Runtime, select_runtime
@@ -132,6 +133,7 @@ def build(
             fs_packages=frozenset(config.fs_packages),
             hints=config.hints,
             level=level,
+            xz_natives=config.best_compression,
         )
     warnings += walk.warnings
     if walk.unreachable:
@@ -155,6 +157,7 @@ def build(
             ("dists", sorted(f"{d.name}=={d.version}" for d in content.dists)),
             ("glibc", glibc),
             ("zstd_level", level),  # of the app's content and of every block
+            ("native_compression", f"xz -{XZ_PRESET}" if config.best_compression else "zstd"),
             ("git", git_state(project.directory, warn=warnings.append)),
         ),
         zstd_level=level,

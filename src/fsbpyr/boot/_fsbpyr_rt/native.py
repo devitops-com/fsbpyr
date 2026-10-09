@@ -12,6 +12,7 @@ reported and restored from the payload.
 """
 
 import contextlib
+import mmap
 import os
 import stat
 import sys
@@ -24,6 +25,7 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from types import ModuleType
+    from typing import Literal
 
 NATIVE_EXT, NATIVE_LIB = 3, 4
 GENERATION_DIGITS = 32
@@ -32,6 +34,7 @@ _NEW_FILE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 FS_REQUIRED = 1  # file flag: extracted together with its FS_REQUIRED package
 _MODE_MASK = 0o500  # owner read (and execute, where the payload says so); never writable
 EXTRACTED: list[str] = []  # site-relative paths this process wrote (FSBPYR_TRACE)
+_CHECK_BATCH = 256  # files mapped and hashed in one parallel pass
 
 
 class NativeCacheError(ImportError):
@@ -86,9 +89,10 @@ def _open_child(parent: int, name: str, path: str) -> int:
     return _checked(os.open(name, _DIRECTORY | os.O_NOFOLLOW, dir_fd=parent), path, private=True)
 
 
-def _cached(directory: int, name: str, size: int, digest: bytes) -> bool | None:
-    """True: a file of ours with that content is in place; None: nothing is; False: something
-    else is (a file changed after it was extracted)."""
+def _mapped(directory: int, name: str, size: int) -> mmap.mmap | bytes | Literal[False] | None:
+    """The cached file, mapped for hashing (``b""`` when empty); None: nothing is there; False:
+    something else is (not ours, another size, unreadable or not mappable: a file changed after
+    it was extracted). The descriptor is closed at once: a batch holds mappings only."""
     try:
         info = os.stat(name, dir_fd=directory, follow_symlinks=False)
     except FileNotFoundError:
@@ -98,24 +102,35 @@ def _cached(directory: int, name: str, size: int, digest: bytes) -> bool | None:
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK  # a FIFO must not block
     try:
         fd = os.open(name, flags, dir_fd=directory)
-    except OSError:  # unreadable: replaced like any other changed file
+    except OSError:
         return False
-    try:  # the launcher's own routine (D32); None if the file is no longer ``size`` bytes
-        return _fsbpyr.file_digest(fd, size) == digest
-    except OSError:  # cannot be hashed (not a regular file, no mmap, EIO): replaced too
+    try:
+        held = os.fstat(fd)  # the file opened, which a rename may have swapped meanwhile
+        if not stat.S_ISREG(held.st_mode) or held.st_size != size:
+            return False
+        return mmap.mmap(fd, size, access=mmap.ACCESS_READ) if size else b""
+    except OSError, ValueError:
         return False
     finally:
         os.close(fd)
 
 
+def _unmap(mapped: mmap.mmap | bytes) -> None:
+    if not isinstance(mapped, bytes):
+        mapped.close()
+
+
 def _publish(directory: int, name: str, data: bytes, mode: int) -> None:
+    """Write under a temporary name, then rename: readers see a whole file or none. Not synced
+    to disk: every process checks a cached file against its digest before it uses it and
+    restores it when it differs, so one a crash left incomplete is repaired (fsync made torch's
+    first run 42.5 s instead of 2.3 s)."""
     temporary = f".fsbpyr-{os.getpid()}-{os.urandom(6).hex()}"  # fits whatever ``name`` is
     fd = os.open(temporary, _NEW_FILE, 0o600, dir_fd=directory)
     try:
         with open(fd, "wb", closefd=False) as out:
             out.write(data)
         os.fchmod(fd, mode & _MODE_MASK)
-        os.fsync(fd)
         os.rename(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
     except BaseException:
         with contextlib.suppress(OSError):
@@ -147,23 +162,10 @@ class NativeCache:
     def sync(self, files: tuple[int, ...], *, resources: bool = False) -> list[str]:
         """Extract the files (FILES indices) that are missing or whose content does not match
         the payload's, reporting the changed ones; returns the site-relative paths written.
-        Each process hashes a file once: extensions share libraries. With ``resources`` any
-        file may be extracted (importlib.resources asked for it on disk); one without a digest
-        is compared with its bytes in the payload."""
-        opened: dict[str, int] = {}  # the chain of directories down to the current one
-
-        def directory(rel: str) -> int:
-            for other in [o for o in opened if o and o != rel and not rel.startswith(f"{o}/")]:
-                os.close(opened.pop(other))  # left behind: big trees must not exhaust fds
-            if rel not in opened:
-                if rel:
-                    parent, _, name = rel.rpartition("/")
-                    opened[rel] = _open_child(directory(parent), name, f"{self.site}/{rel}")
-                else:
-                    opened[rel] = self._open_site()
-            return opened[rel]
-
-        written = []
+        Each process hashes a file once (extensions share libraries), many files per parallel
+        pass. With ``resources`` any file may be extracted (importlib.resources asked for it on
+        disk); one without a digest is compared with its bytes in the payload."""
+        work = _Pass(self)
         try:
             for index in files:
                 _, kind, flags, mode, blob, _, _, rel = _fsbpyr.file_at(index)
@@ -173,27 +175,14 @@ class NativeCache:
                     raise _corrupt(f"extracted file {rel!r}")
                 if rel in self._checked:
                     continue
-                data = None
                 if digest is None:  # compare the cached file with the payload's bytes
-                    data = _fsbpyr.read(blob)
-                    digest = _fsbpyr.tree_digest(data)
-                parent, _, name = rel.rpartition("/")
-                cached = _cached(directory(parent), name, size, digest)
-                if not cached:
-                    if cached is False:
-                        _report_changed(f"{self.site}/{rel}")
-                    if data is None:
-                        data = _fsbpyr.read(blob)
-                        if _fsbpyr.tree_digest(data) != digest:
-                            raise _corrupt(f"{rel!r} digest")
-                    _publish(directory(parent), name, data, mode)
-                    written.append(rel)
-                self._checked.add(rel)
+                    digest = _fsbpyr.tree_digests([_fsbpyr.read(blob)])[0]
+                work.add(rel, blob, size, digest, mode)
+            work.check()
         finally:
-            for fd in opened.values():
-                os.close(fd)
-        EXTRACTED.extend(written)
-        return written
+            work.close()
+        EXTRACTED.extend(work.written)
+        return work.written
 
 
 def _report_changed(path: str) -> None:
@@ -202,6 +191,70 @@ def _report_changed(path: str) -> None:
     if sys.stderr is not None:
         with contextlib.suppress(OSError, ValueError):
             sys.stderr.write(f"fsbpyr: {path} was modified after extraction; restoring it\n")
+
+
+class _Pass:
+    """One sync() of a cache: the chain of open directories, the files written, and the batch
+    of mapped files waiting for their parallel check."""
+
+    def __init__(self, cache: NativeCache) -> None:
+        self.cache = cache
+        self.opened: dict[str, int] = {}  # the chain of directories down to the current one
+        self.written: list[str] = []
+        self.batch: list[tuple[str, int, bytes, int, mmap.mmap | bytes]] = []
+
+    def directory(self, rel: str) -> int:
+        opened = self.opened
+        for other in [o for o in opened if o and o != rel and not rel.startswith(f"{o}/")]:
+            os.close(opened.pop(other))  # left behind: big trees must not exhaust fds
+        if rel not in opened:
+            if rel:
+                parent, _, name = rel.rpartition("/")
+                opened[rel] = _open_child(self.directory(parent), name, f"{self.cache.site}/{rel}")
+            else:
+                opened[rel] = self.cache._open_site()
+        return opened[rel]
+
+    def add(self, rel: str, blob: int, size: int, digest: bytes, mode: int) -> None:
+        parent, _, name = rel.rpartition("/")
+        mapped = _mapped(self.directory(parent), name, size)
+        if mapped is None or mapped is False:
+            self.restore(rel, blob, digest, mode, changed=mapped is False)
+            return
+        self.batch.append((rel, blob, digest, mode, mapped))
+        if len(self.batch) == _CHECK_BATCH:
+            self.check()
+
+    def check(self) -> None:
+        """Hash the batch's mapped files in one parallel pass; restore those that differ."""
+        checked, self.batch = self.batch, []
+        try:
+            digests = _fsbpyr.tree_digests([entry[4] for entry in checked]) if checked else []
+        finally:
+            for entry in checked:
+                _unmap(entry[4])
+        for (rel, blob, digest, mode, _), actual in zip(checked, digests, strict=True):
+            if actual == digest:
+                self.cache._checked.add(rel)
+            else:
+                self.restore(rel, blob, digest, mode, changed=True)
+
+    def restore(self, rel: str, blob: int, digest: bytes, mode: int, changed: bool) -> None:
+        if changed:
+            _report_changed(f"{self.cache.site}/{rel}")
+        data = _fsbpyr.read(blob)
+        if _fsbpyr.tree_digests([data])[0] != digest:
+            raise _corrupt(f"{rel!r} digest")
+        parent, _, name = rel.rpartition("/")
+        _publish(self.directory(parent), name, data, mode)
+        self.written.append(rel)
+        self.cache._checked.add(rel)
+
+    def close(self) -> None:
+        for entry in self.batch:  # an error left them mapped
+            _unmap(entry[4])
+        for fd in self.opened.values():
+            os.close(fd)
 
 
 _CACHE: list[NativeCache] = []

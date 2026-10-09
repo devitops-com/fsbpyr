@@ -1,10 +1,12 @@
 """Immutable input model for the payload writer."""
 
+import lzma
 from compression import zstd
 from dataclasses import dataclass, field
 
 from .format import (
     MAX_BLOB_SIZE,
+    XZ_PIECE,
     Codec,
     FileFlag,
     FileKind,
@@ -33,6 +35,7 @@ class Blob:
     size: int
     codec: Codec
     sha256: bytes | None = None
+    pieces: tuple[Blob, ...] = ()  # codec PIECES: xz streams of XZ_PIECE content each (D33)
 
     def __post_init__(self) -> None:
         if not 0 <= self.size <= MAX_BLOB_SIZE:
@@ -41,8 +44,22 @@ class Blob:
             raise PayloadError("blob size does not match stored data")
         if self.sha256 is not None and len(self.sha256) != 32:
             raise PayloadError("blob digest must be 32 bytes")
+        if (self.codec is Codec.PIECES) != bool(self.pieces):
+            raise PayloadError("pieces belong to a blob of codec PIECES, which needs them")
+        if self.pieces:
+            sizes = [piece.size for piece in self.pieces]
+            if (self.stored or len(sizes) < 2 or sum(sizes) != self.size
+                    or any(piece.codec is not Codec.XZ for piece in self.pieces)
+                    or any(size != XZ_PIECE for size in sizes[:-1])
+                    or not 0 < sizes[-1] <= XZ_PIECE):  # fmt: skip
+                raise PayloadError("pieces must be xz streams of XZ_PIECE bytes, the last of 1 to "
+                                   "XZ_PIECE")  # fmt: skip
 
     def content(self) -> bytes:
+        if self.codec is Codec.PIECES:
+            return b"".join(piece.content() for piece in self.pieces)
+        if self.codec is Codec.XZ:
+            return lzma.decompress(self.stored, format=lzma.FORMAT_XZ)
         return self.stored if self.codec is Codec.NONE else zstd.decompress(self.stored)
 
     def content_digest(self) -> bytes:
@@ -77,6 +94,38 @@ class Blob:
         if allow_raw and len(compressed) >= len(data):
             return cls.raw(data, digest=digest)
         return cls(compressed, len(data), Codec.ZSTD, _digest(data, digest))
+
+    @classmethod
+    def xz(cls, data: bytes, *, digest: bool = False) -> Blob:
+        """xz -6 with the x86 filter (D33), for native files only: one stream, or one per
+        XZ_PIECE of content so that the launcher decodes them in parallel; no check of their
+        own, since the executable's integrity digest covers them. Stored raw if that is not
+        smaller."""
+        return cls.from_xz(data, [xz_stream(piece) for piece in xz_pieces(data)], digest=digest)
+
+    @classmethod
+    def from_xz(cls, data: bytes, streams: list[bytes], *, digest: bool = False) -> Blob:
+        """``data`` from the xz streams of its xz_pieces (compressed elsewhere, in parallel)."""
+        if sum(map(len, streams)) >= len(data):
+            return cls.raw(data, digest=digest)
+        if len(streams) == 1:
+            return cls(streams[0], len(data), Codec.XZ, _digest(data, digest))
+        pieces = tuple(cls(stream, len(piece), Codec.XZ)
+                       for stream, piece in zip(streams, xz_pieces(data), strict=True))  # fmt: skip
+        return cls(b"", len(data), Codec.PIECES, _digest(data, digest), pieces)
+
+
+XZ_PRESET = 6  # owner decision (D33): xz -6 with the x86 filter, for native files
+_XZ_FILTERS = ({"id": lzma.FILTER_X86}, {"id": lzma.FILTER_LZMA2, "preset": XZ_PRESET})
+
+
+def xz_pieces(data: bytes) -> list[bytes]:
+    """The content of each xz stream of a native file: XZ_PIECE bytes, the last fewer."""
+    return [data[start : start + XZ_PIECE] for start in range(0, len(data), XZ_PIECE)]
+
+
+def xz_stream(piece: bytes) -> bytes:
+    return lzma.compress(piece, format=lzma.FORMAT_XZ, check=lzma.CHECK_NONE, filters=_XZ_FILTERS)
 
 
 def _digest(data: bytes, wanted: bool) -> bytes | None:

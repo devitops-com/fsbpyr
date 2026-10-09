@@ -186,17 +186,16 @@ def test_a_cached_file_that_cannot_be_hashed_is_replaced(
     spec = _speed_spec(boot)
     native.native_cache().sync(_files(spec))
     native._CACHE.clear()  # a new process
-    real = native._fsbpyr.file_digest
+    real = native.mmap.mmap
     failing = {LIB.rpartition("/")[2]}
 
-    def file_digest(fd: int, size: int) -> bytes | None:
+    def mapped(fd: int, length: int, **kwargs: Any) -> Any:
         if os.readlink(f"/proc/self/fd/{fd}").rpartition("/")[2] in failing:
             failing.clear()
             raise OSError(errno.ENODEV, "no mmap here")
-        result: bytes | None = real(fd, size)
-        return result
+        return real(fd, length, **kwargs)
 
-    monkeypatch.setattr(native._fsbpyr, "file_digest", file_digest)
+    monkeypatch.setattr(native.mmap, "mmap", mapped)
 
     assert native.native_cache().sync(_files(spec)) == [LIB]
     assert (Path(native.native_cache().site) / LIB).read_bytes() == CONTENT[LIB]
@@ -210,13 +209,13 @@ def test_each_process_hashes_a_cached_file_once(
     native.native_cache().sync(_files(spec))
     native._CACHE.clear()  # a new process
     hashed: list[str] = []
-    real = native._cached
+    real = native._mapped
 
-    def counted(directory: int, name: str, size: int, digest: bytes) -> bool | None:
+    def counted(directory: int, name: str, size: int) -> Any:
         hashed.append(name)
-        return bool(real(directory, name, size, digest))
+        return real(directory, name, size)
 
-    monkeypatch.setattr(native, "_cached", counted)
+    monkeypatch.setattr(native, "_mapped", counted)
     cache = native.native_cache()
 
     assert cache.sync(_files(spec)) == cache.sync(_files(spec)) == []
@@ -318,6 +317,26 @@ def test_long_file_names_can_be_published(native: types.ModuleType, tmp_path: Pa
         os.close(directory)
 
     assert (tmp_path / name).read_bytes() == b"data"
+
+
+def test_cached_files_are_written_without_fsync(
+    native: types.ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every process checks a cached file against its digest before it uses it and restores it
+    when it differs, so a file a crash left incomplete is repaired: syncing each file to disk
+    only cost time (torch's 12,158 files: 42.5 s instead of 2.3 s on the first run)."""
+
+    def refused(fd: int) -> None:
+        raise AssertionError("fsync")
+
+    monkeypatch.setattr(native.os, "fsync", refused)
+    directory = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        native._publish(directory, "lib.so", b"data", 0o755)
+    finally:
+        os.close(directory)
+
+    assert (tmp_path / "lib.so").read_bytes() == b"data"
 
 
 def test_import_errors_raised_by_the_module_itself_do_not_trigger_a_rehash(

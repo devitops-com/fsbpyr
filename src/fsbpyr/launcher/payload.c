@@ -2,10 +2,12 @@
 #include "payload.h"
 
 #include "integrity.h"
+#include "parallel.h"
 #include "vendor/zstd/zstd.h"
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -136,16 +138,26 @@ static bool get_record(const struct fsb_payload *p, enum fsb_section s, uint32_t
     return true;
 }
 
+/* PIECES: offset is the first piece's index, stored_size their number; each piece is checked
+ * as it is decoded. */
+static bool pieces_ok(const struct fsb_payload *p, const struct fsb_blob *b) {
+    uint64_t count = fsb_count(p, FSB_SECTION_BLOBS); /* no product of record fields: none overflows */
+    return b->size > FSB_XZ_PIECE && b->size <= FSB_MAX_BLOB_SIZE &&
+           b->stored_size == (b->size + FSB_XZ_PIECE - 1) / FSB_XZ_PIECE &&
+           b->offset <= count && b->stored_size <= count - b->offset;
+}
+
 bool fsb_get_blob(const struct fsb_payload *p, uint32_t index, struct fsb_blob *b) {
     if (!get_record(p, FSB_SECTION_BLOBS, index, b)) return false;
     if (b->codec == FSB_CODEC_BLOCK) /* offset: the block's index; stored_size: the position */
         return b->offset < fsb_count(p, FSB_SECTION_BLOBS) && b->offset <= UINT32_MAX &&
                fits(b->stored_size, b->size, FSB_MAX_BLOCK_SIZE);
+    if (b->codec == FSB_CODEC_PIECES) return pieces_ok(p, b);
     if (b->offset % FSB_BLOB_ALIGN != 0 || b->offset < p->data_start ||
         !fits(b->offset, b->stored_size, p->size) || b->size > FSB_MAX_BLOB_SIZE)
         return false;
     if (b->codec == FSB_CODEC_NONE) return b->stored_size == b->size;
-    return b->codec == FSB_CODEC_ZSTD;
+    return b->codec == FSB_CODEC_ZSTD || b->codec == FSB_CODEC_XZ;
 }
 
 bool fsb_get_module(const struct fsb_payload *p, uint32_t index, struct fsb_module *m) {
@@ -190,7 +202,26 @@ bool fsb_zstd_decompress(void *dst, uint64_t size, const uint8_t *src, uint64_t 
     return true;
 }
 
-unsigned long long fsb_stored_bytes, fsb_decompressed_bytes;
+_Atomic unsigned long long fsb_stored_bytes, fsb_decompressed_bytes;
+
+/* liblzma, linked statically for CPython's _lzma (the distribution ships no headers). */
+typedef struct lzma_allocator lzma_allocator;
+int lzma_stream_buffer_decode(uint64_t *memlimit, uint32_t flags, const lzma_allocator *allocator,
+                              const uint8_t *in, size_t *in_pos, size_t in_size, uint8_t *out,
+                              size_t *out_pos, size_t out_size);
+#define LZMA_OK 0
+
+/* Exactly one xz stream of exactly ``size`` bytes: a longer one fails as the output fills. */
+static bool xz_decode(void *dst, uint64_t size, const uint8_t *src, uint64_t stored) {
+    uint64_t memlimit = FSB_XZ_MEMLIMIT;
+    size_t in_pos = 0, out_pos = 0;
+    if (lzma_stream_buffer_decode(&memlimit, 0, NULL, src, &in_pos, (size_t)stored, dst, &out_pos,
+                                  (size_t)size) != LZMA_OK)
+        return false;
+    if (in_pos != stored || out_pos != size) return false;
+    fsb_decompressed_bytes += size;
+    return true;
+}
 
 /* Recently decompressed blocks (D30): importing a package reads several of its modules from the
  * same block, so each block is decompressed once while it stays among the last BLOCK_CACHE. */
@@ -230,23 +261,54 @@ static const uint8_t *block_content(const struct fsb_payload *p, uint32_t index,
     return slot->data;
 }
 
+struct pieces {
+    const struct fsb_payload *payload;
+    const struct fsb_blob *parent;
+    uint8_t *dst;
+    atomic_bool failed;
+};
+
+static void decode_piece(void *context, uint64_t number) {
+    struct pieces *job = context;
+    const struct fsb_blob *parent = job->parent;
+    uint64_t start = number * FSB_XZ_PIECE;
+    uint64_t size = number + 1 < parent->stored_size ? FSB_XZ_PIECE : parent->size - start;
+    struct fsb_blob piece;
+    if (!fsb_get_blob(job->payload, (uint32_t)(parent->offset + number), &piece) ||
+        piece.codec != FSB_CODEC_XZ || piece.size != size) {
+        atomic_store(&job->failed, true);
+        return;
+    }
+    fsb_stored_bytes += piece.stored_size;
+    if (!xz_decode(job->dst + start, size, job->payload->base + piece.offset, piece.stored_size))
+        atomic_store(&job->failed, true);
+}
+
 bool fsb_read_blob(const struct fsb_payload *p, const struct fsb_blob *b, void *dst) {
-    const uint8_t *src = p->base + b->offset;
-    switch (b->codec) {
+    switch (b->codec) { /* offset is a data offset for NONE, ZSTD and XZ; a record index else */
     case FSB_CODEC_NONE:
-        memcpy(dst, src, (size_t)b->size);
+        memcpy(dst, p->base + b->offset, (size_t)b->size);
         fsb_stored_bytes += b->size;
         return true;
     case FSB_CODEC_ZSTD:
-        if (!fsb_zstd_frame_ok(src, b->stored_size, b->size)) return false;
+        if (!fsb_zstd_frame_ok(p->base + b->offset, b->stored_size, b->size)) return false;
         fsb_stored_bytes += b->stored_size;
-        return fsb_zstd_decompress(dst, b->size, src, b->stored_size);
+        return fsb_zstd_decompress(dst, b->size, p->base + b->offset, b->stored_size);
     case FSB_CODEC_BLOCK: {
         uint64_t size;
         const uint8_t *block = block_content(p, (uint32_t)b->offset, &size);
         if (block == NULL || !fits(b->stored_size, b->size, size)) return false;
         memcpy(dst, block + b->stored_size, (size_t)b->size);
         return true;
+    }
+    case FSB_CODEC_XZ:
+        fsb_stored_bytes += b->stored_size;
+        return xz_decode(dst, b->size, p->base + b->offset, b->stored_size);
+    case FSB_CODEC_PIECES: { /* one stream per piece: decoded in parallel (D33) */
+        struct pieces job = {.payload = p, .parent = b, .dst = dst};
+        atomic_init(&job.failed, false);
+        fsb_parallel(b->stored_size, 1, decode_piece, &job);
+        return !atomic_load(&job.failed);
     }
     default:
         return false;

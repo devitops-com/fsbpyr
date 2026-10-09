@@ -1,4 +1,4 @@
-# fsbpyr executable format — version 4
+# fsbpyr executable format — version 5
 
 The single source of truth for this format is `src/fsbpyr/payload/format.py`.
 `src/fsbpyr/launcher/format.h` mirrors it, and a test checks that the two agree.
@@ -22,7 +22,7 @@ All integers are little-endian.
 | Offset | Size | Field |
 |--------|------|-------|
 | 0 | 8 | magic `FSBPYR\0T` |
-| 8 | 4 | `format_version` (= 4) |
+| 8 | 4 | `format_version` (= 5) |
 | 12 | 4 | `flags` (reserved, 0) |
 | 16 | 8 | `payload_offset` (absolute file offset) |
 | 24 | 8 | `payload_size` |
@@ -68,10 +68,11 @@ equal), for two things:
   way to hash).
 - Files extracted to the cache (natives, FS_REQUIRED packages, resources asked for as paths)
   run outside the file, so each process hashes them against DIGESTS once, before it first uses
-  them, with the same routine and threads (`_fsbpyr.file_digest`, which hashes only a regular
-  file of the expected size; data about to be written: `_fsbpyr.tree_digest`); a changed file,
-  or one that cannot be hashed, is reported on stderr and restored. A file changed while
-  a process runs is noticed by the next one.
+  them, with the same routine: up to 256 files of the expected size are mapped and hashed in
+  one parallel pass (`_fsbpyr.tree_digests`, which also checks data about to be written); a
+  changed file, or one that cannot be hashed, is reported on stderr and restored. A file
+  changed while a process runs is noticed by the next one. Files are written under a temporary
+  name and renamed, without fsync: one a crash left incomplete fails its check and is restored.
 - `fsbpyr inspect` shows the stored digest, which proves nothing by itself; `--verify` and the
   shell recipe compute it from the bytes.
 
@@ -80,7 +81,7 @@ equal), for two things:
 | Offset | Size | Field |
 |--------|------|-------|
 | 0 | 8 | magic `FSBPYR\0H` |
-| 8 | 4 | `format_version` (= 4) |
+| 8 | 4 | `format_version` (= 5) |
 | 12 | 4 | `header_size` (= 208) |
 | 16 | 4 | `python_hexversion` of the target CPython (`PY_VERSION_HEX`) |
 | 20 | 4 | bytecode magic (`importlib.util.MAGIC_NUMBER`) |
@@ -117,10 +118,10 @@ The MODULES, FILES and DISTS tables are sorted strictly ascending by their key's
 
 | Offset | Size | Field |
 |--------|------|-------|
-| 0 | 8 | `offset` of the stored bytes; codec 2: index of the block |
-| 8 | 8 | `stored_size`; codec 2: position of the content inside the block |
+| 0 | 8 | `offset` of the stored bytes; codec 2: index of the block; codec 4: index of the first piece |
+| 8 | 8 | `stored_size`; codec 2: position of the content inside the block; codec 4: number of pieces |
 | 16 | 8 | `size` (uncompressed) |
-| 24 | 1 | `codec`: 0 = none, 1 = zstd (one frame with content size and checksum), 2 = in a block |
+| 24 | 1 | `codec`: 0 = none, 1 = zstd (one frame with content size and checksum), 2 = in a block, 3 = xz, 4 = xz in pieces |
 | 25 | 3 | reserved (0) |
 | 28 | 4 | `digest`: index into DIGESTS (integrity digest of the uncompressed data) or NONE |
 
@@ -132,6 +133,17 @@ The MODULES, FILES and DISTS tables are sorted strictly ascending by their key's
 - Identical blobs are stored once; in blocks, identical content is one member whether the spec
   gave it raw or as a zstd frame.
 - For codec none, `stored_size == size`.
+- **xz (version 5, D33).** A blob of codec 3 is one xz stream (`--best-compression`: xz -6
+  with the x86 filter, no check of its own, since the file's integrity digest covers it) that
+  decodes to exactly `size` bytes, with no data after it and at most `XZ_MEMLIMIT` (64 MiB) of
+  decoder memory. A library larger than `XZ_PIECE` (4 MiB) is a blob of codec 4 instead, with no
+  stored bytes of its own: its content is that of `stored_size` (at least 2) consecutive xz
+  blobs from index `offset` on, each `XZ_PIECE` bytes but the last, so that
+  `(stored_size - 1) * XZ_PIECE < size <= stored_size * XZ_PIECE`. Their records follow the
+  block records, their data lies where the library's would, and no other blob of codec 4 and no
+  table references them. Only native files (NATIVE_EXT, NATIVE_LIB) may use codecs 3 and 4. The
+  launcher decodes them with the statically linked liblzma in `_fsbpyr.read`, without the GIL,
+  the pieces of one library in parallel on the routine that hashes the integrity digest.
 - **Blocks (version 2, D30).** A blob of codec 2 has no stored bytes of its own: its content is
   the `size` bytes at `stored_size` in the content of block `offset`, a zstd blob of at most
   `MAX_BLOCK_SIZE` (1 MiB); the writer references blocks only from members. The writer packs
@@ -221,7 +233,11 @@ this short list to build CPython's frozen-module table, so it never scans the MO
 ## Validation rules (readers MUST enforce)
 
 - Trailer and header magic and version must match. `header_size` must be 208. Trailer `flags`
-  must be 0. The launcher accepts only version 4; the Python reader also reads 1 to 3.
+  must be 0. The launcher accepts only version 5; the Python reader also reads 1 to 4.
+- A blob of codec 3 or 4 needs format version 5 and belongs only to native files, never to
+  another file or a module; no file or module names a piece directly. The Python reader and the
+  writer enforce this; the launcher relies on the integrity digest, which only the writer's
+  output passes.
 - The launcher checks the integrity digest (above) before any other rule.
 - `payload_offset` must be 4096-aligned, and the file size must match exactly.
 - Every section must lie inside the payload, start after the header, be 8-byte aligned, and not

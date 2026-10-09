@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.cli import main
+from fsbpyr.payload.format import NATIVE_KINDS, Codec
 from fsbpyr.payload.reader import Executable
 from fsbpyr.runtime.registry import Runtime
 
@@ -95,6 +96,32 @@ def test_every_subcommand_runs(heavy: Path, tmp_path: Path, command: str) -> Non
     stdout, _ = _run(heavy, tmp_path / "cache", command)
 
     assert stdout.strip() == EXPECTED[command]
+
+
+@pytest.fixture(scope="module")
+def heavy_xz(project: Path) -> Path:
+    out = project.parent / "bin" / "heavy-xz"
+    assert main(["build", str(project), "-o", str(out), "--best-compression"]) == 0
+    return out
+
+
+def test_best_compression_stores_natives_as_xz_and_they_run(
+    heavy: Path, heavy_xz: Path, tmp_path: Path
+) -> None:
+    """D33: every native file is xz, in pieces when larger than XZ_PIECE (raw when that is not
+    smaller), and smaller overall."""
+    with Executable.open(heavy_xz) as exe:
+        payload = exe.payload
+        codecs = {payload.blob(f.blob).codec for f in payload.files() if f.kind in NATIVE_KINDS}
+        info = json.loads(payload.build_info)
+    assert {Codec.XZ, Codec.PIECES} <= codecs <= {Codec.XZ, Codec.PIECES, Codec.NONE}
+    assert info["native_compression"] == "xz -6"
+    assert heavy_xz.stat().st_size < heavy.stat().st_size
+
+    for command in ("np", "onnx", "crypto"):
+        stdout, trace = _run(heavy_xz, tmp_path / "cache", command)
+        assert stdout.strip() == EXPECTED[command]
+    assert trace["extracted"]
 
 
 def test_libraries_extensions_open_by_name_are_extracted_with_them(

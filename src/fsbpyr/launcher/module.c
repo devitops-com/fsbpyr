@@ -12,17 +12,11 @@
  *   read(blob)         -> bytes (decompressed, size-checked)
  *   info()             -> dict describing the executable
  *   stats()            -> read counters and integrity check time (FSBPYR_TRACE, benchmarks)
- *   tree_digest(data)  -> integrity digest (D32) of a bytes-like object
- *   file_digest(fd, n) -> integrity digest (D32) of the regular file open as ``fd`` | None
- *                         when it is not ``n`` bytes
+ *   tree_digests(bufs) -> integrity digests (D32) of bytes-like objects, in one parallel pass
  */
 #include "launcher.h"
 
 #include "integrity.h"
-
-#include <errno.h>
-#include <fcntl.h>
-#include <sys/stat.h>
 
 #define MAX_MEMORY_BLOB (UINT64_C(1) << 30) /* larger blobs are extracted, never read whole */
 
@@ -141,55 +135,52 @@ static PyObject *blob_info(PyObject *self, PyObject *arg) {
                          (Py_ssize_t)FSB_DIGEST_SIZE);
 }
 
-/* The integrity digest of files extracted to the cache (D32), by the launcher's own routine;
- * the GIL is released while it hashes. */
-static PyObject *tree_digest(PyObject *self, PyObject *arg) {
+/* tree_digests(buffers): the integrity digests (D32) of byte buffers, such as cached files
+ * mapped by the boot code, in one parallel pass by the launcher's own routine; the GIL is
+ * released while it hashes. */
+static PyObject *tree_digests(PyObject *self, PyObject *arg) {
     (void)self;
-    Py_buffer data;
-    if (PyObject_GetBuffer(arg, &data, PyBUF_SIMPLE) != 0) return NULL;
-    uint8_t digest[FSB_DIGEST_SIZE];
-    bool done;
-    Py_BEGIN_ALLOW_THREADS
-    done = fsb_tree_digest(data.buf, (uint64_t)data.len, digest);
-    Py_END_ALLOW_THREADS
-    PyBuffer_Release(&data);
-    if (!done) return PyErr_NoMemory();
-    return PyBytes_FromStringAndSize((const char *)digest, (Py_ssize_t)FSB_DIGEST_SIZE);
-}
-
-/* file_digest(fd, size): None unless the file is a regular file of exactly ``size`` bytes, so a
- * file swapped for a bigger one is never hashed. A duplicate of the descriptor, taken with the
- * GIL held, is hashed: another thread closing ``fd`` meanwhile cannot hand its number to a
- * different file. */
-static PyObject *file_digest(PyObject *self, PyObject *args) {
-    (void)self;
-    PyObject *file;
-    unsigned long long size;
-    if (!PyArg_ParseTuple(args, "OK:file_digest", &file, &size)) return NULL;
-    int fd = PyObject_AsFileDescriptor(file);
-    if (fd < 0) return NULL;
-    int own = fcntl(fd, F_DUPFD_CLOEXEC, 0);
-    if (own < 0) return PyErr_SetFromErrno(PyExc_OSError);
-    uint8_t digest[FSB_DIGEST_SIZE];
-    struct stat st;
-    int error = 0;
-    bool sized = false;
-    Py_BEGIN_ALLOW_THREADS
-    if (fstat(own, &st) != 0)
-        error = errno;
-    else if (!S_ISREG(st.st_mode))
-        error = EINVAL;
-    else if ((sized = (uint64_t)st.st_size == size))
-        error = fsb_file_digest(own, size, digest);
-    close(own);
-    Py_END_ALLOW_THREADS
-    if (error == ENOMEM) return PyErr_NoMemory(); /* as tree_digest */
-    if (error != 0) {
-        errno = error;
-        return PyErr_SetFromErrno(PyExc_OSError);
+    PyObject *items = PySequence_Fast(arg, "expected a sequence of bytes-like objects");
+    if (items == NULL) return NULL;
+    Py_ssize_t count = PySequence_Fast_GET_SIZE(items), held = 0;
+    Py_buffer *views = PyMem_Calloc((size_t)count + 1, sizeof *views);
+    const uint8_t **data = PyMem_Calloc((size_t)count + 1, sizeof *data);
+    uint64_t *lengths = PyMem_Calloc((size_t)count + 1, sizeof *lengths);
+    uint8_t (*digests)[FSB_DIGEST_SIZE] = PyMem_Calloc((size_t)count + 1, sizeof *digests);
+    PyObject *result = NULL;
+    if (views == NULL || data == NULL || lengths == NULL || digests == NULL) {
+        PyErr_NoMemory();
+        goto done;
     }
-    if (!sized) Py_RETURN_NONE;
-    return PyBytes_FromStringAndSize((const char *)digest, (Py_ssize_t)FSB_DIGEST_SIZE);
+    for (; held < count; held++) {
+        if (PyObject_GetBuffer(PySequence_Fast_GET_ITEM(items, held), &views[held],
+                               PyBUF_SIMPLE) != 0)
+            goto done;
+        data[held] = views[held].buf;
+        lengths[held] = (uint64_t)views[held].len;
+    }
+    bool hashed;
+    Py_BEGIN_ALLOW_THREADS
+    hashed = fsb_tree_digests((uint64_t)count, data, lengths, digests);
+    Py_END_ALLOW_THREADS
+    if (!hashed) {
+        PyErr_NoMemory();
+        goto done;
+    }
+    result = PyList_New(count);
+    for (Py_ssize_t i = 0; result != NULL && i < count; i++) {
+        PyObject *digest = PyBytes_FromStringAndSize((const char *)digests[i], FSB_DIGEST_SIZE);
+        if (digest == NULL) Py_CLEAR(result);
+        else PyList_SET_ITEM(result, i, digest);
+    }
+done:
+    for (Py_ssize_t i = 0; i < held; i++) PyBuffer_Release(&views[i]);
+    PyMem_Free(views);
+    PyMem_Free(data);
+    PyMem_Free(lengths);
+    PyMem_Free(digests);
+    Py_DECREF(items);
+    return result;
 }
 
 /* Keys of ``section`` starting with key[0:length], followed by ``separator`` when the key is
@@ -364,7 +355,16 @@ static PyObject *read_blob(PyObject *self, PyObject *arg) {
         return corrupt("blob data", index);
     PyObject *out = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)b.size);
     if (out == NULL) return NULL;
-    if (!fsb_read_blob(&fsb_self, &b, PyBytes_AS_STRING(out))) {
+    char *dst = PyBytes_AS_STRING(out);
+    bool done;
+    if (b.codec == FSB_CODEC_XZ || b.codec == FSB_CODEC_PIECES) { /* slow: a native library */
+        Py_BEGIN_ALLOW_THREADS
+        done = fsb_read_blob(&fsb_self, &b, dst);
+        Py_END_ALLOW_THREADS
+    } else {
+        done = fsb_read_blob(&fsb_self, &b, dst);
+    }
+    if (!done) {
         Py_DECREF(out);
         return corrupt("blob data", index);
     }
@@ -395,9 +395,9 @@ static PyObject *info(PyObject *self, PyObject *noargs) {
 static PyObject *stats(PyObject *self, PyObject *noargs) {
     (void)self;
     (void)noargs;
-    return Py_BuildValue("{s:K,s:K,s:K,s:K}", "reads", reads, "stored_bytes", fsb_stored_bytes,
-                         "decompressed_bytes", fsb_decompressed_bytes, "integrity_ns",
-                         fsb_integrity_ns);
+    unsigned long long stored = fsb_stored_bytes, decompressed = fsb_decompressed_bytes;
+    return Py_BuildValue("{s:K,s:K,s:K,s:K}", "reads", reads, "stored_bytes", stored,
+                         "decompressed_bytes", decompressed, "integrity_ns", fsb_integrity_ns);
 }
 
 static PyMethodDef methods[] = {
@@ -414,9 +414,7 @@ static PyMethodDef methods[] = {
     {"dists", dists, METH_NOARGS, "All distributions, sorted by canonical name."},
     {"info", info, METH_NOARGS, "Describe the running executable."},
     {"stats", stats, METH_NOARGS, "Payload read counters and the integrity check's time."},
-    {"tree_digest", tree_digest, METH_O, "Integrity digest of a bytes-like object."},
-    {"file_digest", file_digest, METH_VARARGS,
-     "Integrity digest of the regular file open as a fd, None unless it has the given size."},
+    {"tree_digests", tree_digests, METH_O, "Integrity digests of bytes-like objects."},
     {NULL, NULL, 0, NULL},
 };
 

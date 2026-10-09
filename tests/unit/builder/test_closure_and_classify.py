@@ -13,9 +13,18 @@ import pytest
 
 from fsbpyr.classify import ClassifyError, _digested, classify, compile_module
 from fsbpyr.closure import ClosureError, SiteIndex, resolve_entry
-from fsbpyr.payload.format import FileFlag, FileKind, ModuleFlag, ModuleKind, tree_digest
+from fsbpyr.payload.format import (
+    NATIVE_KINDS,
+    Codec,
+    FileFlag,
+    FileKind,
+    ModuleFlag,
+    ModuleKind,
+    tree_digest,
+)
 from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob
 
+from ...support.apps import library
 from ...support.elf import make_elf
 
 PROJECT_DIR = Path("/work/hello")
@@ -530,6 +539,20 @@ def test_litellm_is_fs_required_without_configuration(site: Path) -> None:
     assert FileFlag.FS_REQUIRED in endpoints.flags
 
 
+def test_torch_is_fs_required_without_configuration(site: Path) -> None:
+    """torch runs bin/torch_shm_manager and loads lib/libtorch_global_deps.so by paths next to
+    its __file__ as it is imported (torch 2.14)."""
+    _dist(site, "torch", "2.14.1", {"torch/__init__.py": b"", "torch/bin/torch_shm_manager": b"x"})
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["torch"]], extension_suffixes=SUFFIXES, include_source=False)
+
+    torch = next(m for m in content.modules if m.name == "torch")
+    assert ModuleFlag.FS_REQUIRED_ROOT in torch.flags
+    manager = next(f for f in content.files if f.path == "torch/bin/torch_shm_manager")
+    assert FileFlag.FS_REQUIRED in manager.flags
+
+
 # --- .pth files ------------------------------------------------------------------------------
 
 
@@ -690,3 +713,58 @@ def test_digests_of_files_needed_on_disk_come_from_their_content() -> None:
     stale = replace(Blob.zstd(b"data", digest=True), sha256=bytes(32))
 
     assert _digested(stale).sha256 == tree_digest(b"data")
+
+
+def test_best_compression_stores_native_files_as_xz(site: Path) -> None:
+    """D33: natives only, with their digests; everything else stays zstd."""
+    big = "big/_big.cpython-314-x86_64-linux-gnu.so"
+    _dist(site, "big", "1.0", {"big/__init__.py": b"", big: make_elf() + bytes(200_000),
+                               "big/data.txt": b"x" * 5000})  # fmt: skip
+    _native_site(site)
+    index = SiteIndex.scan(site)
+    dists = [index.dists["big"], index.dists["fast"]]
+
+    files = {f.path: f for f in classify(dists, extension_suffixes=SUFFIXES,
+                                         include_source=True, xz_natives=True).files}  # fmt: skip
+
+    natives = {path: f for path, f in files.items() if f.kind in NATIVE_KINDS}
+    assert len(natives) == 4 and files[big].blob.codec is Codec.XZ
+    assert all(f.blob.codec in (Codec.XZ, Codec.NONE) for f in natives.values())
+    assert all(f.blob.sha256 == tree_digest(f.blob.content()) for f in natives.values())
+    assert files["big/data.txt"].blob.codec is Codec.ZSTD
+
+
+def test_best_compression_uses_at_most_the_usable_cores(
+    site: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+    workers: list[int] = []
+
+    def recorded(max_workers: int) -> ThreadPoolExecutor:
+        workers.append(max_workers)
+        return ThreadPoolExecutor(max_workers)
+
+    monkeypatch.setattr("fsbpyr.classify.ThreadPoolExecutor", recorded)
+    _native_site(site)
+    dists = [SiteIndex.scan(site).dists["fast"]]
+    for cores in (3, 64):
+        monkeypatch.setattr("os.process_cpu_count", lambda cores=cores: cores)
+        classify(dists, extension_suffixes=SUFFIXES, include_source=True, xz_natives=True)
+
+    assert workers == [3, 8]
+
+
+def test_best_compression_stores_large_natives_as_pieces(site: Path) -> None:
+    """The pieces of every file go through one pool; the result is what Blob.xz gives."""
+    big = "big/_big.cpython-314-x86_64-linux-gnu.so"
+    data = make_elf() + library(2300)  # over two pieces
+    _dist(site, "big", "1.0", {"big/__init__.py": b"", big: data})
+    dists = [SiteIndex.scan(site).dists["big"]]
+
+    files = {f.path: f for f in classify(dists, extension_suffixes=SUFFIXES,
+                                         include_source=True, xz_natives=True).files}  # fmt: skip
+
+    blob = files[big].blob
+    assert blob.codec is Codec.PIECES and len(blob.pieces) == 3
+    assert blob == Blob.xz(data, digest=True) and blob.content() == data

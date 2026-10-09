@@ -137,7 +137,7 @@ def test_tool_table_supplies_defaults(tmp_path: Path) -> None:
 def test_unknown_keys_are_rejected(tmp_path: Path) -> None:
     text = PYPROJECT + 'profile = "compact"\n'  # replaced by fast-compression (Phase 7)
 
-    with pytest.raises(ConfigError, match=r"unknown .*'profile'.*fast-compression"):
+    with pytest.raises(ConfigError, match=r"unknown .*'profile'.*fast-compression.*best"):
         load_config(Project.load(_project(tmp_path, text)))
 
 
@@ -149,6 +149,25 @@ def test_fast_compression_can_be_configured(tmp_path: Path) -> None:
 
     assert (fast.fast_compression, fast.zstd_level) == (True, ZSTD_FAST_LEVEL)
     assert (default.fast_compression, default.zstd_level) == (False, ZSTD_LEVEL)
+
+
+def test_best_compression_can_be_configured_but_not_with_fast_compression(
+    tmp_path: Path,
+) -> None:
+    best = load_config(Project.load(_project(tmp_path, PYPROJECT + "best-compression = true\n")))
+
+    assert (best.best_compression, best.zstd_level) == (True, ZSTD_LEVEL)
+    with pytest.raises(ConfigError, match="exclude each other"):
+        load_config(Project.load(_project(tmp_path, PYPROJECT)), fast_compression=True,
+                    best_compression=True)  # fmt: skip
+
+
+def test_a_compression_flag_on_the_command_line_wins_over_the_project(tmp_path: Path) -> None:
+    project = Project.load(_project(tmp_path, PYPROJECT + "best-compression = true\n"))
+
+    config = load_config(project, fast_compression=True)
+
+    assert (config.fast_compression, config.best_compression) == (True, False)
 
 
 def test_allowed_system_libs_come_from_tool_table_or_cli(tmp_path: Path) -> None:
