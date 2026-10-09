@@ -50,8 +50,9 @@ struct fsb_cache_sync {
 };
 
 /* Extract the files that are missing and replace the ones that differ from the payload; stops at
- * the first failure. Every record is checked before anything on disk is touched. Thread-safe and
- * independent of Python: callers release the GIL. */
+ * the first failure. Every record of the job is checked before anything on disk is touched
+ * (module.c gives jobs of up to 4096 files, D38). Thread-safe and independent of Python: callers
+ * release the GIL. */
 void fsb_cache_sync(const struct fsb_payload *payload, struct fsb_cache_sync *job);
 
 /* The payload reader's rule for paths (check_path): no empty, "." or ".." component, no NUL and

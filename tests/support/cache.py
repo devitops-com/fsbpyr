@@ -11,10 +11,10 @@ import errno
 import os
 import stat
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
-from fsbpyr.payload.format import MAX_MEMORY_BLOB, NATIVE_KINDS, NONE, FileFlag, tree_digest
+from fsbpyr.payload.format import NATIVE_KINDS, NONE, FileFlag, tree_digest
 from fsbpyr.payload.format import PayloadError as _ReaderError
 from fsbpyr.payload.reader import FileRecord, Payload
 
@@ -26,7 +26,8 @@ class CacheError(ImportError):
 CHANGED, DONE, WRITTEN = 1, 2, 4  # outcome bits of a file
 CHECK_BATCH, SMALL_FILE, BATCH_BUFFER, HELD_FILES = 1024, 64 << 10, 16 << 20, 64
 WRITE_PIECE = 1 << 20
-_PATH_SIZE = 4096  # cache.c: a directory path below the root, in bytes, is shorter
+SYNC_CHUNK = 4096  # module.c: files synced at once
+OPEN_LEVELS = 16  # cache.c: directories kept open from the root down
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
 _NEW_FILE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 _PRESENT, _MISSING, _CHANGED = range(3)
@@ -44,10 +45,36 @@ def safe(path: str) -> bool:
     )
 
 
-def sync(
-    payload: Payload, root: Any, chain: Any, files: Any, checked: Any, resources: Any
-) -> list[str]:
-    """Mirror of _fsbpyr.sync(): argument checks in module.c's order, then fsb_cache_sync()."""
+def sync(payload: Payload, root: Any, chain: Any, files: Any, checked: Any, resources: Any,
+         written: Any = None) -> int:  # fmt: skip
+    """Mirror of _fsbpyr.sync(): argument checks in module.c's order, then fsb_cache_sync() a
+    chunk of SYNC_CHUNK files at a time; the number of files written."""
+    root_path, resources, memo, items = _arguments(payload, root, chain, files, checked,
+                                                   resources, written)  # fmt: skip
+    records = payload.files()
+    count, at = 0, 0
+    while chunk := _chunk(items, at, memo, len(records)):
+        todo, at = chunk
+        outcome = [0] * len(todo)
+        try:
+            _Sync(payload, root_path, chain, [records[i] for i in todo], outcome, resources).run()
+        finally:
+            for item, record in enumerate(records[i] for i in todo):
+                if outcome[item] & CHANGED:
+                    _report(f"fsbpyr: {os.fsdecode(root_path)}/{chain}/{record.path} was "
+                            "modified after extraction; restoring it\n")  # fmt: skip
+                if outcome[item] & DONE:
+                    memo[record.index // 8] |= 1 << record.index % 8
+                if outcome[item] & WRITTEN:
+                    count += 1
+                    if written is not None:
+                        written.append(record.path)
+    return count
+
+
+def _arguments(payload: Payload, root: Any, chain: Any, files: Any, checked: Any, resources: Any,
+               written: Any) -> tuple[bytes, bool, memoryview, Any]:  # fmt: skip
+    """module.c's checks of sync()'s arguments, in its order."""
     root_path = os.fsencode(root)
     if b"\0" in root_path:
         raise ValueError("embedded null byte")
@@ -57,42 +84,42 @@ def sync(
     chain.encode()
     if not safe(chain):
         raise ValueError(f"unsafe cache chain {chain!r}")
+    if written is not None and not isinstance(written, list):
+        raise TypeError("written must be a list or None")
     memo = memoryview(checked)
     if memo.readonly:
         raise BufferError("Object is not writable.")
-    records = payload.files()
-    if memo.nbytes != len(records):
-        raise ValueError("checked must hold one byte per file")
-    todo = [index for index in _indices(files, len(records)) if not memo[index]]
-    outcome = [0] * len(todo)
-    try:
-        _Sync(payload, root_path, chain, [records[i] for i in todo], outcome, resources).run()
-    finally:
-        written = []
-        for item, record in enumerate(records[i] for i in todo):
-            if outcome[item] & CHANGED:
-                _report(f"fsbpyr: {os.fsdecode(root_path)}/{chain}/{record.path} was modified "
-                        "after extraction; restoring it\n")  # fmt: skip
-            if outcome[item] & DONE:
-                memo[record.index] = 1
-            if outcome[item] & WRITTEN:
-                written.append(record.path)
-    return written
+    if memo.nbytes != (len(payload.files()) + 7) // 8:
+        raise ValueError("checked must hold one bit per file")
+    return root_path, resources, memo, _sequence(files)
 
 
-def _indices(files: Any, count: int) -> list[int]:
+def _sequence(files: Any) -> Any:
+    """PySequence_Check(): read an item at a time; anything else is made a list."""
+    if not isinstance(files, dict) and hasattr(type(files), "__getitem__"):
+        return files
     try:
-        items = list(files)
+        return list(files)
     except TypeError:
         raise TypeError("expected a sequence of FILES indices") from None
-    for item in items:
+
+
+def _chunk(items: Any, at: int, memo: memoryview, count: int) -> tuple[list[int], int] | None:
+    """module.c's next_chunk(): up to SYNC_CHUNK indices from items[at] on that ``memo`` does
+    not mark, and where the next chunk starts; None when the items are used up."""
+    todo: list[int] = []
+    while at < len(items) and len(todo) < SYNC_CHUNK:
+        item = items[at]
+        at += 1
         if not isinstance(item, int):
             raise TypeError("an integer is required")
         if item < 0 or item >= 2**64:
             raise OverflowError("FILES index out of range")
         if item >= count:
             raise CacheError(f"corrupt executable payload: file {item}")
-    return items
+        if not memo[item // 8] >> item % 8 & 1:
+            todo.append(item)
+    return (todo, at) if todo else None
 
 
 def _report(text: str) -> None:
@@ -116,7 +143,7 @@ class _Sync:
         self.records, self.outcome, self.resources = records, outcome, resources
         self.uid = os.geteuid()
         self.root_fd = -1
-        self.opened: list[tuple[str, int]] = []  # the directories below the root, in order
+        self.levels: list[list[Any]] = []  # [name, descriptor or -1] from the root down
         self.batch: list[tuple[_Entry, bytes | int]] = []  # small files' content, or descriptors
         self.buffered = 0  # bytes of small files read into the batch
         self.held = 0  # descriptors held by the batch
@@ -144,8 +171,9 @@ class _Sync:
             self._check()
         finally:
             _close(self.batch)
-            for _, fd in self.opened:
-                os.close(fd)
+            for _, fd in self.levels:
+                if fd >= 0:
+                    os.close(fd)
             if self.root_fd >= 0:
                 os.close(self.root_fd)
 
@@ -158,8 +186,6 @@ class _Sync:
         if not extractable or not safe(record.path):
             raise self._corrupt("extracted file", record)
         blob = self.payload.blob(record.blob)
-        if blob.size > MAX_MEMORY_BLOB:
-            raise self._corrupt("blob of file", record)
         if blob.digest != NONE:
             return _Entry(item, record, blob.size, self.payload.digest(blob.digest))
         if not self.resources:
@@ -205,27 +231,51 @@ class _Sync:
 
     def _parent(self, entry: _Entry) -> int:
         parent = entry.record.path.rpartition("/")[0]
-        target = f"{self.chain}/{parent}" if parent else self.chain
-        if len(target.encode()) >= _PATH_SIZE:
-            path = self._path(f"{self.chain}/{entry.record.path}")
-            raise OSError(errno.ENAMETOOLONG, os.strerror(errno.ENAMETOOLONG), path)
-        return self._directory(target)
+        return self._directory(f"{self.chain}/{parent}" if parent else self.chain)
+
+    def _level_path(self, level: int) -> str:
+        return self._path("/".join(name for name, _ in self.levels[: level + 1]))
+
+    def _level_fd(self, level: int) -> int:
+        """cache.c's level_fd(): open, or opened again down from the deepest open level above;
+        levels deeper than OPEN_LEVELS opened on the way are closed again."""
+        start = level + 1
+        while start > 0 and self.levels[start - 1][1] < 0:
+            start -= 1
+        parent = self.levels[start - 1][1] if start else self.root_fd
+        for i in range(start, level + 1):
+            try:
+                fd = self._open_private(parent, self.levels[i][0], self._level_path(i))
+            finally:
+                if i > start and i - 1 >= OPEN_LEVELS:
+                    os.close(parent)
+                    self.levels[i - 1][1] = -1
+            self.levels[i][1] = parent = fd
+        return int(self.levels[level][1])
 
     def _directory(self, target: str) -> int:
-        """The directory ``target`` below the root: what is open already stays open, the rest
-        of the path is opened (and created) one component at a time."""
+        """cache.c's open_directory(): the levels shared with the last directory stay, the rest
+        of the path is opened (and created) one component at a time; only OPEN_LEVELS levels
+        and the deepest stay open."""
         parts = target.split("/")
         common = 0
-        while (common < len(self.opened) and common < len(parts)
-               and self.opened[common][0] == parts[common]):  # fmt: skip
+        while (common < len(self.levels) and common < len(parts)
+               and self.levels[common][0] == parts[common]):  # fmt: skip
             common += 1
-        while len(self.opened) > common:
-            os.close(self.opened.pop()[1])
+        while len(self.levels) > common:
+            fd = self.levels.pop()[1]
+            if fd >= 0:
+                os.close(fd)
+        parent = self._level_fd(common - 1) if common else self.root_fd
         for part in parts[common:]:
-            parent = self.opened[-1][1] if self.opened else self.root_fd
-            path = self._path("/".join(parts[: len(self.opened) + 1]))
-            self.opened.append((part, self._open_private(parent, part, path)))
-        return self.opened[-1][1]
+            depth = len(self.levels)
+            fd = self._open_private(parent, part, self._path("/".join(parts[: depth + 1])))
+            if depth > OPEN_LEVELS and self.levels[depth - 1][1] >= 0:  # only the deepest
+                os.close(self.levels[depth - 1][1])
+                self.levels[depth - 1][1] = -1
+            self.levels.append([part, fd])
+            parent = fd
+        return parent
 
     def _open_private(self, parent: int, name: str, path: str) -> int:
         flags = _DIRECTORY | os.O_NOFOLLOW
@@ -239,7 +289,7 @@ class _Sync:
 
     def _load(self, directory: int, name: str, size: int) -> tuple[int, bytes | int | None]:
         """cache.c's load_cached(): a small file's content, or a larger one's descriptor."""
-        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK | os.O_NOCTTY
         try:
             fd = os.open(name, flags, dir_fd=directory)
         except FileNotFoundError:
@@ -319,12 +369,18 @@ class _Sync:
                 self._restore(entry)
 
     def _restore(self, entry: _Entry) -> None:
+        """cache.c's restore(): the directory, a temporary file, the content written and hashed,
+        then the digest checked before the file is renamed into place."""
+        directory = self._parent(entry)
+        _publish(directory, entry.record.path.rpartition("/")[2], entry.record.mode,
+                 lambda: self._checked_content(entry))  # fmt: skip
+        self.outcome[entry.item] |= DONE | WRITTEN
+
+    def _checked_content(self, entry: _Entry) -> bytes:
         data = self._content(entry.record)
         if tree_digest(data) != entry.digest:
             raise self._corrupt("digest of file", entry.record)
-        directory = self._parent(entry)
-        _publish(directory, entry.record.path.rpartition("/")[2], data, entry.record.mode)
-        self.outcome[entry.item] |= DONE | WRITTEN
+        return data
 
 
 class _NoRoom(Exception):
@@ -353,7 +409,7 @@ def _close(batch: list[tuple[_Entry, bytes | int]]) -> None:
             os.close(content)
 
 
-def _publish(directory: int, name: str, data: bytes, mode: int) -> None:
+def _publish(directory: int, name: str, mode: int, content: Callable[[], bytes]) -> None:
     for _ in range(_TEMPORARY_ATTEMPTS):
         _temporaries[0] += 1
         temporary = f".fsbpyr-{os.getpid()}-{_temporaries[0] - 1}"
@@ -365,8 +421,8 @@ def _publish(directory: int, name: str, data: bytes, mode: int) -> None:
     else:
         raise FileExistsError(17, "no temporary name left", name)
     try:
-        view = memoryview(data)
-        while view:  # in pieces, as cache.c writes them
+        view = memoryview(content())
+        while view:  # in pieces, as cache.c writes them (it leaves pieces of zeros as holes)
             view = view[os.write(fd, view[:WRITE_PIECE]) :]
         os.fchmod(fd, 0o400 | (mode & 0o100))  # readable by its owner, never writable
         os.rename(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)

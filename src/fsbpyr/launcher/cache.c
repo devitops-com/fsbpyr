@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -25,13 +26,16 @@
 #define HELD_FILES 64u
 /* Restored files are written in pieces of at most WRITE_PIECE: written whole, a 438 MB library
  * stayed in the page cache as 2 MiB folios, which the dynamic loader maps whole, and torch's
- * libtorch_cpu.so took 156 MB of RSS instead of 60 MB (XFS, Linux 6.12; D36). */
+ * libtorch_cpu.so took 156 MB of RSS instead of 60 MB (XFS, Linux 6.12; D36). A piece of zeros
+ * is not written: runs of zeros become holes (D38). */
 #define WRITE_PIECE (UINT64_C(1) << 20)
 #define DECODER_BLOCKS 4u /* blocks a sync's own decoder keeps (D30): files restored in path order */
 #define DIRECTORY (O_RDONLY | O_DIRECTORY | O_CLOEXEC)
 #define TEMPORARY_ATTEMPTS 100u
-#define PATH_SIZE 4096u            /* a directory path below the root */
-#define MAX_DEPTH (PATH_SIZE / 2u) /* components of such a path */
+/* Directories kept open from the root down: a deeper one is opened again from the deepest open
+ * one when it is needed, so a path of any depth takes at most OPEN_LEVELS + 1 descriptors (D38).
+ * Directories this deep are rare: walking down again costs little. */
+#define OPEN_LEVELS 16u
 
 /* A cached file, as load_cached() finds it; NO_ROOM: it cannot be opened for lack of descriptors
  * or memory, which the files held for the pass so far may be taking; FAILED: the failure is set. */
@@ -47,19 +51,23 @@ struct entry {        /* one file to check, its records checked */
     uint8_t digest[FSB_DIGEST_SIZE];
 };
 
+struct level {  /* a directory below the root: path[0, end) */
+    size_t end;
+    int fd;     /* -1 if closed: deeper than OPEN_LEVELS, and not the deepest */
+};
+
 struct state {
     const struct fsb_payload *payload;
     struct fsb_decoder *decoder; /* this sync's own (no GIL here), once a blob needs one */
     struct fsb_cache_sync *job;
     size_t chain_length;
     uid_t uid;
-    /* The directories open from the root down: fds[0] is the root, fds[i] the directory at the
-     * end of the i-th component of ``path`` (ends[i - 1]); ``depth`` of them are open. */
-    bool root_open;
-    size_t depth;
-    int fds[MAX_DEPTH + 1];
-    size_t ends[MAX_DEPTH];
-    char path[PATH_SIZE];
+    int root; /* -1 until open */
+    /* The directories from the root down to the last one used: ``depth`` levels of ``path``. */
+    struct level *levels;
+    size_t depth, levels_capacity;
+    char *path, *target; /* the levels' path; open_parent's */
+    size_t path_capacity, target_capacity;
     /* Cached files read, or held open, waiting for their parallel pass. */
     unsigned batched;
     uint64_t buffered; /* bytes of ``buffer`` in use */
@@ -104,7 +112,7 @@ static bool failed_at(struct state *s, enum fsb_cache_failure failure, int error
     struct fsb_cache_sync *job = s->job;
     job->failure = failure;
     job->error = error;
-    if (length > PATH_SIZE) length = PATH_SIZE; /* the message only: cut short */
+    if (length > sizeof job->path) length = sizeof job->path; /* the message only: cut short */
     if (below == NULL)
         snprintf(job->path, sizeof job->path, "%s", job->root);
     else
@@ -120,19 +128,62 @@ static bool file_failed(struct state *s, int error, const struct entry *e) {
     return false;
 }
 
-/* The entry's content, decoded from the payload into a buffer the caller frees. */
-static bool decode(struct state *s, const struct entry *e, uint8_t **content) {
+static bool zeros(const uint8_t *data, size_t size) {
+    return size == 0 || (data[0] == 0 && memcmp(data, data + 1, size - 1) == 0);
+}
+
+/* data[0, length) at ``offset`` of the file open as ``fd``, in pieces of at most WRITE_PIECE;
+ * a piece of zeros is skipped (a hole). *end: where the last piece written ends. 0 or an errno. */
+static int write_window(int fd, uint64_t offset, const uint8_t *data, uint64_t length,
+                        uint64_t *end) {
+    for (uint64_t at = 0; at < length;) {
+        size_t size = (size_t)(length - at < WRITE_PIECE ? length - at : WRITE_PIECE);
+        if (!zeros(data + at, size)) {
+            for (size_t done = 0; done < size;) {
+                ssize_t n = pwrite(fd, data + at + done, size - done, (off_t)(offset + at + done));
+                if (n < 0 && errno == EINTR) continue;
+                if (n < 0) return errno;
+                if (n == 0) return EIO;
+                done += (size_t)n;
+            }
+            *end = offset + at + size;
+        }
+        at += size;
+    }
+    return 0;
+}
+
+/* The entry's content from the payload a window at a time (D38): its digest into ``digest``
+ * and, if ``fd`` >= 0, the content written to the file open as ``fd``. False with the failure
+ * set. */
+static bool stream_content(struct state *s, const struct entry *e, int fd,
+                           uint8_t digest[FSB_DIGEST_SIZE]) {
     if (s->decoder == NULL && (s->decoder = fsb_decoder_new(DECODER_BLOCKS)) == NULL)
         return out_of_memory(s);
-    if (e->blob.codec == FSB_CODEC_ZSTD && /* a frame of another size: corrupt, never allocated */
-        !fsb_zstd_frame_ok(s->payload->base + e->blob.offset, e->blob.stored_size, e->blob.size))
-        return corrupt(s, "blob data of file", e->index);
-    *content = malloc(e->blob.size ? (size_t)e->blob.size : 1);
-    if (*content == NULL) return out_of_memory(s);
-    if (fsb_read_blob(s->payload, s->decoder, &e->blob, *content)) return true;
-    free(*content);
-    *content = NULL;
-    return corrupt(s, "blob data of file", e->index);
+    struct fsb_stream *stream = fsb_stream_open(s->payload, s->decoder, &e->blob);
+    if (stream == NULL) return out_of_memory(s);
+    struct fsb_tree tree;
+    fsb_tree_init(&tree);
+    const uint8_t *data;
+    uint64_t length, offset = 0, end = 0;
+    int status, error = 0;
+    while ((status = fsb_stream_next(stream, &data, &length)) == FSB_STREAM_DATA) {
+        if (fsb_tree_add(&tree, data, length) != 0) {
+            status = FSB_STREAM_MEMORY;
+            break;
+        }
+        if (fd >= 0 && (error = write_window(fd, offset, data, length, &end)) != 0) break;
+        offset += length;
+    }
+    fsb_stream_close(stream);
+    if (error != 0) return file_failed(s, error, e);
+    if (status == FSB_STREAM_MEMORY) return out_of_memory(s);
+    if (status != FSB_STREAM_END) return corrupt(s, "blob data of file", e->index);
+    /* a hole at the end: the file gets its size (a truncate costs XFS a transaction: only then) */
+    if (fd >= 0 && end < e->blob.size && ftruncate(fd, (off_t)e->blob.size) != 0)
+        return file_failed(s, errno, e);
+    fsb_tree_final(&tree, digest);
+    return true;
 }
 
 static bool prepare(struct state *s, uint64_t item, struct entry *e) {
@@ -145,8 +196,7 @@ static bool prepare(struct state *s, uint64_t item, struct entry *e) {
                        f.kind == FSB_FILE_NATIVE_LIB || (f.flags & FSB_FILE_FS_REQUIRED);
     if (!extractable || !fsb_cache_safe(e->path, f.path.length))
         return corrupt(s, "extracted file", index);
-    if (!fsb_get_blob(p, f.blob, &e->blob) || e->blob.size > FSB_MAX_MEMORY_BLOB) /* read whole */
-        return corrupt(s, "blob of file", index);
+    if (!fsb_get_blob(p, f.blob, &e->blob)) return corrupt(s, "blob of file", index);
     e->item = item;
     e->index = index;
     e->length = f.path.length;
@@ -154,11 +204,7 @@ static bool prepare(struct state *s, uint64_t item, struct entry *e) {
     if (e->blob.digest != FSB_NONE)
         return fsb_get_digest(p, e->blob.digest, e->digest) || corrupt(s, "digest of file", index);
     if (!s->job->resources) return corrupt(s, "extracted file", index);
-    uint8_t *content; /* no digest: the cached file is compared with the payload's content */
-    if (!decode(s, e, &content)) return false;
-    bool hashed = fsb_tree_digest(content, e->blob.size, e->digest);
-    free(content);
-    return hashed || out_of_memory(s);
+    return stream_content(s, e, -1, e->digest); /* no digest: the payload's content is hashed */
 }
 
 /* ``fd`` if the directory open as ``fd`` is ours (and, if ``private``, forced to 0700); else -1
@@ -213,9 +259,8 @@ static bool open_root(struct state *s) {
         fd = open(s->job->root, DIRECTORY);
     }
     if (fd < 0) return failed_at(s, FSB_CACHE_SYSTEM, errno, NULL, 0);
-    s->fds[0] = owned(s, fd, false, NULL, 0);
-    s->root_open = s->fds[0] >= 0;
-    return s->root_open;
+    s->root = owned(s, fd, false, NULL, 0);
+    return s->root >= 0;
 }
 
 /* Directory ``name`` of the one open as ``parent``, created 0700 if missing; never a symlink. */
@@ -236,37 +281,86 @@ static int open_private(struct state *s, int parent, const char *name, const cha
     return owned(s, fd, true, below, length);
 }
 
-/* The directory target[0, length) below the root: the directories open along the way stay
- * open, the others are closed (a tree of any width needs few descriptors), and the rest of the
- * path is opened, and created, one component at a time. -1 with the failure set. */
+/* *buffer holding at least ``needed`` items of ``size`` bytes; false if out of memory. */
+static bool reserve(void **buffer, size_t *capacity, size_t needed, size_t size) {
+    if (needed <= *capacity) return true;
+    size_t grown = *capacity * 2 > needed ? *capacity * 2 : needed;
+    void *more = realloc(*buffer, grown * size);
+    if (more == NULL) return false;
+    *buffer = more;
+    *capacity = grown;
+    return true;
+}
+
+/* Level ``level`` of ``path``, opened (and created) in the directory open as ``parent``. */
+static int open_level(struct state *s, int parent, size_t level) {
+    size_t start = level ? s->levels[level - 1].end + 1 : 0, end = s->levels[level].end;
+    char name[NAME_MAX + 1];
+    if (end - start > NAME_MAX) {
+        failed_at(s, FSB_CACHE_SYSTEM, ENAMETOOLONG, s->path, end);
+        return -1;
+    }
+    memcpy(name, s->path + start, end - start);
+    name[end - start] = '\0';
+    return open_private(s, parent, name, s->path, end);
+}
+
+/* The descriptor of level ``level``: open, or opened again down from the deepest open level
+ * above it; levels deeper than OPEN_LEVELS opened on the way are closed again. */
+static int level_fd(struct state *s, size_t level) {
+    size_t from = level + 1; /* levels [from, level] are closed */
+    while (from > 0 && s->levels[from - 1].fd < 0) from--;
+    int parent = from > 0 ? s->levels[from - 1].fd : s->root;
+    for (size_t i = from; i <= level; i++) {
+        int fd = open_level(s, parent, i);
+        if (i > from && i - 1 >= OPEN_LEVELS) { /* opened on the way: not kept */
+            close(parent);
+            s->levels[i - 1].fd = -1;
+        }
+        if (fd < 0) return -1;
+        s->levels[i].fd = parent = fd;
+    }
+    return s->levels[level].fd;
+}
+
+/* The directory target[0, length) below the root: the levels it shares with the last one stay,
+ * the others are closed (a tree of any width needs few descriptors), and the rest of the path
+ * is opened, and created, one component at a time. -1 with the failure set. */
 static int open_directory(struct state *s, const char *target, size_t length) {
     size_t common = 0;
     while (common < s->depth) {
-        size_t start = common ? s->ends[common - 1] + 1 : 0, end = s->ends[common];
+        size_t start = common ? s->levels[common - 1].end + 1 : 0, end = s->levels[common].end;
         if (end > length || (end < length && target[end] != '/') ||
             memcmp(s->path + start, target + start, end - start) != 0)
             break;
         common++;
     }
-    while (s->depth > common) close(s->fds[s->depth--]);
+    while (s->depth > common)
+        if (s->levels[--s->depth].fd >= 0) close(s->levels[s->depth].fd);
+    if (!reserve((void **)&s->path, &s->path_capacity, length + 1, 1)) {
+        out_of_memory(s);
+        return -1;
+    }
     memcpy(s->path, target, length);
-    for (size_t start = common ? s->ends[common - 1] + 1 : 0; start < length;) {
+    int parent = common ? level_fd(s, common - 1) : s->root;
+    for (size_t start = common ? s->levels[common - 1].end + 1 : 0; parent >= 0 && start < length;) {
         const char *slash = memchr(target + start, '/', length - start);
         size_t end = slash ? (size_t)(slash - target) : length;
-        char name[NAME_MAX + 1];
-        if (end - start > NAME_MAX) {
-            failed_at(s, FSB_CACHE_SYSTEM, ENAMETOOLONG, target, end);
+        if (!reserve((void **)&s->levels, &s->levels_capacity, s->depth + 1, sizeof *s->levels)) {
+            out_of_memory(s);
             return -1;
         }
-        memcpy(name, target + start, end - start);
-        name[end - start] = '\0';
-        int fd = open_private(s, s->fds[s->depth], name, target, end);
+        s->levels[s->depth] = (struct level){.end = end, .fd = -1};
+        int fd = open_level(s, parent, s->depth);
         if (fd < 0) return -1;
-        s->fds[++s->depth] = fd;
-        s->ends[s->depth - 1] = end;
+        if (s->depth > OPEN_LEVELS && s->levels[s->depth - 1].fd >= 0) { /* only the deepest */
+            close(s->levels[s->depth - 1].fd);
+            s->levels[s->depth - 1].fd = -1;
+        }
+        s->levels[s->depth++].fd = parent = fd;
         start = end + 1;
     }
-    return s->fds[s->depth];
+    return parent;
 }
 
 /* The directory the entry's file belongs in: <chain>/<its site directory>. */
@@ -274,17 +368,16 @@ static int open_parent(struct state *s, const struct entry *e) {
     const char *slash = memrchr(e->path, '/', e->length);
     size_t directory = slash ? (size_t)(slash - e->path) : 0;
     size_t length = s->chain_length + (slash ? 1 + directory : 0);
-    char target[PATH_SIZE];
-    if (length >= sizeof target) {
-        file_failed(s, ENAMETOOLONG, e);
+    if (!reserve((void **)&s->target, &s->target_capacity, length + 1, 1)) {
+        out_of_memory(s);
         return -1;
     }
-    memcpy(target, s->job->chain, s->chain_length);
+    memcpy(s->target, s->job->chain, s->chain_length);
     if (slash) {
-        target[s->chain_length] = '/';
-        memcpy(target + s->chain_length + 1, e->path, directory);
+        s->target[s->chain_length] = '/';
+        memcpy(s->target + s->chain_length + 1, e->path, directory);
     }
-    return open_directory(s, target, length);
+    return open_directory(s, s->target, length);
 }
 
 static const char *base_name(const struct entry *e) {
@@ -317,8 +410,10 @@ static int load_cached(struct state *s, int directory, const struct entry *e,
                        const uint8_t **data, int *fd) {
     uint64_t size = e->blob.size;
     *data = NULL;
-    do /* O_NOFOLLOW: a symlink is replaced; O_NONBLOCK: a FIFO is replaced, never waited for */
-        *fd = openat(directory, base_name(e), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    do /* O_NOFOLLOW: a symlink is replaced; O_NONBLOCK: a FIFO is replaced, never waited for;
+        * O_NOCTTY: a terminal device put there never becomes the process's terminal */
+        *fd = openat(directory, base_name(e),
+                     O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK | O_NOCTTY);
     while (*fd < 0 && errno == EINTR);
     if (*fd < 0) {
         int error = errno;
@@ -343,22 +438,12 @@ static int load_cached(struct state *s, int directory, const struct entry *e,
     return found;
 }
 
-static int write_all(int fd, const uint8_t *data, uint64_t size) {
-    while (size > 0) {
-        ssize_t written = write(fd, data, (size_t)(size < WRITE_PIECE ? size : WRITE_PIECE));
-        if (written < 0 && errno == EINTR) continue;
-        if (written < 0) return errno;
-        if (written == 0) return EIO;
-        data += written;
-        size -= (uint64_t)written;
-    }
-    return 0;
-}
-
-/* Write the file under a temporary name, then rename it into place: readers see a whole file or
- * none. Not synced to disk (D34; fsync made torch's first run 42.5 s instead of 2.3 s). */
-static bool publish(struct state *s, int directory, const struct entry *e,
-                    const uint8_t *content) {
+/* Write the entry's file from the payload under a temporary name, a window at a time, hashing
+ * what it writes, then rename it into place if it has the payload's digest: readers see a whole
+ * file or none. Not synced to disk (D34; fsync made torch's first run 42.5 s instead of 2.3 s). */
+static bool restore(struct state *s, const struct entry *e) {
+    int directory = open_parent(s, e);
+    if (directory < 0) return false;
     char temporary[64];
     int fd = -1;
     for (unsigned attempt = 0; fd < 0 && attempt < TEMPORARY_ATTEMPTS; attempt++) {
@@ -369,29 +454,16 @@ static bool publish(struct state *s, int directory, const struct entry *e,
         if (fd < 0 && errno != EEXIST) break;
     }
     if (fd < 0) return file_failed(s, errno, e);
-    int error = write_all(fd, content, e->blob.size);
+    uint8_t digest[FSB_DIGEST_SIZE];
+    bool done = stream_content(s, e, fd, digest);
+    if (done && memcmp(digest, e->digest, sizeof digest) != 0)
+        done = corrupt(s, "digest of file", e->index);
     /* readable by its owner, executable where the payload says so, never writable */
-    if (error == 0 && fchmod(fd, S_IRUSR | (e->mode & S_IXUSR)) != 0) error = errno;
-    if (error == 0 && renameat(directory, temporary, directory, base_name(e)) != 0) error = errno;
-    if (error != 0) unlinkat(directory, temporary, 0);
+    if (done && fchmod(fd, S_IRUSR | (e->mode & S_IXUSR)) != 0) done = file_failed(s, errno, e);
+    if (done && renameat(directory, temporary, directory, base_name(e)) != 0)
+        done = file_failed(s, errno, e);
+    if (!done) unlinkat(directory, temporary, 0);
     close(fd);
-    return error == 0 || file_failed(s, error, e);
-}
-
-/* Write the entry's file from the payload, its content checked against the digest first. */
-static bool restore(struct state *s, const struct entry *e) {
-    uint8_t *content, digest[FSB_DIGEST_SIZE];
-    if (!decode(s, e, &content)) return false;
-    bool done = false;
-    if (!fsb_tree_digest(content, e->blob.size, digest)) {
-        out_of_memory(s);
-    } else if (memcmp(digest, e->digest, sizeof digest) != 0) {
-        corrupt(s, "digest of file", e->index);
-    } else {
-        int directory = open_parent(s, e);
-        done = directory >= 0 && publish(s, directory, e, content);
-    }
-    free(content);
     if (done) s->job->outcome[e->item] |= FSB_CACHE_DONE | FSB_CACHE_WRITTEN;
     return done;
 }
@@ -439,8 +511,12 @@ static bool sync_file(struct state *s, const struct entry *e) {
     uint64_t size = e->blob.size;
     if (size <= SMALL_FILE) { /* room in the buffer, before any directory is opened for it */
         if (s->buffered + size > BATCH_BUFFER && !check_batch(s)) return false;
-        if (s->buffer == NULL && (s->buffer = malloc(BATCH_BUFFER)) == NULL)
-            return out_of_memory(s);
+        if (s->buffer == NULL) { /* mapped: unmapped at the end, never left in malloc's heap */
+            void *buffer = mmap(NULL, BATCH_BUFFER, PROT_READ | PROT_WRITE,
+                                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (buffer == MAP_FAILED) return out_of_memory(s);
+            s->buffer = buffer;
+        }
     }
     int directory = open_parent(s, e);
     if (directory < 0 && room_made(s)) directory = open_parent(s, e);
@@ -479,15 +555,20 @@ void fsb_cache_sync(const struct fsb_payload *payload, struct fsb_cache_sync *jo
     s->job = job;
     s->chain_length = strlen(job->chain);
     s->uid = geteuid();
+    s->root = -1;
     bool ok = true; /* every record checked before anything on disk is touched */
     for (uint64_t i = 0; ok && i < job->count; i++) ok = prepare(s, i, &entries[i]);
     ok = ok && job->count > 0 && open_root(s); /* nothing to check: nothing touched */
     for (uint64_t i = 0; ok && i < job->count; i++) ok = sync_file(s, &entries[i]);
     if (ok) check_batch(s);
     close_batch(s, s->batched); /* a failure left them open */
-    while (s->depth > 0) close(s->fds[s->depth--]);
-    if (s->root_open) close(s->fds[0]);
-    free(s->buffer);
+    while (s->depth > 0)
+        if (s->levels[--s->depth].fd >= 0) close(s->levels[s->depth].fd);
+    if (s->root >= 0) close(s->root);
+    free(s->levels);
+    free(s->path);
+    free(s->target);
+    if (s->buffer != NULL) munmap(s->buffer, BATCH_BUFFER);
     fsb_decoder_free(s->decoder);
     free(entries);
     free(s);

@@ -368,17 +368,6 @@ def test_package_directory_wins_over_same_named_extension(site: Path) -> None:
     assert kinds["both/libbar-2.so"] is FileKind.NATIVE_LIB  # not an importable name
 
 
-def test_native_files_too_large_to_load_fail_the_build(
-    site: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _native_site(site)
-    monkeypatch.setattr("fsbpyr.classify.MAX_MEMORY_BLOB", 100)
-    index = SiteIndex.scan(site)
-
-    with pytest.raises(ClassifyError, match="too large"):
-        classify([index.dists["fast"]], extension_suffixes=SUFFIXES, include_source=True)
-
-
 def test_same_dist_duplicates_warn_unless_extension_and_fallback(site: Path) -> None:
     _dist(site, "twice", "1.0", {"twice.py": b"", "twice/__init__.py": b""})
     index = SiteIndex.scan(site)

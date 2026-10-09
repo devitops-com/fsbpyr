@@ -19,7 +19,7 @@ from pathlib import Path
 from packaging.utils import canonicalize_name
 
 from .natives import init_symbol
-from .payload.format import MAX_MEMORY_BLOB, NATIVE_KINDS, NONE, FileKind, PayloadError
+from .payload.format import NATIVE_KINDS, NONE, FileKind, PayloadError
 from .payload.reader import Executable, FileRecord, Payload
 from .vcs import version_string
 
@@ -72,8 +72,6 @@ def _is_extension(payload: Payload, file: FileRecord) -> bool:
         return False
     if not _PLAIN_SO.fullmatch(file.path.rpartition("/")[2]):
         return True  # an ABI-tagged name (.cpython-314-..., .abi3) is an extension
-    if payload.blob(file.blob).size > MAX_MEMORY_BLOB:  # never bundled by a build
-        return True
     try:
         return payload.contains(file.blob, init_symbol(file.path))
     except PayloadError:

@@ -170,9 +170,9 @@ def test_paths_are_extracted_once_per_process(
     calls: list[tuple[int, ...]] = []
     sync = native.NativeCache.sync
 
-    def counted(cache: object, indices: tuple[int, ...], **options: bool) -> list[str]:
-        calls.append(indices)
-        return list(sync(cache, indices, **options))
+    def counted(cache: object, indices: tuple[int, ...], **options: bool) -> int:
+        calls.append(tuple(indices))
+        return int(sync(cache, indices, **options))
 
     monkeypatch.setattr(native.NativeCache, "sync", counted)
 
@@ -196,7 +196,10 @@ def test_unusable_caches_fail_loudly_for_paths(
         assert str(files / "x.txt") == boot.ROOT + "/plain/x.txt"
 
 
-def test_extraction_happens_once(site: Path, boot: ModuleType) -> None:
+def test_extraction_happens_once(
+    site: Path, boot: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FSBPYR_TRACE", "1")  # the paths written are kept for the trace
     importlib.import_module("tpl")
     native = sys.modules["_fsbpyr_rt.native"]
     extracted = sorted(native.EXTRACTED)

@@ -9,12 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from fsbpyr.runtime import pbs, pins, registry, stub
-from fsbpyr.runtime.registry import Runtime
-from fsbpyr.runtime.toolchain import find_toolchain
+from fsbpyr.payload.format import DIGEST_LEAF
 
 from ..support import edges
 from ..unit.boot.conftest import FAKE_RUNTIME
+from .conftest import LauncherBuild
 
 pytestmark = pytest.mark.slow
 
@@ -24,24 +23,16 @@ SOURCES = ("payload.c", "integrity.c", "parallel.c", "cache.c")
 
 
 @pytest.fixture(scope="module")
-def harness(runtime: Runtime, tmp_path_factory: pytest.TempPathFactory) -> Path:
+def harness(launcher_build: LauncherBuild, tmp_path_factory: pytest.TempPathFactory) -> Path:
     """The harness, linked with the launcher's sources and the runtime's own zstd, liblzma and
     OpenSSL, as the launcher is."""
-    pin = pins.pin_for(runtime.python_version.rpartition(".")[0], registry.host_triple())
-    dist = pbs.fetch(pin, registry.cache_root())
-    toolchain = find_toolchain(dist.llvm_major)
-    work = tmp_path_factory.mktemp("harness")
-    stub._copy_launcher(work)
-    libs = dist.root / "build" / "lib"
-    out = work / "payload_fuzz"
-    command = [os.fspath(toolchain.clang), "-std=c11", "-D_GNU_SOURCE", "-g", "-O1",
-               "-fsanitize=fuzzer,address,undefined", "-fno-sanitize-recover=undefined",
-               f"-I{work}", "-o", os.fspath(out), os.fspath(HARNESS),
-               *(os.fspath(work / source) for source in SOURCES),
-               *(os.fspath(libs / name) for name in ("libzstd.a", "liblzma.a", "libcrypto.a")),
-               "-lpthread", "-ldl"]  # fmt: skip
-    subprocess.run(command, check=True, capture_output=True, text=True)
-    return out
+    out = tmp_path_factory.mktemp("harness") / "payload_fuzz"
+    flags = (
+        "-fsanitize=fuzzer,address,undefined",
+        "-fno-sanitize-recover=undefined",
+        f"-DFSB_STREAM_WINDOW={DIGEST_LEAF}u",
+    )  # windows of a leaf: small inputs cross them
+    return launcher_build.compile(out, [HARNESS, *SOURCES], *flags)
 
 
 @pytest.fixture(scope="module")

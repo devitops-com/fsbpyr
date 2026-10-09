@@ -45,9 +45,17 @@ def test_c_module_and_standin_honour_the_same_contract(demo: Path) -> None:
 
     assert json.loads(result.stdout) == expected
     held = expected["sync"]["limited"][0][2:]  # both equal, and as they should be: (D36)
-    assert held == [[["ok", []], ""]] * 2  # checked, through a pass's files held open
+    assert held == [[["ok", 0, []], ""]] * 2  # checked, through a pass's files held open
     # a name the file system refuses fails the sync, and nothing is reported as modified (D38)
-    assert expected["sync"]["name too long"] == [["raises", "OSError", "ENAMETOOLONG"], ""]
+    too_long = [["raises", "OSError", "ENAMETOOLONG"], ""]
+    assert expected["sync"]["name too long"] == too_long
+    # D38: a first chunk of 4096 files is written before the second fails; the done are marked
+    chunks = [["raises", "OSError"], 4100, "chunks/f0000.txt", "chunks/f4099.txt", 4101, 4100]
+    assert expected["sync"]["chunks"] == [*chunks, True, too_long]
+    deep = "deep/" + "d/" * 40 + "x.txt"  # D38: 40 levels deep with 24 descriptors to spare
+    assert expected["sync"]["deep"][:2] == [[["ok", 1, [deep]], ""], [["ok", 0, []], ""]]
+    read = {blob: outcome[1] for blob, outcome in expected["reads"].items() if outcome[0] == "ok"}
+    assert read and all(expected["streams"][blob][0][3] == read[blob] for blob in read)  # D38
 
 
 @pytest.mark.skipif(shutil.which("strace") is None, reason="needs strace")

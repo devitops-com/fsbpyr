@@ -4,7 +4,8 @@
  * from them; the same binary replays a single input given as a file.
  *
  * Whatever the input, the launcher must refuse it or read it, never crash: every record of
- * every table up to MAX_RECORDS is visited, every blob up to MAX_READ bytes decoded. */
+ * every table up to MAX_RECORDS is visited, every blob up to MAX_READ bytes decoded, whole and
+ * through a stream (built with a small window, so that small inputs cross windows). */
 #include "cache.h"
 #include "integrity.h"
 #include "payload.h"
@@ -13,6 +14,8 @@
 
 #define MAX_RECORDS 4096u
 #define MAX_READ (16u << 20) /* larger blobs are left alone: the harness's memory is bounded */
+
+static volatile uint8_t touched; /* what the windows held: their bytes are really read */
 
 static uint64_t bounded(const struct fsb_payload *p, enum fsb_section section) {
     uint64_t count = fsb_count(p, section);
@@ -40,9 +43,34 @@ static void read_blob(const struct fsb_payload *p, uint32_t index) {
     free(content);
 }
 
+/* The blob through a stream, with a decoder of its own as a cache sync has: read to its end from
+ * its start, from its middle and from its first byte on, each window's ends touched. */
+static void stream_blob(const struct fsb_payload *p, struct fsb_decoder *d, uint32_t index) {
+    struct fsb_blob b;
+    if (!fsb_get_blob(p, index, &b) || b.size > MAX_READ) return;
+    struct fsb_stream *s = fsb_stream_open(p, d, &b);
+    if (s == NULL) return;
+    uint64_t starts[] = {0, b.size / 2, b.size > 0};
+    for (unsigned i = 0; i < sizeof starts / sizeof starts[0]; i++) {
+        const uint8_t *data;
+        uint64_t length;
+        int status = fsb_stream_seek(s, starts[i]);
+        while (status == FSB_STREAM_DATA &&
+               (status = fsb_stream_next(s, &data, &length)) == FSB_STREAM_DATA)
+            touched = data[0] ^ data[length - 1];
+        if (status != FSB_STREAM_END) break; /* failed: it fails every call after */
+    }
+    fsb_stream_close(s);
+}
+
 static void walk(const struct fsb_payload *p) {
     const char *text;
-    for (uint32_t i = 0; i < bounded(p, FSB_SECTION_BLOBS); i++) read_blob(p, i);
+    struct fsb_decoder *decoder = fsb_decoder_new(4);
+    for (uint32_t i = 0; i < bounded(p, FSB_SECTION_BLOBS); i++) {
+        read_blob(p, i);
+        if (decoder != NULL) stream_blob(p, decoder, i);
+    }
+    fsb_decoder_free(decoder);
     for (uint32_t i = 0; i < bounded(p, FSB_SECTION_FILES); i++) {
         struct fsb_file f;
         if (!fsb_get_file(p, i, &f)) continue;

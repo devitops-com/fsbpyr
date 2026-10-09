@@ -38,7 +38,7 @@ NOT_STR: list[Any] = [None, 1, b"pkg"]
 CHAIN = "runtime/g/site"
 EXT, DEP = "native.libs/_ext.so", "native.libs/libdep.so"
 BROKEN = ["native.libs/libtrailing.so", "native.libs/libbadpiece.so",
-          "native.libs/libwrongdigest.so", "native.libs/libhuge.so", "pkg/cli.py"]  # fmt: skip
+          "native.libs/libwrongdigest.so", "pkg/cli.py"]  # fmt: skip
 DAMAGES = ["same size", "missing", "longer", "empty", "symlink", "unreadable", "fifo",
            "directory"]  # fmt: skip
 
@@ -55,6 +55,8 @@ def _outcome(call: Any, *args: Any) -> Any:
 
 
 def _plain(value: Any) -> Any:
+    if isinstance(value, range):
+        return ["range", value.start, value.stop, value.step]
     if isinstance(value, tuple | list):
         return [type(value).__name__, *(_plain(v) for v in value)]
     if isinstance(value, bytes):
@@ -98,8 +100,47 @@ def run(fsb: Any) -> dict[str, Any]:
     info = dict(fsb.info())
     info["generation_id"] = info["generation_id"].hex()
     out["info"] = info
+    out["streams"] = _streams(fsb, sorted(blobs))
     out["sync"] = _syncs(fsb)
     return out
+
+
+def _streams(fsb: Any, blobs: list[int]) -> dict[str, Any]:
+    """Blobs read through _fsbpyr.stream (D38): in odd pieces, then around after seeks back,
+    forward and to the end; a damaged blob refuses where it is read."""
+    natives = [fsb.find_file(path)[4] for path in [*BROKEN[:3], "native.libs/libpieces.so"]]
+    out = {str(blob): _stream_steps(fsb, blob) for blob in [*blobs, *natives]}
+    out["bad"] = [_outcome(fsb.stream, blob) for blob in BAD_BLOBS]
+    return out
+
+
+def _stream_steps(fsb: Any, blob: int) -> list[Any]:
+    steps: list[Any] = []
+    try:
+        stream = fsb.stream(blob)
+    except Exception as exc:
+        return [["raises", type(exc).__name__]]
+    piece = bytearray(65537)
+    try:
+        size, data = stream.size, bytearray()
+        while count := stream.readinto(piece):
+            data += piece[:count]
+        steps.append(["read", size, len(data), _digest(bytes(data))])
+        for position in (0, size // 2, size, 1, size // 3):
+            steps.append(["seek", stream.seek(position), stream.tell()])
+            count = stream.readinto(piece)
+            steps.append(["readinto", count, _digest(bytes(piece[:count])), stream.tell()])
+        steps.append(_outcome(stream.seek, size + 1))
+        steps.append(_outcome(stream.seek, 2**64))
+        steps.append(_outcome(stream.readinto, b"read-only"))
+    except Exception as exc:  # the contract compares where and how a stream refuses
+        steps.append(["raises", type(exc).__name__])
+        # a failure sticks: every call after fails alike (D38), wherever it would go
+        steps.append([_outcome(stream.readinto, piece), _outcome(stream.seek, 0),
+                      _outcome(stream.tell)])  # fmt: skip
+    stream.close()
+    steps.append([_outcome(stream.readinto, piece), _outcome(stream.seek, 0)])  # closed first
+    return steps
 
 
 def _syncs(fsb: Any) -> dict[str, Any]:
@@ -119,19 +160,23 @@ def _syncs(fsb: Any) -> dict[str, Any]:
             "no stderr": _sync_without_stderr(fsb, tmp),
             "name too long": _sync(fsb, os.path.join(tmp, "toolong"), fsb.files_below("toolong")),
             "limited": _sync_limited(fsb, tmp),
+            "chunks": _sync_chunks(fsb, tmp),
+            "deep": _sync_deep(fsb, tmp),
         }
         out["descriptors left open"] = _descriptors() - descriptors
     return out
 
 
 def _sync(fsb: Any, root: Any, files: Any, memo: Any = None, **options: Any) -> list[Any]:
-    """Outcome of one sync and what it reported on stderr, ``root`` written as <root>. Messages
-    of cache errors count; of other errors only the class (and errno)."""
-    memo = bytearray(fsb.info()["files"]) if memo is None else memo
-    args = (root, options.get("chain", CHAIN), files, memo, options.get("resources", False))
+    """Outcome of one sync (the number of files written and their paths) and what it reported
+    on stderr, ``root`` written as <root>. Messages of cache errors count; of other errors only
+    the class (and errno)."""
+    memo = bytearray((fsb.info()["files"] + 7) // 8) if memo is None else memo
+    written, chain = options.get("written", []), options.get("chain", CHAIN)
+    args = (root, chain, files, memo, options.get("resources", False), written)
     saved, sys.stderr = sys.stderr, io.StringIO()
     try:
-        outcome = ["ok", fsb.sync(*args)]
+        outcome = ["ok", fsb.sync(*args), written]
     except OSError as exc:
         outcome = ["raises", type(exc).__name__, errno.errorcode.get(exc.errno or 0)]
     except ImportError as exc:  # CacheError
@@ -144,6 +189,39 @@ def _sync(fsb: Any, root: Any, files: Any, memo: Any = None, **options: Any) -> 
         outcome = [v.replace(root, "<root>") if isinstance(v, str) else v for v in outcome]
         reported = reported.replace(root, "<root>")
     return [outcome, reported]
+
+
+def _bits(memo: bytearray, count: int) -> list[int]:
+    return [i for i in range(count) if memo[i // 8] >> i % 8 & 1]
+
+
+def _sync_chunks(fsb: Any, tmp: str) -> list[Any]:
+    """A sync of more files than a chunk (module.c's SYNC_CHUNK, 4096): the first chunk is
+    written before a file of the second fails the sync (a name too long for any file system),
+    and a sync again finds the done ones marked (D38)."""
+    root, files, count = os.path.join(tmp, "chunks"), fsb.files_below("chunks"), fsb.info()["files"]
+    memo, written = bytearray((count + 7) // 8), list[str]()
+    first = _sync(fsb, root, files, memo, resources=True, written=written)
+    marked = _bits(memo, count)
+    again = _sync(fsb, root, files, memo, resources=True)
+    return [first[0][:2], len(written), written[0], written[-1], len(files), len(marked),
+            marked == list(files)[: len(marked)], again]  # fmt: skip
+
+
+def _sync_deep(fsb: Any, tmp: str) -> list[Any]:
+    """A file 40 directories deep, extracted with 24 descriptors to spare: at most OPEN_LEVELS
+    of them stay open (cache.c), so depth costs no descriptors (D38)."""
+    import resource  # noqa: PLC0415
+
+    root, files = os.path.join(tmp, "deep"), fsb.files_below("deep")
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (_limit_leaving(24), hard))
+    try:
+        first = _sync(fsb, root, files, resources=True)
+        again = _sync(fsb, root, files, resources=True)  # a new process: checked, not written
+    finally:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+    return [first, again, _tree(os.path.join(_site(root), "deep"))]
 
 
 def _descriptors() -> int:
@@ -207,22 +285,25 @@ def _sync_arguments(fsb: Any, tmp: str) -> dict[str, Any]:
     files = _closure(fsb, EXT)
     roots = [None, 1, "a\0b", ""]
     chains = [None, b"runtime", "", "../x", "a//b", "a/./b", "a/", "/a", "a\\b", "a\0b", "\ud800"]
-    lists = [None, 1, [count], [-1], [2**64], ["0"], [1.0]]
-    memos = [1, bytes(count), bytearray(count - 1), bytearray(count + 1)]
+    lists = [None, 1, [count], [-1], [2**64], ["0"], [1.0], {0: 0}, iter([0])]
+    bits = (count + 7) // 8
+    memos = [1, bytes(bits), bytearray(bits - 1), bytearray(bits + 1), bytearray(count)]
     return {
         "root": [_sync(fsb, bad, files) for bad in roots],
         "chain": [_sync(fsb, root, files, chain=bad) for bad in chains],
         "files": [_sync(fsb, root, bad) for bad in lists],
         "memo": [_sync(fsb, root, files, bad) for bad in memos],
+        "written": [_sync(fsb, root, files, written=bad) for bad in ["x", (), {}]],
     }
 
 
 def _sync_natives(fsb: Any, tmp: str) -> dict[str, Any]:
     parent = os.path.join(tmp, "natives")
     root = os.path.join(parent, "cache")  # neither exists: both are created
-    files, memo = _closure(fsb, EXT), bytearray(fsb.info()["files"])
+    count = fsb.info()["files"]
+    files, memo = _closure(fsb, EXT), bytearray((count + 7) // 8)
     out: dict[str, Any] = {"first": _sync(fsb, root, files, memo), "tree": _tree(parent)}
-    out["remembered"] = [i for i, done in enumerate(memo) if done] == sorted(files)
+    out["remembered"] = _bits(memo, count) == sorted(files)
     out["again"] = _sync(fsb, root, files, memo)
     _damage(os.path.join(_site(root), DEP), "same size")
     out["same process"] = _sync(fsb, root, files, memo)  # checked once per process
@@ -298,7 +379,7 @@ def _sync_payload(fsb: Any, tmp: str) -> dict[str, Any]:
 def _sync_resources(fsb: Any, tmp: str) -> dict[str, Any]:
     """Files without a digest, extracted only as resources: compared with the payload's bytes."""
     root, data = os.path.join(tmp, "resources"), fsb.files_below("pkg/data")
-    memo = bytearray(fsb.info()["files"])
+    memo = bytearray((fsb.info()["files"] + 7) // 8)
     out: dict[str, Any] = {"refused": _sync(fsb, root, data)}
     out["first"] = _sync(fsb, root, data, memo, resources=True)
     _damage(os.path.join(_site(root), "pkg/data/table.json"), "same size")
@@ -328,8 +409,9 @@ def _sync_batches(fsb: Any, tmp: str) -> list[Any]:
         _damage(os.path.join(directory, name), "same size")
     again = _sync(fsb, root, files, resources=True)
     clean = _sync(fsb, root, files, resources=True)
-    return [first[0][0], len(first[0][1]), len(names), again,
-            again[0] == ["ok", [f"batch/{name}" for name in damaged]], clean]  # fmt: skip
+    return [first[0][0], first[0][1], len(names), again,
+            again[0] == ["ok", len(damaged), [f"batch/{name}" for name in damaged]],
+            clean]  # fmt: skip
 
 
 def _sync_threads(fsb: Any, tmp: str) -> list[Any]:
@@ -344,7 +426,8 @@ def _sync_threads(fsb: Any, tmp: str) -> list[Any]:
     def syncing(n: int) -> None:
         try:
             root = os.path.join(tmp, f"thread{n}")
-            results.append(f"wrote {len(fsb.sync(root, CHAIN, files, bytearray(count), True))}")
+            memo = bytearray((count + 7) // 8)
+            results.append(f"wrote {fsb.sync(root, CHAIN, files, memo, True)}")
         except Exception as exc:  # the contract compares it
             results.append(repr(exc))
 
@@ -372,7 +455,7 @@ def _sync_without_stderr(fsb: Any, tmp: str) -> list[Any]:
     _damage(os.path.join(_site(root), DEP), "same size")
     saved, sys.stderr = sys.stderr, None
     try:
-        written = fsb.sync(root, CHAIN, files, bytearray(fsb.info()["files"]), False)
+        written = fsb.sync(root, CHAIN, files, bytearray((fsb.info()["files"] + 7) // 8), False)
     finally:
         sys.stderr = saved
     return [written, _tree(os.path.join(_site(root), "native.libs"))]

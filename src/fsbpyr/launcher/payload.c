@@ -135,6 +135,7 @@ bool fsb_payload_open(struct fsb_payload *p, const char **error) {
     close(fd);
     if (*error != NULL) return false;
     *error = attach(p, map, trailer.payload_size);
+    p->mapped = true;
     return *error == NULL;
 }
 
@@ -171,7 +172,8 @@ bool fsb_get_blob(const struct fsb_payload *p, uint32_t index, struct fsb_blob *
         !fits(b->offset, b->stored_size, p->size) || b->size > FSB_MAX_BLOB_SIZE)
         return false;
     if (b->codec == FSB_CODEC_NONE) return b->stored_size == b->size;
-    return b->codec == FSB_CODEC_ZSTD || b->codec == FSB_CODEC_XZ;
+    if (b->codec == FSB_CODEC_XZ) return b->size <= FSB_XZ_PIECE; /* larger content is in pieces */
+    return b->codec == FSB_CODEC_ZSTD;
 }
 
 bool fsb_get_module(const struct fsb_payload *p, uint32_t index, struct fsb_module *m) {
@@ -247,6 +249,23 @@ static struct fsb_decoder *decoder(struct fsb_decoder *d) {
     return process;
 }
 
+_Atomic unsigned long long fsb_stored_bytes, fsb_decompressed_bytes;
+
+/* Payload pages read through the mapping stay in the process's resident memory while it is
+ * mapped, though they are only the file's page cache: once SWEEP bytes were read since the
+ * last time, the data area's pages are dropped from it (D38). The mapping is read-only, so
+ * nothing is lost: a page used again is read again, from the page cache. */
+#define SWEEP (UINT64_C(256) << 20)
+static _Atomic uint64_t unswept;
+
+static void count_read(const struct fsb_payload *p, uint64_t stored) {
+    fsb_stored_bytes += stored;
+    if (!p->mapped || atomic_fetch_add(&unswept, stored) + stored < SWEEP) return;
+    atomic_store(&unswept, 0);
+    uint64_t page = (uint64_t)sysconf(_SC_PAGESIZE), start = p->data_start / page * page;
+    madvise((void *)(p->base + start), (size_t)(p->size - start), MADV_DONTNEED);
+}
+
 /* Decompress one verified frame (fsb_zstd_frame_ok) into dst[size]. */
 static bool zstd_decompress(struct fsb_decoder *d, void *dst, uint64_t size, const uint8_t *src,
                             uint64_t stored) {
@@ -256,8 +275,6 @@ static bool zstd_decompress(struct fsb_decoder *d, void *dst, uint64_t size, con
     fsb_decompressed_bytes += size;
     return true;
 }
-
-_Atomic unsigned long long fsb_stored_bytes, fsb_decompressed_bytes;
 
 /* liblzma, linked statically for CPython's _lzma (the distribution ships no headers). */
 typedef struct lzma_allocator lzma_allocator;
@@ -295,7 +312,7 @@ static const uint8_t *block_content(const struct fsb_payload *p, struct fsb_deco
         return NULL;
     const uint8_t *src = p->base + block.offset;
     if (!fsb_zstd_frame_ok(src, block.stored_size, block.size)) return NULL;
-    fsb_stored_bytes += block.stored_size;
+    count_read(p, block.stored_size);
     if (slot->data == NULL && (slot->data = malloc(FSB_MAX_BLOCK_SIZE)) == NULL) return NULL;
     slot->used = 0; /* invalid until the content is in place */
     if (!zstd_decompress(d, slot->data, block.size, src, block.stored_size)) return NULL;
@@ -306,18 +323,19 @@ static const uint8_t *block_content(const struct fsb_payload *p, struct fsb_deco
     return slot->data;
 }
 
-struct pieces {
+struct pieces { /* pieces first, first + 1, ... of ``parent`` into dst, FSB_XZ_PIECE apart */
     const struct fsb_payload *payload;
     const struct fsb_blob *parent;
+    uint64_t first;
     uint8_t *dst;
     atomic_bool failed;
 };
 
-static void decode_piece(void *context, uint64_t number, unsigned worker) {
+static void decode_piece(void *context, uint64_t item, unsigned worker) {
     (void)worker;
     struct pieces *job = context;
     const struct fsb_blob *parent = job->parent;
-    uint64_t start = number * FSB_XZ_PIECE;
+    uint64_t number = job->first + item, start = number * FSB_XZ_PIECE;
     uint64_t size = number + 1 < parent->stored_size ? FSB_XZ_PIECE : parent->size - start;
     struct fsb_blob piece;
     if (!fsb_get_blob(job->payload, (uint32_t)(parent->offset + number), &piece) ||
@@ -325,23 +343,37 @@ static void decode_piece(void *context, uint64_t number, unsigned worker) {
         atomic_store(&job->failed, true);
         return;
     }
-    fsb_stored_bytes += piece.stored_size;
-    if (!xz_decode(job->dst + start, size, job->payload->base + piece.offset, piece.stored_size))
+    count_read(job->payload, piece.stored_size);
+    if (!xz_decode(job->dst + item * FSB_XZ_PIECE, size, job->payload->base + piece.offset,
+                   piece.stored_size))
         atomic_store(&job->failed, true);
 }
+
+/* Pieces [first, first + count) of ``b`` into dst, in parallel. */
+static bool decode_pieces(const struct fsb_payload *p, const struct fsb_blob *b, uint64_t first,
+                          uint64_t count, uint8_t *dst) {
+    struct pieces job = {.payload = p, .parent = b, .first = first, .dst = dst};
+    atomic_init(&job.failed, false);
+    fsb_parallel(count, 1, decode_piece, &job);
+    return !atomic_load(&job.failed);
+}
+
+static bool stream_into(const struct fsb_payload *p, struct fsb_decoder *d,
+                        const struct fsb_blob *b, uint8_t *dst);
 
 bool fsb_read_blob(const struct fsb_payload *p, struct fsb_decoder *with, const struct fsb_blob *b,
                    void *dst) {
     struct fsb_decoder *d;
+    if (b->size > FSB_STREAM_WINDOW) return stream_into(p, with, b, dst);
     switch (b->codec) { /* offset is a data offset for NONE, ZSTD and XZ; a record index else */
     case FSB_CODEC_NONE:
         memcpy(dst, p->base + b->offset, (size_t)b->size);
-        fsb_stored_bytes += b->size;
+        count_read(p, b->size);
         return true;
     case FSB_CODEC_ZSTD:
         if (!fsb_zstd_frame_ok(p->base + b->offset, b->stored_size, b->size)) return false;
         if ((d = decoder(with)) == NULL) return false;
-        fsb_stored_bytes += b->stored_size;
+        count_read(p, b->stored_size);
         return zstd_decompress(d, dst, b->size, p->base + b->offset, b->stored_size);
     case FSB_CODEC_BLOCK: {
         uint64_t size;
@@ -352,17 +384,208 @@ bool fsb_read_blob(const struct fsb_payload *p, struct fsb_decoder *with, const 
         return true;
     }
     case FSB_CODEC_XZ:
-        fsb_stored_bytes += b->stored_size;
+        count_read(p, b->stored_size);
         return xz_decode(dst, b->size, p->base + b->offset, b->stored_size);
-    case FSB_CODEC_PIECES: { /* one stream per piece: decoded in parallel (D33) */
-        struct pieces job = {.payload = p, .parent = b, .dst = dst};
-        atomic_init(&job.failed, false);
-        fsb_parallel(b->stored_size, 1, decode_piece, &job);
-        return !atomic_load(&job.failed);
-    }
+    case FSB_CODEC_PIECES: /* one stream per piece: decoded in parallel (D33) */
+        return decode_pieces(p, b, 0, b->stored_size, dst);
     default:
         return false;
     }
+}
+
+struct fsb_stream {
+    const struct fsb_payload *payload;
+    struct fsb_decoder *decoder; /* BLOCK: NULL is the process's */
+    struct fsb_blob blob;
+    uint64_t position; /* of the content: what the next window starts with */
+    int failed;        /* FSB_STREAM_CORRUPT or _MEMORY once a window failed: every call after */
+    ZSTD_DCtx *zstd;   /* ZSTD, once the frame is checked */
+    uint64_t frame;    /* ZSTD: content decoded so far (a seek only moves ``position``) */
+    size_t consumed;   /* ZSTD: stored bytes the frame's decoding took so far */
+    bool ended;        /* ZSTD: the frame was decoded to its end, checksum included */
+    uint8_t *buffer;   /* all but NONE: a window (BLOCK: its member, copied out of its block) */
+    uint64_t capacity;
+    bool decoded; /* XZ and BLOCK: the whole content is in the buffer */
+};
+
+/* Pieces decoded for one window: at least one, however small the window. */
+#define WINDOW_PIECES (FSB_STREAM_WINDOW > FSB_XZ_PIECE ? FSB_STREAM_WINDOW / FSB_XZ_PIECE : 1)
+
+struct fsb_stream *fsb_stream_open(const struct fsb_payload *p, struct fsb_decoder *decoder,
+                                   const struct fsb_blob *b) {
+    struct fsb_stream *s = calloc(1, sizeof *s);
+    if (s == NULL) return NULL;
+    s->payload = p;
+    s->decoder = decoder;
+    s->blob = *b;
+    if (b->codec == FSB_CODEC_PIECES) {
+        uint64_t pieces = b->stored_size < WINDOW_PIECES ? b->stored_size : WINDOW_PIECES;
+        s->capacity = pieces * FSB_XZ_PIECE;
+    } else if (b->codec == FSB_CODEC_ZSTD) {
+        s->capacity = b->size < FSB_STREAM_WINDOW ? b->size : FSB_STREAM_WINDOW;
+    } else if (b->codec != FSB_CODEC_NONE) { /* decoded whole: at most a piece (fsb_get_blob) */
+        s->capacity = b->size;
+    }
+    if (b->codec != FSB_CODEC_NONE && (s->buffer = malloc((size_t)s->capacity + 1)) == NULL) {
+        free(s);
+        return NULL;
+    }
+    return s;
+}
+
+void fsb_stream_close(struct fsb_stream *s) {
+    if (s == NULL) return;
+    ZSTD_freeDCtx(s->zstd);
+    free(s->buffer);
+    free(s);
+}
+
+uint64_t fsb_stream_position(const struct fsb_stream *s) {
+    return s->position;
+}
+
+uint64_t fsb_stream_size(const struct fsb_stream *s) {
+    return s->blob.size;
+}
+
+/* The next ``size`` bytes of a zstd frame's content into the buffer; size 0: the frame must end
+ * there, its checksum checked, with nothing after it. */
+static int zstd_next(struct fsb_stream *s, uint64_t size) {
+    const struct fsb_blob *b = &s->blob;
+    const uint8_t *src = s->payload->base + b->offset;
+    if (size == 0 && s->ended) /* decoded to its end already, checksum included */
+        return s->consumed == b->stored_size ? FSB_STREAM_DATA : FSB_STREAM_CORRUPT;
+    if (s->zstd == NULL) {
+        if (!fsb_zstd_frame_ok(src, b->stored_size, b->size)) return FSB_STREAM_CORRUPT;
+        if ((s->zstd = ZSTD_createDCtx()) == NULL) return FSB_STREAM_MEMORY;
+    }
+    ZSTD_outBuffer out = {s->buffer, (size_t)size, 0};
+    ZSTD_inBuffer in = {src, (size_t)b->stored_size, s->consumed};
+    size_t left = 1;
+    while (size == 0 ? left != 0 : out.pos < out.size) {
+        size_t before_in = in.pos, before_out = out.pos;
+        left = ZSTD_decompressStream(s->zstd, &out, &in);
+        if (ZSTD_isError(left) || (left == 0 && out.pos < out.size) || /* short */
+            (in.pos == before_in && out.pos == before_out))            /* stuck */
+            return FSB_STREAM_CORRUPT;
+    }
+    s->ended = left == 0;
+    count_read(s->payload, in.pos - s->consumed);
+    s->consumed = in.pos;
+    s->frame += size;
+    fsb_decompressed_bytes += size;
+    return size == 0 && in.pos != in.size ? FSB_STREAM_CORRUPT : FSB_STREAM_DATA;
+}
+
+/* ``want`` bytes of a zstd frame's content from the stream's position into the buffer (0: the
+ * frame's end checked), decoding up to the position first: from the frame's start if a seek
+ * went back, discarding what a seek skipped. */
+static int zstd_window(struct fsb_stream *s, uint64_t want) {
+    if (s->frame > s->position) {
+        if (s->zstd != NULL) ZSTD_DCtx_reset(s->zstd, ZSTD_reset_session_only);
+        s->frame = s->consumed = 0;
+        s->ended = false;
+    }
+    while (s->frame < s->position) {
+        uint64_t skip = s->position - s->frame;
+        int status = zstd_next(s, skip < s->capacity ? skip : s->capacity);
+        if (status != FSB_STREAM_DATA) return status;
+    }
+    return zstd_next(s, want);
+}
+
+/* XZ and BLOCK: the whole content into the buffer, once (an xz stream is at most a piece, a
+ * block member at most a block); the block's member is copied out, since the block's slot is
+ * the decoder's, which other reads use. Done before even an empty one ends: its data is checked
+ * as fsb_read_blob checks it. */
+static int decode_whole(struct fsb_stream *s) {
+    const struct fsb_blob *b = &s->blob;
+    if (s->decoded) return FSB_STREAM_DATA;
+    if (b->codec == FSB_CODEC_XZ) {
+        count_read(s->payload, b->stored_size);
+        if (!xz_decode(s->buffer, b->size, s->payload->base + b->offset, b->stored_size))
+            return FSB_STREAM_CORRUPT;
+    } else {
+        struct fsb_decoder *d = decoder(s->decoder);
+        uint64_t size;
+        const uint8_t *block = d ? block_content(s->payload, d, (uint32_t)b->offset, &size) : NULL;
+        if (block == NULL || !fits(b->stored_size, b->size, size)) return FSB_STREAM_CORRUPT;
+        memcpy(s->buffer, block + b->stored_size, (size_t)b->size);
+    }
+    s->decoded = true;
+    return FSB_STREAM_DATA;
+}
+
+/* fsb_stream_next, without the stickiness of a failure. */
+static int next_window(struct fsb_stream *s, const uint8_t **data, uint64_t *length) {
+    const struct fsb_blob *b = &s->blob;
+    uint64_t want = b->size - s->position;
+    int status = FSB_STREAM_DATA;
+    if (b->codec == FSB_CODEC_XZ || b->codec == FSB_CODEC_BLOCK) status = decode_whole(s);
+    if (status == FSB_STREAM_DATA && want == 0 && b->codec == FSB_CODEC_ZSTD)
+        status = zstd_window(s, 0); /* the frame's end: its checksum */
+    if (status != FSB_STREAM_DATA) return status;
+    if (want == 0) return FSB_STREAM_END;
+    if (want > FSB_STREAM_WINDOW) want = FSB_STREAM_WINDOW;
+    switch (b->codec) {
+    case FSB_CODEC_NONE:
+        *data = s->payload->base + b->offset + s->position;
+        count_read(s->payload, want);
+        break;
+    case FSB_CODEC_ZSTD:
+        if ((status = zstd_window(s, want)) != FSB_STREAM_DATA) return status;
+        *data = s->buffer;
+        break;
+    case FSB_CODEC_BLOCK: /* at most a block, at most a piece: one window */
+    case FSB_CODEC_XZ:
+        *data = s->buffer + s->position;
+        want = b->size - s->position;
+        break;
+    case FSB_CODEC_PIECES: { /* the window's pieces, in parallel */
+        uint64_t first = s->position / FSB_XZ_PIECE, count = s->capacity / FSB_XZ_PIECE;
+        if (count > b->stored_size - first) count = b->stored_size - first;
+        uint64_t end = (first + count) * FSB_XZ_PIECE;
+        if (!decode_pieces(s->payload, b, first, count, s->buffer)) return FSB_STREAM_CORRUPT;
+        *data = s->buffer + (s->position - first * FSB_XZ_PIECE);
+        want = (end < b->size ? end : b->size) - s->position;
+        break;
+    }
+    default:
+        return FSB_STREAM_CORRUPT;
+    }
+    *length = want;
+    s->position += want;
+    return FSB_STREAM_DATA;
+}
+
+int fsb_stream_next(struct fsb_stream *s, const uint8_t **data, uint64_t *length) {
+    if (s->failed) return s->failed;
+    int status = next_window(s, data, length);
+    if (status == FSB_STREAM_CORRUPT || status == FSB_STREAM_MEMORY) s->failed = status;
+    return status;
+}
+
+int fsb_stream_seek(struct fsb_stream *s, uint64_t position) {
+    if (s->failed) return s->failed;
+    if (position > s->blob.size) return FSB_STREAM_CORRUPT;
+    s->position = position; /* zstd decodes up to it when the next window is asked for */
+    return FSB_STREAM_DATA;
+}
+
+/* A blob larger than a window, streamed into dst[b->size]. */
+static bool stream_into(const struct fsb_payload *p, struct fsb_decoder *d,
+                        const struct fsb_blob *b, uint8_t *dst) {
+    struct fsb_stream *s = fsb_stream_open(p, d, b);
+    const uint8_t *data;
+    uint64_t length;
+    int status = s ? FSB_STREAM_DATA : FSB_STREAM_MEMORY;
+    while (status == FSB_STREAM_DATA) {
+        uint64_t at = s->position;
+        if ((status = fsb_stream_next(s, &data, &length)) == FSB_STREAM_DATA)
+            memcpy(dst + at, data, (size_t)length);
+    }
+    fsb_stream_close(s);
+    return status == FSB_STREAM_END;
 }
 
 /* memcmp order with the shorter string first on a common prefix (Python bytes ordering) */

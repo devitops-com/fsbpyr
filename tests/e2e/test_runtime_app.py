@@ -102,6 +102,88 @@ def test_system_exit_and_sigint_keep_cpython_semantics(build_app: BuildApp) -> N
     assert _run(app, "k").returncode == -signal.SIGINT
 
 
+_SIGNALS = """\
+import signal
+NAMES = ("SIGINT", "SIGPIPE", "SIGXFSZ")
+def main():
+    print([str(signal.getsignal(getattr(signal, name))) for name in NAMES])
+"""
+
+
+@pytest.mark.sanitized
+def test_signals_are_handled_as_python_handles_them(build_app: BuildApp) -> None:
+    """D38: SIGPIPE and SIGXFSZ are ignored, as by `python`: a write to a closed pipe or socket
+    raises BrokenPipeError, and a write past the file-size limit (ulimit -f) fails with EFBIG;
+    both used to end the process."""
+    app = build_app({"sig.py": _SIGNALS}, "sig:main")
+    python = subprocess.run([sys.executable, "-c", _SIGNALS + "main()"], capture_output=True,
+                            text=True, check=True)  # fmt: skip
+
+    handled = _run(app).stdout
+
+    assert handled == python.stdout
+    assert handled.endswith(", '1', '1']\n")  # SIGPIPE and SIGXFSZ: SIG_IGN
+
+
+_WRITES_TO_A_CLOSED_PIPE = """\
+import os
+def main():
+    read, write = os.pipe()
+    os.close(read)
+    try:
+        os.write(write, b"x")
+    except BrokenPipeError:
+        print("BrokenPipeError")
+"""
+
+
+@pytest.mark.sanitized
+def test_a_write_to_a_closed_pipe_raises(build_app: BuildApp) -> None:
+    app = build_app({"pipe.py": _WRITES_TO_A_CLOSED_PIPE}, "pipe:main")
+
+    result = _run(app)
+
+    assert (result.returncode, result.stdout) == (0, "BrokenPipeError\n"), result.stderr
+
+
+_EXTRACTS_UNDER_A_FILE_SIZE_LIMIT = """\
+import _fsbpyr
+from _fsbpyr_rt.native import native_cache
+
+def main():
+    try:
+        native_cache().sync(_fsbpyr.files_below("x.libs"))
+    except OSError as exc:
+        print("failed", exc.errno)
+"""
+
+
+@pytest.mark.sanitized
+def test_a_file_size_limit_fails_an_extraction_and_ends_nothing(
+    runtime: Runtime, tmp_path: Path
+) -> None:
+    """D38 (security review): under ulimit -f, writing a library past the limit fails with EFBIG
+    and the sync says so; SIGXFSZ used to end the process with a core dump."""
+    import resource  # noqa: PLC0415
+
+    content = random.Random(8).randbytes(3 << 20)  # noqa: S311  # incompressible test data
+    native = File("x.libs/libbig.so", FileKind.NATIVE_LIB, Blob.zstd(content, digest=True),
+                  mode=0o755)  # fmt: skip
+    modules, files = app_content({"x.py": _EXTRACTS_UNDER_A_FILE_SIZE_LIMIT})
+    app = tmp_path / "app"
+    build_executable(runtime, App("x", "x:main", modules=modules, files=(*files, native)), app)
+
+    def limit() -> None:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (1 << 20, resource.RLIM_INFINITY))
+
+    env = {**os.environ, "FSBPYR_CACHE_DIR": str(tmp_path / "cache")}
+    result = subprocess.run([app], capture_output=True, text=True, check=False, env=env,
+                            preexec_fn=limit)  # fmt: skip
+
+    assert (result.returncode, result.stdout) == (0, "failed 27\n"), result.stderr  # EFBIG
+    assert not [p for p in (tmp_path / "cache").rglob("*") if p.is_file()]  # nothing left
+
+
 @pytest.mark.sanitized
 def test_module_entry_point_runs_package_main(build_app: BuildApp) -> None:
     app = build_app(
@@ -391,7 +473,8 @@ def main():
         hard = resource.getrlimit(resource.RLIMIT_AS)[1]
         resource.setrlimit(resource.RLIMIT_AS, ((size << 10) + (160 << 20), hard))
     try:
-        print("written", len(_fsbpyr.sync(root, "runtime/g/site", files, bytearray(count), False)))
+        memo = bytearray((count + 7) // 8)
+        print("written", _fsbpyr.sync(root, "runtime/g/site", files, memo, False))
     except OSError as exc:
         print("failed", exc.errno)
 """
@@ -430,7 +513,7 @@ def main():
     def syncing():
         while not stop.is_set():  # the tree removed each time: every file decoded and written
             shutil.rmtree(os.path.join(root, "runtime"), ignore_errors=True)
-            _fsbpyr.sync(root, "runtime/r", files, bytearray(count), True)
+            _fsbpyr.sync(root, "runtime/r", files, bytearray((count + 7) // 8), True)
 
     thread = threading.Thread(target=syncing)
     thread.start()
@@ -503,7 +586,7 @@ def resident(path):
 def main():
     started = peak()  # the executable checked itself
     root, files, count = sys.argv[1], _fsbpyr.files_below("x.libs"), _fsbpyr.info()["files"]
-    _fsbpyr.sync(root, "runtime/g/site", files, bytearray(count), False)
+    _fsbpyr.sync(root, "runtime/g/site", files, bytearray((count + 7) // 8), False)
     checked = peak()
     path = os.path.join(root, "runtime/g/site/x.libs/libbig.so")
     with open(path, "rb") as file, mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ) as lib:

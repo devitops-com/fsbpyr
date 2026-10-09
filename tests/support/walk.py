@@ -60,8 +60,9 @@ def run(fsb: Any) -> list[str]:
     attempt("list_dir", fsb.list_dir, "")
     below = attempt("files_below", fsb.files_below, "") or ()
     with tempfile.TemporaryDirectory() as root:
-        attempt("sync", fsb.sync, root, "runtime/g/site", below, bytearray(count), True)
-        attempt("sync natives", fsb.sync, root, "runtime/n/site", natives, bytearray(count), False)
+        memo = (count + 7) // 8  # a bit per file
+        attempt("sync", fsb.sync, root, "runtime/g/site", below, bytearray(memo), True)
+        attempt("sync natives", fsb.sync, root, "runtime/n/site", natives, bytearray(memo), False)
         for load in loads:
-            attempt("sync closure", fsb.sync, root, "runtime/c/site", load, bytearray(count), False)
+            attempt("sync closure", fsb.sync, root, "runtime/c/site", load, bytearray(memo), False)
     return sorted(errors)

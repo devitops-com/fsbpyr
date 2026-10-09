@@ -56,6 +56,7 @@ def edge_files() -> tuple[File, ...]:
     return (
         File("pkg/data.bin", FileKind.RESOURCE, Blob.zstd(b"data " * 30000), dist="edge"),
         File("pkg/raw.bin", FileKind.RESOURCE, Blob.zstd(noise), dist="edge"),
+        File("pkg/zeros.bin", FileKind.RESOURCE, Blob.zstd(bytes(3 << 20)), dist="edge"),  # windows
         File("lib/libx.so", FileKind.NATIVE_LIB, Blob.xz(b"\x7fELF x" * 20000, digest=True),
              mode=0o755),
         File("lib/libbig.so", FileKind.NATIVE_LIB, Blob.xz(library(1100), digest=True),
@@ -367,9 +368,9 @@ PATH_CASES: tuple[PathCase, ...] = (
     PathCase("a 255-byte component", "lib/" + "c" * 255, False, "accept"),
     PathCase("a 256-byte component", "lib/" + "c" * 256, True, "access"),  # the OS refuses it
     PathCase("a 256-byte directory", "lib/" + "d" * 256 + "/x.so", True, "access"),
-    PathCase("500 directories deep", "d/" * 500 + "x.so", False, "accept"),  # 1 KiB descriptors
-    # past the cache's 4 KiB directory path: refused until 8b leaves the limit to the OS
-    PathCase("an 8 KiB path", ("d" * 250 + "/") * 32 + "x.so", True, "access"),
-    PathCase("2100 directories deep", "d/" * 2100 + "x.so", True, "access"),
+    PathCase("500 directories deep", "d/" * 500 + "x.so", False, "accept"),
+    # no limit of ours on a path's length or depth (D38): only the OS's (NAME_MAX)
+    PathCase("an 8 KiB path", ("d" * 250 + "/") * 32 + "x.so", False, "accept"),
+    PathCase("2100 directories deep", "d/" * 2100 + "x.so", False, "accept"),
 )
 # fmt: on

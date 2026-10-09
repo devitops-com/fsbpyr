@@ -1,6 +1,9 @@
 """End-to-end fixtures: a real runtime (built once, cached) and an app builder."""
 
-from collections.abc import Callable, Iterator
+import os
+import subprocess
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -9,8 +12,8 @@ from fsbpyr import bytecode
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.payload.format import FileKind, ModuleKind
 from fsbpyr.payload.spec import Blob, File, Module
-from fsbpyr.runtime import registry
-from fsbpyr.runtime.toolchain import ToolchainError
+from fsbpyr.runtime import pbs, pins, registry, stub
+from fsbpyr.runtime.toolchain import ToolchainError, find_toolchain
 
 type BuildApp = Callable[[dict[str, str], str], Path]
 
@@ -42,6 +45,39 @@ def runtime(request: pytest.FixtureRequest) -> registry.Runtime:
         return registry.build_runtime("3.14", log=lambda _: None, sanitize=sanitize)
     except ToolchainError as exc:  # pragma: no cover - depends on the host
         pytest.skip(f"cannot build a runtime here: {exc}")
+
+
+@dataclass(frozen=True)
+class LauncherBuild:
+    """The runtime build's compiler, a copy of the launcher's sources and the runtime's own
+    zstd, liblzma and OpenSSL, for test programs built from launcher code (D38)."""
+
+    clang: Path
+    sources: Path
+    libs: tuple[Path, ...]
+
+    def compile(self, out: Path, files: Sequence[Path | str], *flags: str) -> Path:
+        """``files``: test sources, and launcher sources by name ("integrity.c")."""
+        inputs = [os.fspath(f if isinstance(f, Path) else self.sources / f) for f in files]
+        command = [os.fspath(self.clang), "-std=c11", "-D_GNU_SOURCE", "-g", "-O1", *flags,
+                   f"-I{self.sources}", "-o", os.fspath(out), *inputs,
+                   *map(os.fspath, self.libs), "-lpthread", "-ldl"]  # fmt: skip
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stderr
+        return out
+
+
+@pytest.fixture(scope="session")
+def launcher_build(
+    runtime: registry.Runtime, tmp_path_factory: pytest.TempPathFactory
+) -> LauncherBuild:
+    pin = pins.pin_for(runtime.python_version.rpartition(".")[0], registry.host_triple())
+    dist = pbs.fetch(pin, registry.cache_root())
+    sources = tmp_path_factory.mktemp("launcher-sources")
+    stub._copy_launcher(sources)
+    libs = tuple(dist.root / "build" / "lib" / name
+                 for name in ("libzstd.a", "liblzma.a", "libcrypto.a"))  # fmt: skip
+    return LauncherBuild(find_toolchain(dist.llvm_major).clang, sources, libs)
 
 
 def app_content(sources: dict[str, str]) -> tuple[tuple[Module, ...], tuple[File, ...]]:

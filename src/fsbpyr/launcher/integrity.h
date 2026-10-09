@@ -13,15 +13,33 @@
 
 #include "format.h"
 
-/* The digests of ``count`` buffers, all their leaves hashed in one parallel pass (many small
- * cached files share the threads; a large one spreads over them). A buffer whose data[i] is NULL
- * is the file open as fds[i] (``fds`` may be NULL if there is none): each thread reads its
- * leaves through a small buffer of its own, so a large file never takes its size of resident
- * memory, as it would mapped (D36). A leaf that cannot be read whole gets a digest that cannot match.
- * 0; EIO if some leaf could not be read (its digest is set all the same); ENOMEM if out of
- * memory (no digest set). Reentrant: no shared state. */
+/* Room for OpenSSL's SHA256_CTX (112 bytes), which the distribution declares nowhere. */
+typedef union {
+    unsigned char bytes[256];
+    uint64_t align;
+} fsb_sha256_context;
+
+/* The digests of ``count`` buffers, their leaves hashed in parallel passes (many small cached
+ * files share the threads; a large one spreads over them). A pass hashes a bounded number of
+ * leaves and folds their digests into each buffer's root before the next, so the memory needed
+ * does not grow with the buffers' sizes (D38). A buffer whose data[i] is NULL is the file open
+ * as fds[i] (``fds`` may be NULL if there is none): each thread reads its leaves through a
+ * small buffer of its own, so a large file never takes its size of resident memory, as it would
+ * mapped (D36). A leaf that cannot be read whole gets a digest that cannot match. 0; EIO if some
+ * leaf could not be read (its digest is set all the same); ENOMEM if out of memory (no digest
+ * set). Reentrant: no shared state. */
 int fsb_tree_digests(uint64_t count, const uint8_t *const data[], const int fds[],
                      const uint64_t lengths[], uint8_t (*digests)[FSB_DIGEST_SIZE]);
+
+/* The digest of content that comes a piece at a time (extraction, D38): each piece is hashed
+ * in parallel as it comes and only its root is kept. Every piece but the last is whole leaves. */
+struct fsb_tree {
+    fsb_sha256_context root;
+    bool ended; /* a piece that was not whole leaves came: no other may follow */
+};
+void fsb_tree_init(struct fsb_tree *tree);
+int fsb_tree_add(struct fsb_tree *tree, const uint8_t *data, uint64_t length); /* 0 or ENOMEM */
+void fsb_tree_final(struct fsb_tree *tree, uint8_t digest[FSB_DIGEST_SIZE]);
 
 /* The digest of data[0, length): fsb_tree_digests of one buffer. */
 bool fsb_tree_digest(const uint8_t *data, uint64_t length, uint8_t digest[FSB_DIGEST_SIZE]);

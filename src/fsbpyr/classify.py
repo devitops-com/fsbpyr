@@ -15,7 +15,6 @@ from .closure import InstalledDist
 from .elf import ElfError, glibc_requirement, is_elf
 from .natives import NativeError, closures, is_extension_module
 from .payload.format import (
-    MAX_MEMORY_BLOB,
     NATIVE_KINDS,
     FileFlag,
     FileKind,
@@ -309,9 +308,6 @@ class _Collector:
         except NativeError as exc:
             raise ClassifyError(str(exc)) from exc
         self.reached = {member for members in needs.values() for member in members}
-        for rel, data in self.natives.items():
-            if len(data) > MAX_MEMORY_BLOB:  # extraction reads a blob whole (no streaming yet)
-                raise ClassifyError(f"{rel} is too large to bundle ({len(data)} bytes)")
         blobs = _native_blobs(self.natives, self.level, self.xz_natives)
         for rel in self.natives:
             kind = FileKind.NATIVE_EXT if rel in extensions else FileKind.NATIVE_LIB

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 NATIVE_EXT = 3
 GENERATION_DIGITS = 32
-EXTRACTED: list[str] = []  # site-relative paths this process wrote (FSBPYR_TRACE)
+EXTRACTED: list[str] = []  # site-relative paths this process wrote, kept for FSBPYR_TRACE
 # ImportError: the native cache cannot be used, or the payload's data for it is corrupt.
 NativeCacheError = _fsbpyr.CacheError
 
@@ -52,17 +52,18 @@ class NativeCache:
         self.root = root
         self.site = "/".join((root, *chain))
         self._chain = "/".join(chain)
-        self._checked = bytearray(_fsbpyr.info()["files"])  # per FILES index: checked here
+        files = _fsbpyr.info()["files"]
+        self._checked = bytearray((files + 7) // 8)  # a bit per FILES index: checked here
 
-    def sync(self, files: Sequence[int], *, resources: bool = False) -> list[str]:
-        """Extract the files (FILES indices) that are missing or whose content does not match
-        the payload's, reporting the changed ones; returns the site-relative paths written.
-        Each process hashes a file once (extensions share libraries). With ``resources`` any
-        file may be extracted (importlib.resources asked for it on disk); one without a digest
-        is compared with its bytes in the payload."""
-        written: list[str] = _fsbpyr.sync(self.root, self._chain, files, self._checked, resources)
-        EXTRACTED.extend(written)
-        return written
+    def sync(self, files: Sequence[int], *, resources: bool = False) -> int:
+        """Extract the files (FILES indices, a range from files_below or a closure) that are
+        missing or whose content does not match the payload's, reporting the changed ones;
+        returns the number of files written. Each process hashes a file once (extensions share
+        libraries). With ``resources`` any file may be extracted (importlib.resources asked for
+        it on disk); one without a digest is compared with its bytes in the payload. Paths
+        written are kept only for FSBPYR_TRACE: no memory per file otherwise (D38)."""
+        written = EXTRACTED if os.environ.get("FSBPYR_TRACE") else None
+        return _fsbpyr.sync(self.root, self._chain, files, self._checked, resources, written)
 
 
 _CACHE: list[NativeCache] = []

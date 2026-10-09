@@ -73,9 +73,13 @@ equal), for two things:
   held open and read a leaf at a time by the hashing threads, D36), and checks data about to be
   written the same way; a changed file, or one that cannot be read, is reported on stderr and
   restored. When the files a pass holds leave no descriptor or memory to open the next file or
-  its directories, the pass is checked first; if that is not enough, the run fails. A file changed while a process runs is
-  noticed by the next one. Files are written under a temporary name, in pieces of at most 1 MiB,
-  and renamed, without fsync: one a crash left incomplete fails its check and is restored.
+  its directories, the pass is checked first; if that is not enough, the run fails. A file
+  changed while a process runs is noticed by the next one. Files are written under a temporary
+  name a window at a time, hashed as they are written, in pieces of at most 1 MiB (a piece of
+  zeros is left a hole), then renamed if their digest is right, without fsync: one a crash left
+  incomplete fails its check and is restored. Content is decoded a window of at most 64 MiB at
+  a time, and the digest keeps a bounded window of leaf digests, so neither a file's size nor
+  the number of files (synced 4096 at a time) sets the memory a sync needs (D38).
 - `fsbpyr inspect` shows the stored digest, which proves nothing by itself; `--verify` and the
   shell recipe compute it from the bytes.
 
@@ -130,7 +134,8 @@ The MODULES, FILES and DISTS tables are sorted strictly ascending by their key's
 
 - Stored data is 16-byte aligned and lies after the end of the last section (the blob data
   area).
-- `size` is at most 2^40 (1 TiB).
+- `size` is at most 2^62 (D38: no limit of ours below what file systems hold; readers stream
+  content larger than a window instead of holding it).
 - Blob order on disk: startup code, module code, resources, sources, natives. Within each
   class, blobs are ordered by the first path that references them.
 - Identical blobs are stored once; in blocks, identical content is one member whether the spec
@@ -138,8 +143,9 @@ The MODULES, FILES and DISTS tables are sorted strictly ascending by their key's
 - For codec none, `stored_size == size`.
 - **xz (version 5, D33).** A blob of codec 3 is one xz stream (`--best-compression`: xz -6
   with the x86 filter, no check of its own, since the file's integrity digest covers it) that
-  decodes to exactly `size` bytes, with no data after it and at most `XZ_MEMLIMIT` (64 MiB) of
-  decoder memory. A library larger than `XZ_PIECE` (4 MiB) is a blob of codec 4 instead, with no
+  decodes to exactly `size` bytes, at most `XZ_PIECE`, with no data after it and at most
+  `XZ_MEMLIMIT` (64 MiB) of decoder memory. A library larger than `XZ_PIECE` (4 MiB) is a blob
+  of codec 4 instead, with no
   stored bytes of its own: its content is that of `stored_size` (at least 2) consecutive xz
   blobs from index `offset` on, each `XZ_PIECE` bytes but the last, so that
   `(stored_size - 1) * XZ_PIECE < size <= stored_size * XZ_PIECE`. Their records follow the

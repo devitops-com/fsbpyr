@@ -24,6 +24,7 @@ import _fsbpyr
 from .native import materialize
 
 _READ_MODES = frozenset({"r", "rt", "tr", "rb", "br"})
+_IN_MEMORY = 16 << 20  # resources opened as files up to this size are read whole (D38)
 
 
 def _normalize(path: str) -> str | None:
@@ -123,10 +124,59 @@ class PayloadTraversable(Traversable):
         return self.read_bytes().decode(encoding or "utf-8", errors or "strict")
 
     def open(self, mode: str = "r", *args: Any, **kwargs: Any) -> IO[Any]:
+        """Small resources are read whole; larger ones are streamed a window at a time, so a
+        resource of any size never takes its size of memory (D38)."""
         if mode not in _READ_MODES:
             raise ValueError(f"payload resources are read-only; invalid mode {mode!r}")
-        data = io.BytesIO(self.read_bytes())
+        record = self._record()
+        if record is None:
+            raise FileNotFoundError(2, "No such file in the executable payload", self.virtual())
+        data: io.BufferedIOBase
+        if _fsbpyr.blob_info(record[4])[0] <= _IN_MEMORY:
+            data = io.BytesIO(_fsbpyr.read(record[4]))
+        else:
+            data = io.BufferedReader(_StreamedFile(_fsbpyr.stream(record[4])))
         return data if "b" in mode else io.TextIOWrapper(data, *args, **kwargs)
+
+
+class _StreamedFile(io.RawIOBase):
+    """A payload resource read as a file through an ``_fsbpyr.Stream``; it seeks as a file does,
+    past the end included (reads there give nothing)."""
+
+    def __init__(self, stream: Any) -> None:
+        super().__init__()
+        self._stream = stream
+        self._past: int | None = None  # a position past the end
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        return 0 if self._past is not None else int(self._stream.readinto(buffer))
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        if whence == io.SEEK_CUR:
+            offset += self.tell()
+        elif whence == io.SEEK_END:
+            offset += self._stream.size
+        elif whence != io.SEEK_SET:
+            raise ValueError(f"invalid whence ({whence}, should be 0, 1 or 2)")
+        if offset < 0:
+            raise ValueError(f"negative seek value {offset}")
+        self._stream.seek(min(offset, self._stream.size))
+        self._past = offset if offset > self._stream.size else None
+        return offset
+
+    def tell(self) -> int:
+        return self._past if self._past is not None else int(self._stream.tell())
+
+    def close(self) -> None:
+        if not self.closed:
+            self._stream.close()
+        super().close()
 
 
 @contextlib.contextmanager

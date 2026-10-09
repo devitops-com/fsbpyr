@@ -124,6 +124,10 @@ int main(int argc, char **argv) {
 
     PyConfig config;
     PyConfig_InitIsolatedConfig(&config);
+    /* as `python` has them: SIGINT raises KeyboardInterrupt; SIGPIPE and SIGXFSZ are ignored, so
+     * a write to a closed pipe or socket raises BrokenPipeError and one past the file-size limit
+     * fails with EFBIG, where both would end the process (D38, security review) */
+    config.install_signal_handlers = 1;
     config.parse_argv = 0;
     config.site_import = 0;
     config.safe_path = 1;

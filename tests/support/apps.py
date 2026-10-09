@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fsbpyr import bytecode
 from fsbpyr.assemble import App
-from fsbpyr.payload.format import MAX_MEMORY_BLOB, XZ_PIECE, Codec, FileKind, ModuleKind
+from fsbpyr.payload.format import XZ_PIECE, Codec, FileKind, ModuleKind
 from fsbpyr.payload.spec import Blob, Dist, File, Module
 
 from .contract import DIGEST_SIZES
@@ -100,6 +100,10 @@ BATCH = (
 HELD = {f"held/a/f{i:02}.bin": _filler(f"f{i}", 70 << 10) for i in range(40)} | {
     "held/b/c/d/e/f/x.txt": b"x"
 }
+# more files than a sync takes at once (module.c's SYNC_CHUNK, 4096), the last one with a name
+# no file system takes; one file 40 directories deep (D38)
+CHUNKS = {f"chunks/f{i:04}.txt": b"%d" % i for i in range(4100)} | {"chunks/zz/" + "z" * 256: b"z"}
+DEEP = {"deep/" + "d/" * 40 + "x.txt": b"deep"}
 
 
 def _bad_xz() -> list[File]:
@@ -117,14 +121,12 @@ def _bad_xz() -> list[File]:
     bad = (*pieces.pieces[:1], Blob(pieces.pieces[1].stored + b"junk", XZ_PIECE, Codec.XZ),
            *pieces.pieces[2:])  # fmt: skip
     wrong = Blob.zstd(b"\x7fELF wrong" * 500)  # intact content, another digest
-    huge = Blob(Blob.xz(bytes(4 << 20)).stored, MAX_MEMORY_BLOB + 1, Codec.XZ, bytes(32))
     files += [
         File("native.libs/libpieces.so", FileKind.NATIVE_LIB, pieces, mode=0o755),
         File("native.libs/libbadpiece.so", FileKind.NATIVE_LIB,
              Blob(b"", pieces.size, Codec.PIECES, bytes(32), bad), mode=0o755),
         File("native.libs/libwrongdigest.so", FileKind.NATIVE_LIB,
              Blob(wrong.stored, wrong.size, Codec.ZSTD, bytes(32)), mode=0o755),
-        File("native.libs/libhuge.so", FileKind.NATIVE_LIB, huge, mode=0o755),  # never read whole
     ]  # fmt: skip
     return files
 
@@ -141,6 +143,7 @@ def demo_app(entrypoint: str = "entry:main") -> App:
     files += [File(p, FileKind.RESOURCE, Blob.zstd(d)) for p, d in TREE.items()]
     files += [File(p, FileKind.RESOURCE, Blob.zstd(d)) for p, d in BATCH.items()]
     files += [File(p, FileKind.RESOURCE, Blob.zstd(d)) for p, d in HELD.items()]
+    files += [File(p, FileKind.RESOURCE, Blob.zstd(d)) for p, d in (CHUNKS | DEEP).items()]
     files += [  # never loaded: they exercise file_at / closure / blob_info / sync
         File(NATIVE_EXT, FileKind.NATIVE_EXT, Blob.zstd(b"\x7fELF ext", digest=True),
              mode=0o755, closure=(NATIVE_LIB,)),

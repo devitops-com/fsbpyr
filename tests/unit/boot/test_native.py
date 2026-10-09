@@ -106,13 +106,14 @@ def test_compiled_package_keeps_its_submodules_in_the_payload(boot: types.Module
 
 
 def test_first_sync_extracts_the_closure_once(
-    boot: types.ModuleType, native: types.ModuleType, tmp_path: Path
+    boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spec = _speed_spec(boot)
     cache = native.native_cache()
+    monkeypatch.setenv("FSBPYR_TRACE", "1")  # the paths written are kept for the trace
 
-    assert sorted(cache.sync(_files(spec))) == [LIB, EXT]
-    assert cache.sync(_files(spec)) == []
+    assert cache.sync(_files(spec)) == 2
+    assert cache.sync(_files(spec)) == 0
 
     site = Path(cache.site)
     assert (site / EXT).read_bytes() == CONTENT[EXT] and (site / LIB).read_bytes() == CONTENT[LIB]
@@ -121,6 +122,17 @@ def test_first_sync_extracts_the_closure_once(
     assert not (site / "cy").exists()  # only what was asked for
     assert sorted(native.EXTRACTED) == [LIB, EXT]
     assert not [p for p in site.rglob(".*")]  # no temporary files left behind
+
+
+def test_paths_written_are_kept_only_for_the_trace(
+    boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D38: a sync of any number of files needs no memory per file."""
+    monkeypatch.delenv("FSBPYR_TRACE", raising=False)
+    spec = _speed_spec(boot)
+
+    assert native.native_cache().sync(_files(spec)) == 2
+    assert native.EXTRACTED == []
 
 
 def _damage(path: Path) -> None:
@@ -136,12 +148,12 @@ def test_a_later_process_rehashes_and_restores_a_modified_file(
     native.native_cache().sync(_files(spec))
     native._CACHE.clear()  # a new process
     cache = native.native_cache()
-    assert cache.sync(_files(spec)) == []
+    assert cache.sync(_files(spec)) == 0
     _damage(Path(cache.site) / LIB)  # same size, other content
     native._CACHE.clear()
     cache = native.native_cache()
 
-    assert cache.sync(_files(spec)) == [LIB]
+    assert cache.sync(_files(spec)) == 1
     assert (Path(cache.site) / LIB).read_bytes() == CONTENT[LIB]
     assert f"fsbpyr: {cache.site}/{LIB} was modified" in capsys.readouterr().err
 
@@ -174,7 +186,7 @@ def test_an_unreadable_cached_file_is_replaced(
     (Path(native.native_cache().site) / LIB).chmod(0o000)
     native._CACHE.clear()  # a new process
 
-    assert native.native_cache().sync(_files(spec)) == [LIB]
+    assert native.native_cache().sync(_files(spec)) == 1
     assert (Path(native.native_cache().site) / LIB).read_bytes() == CONTENT[LIB]
 
 
@@ -188,12 +200,12 @@ def test_each_process_hashes_a_cached_file_once(
     native.native_cache().sync(_files(spec))
     native._CACHE.clear()  # a new process
     cache = native.native_cache()
-    assert cache.sync(_files(spec)) == []
+    assert cache.sync(_files(spec)) == 0
     _damage(Path(cache.site) / LIB)
 
-    assert cache.sync(_files(spec)) == []
+    assert cache.sync(_files(spec)) == 0
     native._CACHE.clear()
-    assert native.native_cache().sync(_files(spec)) == [LIB]
+    assert native.native_cache().sync(_files(spec)) == 1
 
 
 def test_a_modified_file_is_restored_before_loading(

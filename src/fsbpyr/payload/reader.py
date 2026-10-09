@@ -26,7 +26,6 @@ from .format import (
     HEADER_SIZE,
     MAX_BLOB_SIZE,
     MAX_BLOCK_SIZE,
-    MAX_MEMORY_BLOB,
     MAX_MODE,
     MODULE,
     NATIVE_KINDS,
@@ -273,6 +272,8 @@ class Payload:
             raise PayloadError(f"blob {i}: stored size differs from size")
         if kind is Codec.XZ and self.version < 5:
             raise PayloadError(f"blob {i}: format version {self.version} has no xz (codec 3)")
+        if kind is Codec.XZ and size > XZ_PIECE:
+            raise PayloadError(f"blob {i}: an xz stream holds at most {XZ_PIECE} bytes")
 
     def _parse_dists(self) -> tuple[DistRecord, ...]:
         dists = []
@@ -425,8 +426,6 @@ class Payload:
         record = self.blob(index)
         if record.codec is Codec.BLOCK:
             return self._block(record.offset)[record.stored_size : record.stored_size + record.size]
-        if record.size > MAX_MEMORY_BLOB:  # as the launcher: such a blob is only streamed
-            raise PayloadError(f"blob {index} is too large to read whole ({record.size} bytes)")
         if record.codec is Codec.PIECES:
             first, count = record.offset, record.stored_size
             return b"".join(self.read_blob(piece) for piece in range(first, first + count))

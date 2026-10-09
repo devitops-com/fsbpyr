@@ -71,7 +71,7 @@ def test_xz_natives_and_their_pieces_are_extracted_with_no_thread_of_the_runtime
 
     written = native.native_cache().sync(_closure(boot))
 
-    assert sorted(written) == sorted(CONTENT)
+    assert written == len(CONTENT)
     site = Path(native.native_cache().site)
     assert all((site / rel).read_bytes() == data for rel, data in CONTENT.items())
     assert threading.active_count() == threads

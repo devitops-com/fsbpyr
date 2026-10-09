@@ -879,7 +879,7 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
   release's measurements; the count-based tests and the startup budget pass; fast exit is
   evaluated and dropped. **DONE 2026-10-09.**
 
-### Phase 8 — Hardening (L; D38) — **8a DONE 2026-10-09 (0.10.0)**
+### Phase 8 — Hardening (L; D38) — **8a DONE 2026-10-09 (0.10.0), 8b DONE 2026-10-09 (0.11.0)**
 
 Principle (owner): normal cases fast, edge and extreme cases correct, never a crash. Every
 item below gets explicit tests in the normal test run. Steps, each released on its own:
@@ -937,6 +937,37 @@ item below gets explicit tests in the normal test run. Steps, each released on i
   (today it does: 1,000 levels need 1,000 descriptors, past a common soft limit of 1,024).
 - Resources opened as files (`importlib.resources` `open()`) stream; `read_bytes()` returns
   what the app asked for.
+- **Done (0.11.0):**
+  - streams (`fsb_stream_*`): every codec a window of at most 64 MiB at a time; zstd frames
+    decoded a window at a time, checksum checked at their end; a single xz stream holds at
+    most a piece (more is in pieces), pieces decode 16 per window in parallel; a stream that
+    failed fails every call after; a seek decodes nothing until the next read
+  - payload pages read through the mapping counted in resident memory (a sequence of reads of
+    10 GB would have kept 10 GB): every 256 MiB read, the data area's pages are dropped
+  - extraction: decoded, hashed and written a window at a time under a temporary name, renamed
+    once the digest is right; pieces of zeros are holes (a file is truncated to its size only
+    when it ends in one: truncating every file cost the torch app's first run 0.4 s on XFS)
+  - the digest keeps 4096 leaf digests (128 KiB) at a time, whatever the file's size
+  - sync: `files_below` gives a range (two binary searches); 4096 files per job, a bitmap of
+    the files checked; the number written is returned, their paths kept only for
+    `FSBPYR_TRACE`; no limit on a path's length or depth; 16 directory levels stay open,
+    deeper ones are opened again from the deepest open one
+  - `_fsbpyr.read` has no cap; `_fsbpyr.stream`; resources over 16 MiB opened as files stream
+    and seek
+  - found by the reviews: the launcher let SIGPIPE and SIGXFSZ end the process (a write to a
+    closed pipe or socket, a write past `ulimit -f`), where `python` raises BrokenPipeError or
+    fails with EFBIG: signal handlers are now installed as `python` installs them; a stream of
+    a block member pointed into the shared decoder's slot (copied out now); cached files are
+    opened with O_NOCTTY
+  - tests: windowed digests and streams of every codec at window boundaries (probes built
+    with small windows, under ASan/UBSan/LSan), streams fuzzed, a sync across chunks and 40
+    levels deep under a descriptor limit, 1.5 GiB + 600 MiB + 80 MiB extracted and streamed
+    within 512 MiB of added resident memory, holes, signals as in `python`
+  - measured (torch app, Core Ultra 9 285, XFS): first run 1696 → 1702 ms; later runs 1080 →
+    1082 ms, peak RSS 349 → 346 MB (the check's 16 MiB buffer is mapped now: from malloc, the
+    three 4096-file jobs of torch's fs-package left it in the heap, 364 MB); startup 7.94 →
+    8.03 ms (Python's own signal setup)
+  - left for 8c: the builder still holds content in memory
 
 **8c — Streaming when building** (D38): blob contents come from files, not memory; compression
 (zstd with the size pledged, xz in pieces), digests and ELF scanning stream; the writer lays

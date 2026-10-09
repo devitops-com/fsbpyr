@@ -9,7 +9,6 @@ import pytest
 from fsbpyr.payload.convert import spec_from_payload
 from fsbpyr.payload.format import (
     FILE,
-    MAX_MEMORY_BLOB,
     XZ_PIECE,
     Codec,
     FileKind,
@@ -120,16 +119,13 @@ def test_xz_blobs_need_format_version_5() -> None:
         Payload(bytes(older))
 
 
-def test_blobs_too_large_for_memory_are_never_read_whole() -> None:
-    """A tiny stream may claim and produce far more than memory holds: contains() streams it."""
-    bomb = Blob.xz(bytes(4 << 20))
-    stored = Blob(bomb.stored, MAX_MEMORY_BLOB + 1, Codec.XZ, bytes(32))
-    payload = Payload(_encoded(stored))
-    record = payload.find_file(NATIVE)
-    assert record is not None
+def test_an_xz_stream_holds_at_most_a_piece() -> None:
+    """More content is in pieces (D33), so a reader decodes an xz stream into a buffer of a
+    piece's size at most: a tiny stream claiming more is refused before it is decoded (D38)."""
+    bomb = Blob.xz(bytes(XZ_PIECE))
 
-    with pytest.raises(PayloadError, match="too large"):
-        payload.read_blob(record.blob)
+    with pytest.raises(PayloadError, match="at most XZ_PIECE"):
+        Blob(bomb.stored, XZ_PIECE + 1, Codec.XZ, bytes(32))
 
 
 # --- pieces: libraries over XZ_PIECE as independent xz streams, decoded in parallel ----------

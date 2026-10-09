@@ -17,7 +17,7 @@ DIGEST_LEAF = 1 << 20  # the integrity digest hashes the file in pieces of this 
 XZ_MEMLIMIT = 64 << 20  # decoder memory an xz stream may ask for (xz -6 needs about 9 MiB)
 XZ_PIECE = 4 << 20  # libraries larger than this are xz in pieces of this much content (D33)
 MAX_MODE = 0o777
-MAX_BLOB_SIZE = 1 << 40  # 1 TiB; keeps sizes far inside ssize_t
+MAX_BLOB_SIZE = 1 << 62  # far inside off_t; no limit of ours below what OSes hold (D38)
 MAX_STRTAB_SIZE = 0xFFFFFFFF
 
 TRAILER_MAGIC = b"FSBPYR\x00T"
@@ -106,7 +106,6 @@ class FileKind(IntEnum):
     METADATA = 5
 
 
-MAX_MEMORY_BLOB = 1 << 30  # largest blob read whole: _fsbpyr.read(), the cache sync (format.h)
 NATIVE_KINDS = frozenset({FileKind.NATIVE_EXT, FileKind.NATIVE_LIB})
 
 

@@ -42,6 +42,8 @@ class Blob:
             raise PayloadError(f"blob size {self.size} outside 0..{MAX_BLOB_SIZE}")
         if self.codec is Codec.NONE and len(self.stored) != self.size:
             raise PayloadError("blob size does not match stored data")
+        if self.codec is Codec.XZ and self.size > XZ_PIECE:
+            raise PayloadError("an xz stream holds at most XZ_PIECE bytes: more is in pieces")
         if self.sha256 is not None and len(self.sha256) != 32:
             raise PayloadError("blob digest must be 32 bytes")
         if (self.codec is Codec.PIECES) != bool(self.pieces):

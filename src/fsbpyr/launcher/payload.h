@@ -17,6 +17,7 @@
 struct fsb_payload {
     const uint8_t *base; /* start of the mapped payload */
     uint64_t size;
+    bool mapped; /* base is a mapping of the file (not a test's image in memory) */
     struct fsb_header header;
     const uint8_t *strtab;
     uint64_t strtab_size;
@@ -69,10 +70,38 @@ void fsb_decoder_free(struct fsb_decoder *decoder);
 /* Read blob ``b`` (from fsb_get_blob) into dst[b->size] with ``decoder``: copied, decompressed
  * (zstd checksum verified; xz bounded to exactly one stream of ``size`` bytes; pieces decoded in
  * parallel), or sliced out of its block, which the decoder decompresses once and keeps since a
- * package's modules share blocks. False on any corruption. xz and pieces touch only the atomic
- * counters (D33). */
+ * package's modules share blocks; a blob larger than a stream's window is streamed into ``dst``.
+ * False on any corruption, or if out of memory for a stream. xz and pieces touch only the
+ * atomic counters (D33). */
 bool fsb_read_blob(const struct fsb_payload *payload, struct fsb_decoder *decoder,
                    const struct fsb_blob *b, void *dst);
+
+/* The content of one blob a window at a time, whatever its size (D38): a window holds at most
+ * FSB_STREAM_WINDOW bytes (an xz piece at least), and every window from the start of the
+ * content but the last is whole digest leaves (FSB_DIGEST_LEAF), so it can be hashed as it
+ * comes. Streams use ``decoder`` as fsb_read_blob does (only BLOCK needs it, and its member is
+ * copied out); each has its own state otherwise. A stream that failed fails every call after.
+ * Tests build the window smaller (a multiple of FSB_DIGEST_LEAF). */
+#ifndef FSB_STREAM_WINDOW
+#define FSB_STREAM_WINDOW (UINT64_C(64) << 20)
+#endif
+enum { FSB_STREAM_END, FSB_STREAM_DATA, FSB_STREAM_CORRUPT, FSB_STREAM_MEMORY };
+struct fsb_stream;
+/* NULL if out of memory. ``b`` is from fsb_get_blob. */
+struct fsb_stream *fsb_stream_open(const struct fsb_payload *payload, struct fsb_decoder *decoder,
+                                   const struct fsb_blob *b);
+/* FSB_STREAM_DATA with the content from the stream's position on in data[0, *length), valid
+ * until the next call; FSB_STREAM_END after the last byte (a zstd frame also checked to its
+ * end); FSB_STREAM_CORRUPT or FSB_STREAM_MEMORY. */
+int fsb_stream_next(struct fsb_stream *stream, const uint8_t **data, uint64_t *length);
+/* Move the stream to content offset ``position`` (at most the blob's size; FSB_STREAM_CORRUPT
+ * otherwise): what fsb_stream_next gives next starts there. Nothing is decoded here: zstd
+ * decodes up to the position when the next window is asked for, from the frame's start if it is
+ * behind. */
+int fsb_stream_seek(struct fsb_stream *stream, uint64_t position);
+uint64_t fsb_stream_position(const struct fsb_stream *stream);
+uint64_t fsb_stream_size(const struct fsb_stream *stream);
+void fsb_stream_close(struct fsb_stream *stream);
 
 /* Payload bytes read and bytes decompressed so far, blocks included (FSBPYR_TRACE). */
 extern _Atomic unsigned long long fsb_stored_bytes, fsb_decompressed_bytes; /* any thread */

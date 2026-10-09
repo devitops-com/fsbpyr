@@ -9,7 +9,7 @@ import types
 from pathlib import Path
 from typing import Any
 
-from fsbpyr.payload.format import MAX_MEMORY_BLOB, NONE
+from fsbpyr.payload.format import NONE
 from fsbpyr.payload.format import PayloadError as _ReaderError
 from fsbpyr.payload.reader import Executable
 
@@ -96,23 +96,29 @@ class StandIn(types.ModuleType):
     def read(self, blob: object) -> bytes:
         index = _index(blob, "blob")
         try:
-            record = self._payload.blob(index)
-            if record.size > MAX_MEMORY_BLOB:
-                raise PayloadError(f"corrupt executable payload: blob too large {index}")
             return self._payload.read_blob(index)
         except _ReaderError as exc:
             raise PayloadError(f"corrupt executable payload: {exc}") from None
+
+    def stream(self, blob: object) -> Stream:
+        index = _index(blob, "blob")
+        try:
+            size = self._payload.blob(index).size
+        except _ReaderError:
+            raise PayloadError(f"corrupt executable payload: blob {index}") from None
+        return Stream(self, index, size)
 
     def list_dir(self, path: object) -> list[str]:
         key = _key(path)
         return [] if key is None else list(self._payload.list_dir(key))
 
-    def files_below(self, path: object) -> tuple[int, ...]:
+    def files_below(self, path: object) -> range:
         key = _key(path)
         if key is None:
-            return ()
+            return range(0)
         prefix = f"{key}/" if key else ""
-        return tuple(f.index for f in self._payload.files() if f.path.startswith(prefix))
+        below = [f.index for f in self._payload.files() if f.path.startswith(prefix)]
+        return range(below[0], below[-1] + 1) if below else range(0)
 
     def is_dir(self, path: object) -> bool:
         key = _key(path)
@@ -150,5 +156,61 @@ class StandIn(types.ModuleType):
     def stats(self) -> dict[str, int]:
         return {"reads": 0, "stored_bytes": 0, "decompressed_bytes": 0, "integrity_ns": 0}
 
-    def sync(self, root: Any, chain: Any, files: Any, checked: Any, resources: Any) -> list[str]:
-        return cache.sync(self._payload, root, chain, files, checked, resources)
+    def sync(self, root: Any, chain: Any, files: Any, checked: Any, resources: Any,
+             written: Any = None) -> int:  # fmt: skip
+        return cache.sync(self._payload, root, chain, files, checked, resources, written)
+
+
+class Stream:
+    """Mirror of _fsbpyr.Stream. The content is read whole here, at the first read: a damaged
+    blob is refused there, where the launcher refuses it at the window that holds the damage
+    (a zstd checksum: at the end). A failure is sticky, as the launcher's."""
+
+    def __init__(self, module: StandIn, blob: int, size: int) -> None:
+        self._module, self._blob, self.size = module, blob, size
+        self._content: bytes | None = None
+        self._position = 0
+        self._closed = self._failed = False
+
+    def _error(self) -> PayloadError:
+        return PayloadError(f"corrupt executable payload: blob data {self._blob}")
+
+    def _open(self) -> None:
+        """module.c's stream_take(): closed, or failed before."""
+        if self._closed:
+            raise ValueError("I/O operation on closed stream")
+        if self._failed:
+            raise self._error()
+
+    def readinto(self, buffer: Any) -> int:
+        view = memoryview(buffer).cast("B")  # first, as PyObject_GetBuffer is
+        if view.readonly:
+            raise BufferError("Object is not writable.")
+        self._open()
+        if self._content is None and len(view) and self._position < self.size:
+            try:
+                self._content = self._module._payload.read_blob(self._blob)
+            except _ReaderError:
+                self._failed = True
+                raise self._error() from None
+        data = (self._content or b"")[self._position : self._position + len(view)]
+        view[: len(data)] = data
+        self._position += len(data)
+        return len(data)
+
+    def seek(self, position: int) -> int:
+        if not isinstance(position, int):
+            raise TypeError("expected int")
+        if not 0 <= position < 2**64:  # PyLong_AsUnsignedLongLong
+            raise OverflowError("int out of range of unsigned long long")
+        self._open()
+        if position > self.size:
+            raise ValueError("position beyond the end of the stream")
+        self._position = position
+        return position
+
+    def tell(self) -> int:
+        return self._position
+
+    def close(self) -> None:
+        self._closed = True
