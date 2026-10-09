@@ -1,7 +1,7 @@
 """Turn a payload back into a spec, keeping every stored blob byte-for-byte (no recompression);
 a blob inside a block comes back as its raw content, which the writer packs again."""
 
-from .format import NONE, Codec
+from .format import FORMAT_VERSION, NONE, Codec, PayloadError
 from .reader import Payload
 from .spec import Blob, Dist, File, Module, PayloadSpec
 
@@ -17,6 +17,10 @@ def _blob(payload: Payload, index: int) -> Blob | None:
 
 
 def spec_from_payload(payload: Payload) -> PayloadSpec:
+    """Only from this format version: older DIGESTS hold plain SHA-256, which a version 4 file
+    would present as integrity digests, so every check of the files would fail."""
+    if payload.version != FORMAT_VERSION:
+        raise PayloadError(f"format version {payload.version}: only {FORMAT_VERSION} is re-encoded")
     files = payload.files()
     dists = payload.dists()
 

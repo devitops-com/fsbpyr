@@ -1,19 +1,29 @@
-/* Whole-file integrity check (D31, docs/format.md "Integrity").
+/* The integrity digest (D31, D32; docs/format.md "Integrity").
  *
- * The last FSB_DIGEST_SIZE bytes of an executable are the SHA-256 over the SHA-256 of each
- * FSB_DIGEST_LEAF piece of everything before them. The launcher checks it before it believes
- * any byte of its own file, hashing the pieces on up to 8 threads.
+ * SHA-256 over the SHA-256 of each FSB_DIGEST_LEAF piece of the data, the pieces hashed on up to
+ * 8 threads. One routine for everything the launcher checks: its own file before it starts
+ * (the file's last FSB_DIGEST_SIZE bytes are the digest of everything before them) and every
+ * file it extracts to the cache (the payload's DIGESTS).
  */
 #ifndef FSBPYR_INTEGRITY_H
 #define FSBPYR_INTEGRITY_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
-/* NULL if the file open as ``fd`` (``size`` bytes) matches its digest, else a static
- * description of the failure. */
+#include "format.h"
+
+/* The digest of data[0, length); false if out of memory. Reentrant: no shared state. */
+bool fsb_tree_digest(const uint8_t *data, uint64_t length, uint8_t digest[FSB_DIGEST_SIZE]);
+
+/* The digest of the first ``length`` bytes of the file open as ``fd``; 0 or an errno value. */
+int fsb_file_digest(int fd, uint64_t length, uint8_t digest[FSB_DIGEST_SIZE]);
+
+/* NULL if the file open as ``fd`` (``size`` bytes) ends with the digest of everything before
+ * it, else a static description of the failure. */
 const char *fsb_check_integrity(int fd, uint64_t size);
 
-/* Nanoseconds the check took (FSBPYR_TRACE). */
+/* Nanoseconds fsb_check_integrity took (FSBPYR_TRACE). */
 extern unsigned long long fsb_integrity_ns;
 
 #endif /* FSBPYR_INTEGRITY_H */

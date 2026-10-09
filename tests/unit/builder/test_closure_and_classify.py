@@ -6,13 +6,14 @@ import json
 import marshal
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from fsbpyr.classify import ClassifyError, classify, compile_module
+from fsbpyr.classify import ClassifyError, _digested, classify, compile_module
 from fsbpyr.closure import ClosureError, SiteIndex, resolve_entry
-from fsbpyr.payload.format import FileFlag, FileKind, ModuleFlag, ModuleKind
+from fsbpyr.payload.format import FileFlag, FileKind, ModuleFlag, ModuleKind, tree_digest
 from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob
 
 from ...support.elf import make_elf
@@ -242,9 +243,9 @@ def test_native_extensions_become_extension_modules_with_closures(site: Path) ->
     files = {f.path: f for f in content.files}
     ext = files[EXT]
     assert ext.kind is FileKind.NATIVE_EXT and ext.closure == ("fast.libs/libhelper-1.so",)
-    assert ext.blob.sha256 is not None and ext.mode & 0o500 == 0o500
+    assert ext.blob.sha256 == tree_digest(ext.blob.content()) and ext.mode & 0o500 == 0o500
     lib = files["fast.libs/libhelper-1.so"]
-    assert lib.kind is FileKind.NATIVE_LIB and lib.blob.sha256 is not None
+    assert lib.kind is FileKind.NATIVE_LIB and lib.blob.sha256 == tree_digest(lib.blob.content())
     assert files["fast/data.so.txt"].kind is FileKind.RESOURCE
 
 
@@ -461,7 +462,10 @@ def test_fs_packages_mark_every_file_below_them(site: Path) -> None:
     assert ModuleFlag.FS_REQUIRED_ROOT not in modules["tpl.sub"].flags
     files = {f.path: f for f in content.files}
     for rel in ("tpl/__init__.py", "tpl/templates/a.txt", "tpl/tool.sh", "tpl/sub/__init__.py"):
-        assert FileFlag.FS_REQUIRED in files[rel].flags and files[rel].blob.sha256 is not None
+        blob = files[rel].blob
+        assert FileFlag.FS_REQUIRED in files[rel].flags and blob.sha256 == tree_digest(
+            blob.content()
+        )
     assert (files["tpl/tool.sh"].mode, files["tpl/templates/a.txt"].mode) == (0o755, 0o644)
     assert files["other/x.txt"].flags == FileFlag(0)
     assert modules["tpl"].source is files["tpl/__init__.py"].blob
@@ -679,3 +683,10 @@ def test_the_highest_glibc_requirement_of_native_files_is_recorded(site: Path) -
     content = classify([index.dists["fast"]], extension_suffixes=SUFFIXES, include_source=True)
 
     assert content.glibc == ((2, 34), "fast/_new.abi3.so")
+
+
+def test_digests_of_files_needed_on_disk_come_from_their_content() -> None:
+    """Whatever digest a blob arrives with, the one recorded is computed from its bytes."""
+    stale = replace(Blob.zstd(b"data", digest=True), sha256=bytes(32))
+
+    assert _digested(stale).sha256 == tree_digest(b"data")

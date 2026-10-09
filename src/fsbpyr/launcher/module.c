@@ -4,7 +4,7 @@
  *   find_file(path)    -> (index, kind, flags, mode, blob, dist, closure) | None
  *   file_at(index)     -> (index, kind, flags, mode, blob, dist, closure, path)
  *   closure(word)      -> FILES indices of the closure starting at CLOSURES word ``word``
- *   blob_info(blob)    -> (size, SHA-256 of the uncompressed content | None)
+ *   blob_info(blob)    -> (size, integrity digest of the uncompressed content | None)
  *   list_dir(path)     -> sorted names directly below a directory ('' is the root)
  *   is_dir(path)       -> whether any file lives below a directory (O(log n))
  *   list_modules(pre)  -> [(name, kind)] direct children of "pkg." ('' is the top level)
@@ -12,10 +12,17 @@
  *   read(blob)         -> bytes (decompressed, size-checked)
  *   info()             -> dict describing the executable
  *   stats()            -> read counters and integrity check time (FSBPYR_TRACE, benchmarks)
+ *   tree_digest(data)  -> integrity digest (D32) of a bytes-like object
+ *   file_digest(fd, n) -> integrity digest (D32) of the regular file open as ``fd`` | None
+ *                         when it is not ``n`` bytes
  */
 #include "launcher.h"
 
 #include "integrity.h"
+
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 
 #define MAX_MEMORY_BLOB (UINT64_C(1) << 30) /* larger blobs are extracted, never read whole */
 
@@ -132,6 +139,57 @@ static PyObject *blob_info(PyObject *self, PyObject *arg) {
     if (!fsb_get_digest(&fsb_self, b.digest, digest)) return corrupt("digest of blob", index);
     return Py_BuildValue("(Ky#)", (unsigned long long)b.size, (const char *)digest,
                          (Py_ssize_t)FSB_DIGEST_SIZE);
+}
+
+/* The integrity digest of files extracted to the cache (D32), by the launcher's own routine;
+ * the GIL is released while it hashes. */
+static PyObject *tree_digest(PyObject *self, PyObject *arg) {
+    (void)self;
+    Py_buffer data;
+    if (PyObject_GetBuffer(arg, &data, PyBUF_SIMPLE) != 0) return NULL;
+    uint8_t digest[FSB_DIGEST_SIZE];
+    bool done;
+    Py_BEGIN_ALLOW_THREADS
+    done = fsb_tree_digest(data.buf, (uint64_t)data.len, digest);
+    Py_END_ALLOW_THREADS
+    PyBuffer_Release(&data);
+    if (!done) return PyErr_NoMemory();
+    return PyBytes_FromStringAndSize((const char *)digest, (Py_ssize_t)FSB_DIGEST_SIZE);
+}
+
+/* file_digest(fd, size): None unless the file is a regular file of exactly ``size`` bytes, so a
+ * file swapped for a bigger one is never hashed. A duplicate of the descriptor, taken with the
+ * GIL held, is hashed: another thread closing ``fd`` meanwhile cannot hand its number to a
+ * different file. */
+static PyObject *file_digest(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *file;
+    unsigned long long size;
+    if (!PyArg_ParseTuple(args, "OK:file_digest", &file, &size)) return NULL;
+    int fd = PyObject_AsFileDescriptor(file);
+    if (fd < 0) return NULL;
+    int own = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+    if (own < 0) return PyErr_SetFromErrno(PyExc_OSError);
+    uint8_t digest[FSB_DIGEST_SIZE];
+    struct stat st;
+    int error = 0;
+    bool sized = false;
+    Py_BEGIN_ALLOW_THREADS
+    if (fstat(own, &st) != 0)
+        error = errno;
+    else if (!S_ISREG(st.st_mode))
+        error = EINVAL;
+    else if ((sized = (uint64_t)st.st_size == size))
+        error = fsb_file_digest(own, size, digest);
+    close(own);
+    Py_END_ALLOW_THREADS
+    if (error == ENOMEM) return PyErr_NoMemory(); /* as tree_digest */
+    if (error != 0) {
+        errno = error;
+        return PyErr_SetFromErrno(PyExc_OSError);
+    }
+    if (!sized) Py_RETURN_NONE;
+    return PyBytes_FromStringAndSize((const char *)digest, (Py_ssize_t)FSB_DIGEST_SIZE);
 }
 
 /* Keys of ``section`` starting with key[0:length], followed by ``separator`` when the key is
@@ -347,7 +405,7 @@ static PyMethodDef methods[] = {
     {"find_file", find_file, METH_O, "Look up a file record by site-relative path."},
     {"file_at", file_at, METH_O, "File record by index, with its path."},
     {"closure", closure, METH_O, "FILES indices of a closure (by CLOSURES word index)."},
-    {"blob_info", blob_info, METH_O, "(size, SHA-256 or None) of a blob's content."},
+    {"blob_info", blob_info, METH_O, "(size, integrity digest or None) of a blob's content."},
     {"read", read_blob, METH_O, "Return the uncompressed content of a blob."},
     {"list_dir", list_dir, METH_O, "Sorted names directly below a payload directory."},
     {"is_dir", is_dir, METH_O, "Whether any payload file lives below a directory."},
@@ -356,6 +414,9 @@ static PyMethodDef methods[] = {
     {"dists", dists, METH_NOARGS, "All distributions, sorted by canonical name."},
     {"info", info, METH_NOARGS, "Describe the running executable."},
     {"stats", stats, METH_NOARGS, "Payload read counters and the integrity check's time."},
+    {"tree_digest", tree_digest, METH_O, "Integrity digest of a bytes-like object."},
+    {"file_digest", file_digest, METH_VARARGS,
+     "Integrity digest of the regular file open as a fd, None unless it has the given size."},
     {NULL, NULL, 0, NULL},
 };
 

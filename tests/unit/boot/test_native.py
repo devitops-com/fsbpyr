@@ -1,5 +1,6 @@
 """_fsbpyr_rt.native in-process: cache location, materialization, self-heal (plan §3.5)."""
 
+import errno
 import importlib
 import os
 import stat
@@ -173,6 +174,29 @@ def test_an_unreadable_cached_file_is_replaced(
     native.native_cache().sync(_files(spec))
     (Path(native.native_cache().site) / LIB).chmod(0o000)
     native._CACHE.clear()  # a new process
+
+    assert native.native_cache().sync(_files(spec)) == [LIB]
+    assert (Path(native.native_cache().site) / LIB).read_bytes() == CONTENT[LIB]
+
+
+def test_a_cached_file_that_cannot_be_hashed_is_replaced(
+    boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An error while hashing (no mmap on that file system, EIO) is a repair, not a failure."""
+    spec = _speed_spec(boot)
+    native.native_cache().sync(_files(spec))
+    native._CACHE.clear()  # a new process
+    real = native._fsbpyr.file_digest
+    failing = {LIB.rpartition("/")[2]}
+
+    def file_digest(fd: int, size: int) -> bytes | None:
+        if os.readlink(f"/proc/self/fd/{fd}").rpartition("/")[2] in failing:
+            failing.clear()
+            raise OSError(errno.ENODEV, "no mmap here")
+        result: bytes | None = real(fd, size)
+        return result
+
+    monkeypatch.setattr(native._fsbpyr, "file_digest", file_digest)
 
     assert native.native_cache().sync(_files(spec)) == [LIB]
     assert (Path(native.native_cache().site) / LIB).read_bytes() == CONTENT[LIB]

@@ -2,9 +2,11 @@
 
 import hashlib
 import struct
+from array import array
 
 import pytest
 
+from fsbpyr.payload.convert import spec_from_payload
 from fsbpyr.payload.format import (
     DIGEST_LEAF,
     DIGEST_SIZE,
@@ -15,7 +17,8 @@ from fsbpyr.payload.format import (
     PayloadError,
     tree_digest,
 )
-from fsbpyr.payload.reader import Executable
+from fsbpyr.payload.reader import Executable, Payload
+from fsbpyr.payload.spec import Blob
 from fsbpyr.payload.writer import assemble, encode_payload
 
 from .conftest import make_spec
@@ -42,6 +45,31 @@ def test_tree_digest_has_one_leaf_per_started_piece(length: int) -> None:
 
     assert tree_digest(data) == expected.digest()
     assert len(leaves) == -(-length // DIGEST_LEAF)  # exact multiples get no empty leaf
+
+
+def test_file_digests_are_tree_digests_whatever_the_representation() -> None:
+    """D32: files extracted to the cache are checked with the executable's construction."""
+    data = bytes(range(256)) * (DIGEST_LEAF // 256) + b"tail"  # two pieces
+    blobs = (Blob.raw(data, digest=True), Blob.zstd(data, digest=True), Blob.zstd(data))
+
+    assert {blob.content_digest() for blob in blobs} == {tree_digest(data)}
+    assert blobs[0].sha256 == blobs[1].sha256 == tree_digest(data)
+
+
+def test_tree_digest_hashes_bytes_whatever_the_item_size() -> None:
+    """The launcher hashes Py_buffer.len bytes; so must the Python routine."""
+    items = array("H", range(1000)) * 600  # 1.2 MB: two pieces of bytes, under a million items
+
+    assert tree_digest(items) == tree_digest(items.tobytes())
+
+
+def test_payloads_of_older_versions_are_never_reencoded() -> None:
+    """Their DIGESTS are plain SHA-256: re-encoded as version 4 they would fail every check."""
+    older = bytearray(encode_payload(make_spec()))
+    struct.pack_into("<I", older, 8, 3)
+
+    with pytest.raises(PayloadError, match="format version 3"):
+        spec_from_payload(Payload(bytes(older)))
 
 
 def test_executable_ends_with_the_digest_of_everything_before_it() -> None:

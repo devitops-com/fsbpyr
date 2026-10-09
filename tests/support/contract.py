@@ -5,6 +5,8 @@ the pure-Python stand-in; both must produce identical results (plan Phase 3).
 """
 
 import hashlib
+import os
+import tempfile
 from typing import Any
 
 NAMES = [
@@ -22,6 +24,10 @@ DIRS = [
 PREFIXES = ["pkg.", "ns.", "json.", "missing.", "pkg.data.", "\ud800."]
 DISTS = ["demo", "missing", ""]
 BAD_BLOBS: list[Any] = [-1, 2**32, 2**64, 10**9, "1"]
+LEAF = 1 << 20  # the integrity digest's piece size: around it, the C and Python routines agree
+DIGEST_SIZES = [0, 1, LEAF - 1, LEAF, LEAF + 1, 5 * LEAF + 3, 9 * LEAF + 1]  # 1 to 3 threads
+NOT_BUFFERS: list[Any] = [None, "text", 1]
+BAD_FDS: list[Any] = [-1, 10**6, "3", None]
 NOT_STR: list[Any] = [None, 1, b"pkg"]
 
 
@@ -79,4 +85,33 @@ def run(fsb: Any) -> dict[str, Any]:
     info = dict(fsb.info())
     info["generation_id"] = info["generation_id"].hex()
     out["info"] = info
+    out.update(_digests(fsb))
+    return out
+
+
+def _digests(fsb: Any) -> dict[str, Any]:
+    samples = {size: (bytes(range(251)) * (size // 251 + 1))[:size] for size in DIGEST_SIZES}
+    out: dict[str, Any] = {
+        "tree_digest": {str(n): _outcome(fsb.tree_digest, data) for n, data in samples.items()},
+        "tree_digest_bad": [_outcome(fsb.tree_digest, arg) for arg in NOT_BUFFERS],
+        "file_digest_bad": [_outcome(fsb.file_digest, fd, 0) for fd in BAD_FDS],
+    }
+    with tempfile.TemporaryDirectory() as directory:
+        files, other_sizes = {}, {}
+        for size, data in samples.items():
+            path = os.path.join(directory, str(size))
+            with open(path, "wb") as file:
+                file.write(data)
+            with open(path, "rb") as file:
+                file.seek(size // 2)  # the position does not matter
+                files[str(size)] = _outcome(fsb.file_digest, file.fileno(), size)
+                other_sizes[str(size)] = _outcome(fsb.file_digest, file.fileno(), size + 1)
+        out["file_digest"] = files
+        out["file_digest_other_size"] = other_sizes  # None: not the file that was expected
+        descriptor = os.open(directory, os.O_RDONLY)
+        try:
+            out["file_digest_dir"] = _outcome(fsb.file_digest, descriptor, 0)
+        finally:
+            os.close(descriptor)
+    out["same_digests"] = out["tree_digest"] == out["file_digest"]
     return out

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .. import __version__
 from ..payload.convert import spec_from_payload
-from ..payload.format import PayloadError
+from ..payload.format import PayloadError, tree_digest
 from ..payload.reader import Executable, Payload
 from ..payload.spec import File, Module, PayloadSpec
 from ..payload.writer import encode_payload
@@ -22,7 +22,7 @@ from . import pbs, pins, stdlib, stub, sysroot
 from .toolchain import find_toolchain
 
 BOOT_PACKAGES = ("_fsbpyr_boot", "_fsbpyr_rt")  # regenerated for every build, never runtime content
-LAYOUT_VERSION = 4  # bump when the stdlib selection or the runtime directory layout changes
+LAYOUT_VERSION = 5  # bump when the stdlib selection or the runtime directory layout changes
 _STUB = "stub"
 _STDLIB = "stdlib.fsbp"
 _META = "runtime.json"
@@ -54,7 +54,7 @@ def secure_directory(path: Path) -> Path:
 
 
 def _digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return tree_digest(path.read_bytes()).hex()
 
 
 def cache_root() -> Path:
@@ -113,7 +113,7 @@ class Runtime:
             (staging / _STDLIB).write_bytes(encode_payload(fragment))
             meta = {
                 **self._metadata(),
-                "sha256": {name: _digest(staging / name) for name in (_STUB, _STDLIB)},
+                "digests": {name: _digest(staging / name) for name in (_STUB, _STDLIB)},
             }
             (staging / _META).write_text(json.dumps(meta, indent=2, sort_keys=True))
             self._publish(staging, directory)
@@ -154,7 +154,7 @@ class Runtime:
         meta = json.loads(paths[2].read_text())
         if meta.get("layout") != LAYOUT_VERSION:
             raise RuntimeCacheError(f"runtime at {directory} uses an old layout; rebuild it")
-        expected = meta.get("sha256", {})
+        expected = meta.get("digests", {})
         for path in paths[:2]:
             if expected.get(path.name) != _digest(path):
                 raise RuntimeCacheError(f"corrupt runtime file {path}; delete {directory}")
@@ -177,15 +177,16 @@ class Runtime:
         zstd frames copied verbatim and block members as content that the next build packs
         again (no compiler, no download, no cache; plan D4)."""
         with Executable.open(path) as exe:
-            if not exe.covers_file:  # format versions 1 and 2: the stub would go unchecked
-                raise RuntimeCacheError(f"{path} has no whole-file digest (built before 0.6.0)")
             try:
                 exe.verify()  # what goes into every app it builds must be what was built
             except PayloadError as exc:
                 raise RuntimeCacheError(f"{path} was modified or damaged ({exc})") from exc
             payload = exe.payload
             info = json.loads(payload.build_info)
-            fragment = spec_from_payload(payload)
+            try:  # only from this format: its launcher reads nothing else
+                fragment = spec_from_payload(payload)
+            except PayloadError as exc:
+                raise RuntimeCacheError(f"{path} cannot serve this fsbpyr's builds: {exc}") from exc
             stub_bytes = exe.stub_prefix()
             hexversion, magic = payload.python_hexversion, payload.bytecode_magic
         if "runtime_tag" not in info:

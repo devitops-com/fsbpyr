@@ -1,6 +1,5 @@
 """Immutable input model for the payload writer."""
 
-import hashlib
 from compression import zstd
 from dataclasses import dataclass, field
 
@@ -12,6 +11,7 @@ from .format import (
     ModuleFlag,
     ModuleKind,
     PayloadError,
+    tree_digest,
 )
 
 ZSTD_MIN_LEVEL, ZSTD_MAX_LEVEL = 1, 22
@@ -26,7 +26,8 @@ NO_FILE_FLAGS = FileFlag(0)
 
 @dataclass(frozen=True, slots=True)
 class Blob:
-    """Stored bytes of one resource, possibly compressed, plus optional SHA-256 of the content."""
+    """Stored bytes of one resource, possibly compressed, plus optionally the integrity digest of
+    its content (``tree_digest``: D32)."""
 
     stored: bytes
     size: int
@@ -45,9 +46,9 @@ class Blob:
         return self.stored if self.codec is Codec.NONE else zstd.decompress(self.stored)
 
     def content_digest(self) -> bytes:
-        """SHA-256 of the content, whatever the representation (a block member comes back raw
-        from a payload, the same content as a zstd frame from a build)."""
-        return self.sha256 or hashlib.sha256(self.content()).digest()
+        """``tree_digest`` of the content, whatever the representation (a block member comes back
+        raw from a payload, the same content as a zstd frame from a build)."""
+        return self.sha256 or tree_digest(self.content())
 
     @classmethod
     def raw(cls, data: bytes, *, digest: bool = False) -> Blob:
@@ -79,7 +80,7 @@ class Blob:
 
 
 def _digest(data: bytes, wanted: bool) -> bytes | None:
-    return hashlib.sha256(data).digest() if wanted else None
+    return tree_digest(data) if wanted else None
 
 
 @dataclass(frozen=True, slots=True)

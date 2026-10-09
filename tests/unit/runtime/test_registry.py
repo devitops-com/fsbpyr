@@ -27,6 +27,7 @@ from fsbpyr.payload.format import (
     FileKind,
     ModuleFlag,
     ModuleKind,
+    tree_digest,
 )
 from fsbpyr.payload.reader import Executable, Payload
 from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob, Dist, File, Module, PayloadSpec
@@ -193,6 +194,15 @@ def test_blocks_are_compressed_at_the_apps_level(tmp_path: Path, level: int) -> 
         )
 
 
+def test_runtime_files_are_recorded_with_the_integrity_digest(tmp_path: Path) -> None:
+    """D32: one digest construction for everything fsbpyr checks against its own record."""
+    _runtime().save(tmp_path / "rt")
+    meta = json.loads((tmp_path / "rt" / "runtime.json").read_text())
+
+    assert meta["digests"] == {name: tree_digest((tmp_path / "rt" / name).read_bytes()).hex()
+                               for name in ("stub", "stdlib.fsbp")}  # fmt: skip
+
+
 def test_runtime_load_detects_corrupted_files(tmp_path: Path) -> None:
     _runtime().save(tmp_path / "rt")
     stub = tmp_path / "rt" / "stub"
@@ -207,8 +217,8 @@ def test_runtimes_of_an_older_layout_are_refused(tmp_path: Path) -> None:
     _runtime().save(tmp_path / "rt")
     meta_path = tmp_path / "rt" / "runtime.json"
     meta = json.loads(meta_path.read_text())
-    assert meta["layout"] == registry.LAYOUT_VERSION == 4
-    meta_path.write_text(json.dumps({**meta, "layout": 3}))
+    assert meta["layout"] == registry.LAYOUT_VERSION == 5
+    meta_path.write_text(json.dumps({**meta, "layout": 4}))
 
     with pytest.raises(RuntimeCacheError, match="old layout"):
         Runtime.load(tmp_path / "rt")
@@ -310,10 +320,9 @@ def test_app_modules_may_not_shadow_builtin_or_frozen_modules(tmp_path: Path, na
         build_executable(_runtime(), App("x", "x:main", modules=(clash,)), tmp_path / "x")
 
 
-def test_runtime_from_an_executable_without_a_whole_file_digest_is_refused(
-    tmp_path: Path,
-) -> None:
-    """Format versions 1 and 2 cover only the payload: the stub would be copied unchecked."""
+def test_runtime_from_an_executable_of_another_format_version_is_refused(tmp_path: Path) -> None:
+    """Its launcher could not read what this fsbpyr writes (and before version 3 the stub
+    would be copied unchecked)."""
     out = tmp_path / "app"
     app = Module("hello", "hello.py", ModuleKind.MODULE, code=Blob.code(b"c"), dist="hello")
     build_executable(
@@ -330,7 +339,7 @@ def test_runtime_from_an_executable_without_a_whole_file_digest_is_refused(
     out.write_bytes(data[:offset] + payload + TRAILER.pack(TRAILER_MAGIC, 2, 0, offset, size,
                                                            digest))  # fmt: skip
 
-    with pytest.raises(RuntimeCacheError, match="whole-file digest"):
+    with pytest.raises(RuntimeCacheError, match="format version 2"):
         Runtime.from_executable(out)
 
 

@@ -123,14 +123,18 @@ use. On a Core Ultra 9 285 with the file in the page cache it takes 2.0 ms for a
 8.9 ms for 148 MB (one core: 6.9 and 38 ms; without SHA instructions: 7.1 and 30 ms). The first
 start after a reboot also reads the whole file from disk. `FSBPYR_TRACE=1` reports the time as
 `integrity_ns`. Files extracted to the cache are hashed again by every process, once, before it
-first uses them; a changed one is reported and restored.
+first uses them, with the same digest and the same multithreaded routine; a changed one is
+reported and restored.
 
 The digest can be published and checked with `fsbpyr inspect --verify BINARY` (plain `inspect`
 shows the stored value) or with standard tools:
 
 ```sh
 head -c -32 app | split -b 1M --filter='openssl dgst -sha256 -binary' | sha256sum
+split -b 1M --filter='openssl dgst -sha256 -binary' < cached-file | sha256sum
 ```
+
+Measured timings, release by release, are in `docs/performance.md`.
 
 What the check cannot stop is someone who can write the file and rewrites the digest too, or
 patches the check out: the code that checks is in the same file. Proving where an executable

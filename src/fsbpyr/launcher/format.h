@@ -1,4 +1,4 @@
-/* fsbpyr executable format v3 — C mirror of src/fsbpyr/payload/format.py (spec: docs/format.md).
+/* fsbpyr executable format v4 — C mirror of src/fsbpyr/payload/format.py (spec: docs/format.md).
  *
  * All integers are little-endian. Records are read with memcpy, never by casting pointers into
  * the mapping, so alignment of the mapped data never matters. tests/integration/
@@ -15,7 +15,7 @@
 #error "fsbpyr format readers assume a little-endian host"
 #endif
 
-#define FSB_FORMAT_VERSION 3u
+#define FSB_FORMAT_VERSION 4u
 #define FSB_PAGE_SIZE 4096u
 #define FSB_BLOB_ALIGN 16u
 #define FSB_TABLE_ALIGN 8u
@@ -75,7 +75,7 @@ struct fsb_trailer {
     uint32_t flags;
     uint64_t payload_offset;
     uint64_t payload_size;
-    uint8_t payload_sha256[32];
+    uint8_t digest[32]; /* integrity digest of everything before it (D31) */
 };
 
 struct fsb_section_ref {

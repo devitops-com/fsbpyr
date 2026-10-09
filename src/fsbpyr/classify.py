@@ -1,12 +1,10 @@
 """RECORD entries -> payload modules, files and namespace packages (plan §3.6 steps 6-7)."""
 
 import csv
-import hashlib
 import posixpath
 import re
 import warnings
 from collections.abc import Callable
-from compression import zstd
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 
@@ -17,12 +15,12 @@ from .natives import NativeError, closures, is_extension_module
 from .payload.format import (
     MAX_MEMORY_BLOB,
     NATIVE_KINDS,
-    Codec,
     FileFlag,
     FileKind,
     ModuleFlag,
     ModuleKind,
     is_module_part,
+    tree_digest,
 )
 from .payload.spec import ZSTD_LEVEL, Blob, Dist, File, Module
 from .scan import file_relative_reads
@@ -47,8 +45,8 @@ BUILTIN_FS_PACKAGES = frozenset({"babel", "botocore", "certifi", "litellm", "mat
 
 
 def _digested(blob: Blob) -> Blob:
-    data = zstd.decompress(blob.stored) if blob.codec is Codec.ZSTD else blob.stored
-    return replace(blob, sha256=hashlib.sha256(data).digest())
+    """The digest from the bytes themselves, never one the blob arrived with."""
+    return replace(blob, sha256=tree_digest(blob.content()))
 
 
 class ClassifyError(RuntimeError):

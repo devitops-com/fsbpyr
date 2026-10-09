@@ -4,14 +4,14 @@ Layout (manifest §7, D9): ``<cache>/runtime/<generation>/site/<site-relative pa
 ``site`` tree mirrors site-packages, so auditwheel's ``$ORIGIN`` RUNPATHs find the bundled
 libraries unchanged. ``<cache>`` is ``$FSBPYR_CACHE_DIR`` or
 ``${XDG_CACHE_HOME:-~/.cache}/<app>``. A file is written under a temporary name, checked
-against its SHA-256 and renamed into place, so racing processes only ever see complete files
+against its digest and renamed into place, so racing processes only ever see complete files
 and need no lock. Extensions are then loaded by CPython's ExtensionFileLoader (plain dlopen).
-Cached files run outside the executable's own integrity check, so every use hashes them again
-(D31): a modified file is reported and restored from the payload.
+Cached files run outside the executable's own integrity check, so each process hashes them once,
+before it first uses them, with the launcher's own digest routine (D31, D32): a modified file is
+reported and restored from the payload.
 """
 
 import contextlib
-import hashlib
 import os
 import stat
 import sys
@@ -95,12 +95,17 @@ def _cached(directory: int, name: str, size: int, digest: bytes) -> bool | None:
         return None
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_size != size:
         return False
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK  # a FIFO must not block
     try:
-        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
+        fd = os.open(name, flags, dir_fd=directory)
     except OSError:  # unreadable: replaced like any other changed file
         return False
-    with open(fd, "rb") as file:
-        return hashlib.file_digest(file, "sha256").digest() == digest
+    try:  # the launcher's own routine (D32); None if the file is no longer ``size`` bytes
+        return _fsbpyr.file_digest(fd, size) == digest
+    except OSError:  # cannot be hashed (not a regular file, no mmap, EIO): replaced too
+        return False
+    finally:
+        os.close(fd)
 
 
 def _publish(directory: int, name: str, data: bytes, mode: int) -> None:
@@ -171,7 +176,7 @@ class NativeCache:
                 data = None
                 if digest is None:  # compare the cached file with the payload's bytes
                     data = _fsbpyr.read(blob)
-                    digest = hashlib.sha256(data).digest()
+                    digest = _fsbpyr.tree_digest(data)
                 parent, _, name = rel.rpartition("/")
                 cached = _cached(directory(parent), name, size, digest)
                 if not cached:
@@ -179,7 +184,7 @@ class NativeCache:
                         _report_changed(f"{self.site}/{rel}")
                     if data is None:
                         data = _fsbpyr.read(blob)
-                        if hashlib.sha256(data).digest() != digest:
+                        if _fsbpyr.tree_digest(data) != digest:
                             raise _corrupt(f"{rel!r} digest")
                     _publish(directory(parent), name, data, mode)
                     written.append(rel)

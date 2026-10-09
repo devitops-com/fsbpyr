@@ -4,12 +4,14 @@ Lets the boot code run in-process (with coverage) on any assembled executable. B
 match src/fsbpyr/launcher/module.c; tests/support/contract.py checks that it does.
 """
 
+import errno
 import os
+import stat
 import types
 from pathlib import Path
 from typing import Any
 
-from fsbpyr.payload.format import MAX_MEMORY_BLOB, NONE
+from fsbpyr.payload.format import MAX_MEMORY_BLOB, NONE, tree_digest
 from fsbpyr.payload.format import PayloadError as _ReaderError
 from fsbpyr.payload.reader import Executable
 
@@ -139,3 +141,29 @@ class StandIn(types.ModuleType):
 
     def stats(self) -> dict[str, int]:
         return {"reads": 0, "stored_bytes": 0, "decompressed_bytes": 0, "integrity_ns": 0}
+
+    def tree_digest(self, data: Any) -> bytes:
+        return tree_digest(data)
+
+    def file_digest(self, fd: Any, size: int) -> bytes | None:
+        """Mirror of file_digest(): PyObject_AsFileDescriptor, fstat, regular files only, None
+        unless the file has ``size`` bytes."""
+        if not isinstance(fd, int) and not hasattr(fd, "fileno"):
+            raise TypeError("argument must be an int, or have a fileno() method.")
+        number = fd if isinstance(fd, int) else fd.fileno()
+        if not isinstance(number, int):
+            raise TypeError("fileno() returned a non-integer")
+        if number < 0:
+            raise ValueError(f"file descriptor cannot be a negative integer ({number})")
+        info = os.fstat(number)
+        if not stat.S_ISREG(info.st_mode):
+            raise OSError(errno.EINVAL, os.strerror(errno.EINVAL))
+        if info.st_size != size:
+            return None
+        data = bytearray()
+        while len(data) < info.st_size:  # by offset, like the C module's mmap
+            chunk = os.pread(number, info.st_size - len(data), len(data))
+            if not chunk:
+                break
+            data += chunk
+        return tree_digest(data)

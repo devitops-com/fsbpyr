@@ -1,4 +1,4 @@
-"""Binary layout of the fsbpyr executable format, version 3 (normative spec: docs/format.md)."""
+"""Binary layout of the fsbpyr executable format, version 4 (normative spec: docs/format.md)."""
 
 import hashlib
 import re
@@ -6,8 +6,8 @@ import struct
 from collections.abc import Buffer
 from enum import IntEnum, IntFlag
 
-FORMAT_VERSION = 3
-READABLE_VERSIONS = (1, 2, 3)  # the Python reader (inspect) also reads executables of older builds
+FORMAT_VERSION = 4
+READABLE_VERSIONS = (1, 2, 3, 4)  # the Python reader (inspect) also reads older executables
 PAGE_SIZE = 4096
 BLOB_ALIGN = 16
 TABLE_ALIGN = 8
@@ -111,15 +111,16 @@ class FileFlag(IntFlag):
 
 
 def extractable(kind: FileKind, flags: FileFlag) -> bool:
-    """Files written to the cache at run time; they carry a SHA-256 digest."""
+    """Files written to the cache at run time; they carry an integrity digest (tree_digest)."""
     return kind in NATIVE_KINDS or FileFlag.FS_REQUIRED in flags
 
 
 def tree_digest(data: Buffer) -> bytes:
-    """SHA-256 over the SHA-256 of each DIGEST_LEAF piece of ``data`` (D31): the launcher
-    hashes the pieces in parallel."""
+    """SHA-256 over the SHA-256 of each DIGEST_LEAF piece of ``data``: the integrity digest of
+    the executable (D31) and of every file it extracts (D32). The launcher's fsb_tree_digest
+    computes the same, hashing the pieces in parallel."""
     root = hashlib.sha256()
-    with memoryview(data) as view:
+    with memoryview(data) as items, items.cast("B") as view:  # bytes, as the launcher hashes
         for start in range(0, len(view), DIGEST_LEAF):
             root.update(hashlib.sha256(view[start : start + DIGEST_LEAF]).digest())
     return root.digest()

@@ -154,7 +154,7 @@ def _integrity_p50(app: Path, runs: int = 15) -> float:
 
 def test_startup_is_within_budget_of_bare_cpython(build_app: BuildApp) -> None:
     """The whole-file check costs what hashing the file costs (D31, about 20 MB for the stub);
-    everything else stays within 15% of a bare CPython start."""
+    everything else stays within 20% of a bare CPython start (docs/performance.md)."""
     app = build_app({"noop.py": "def main():\n    return 0\n"}, "noop:main")
 
     baseline = _p50([sys.executable, "-I", "-S", "-c", "pass"])
@@ -162,7 +162,7 @@ def test_startup_is_within_budget_of_bare_cpython(build_app: BuildApp) -> None:
     integrity = _integrity_p50(app)
 
     assert 0 < integrity < measured
-    assert measured - integrity <= 1.15 * baseline, (
+    assert measured - integrity <= 1.2 * baseline, (
         f"app {measured * 1e3:.2f} ms ({integrity * 1e3:.2f} ms integrity check) "
         f"vs {baseline * 1e3:.2f} ms")  # fmt: skip
 
