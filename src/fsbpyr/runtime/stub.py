@@ -25,9 +25,12 @@ LAUNCHER_FILES = (
 )
 _ERROR_TAIL = 4000
 # Fixed compiler/linker flags; hashed into the runtime id so a flag change yields a new runtime.
+# -Wvla and the frame limit keep the stack bounded by construction (D38;
+# tests/e2e/test_launcher_build.py compiles without LTO, where every frame is sized, and fails).
 COMPILE_FLAGS = (
     "-std=c11", "-O2", "-flto=full", "-fPIE", "-pie", "-D_GNU_SOURCE",
     "-fstack-protector-strong", "-D_FORTIFY_SOURCE=2", "-Wall", "-Wextra",
+    "-Wvla", "-Wframe-larger-than=8192",
 )  # fmt: skip
 # Export only the Python C API that extension modules link against: exporting everything would
 # let wheel libraries bind to the static zlib, OpenSSL or libffi linked into the stub.
@@ -37,28 +40,54 @@ LINK_FLAGS = (
 )  # fmt: skip
 
 
+# The sanitized test variant (D38): ASan and UBSan, every undefined behaviour fatal; built
+# without LTO, stripping or FORTIFY (which would hide where a report points, or overlap ASan).
+SANITIZE_FLAGS = (
+    "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined", "-fno-omit-frame-pointer",
+    "-g",
+)  # fmt: skip
+_NOT_SANITIZED = ("-O2", "-flto=full", "-D_FORTIFY_SOURCE=2", "-s")
+
+
+def compile_flags(*, sanitize: bool = False) -> tuple[str, ...]:
+    if not sanitize:
+        return COMPILE_FLAGS
+    return (*(f for f in COMPILE_FLAGS if f not in _NOT_SANITIZED), "-O1", *SANITIZE_FLAGS)
+
+
+def link_flags(*, sanitize: bool = False) -> tuple[str, ...]:
+    return tuple(f for f in LINK_FLAGS if f not in _NOT_SANITIZED) if sanitize else LINK_FLAGS
+
+
 class StubBuildError(RuntimeError):
     """The compiler or linker failed."""
 
 
-def launcher_digest() -> str:
-    """SHA-256 over the launcher sources: part of the runtime identity."""
+def launcher_digest(*, sanitize: bool = False) -> str:
+    """SHA-256 over the launcher sources and flags: part of the runtime identity."""
     root = importlib.resources.files("fsbpyr.launcher")
     digest = hashlib.sha256()
     for name in LAUNCHER_FILES:
         digest.update(name.encode() + b"\0" + root.joinpath(name).read_bytes())
-    digest.update("\0".join((*COMPILE_FLAGS, *LINK_FLAGS)).encode())
+    flags = (*compile_flags(sanitize=sanitize), *link_flags(sanitize=sanitize))
+    digest.update("\0".join(flags).encode())
     return digest.hexdigest()
 
 
-def stub_command(
-    dist: PbsDist, inputs: LinkInputs, toolchain: Toolchain, sources: list[Path], out: Path
+def stub_command(  # noqa: PLR0913  # the build's inputs, and which variant
+    dist: PbsDist,
+    inputs: LinkInputs,
+    toolchain: Toolchain,
+    sources: list[Path],
+    out: Path,
+    *,
+    sanitize: bool = False,
 ) -> list[str]:
     magic = int.from_bytes(dist.bytecode_magic, "little")
     return [
         os.fspath(toolchain.clang),
         f"--target={dist.triple}",
-        *COMPILE_FLAGS,
+        *compile_flags(sanitize=sanitize),
         # a glibc baseline instead of the build host's (D25)
         *([f"--sysroot={toolchain.sysroot}"] if toolchain.sysroot is not None else []),
         f"--ld-path={toolchain.lld}",
@@ -69,7 +98,7 @@ def stub_command(
         os.fspath(out),
         *map(os.fspath, sources),
         *map(os.fspath, inputs.extra_objects),
-        *LINK_FLAGS,
+        *link_flags(sanitize=sanitize),
         "-Wl,--start-group",
         os.fspath(inputs.libpython),
         *map(os.fspath, inputs.static_libs),
@@ -88,13 +117,13 @@ def _copy_launcher(target: Path) -> list[Path]:
     return [target / name for name in LAUNCHER_SOURCES]
 
 
-def build_stub(dist: PbsDist, toolchain: Toolchain, out: Path) -> None:
+def build_stub(dist: PbsDist, toolchain: Toolchain, out: Path, *, sanitize: bool = False) -> None:
     inputs = link_inputs(
         dist, set(ar.members(dist.root / dist.info["build_info"]["core"]["static_lib"]))
     )
     with tempfile.TemporaryDirectory(prefix="fsbpyr-launcher-") as tmp:
         sources = _copy_launcher(Path(tmp))
-        command = stub_command(dist, inputs, toolchain, sources, out)
+        command = stub_command(dist, inputs, toolchain, sources, out, sanitize=sanitize)
         result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise StubBuildError(f"launcher link failed:\n{result.stderr[-_ERROR_TAIL:]}")

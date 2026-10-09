@@ -244,9 +244,11 @@ class _Sync:
             fd = os.open(name, flags, dir_fd=directory)
         except FileNotFoundError:
             return _MISSING, None
-        except OSError as exc:
+        except OSError as exc:  # os.open() retries EINTR itself, as cache.c does
             if exc.errno in (errno.EMFILE, errno.ENFILE, errno.ENOMEM):
                 raise _NoRoom(exc.errno) from exc
+            if exc.errno == errno.ENAMETOOLONG:
+                raise
             return _CHANGED, None
         try:
             info = os.fstat(fd)

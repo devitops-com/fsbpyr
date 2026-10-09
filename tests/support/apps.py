@@ -149,6 +149,8 @@ def demo_app(entrypoint: str = "entry:main") -> App:
         *_bad_xz(),
         *(File(path, FileKind.NATIVE_LIB, Blob.zstd(data, digest=True), mode=0o755)
           for path, data in SIZES.items()),
+        File("toolong/" + "l" * 256, FileKind.NATIVE_LIB, Blob.zstd(b"\x7fELF long" * 99,
+             digest=True), mode=0o755),  # a name no file system takes (NAME_MAX 255)
     ]  # fmt: skip
     return App(
         "demo",

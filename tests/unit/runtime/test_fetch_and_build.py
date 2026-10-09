@@ -133,8 +133,10 @@ def test_build_runtime_orchestrates_and_caches(
     linked_against: list[Path] = []
     monkeypatch.setattr(sysroot, "fetch_sysroot", lambda pin, cache: cache / "sysroots" / pin.name)
 
-    def build_stub(dist: pbs.PbsDist, toolchain: Toolchain, out: Path) -> None:
-        assert toolchain.sysroot is not None
+    def build_stub(
+        dist: pbs.PbsDist, toolchain: Toolchain, out: Path, *, sanitize: bool = False
+    ) -> None:
+        assert toolchain.sysroot is not None and not sanitize
         linked_against.append(toolchain.sysroot)
         out.write_bytes(b"STUB")
 
@@ -200,3 +202,12 @@ def test_runtime_build_reports_sysroot_failures(
 
     assert main(["runtime", "build"]) == 1
     assert "fsbpyr: error: cannot download" in capsys.readouterr().err
+
+
+def test_the_sanitized_runtime_has_an_identity_of_its_own() -> None:
+    pin = pin_for("3.14", "x86_64-unknown-linux-gnu")
+
+    sanitized = registry.runtime_id(pin, sanitize=True)
+
+    assert sanitized != registry.runtime_id(pin) and sanitized.endswith("-sanitized")
+    assert stub.launcher_digest(sanitize=True) != stub.launcher_digest()

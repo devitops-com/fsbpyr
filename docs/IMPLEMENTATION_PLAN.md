@@ -125,6 +125,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D35 | **The cache sync runs in the launcher** (owner decision 2026-10-09): `_fsbpyr.sync(root, chain, files, checked, resources)` (`cache.c`) checks every record first (an extractable kind, a path the payload reader would accept, a blob and a digest), then, without the GIL, opens and creates the directories below the root one component at a time (never through a symlink, ours, forced to 0700, only those along the current path kept open), checks each cached file (opened `O_NOFOLLOW\|O_NONBLOCK`, then a regular file of ours of the payload's size by `fstat`; up to 64 KiB read into a 16 MiB buffer, larger ones mapped; up to 1024 files per parallel pass), and restores a missing or different file (decoded, its digest checked, written under a temporary name, `fchmod`, renamed into place). Changed files are reported on stderr once it returns, in file order. `_fsbpyr.files_below` gives an fs-package's files as the one run of the sorted table they form. Python keeps where the cache is, the record of what this process checked (a bytearray per cache, one byte per file) and the messages. A sync decodes with a zstd context and a 4-block cache of its own (`fsb_decoder`; NULL names the process's, used with the GIL held), so nothing is shared and nothing locked: a lock held by a sync while another thread forks would stay held in the child (security review; a first lock-based version hung 39 of 40 forked children in a C test). A sync with nothing to check touches nothing; a restored file is always readable by its owner; running out of descriptors fails the sync instead of counting as a changed file, and a mapping that finds no address space left (`ulimit -v`) has the pass's files checked and unmapped first, then is tried again (follow-up review: 6 libraries of 64 MiB under a limit leaving 160 MiB failed before); a SIGINT is handled once the sync returns. `module.c` refuses to build for a free-threaded CPython (`read` shares the process's decoder under the GIL); an e2e test forks 40 times while a thread syncs, and a lock put back around decoding hangs the first child. The tests' stand-in mirrors `cache.c` in Python and the contract compares both: damaged, missing, replaced and unreadable files, symlinked, foreign and shared directories, corrupt records, descriptor limits, more files than a pass holds, syncs on threads while others read. `_fsbpyr.tree_digests` is gone (the cache check was its only user); the contract checks the launcher's digests at the leaf boundaries through `sync` instead. Blobs over 1 GiB are refused, as `_fsbpyr.read` refuses them (`FSB_MAX_MEMORY_BLOB`; a build never bundles one) | torch app (12,151 cached files), later runs: torch's import 615 → 538 ms (venv 470), the whole run 1363 → 1279 ms (venv 1208); first runs 1967 → 1908 ms. The check of the 12,151 files: 80 ms with every file mapped (256 per pass), 53.5 ms as released (the 12 native libraries, 476 MB: 16 ms; the 12,139 other files, 235 MB: 65 → 38 ms). Standalone on those 12,139 files: all mapped 58 ms (55 ms with 1024 per pass); read up to 64 KiB 34 ms (1024 per pass, no `fstatat`; 36 ms with 256, 38 ms with an `fstatat` before each open); read up to 1 MiB 46 ms; one helper thread per 4 MiB of data instead of per 4 leaves, all mapped: 70 ms (`docs/performance.md`) | The walk in Python with one C call per file (the per-file Python calls were the cost); module code (`_code`) in C: of its 85 ms under cProfile for torch's 904 modules, 73 ms are `marshal.loads` and `_fsbpyr.read`, which are C already |
 | D36 | **Checks read files, never map them; restored files are written in pieces of 1 MiB** (owner decision 2026-10-09; 0.9.1). The executable's check and the cache check hash a file through its descriptor: each of up to 8 threads reads its 1 MiB leaves through a 64 KiB buffer of its own (`fsb_parallel` passes the worker's number), so a file's size never counts in the process's resident memory, as it did while the file was mapped; a leaf that cannot be read whole gets a digest that cannot match, so a file that shrinks while it is hashed fails its check instead of ending the process with SIGBUS. The cache check holds at most 64 files over 64 KiB open per pass; out of descriptors or memory while it holds some (opening a file or its directories), the pass is checked first and the step tried once more (this replaces D35's address-space retry: nothing is mapped; the security review found the directories missing at first). A read error in the executable's own check says it cannot read the file, not that it was modified; a cached file that cannot be read is restored like a changed one. A restored file is written in pieces of at most 1 MiB: written whole, torch's 438 MB libtorch_cpu.so stayed in XFS's page cache as 2 MiB folios, which the dynamic loader maps whole | torch app (zstd 9, later runs, 21 runs of each interleaved; Core Ultra 9 285, Linux 6.12, cache on XFS): peak RSS 577 → 349 MB (venv 314); by phase 226 → 14 MB once the executable is checked, 576 → 241 MB during the import (the cache check), 450 → 348 MB in the training loop, where libtorch_cpu.so holds 60 MB instead of 156 MB, as in the venv; whole run 1067 → 1071 ms, import 467 → 473 ms. The executable's check: the no-op app's 27.6 MB 1.82 → 1.93 ms (201 runs), the torch app's 233 MB 14.8 → 13.9 ms. Whole 1 MiB leaves read into a buffer per thread cost the no-op start more and left glibc 8 MB more heap (code review): 64 KiB pieces instead. The library written in 4 MiB pieces stayed at 156 MB; in 1 MiB, 256 KiB or 64 KiB pieces it took 60 MB. The executable's own pages, 42 MB against `python3.14`'s 11 MB, remain (`docs/performance.md`) | Capping the bytes mapped per pass (the peak stays at the largest file, 438 MB here); dropping a written file from the page cache (`posix_fadvise` leaves dirty pages, and the next run would read it from disk) |
 | D37 | **No more millisecond tuning; comparisons with other tools come last** (owner decision 2026-10-09). Phase 7 ends with what it has: the compression work (D29, D30, D33), the checks and the cache in the launcher (D31, D32, D35, D36), and `docs/performance.md` as the report (every release's measurements, how they were taken, where to look when a start gets slower). Regressions are caught by exact counts, not timings: the e2e tests read `FSBPYR_TRACE` (modules loaded per distribution, files extracted) and the contract the cache sync's outcomes; the one timing test stays the startup budget (1.2× bare CPython, the integrity check apart). Dropped: the benchmark harness, the 10% timing gate, the §8 speed targets, grouped frames for tiny modules, and an opt-in fast exit (it saves the libraries' teardown, about 215 ms for torch, but leaves unflushed files, killed threads and unrun finalizers behind). Comparisons with other tools (PyInstaller, a Rust and a Go CLI) move to Phase 10: there is no point in comparing unfinished work | The results are solid; a few milliseconds here or there are not worth the work, and a timing gate mostly catches noise | The §8 harness, targets and CI gate as planned |
+| D38 | **Phase 8 scope** (owner decisions 2026-10-09). (1) No size limits of ours: files and executables of 1 TB and more build and run if the file system and OS allow them; the only structural limit is the format's 32-bit indices (about 4.29 billion files, modules or blobs: the OS fails first). (2) fsbpyr's own work never needs more than 1 GB of resident memory, whatever the input size, when building and when running: data is streamed in bounded pieces; what an app asks for itself (`read()`, `read_bytes()`) is the app's. (3) Cache GC: at most once a day, or when the cache's file system has less than 10% free (then at most once an hour); generations and resource trees unused for 7 days are removed (under disk pressure every one not in use); never what a running process uses (locks); never anything we did not create (a marker names our cache roots; `FSBPYR_CACHE_DIR` may be a user's own directory); explicit runs: `fsbpyr cache gc` (the tool's cache and every app cache it finds) and `FSBPYR_GC=1 app` (that app's cache, then exit). (4) Every item gets explicit tests in the normal test run; principle: normal cases fast, edge and extreme cases correct, never a crash | User does not want to deal with stale cache objects; a removed object is recreated when needed; 1 TB inputs must work | `rm -rf` of the whole cache; a GC run on every start; 64-bit indices (format v6) |
 
 ---
 
@@ -878,50 +879,105 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
   release's measurements; the count-based tests and the startup budget pass; fast exit is
   evaluated and dropped. **DONE 2026-10-09.**
 
-### Phase 8 — Hardening (M)
+### Phase 8 — Hardening (L; D38) — **8a DONE 2026-10-09 (0.10.0)**
 
-- Bounds checks across `_fsbpyr`, and declared-size checks before allocation.
-- **Edge-case tests** (owner decision 2026-10-09), table-driven, against both the C launcher and
-  the Python reader, in every test run:
+Principle (owner): normal cases fast, edge and extreme cases correct, never a crash. Every
+item below gets explicit tests in the normal test run. Steps, each released on its own:
+
+**8a — Safety nets first** (they guard the rest of the phase):
+- **Edge-case tests**, table-driven, against both the C launcher and the Python reader:
   - empty and tiny files: 0 bytes, shorter than the 64-byte trailer, exactly the trailer,
     `payload_size` 0 or exactly the header;
-  - sizes and offsets at 0, 1, each limit ±1 (1 GiB read whole, 1 TiB per blob, 1 MiB per
-    block, 4 MiB per piece), 2^63 and 2^64−1; offset + size that wraps; a table count whose
-    count × record size overflows; a string at the string table's last byte, without its NUL,
-    or 2^32−1 long;
+  - sizes and offsets at 0, 1, each limit ±1, 2^63 and 2^64−1; offset + size that wraps; a
+    table count whose count × record size overflows; a string at the string table's last byte,
+    without its NUL, or 2^32−1 long;
   - compressed data that lies: a zstd frame declaring another size than its record, a tiny xz
     stream claiming gigabytes, 0, 1 or 2^32 pieces, a block member at its block's last byte;
   - indices: NONE (0xFFFFFFFF), the table's count and count−1, a closure listing itself or
     longer than the table;
-  - paths: empty, `.`, `..`, `a//b`, a trailing `/`, an embedded NUL, 4095/4096/4097 bytes, a
-    component of 255/256 bytes, 2048/2049 components.
-- **A libFuzzer harness** on trailer, header, table and record parsing, seeded with the
-  edge-case inputs above (the fuzzer mutates around them: boundary integers, lengths, magic
-  values), run clean for 10 minutes before each release.
-- An ASan/UBSan stub variant for the E2E suite.
-- **Bounded stack, by construction:** the launcher has no recursion over input and no stack
-  array sized by input; the launcher build adds `-Wvla` and a frame-size limit
-  (`-Wframe-larger-than`), so any input-sized stack use fails the build. Module code from the
-  payload is unmarshalled by CPython, whose nesting limit raises instead of overflowing.
-- Cache ownership and permission checks, `noexec` mount detection (`statvfs ST_NOEXEC`) with a
-  clear message, generation GC.
-- GC also removes temporary files left by killed processes (`.fsbpyr-*` older than an hour),
-  and resource trees (D27) of releases unused for 30 days. Temporary files are created inside
-  the target directory, so code listing an extracted resource directory may see one while a
-  file is written or after a kill; moving them to a per-tree scratch directory is part of this.
-- Streaming extraction: decompress natives and FS_REQUIRED files in chunks straight into the
-  temporary file, removing the whole-blob memory peak and the 1 GiB build limit (Phase 5).
-- Cache-root ancestors: walk the root's path from `/` and require every component to be owned
-  by root or the user and not writable by others unless sticky. Closes the risk accepted in the
-  Phase 5 security review (a root inside a directory other users can write).
+  - paths: empty, `.`, `..`, `a//b`, a trailing `/`, an embedded NUL, a component of 255/256
+    bytes, very long and very deep paths.
+- **ASan/UBSan stub variant**: a sanitized runtime the test run builds once; the e2e tests that
+  feed crafted, damaged or extreme payloads and the cache tests run against it too.
+- **Bounded stack by construction**: `-Wvla` and `-Wframe-larger-than` in the launcher build;
+  no recursion over input. Module code is unmarshalled by CPython, whose nesting limit raises.
+- **libFuzzer harness** on trailer, header, table and record parsing and blob decoding, seeded
+  with the edge cases: a short run in the test run, 10 minutes clean before each release.
+- Bounds checks across `_fsbpyr`, and declared-size checks before allocation.
+- **Done (0.10.0):**
+  - 65 cases and 14 paths in `tests/support/edges.py`, each with what the reader and the
+    launcher do; read by the Python reader, by both launchers (an app that walks itself through
+    `_fsbpyr`, `tests/support/walk.py`, syncing closures as imports do) and as the fuzzer's corpus
+  - the sanitized runtime (its own id, `-sanitized`) runs the e2e tests marked `sanitized`; a
+    finding exits 99, which no test can take for an expected failure (a wild read through
+    `ctypes` is the control)
+  - frames of at most 8192 bytes (the largest is 4.9 KB), checked per source without LTO, with
+    controls that the check refuses a VLA and a large frame (the code review found it a no-op
+    under a misspelt flag)
+  - `tests/fuzz/payload_fuzz.c` (libFuzzer with ASan and UBSan): 30 s in the test run
+    (`FSBPYR_FUZZ_SECONDS`), 600 s clean for 0.10.0
+  - found: a cached file whose name the file system refuses (a 256-byte component) was reported
+    as modified; now that fails the sync with the real error, and any other open error replaces
+    the file (EINTR is retried)
+  - test runs keep only failed tests' temporary directories: a run builds about 8 GB of
+    executables, and `/tmp` is often a RAM disk
+  - left for 8b, where the cases flip: directory paths over 4 KiB and over 2048 levels below
+    the cache root are refused; the 1 GiB cap stays, so an xz stream claiming more is refused
+    before it is decoded
+
+**8b — Streaming at run time, no limits of ours** (D38):
+- Extraction streams: stored bytes are read a window at a time (the window released after use),
+  decoded in pieces (zstd and xz streaming; xz pieces in parallel, each written where it
+  belongs), hashed as they are written, written in pieces of at most 1 MiB; runs of zeros
+  become holes. The 1 GiB in-memory cap goes; blobs up to 2^62 bytes.
+- The tree digest keeps a bounded window of leaf digests, whatever the file's size.
+- The cache sync takes files in chunks (`files_below` gives a range), remembers checked files
+  in a bitmap, and needs no per-file memory beyond a chunk; directory paths and depth have no
+  limit of ours (only the OS's), and a deep path does not hold a descriptor per directory level
+  (today it does: 1,000 levels need 1,000 descriptors, past a common soft limit of 1,024).
+- Resources opened as files (`importlib.resources` `open()`) stream; `read_bytes()` returns
+  what the app asked for.
+
+**8c — Streaming when building** (D38): blob contents come from files, not memory; compression
+(zstd with the size pledged, xz in pieces), digests and ELF scanning stream; the writer lays
+out the tables, streams the blob data after them and hashes the result in a second pass; zero
+runs become holes. The reader, `inspect --verify` and the runtime's stdlib copy stream as well.
+A 1 TB executable (a 1 TB file of zeros stored raw, so the file is sparse) builds, checks
+itself, extracts and loads within 1 GB of RSS: run before each release; the normal test run does
+the same with 5 GiB (past every 32-bit size).
+
+**8d — Cache GC** (D38):
+- App caches: a marker at the cache root; each generation and resource tree has a lock file
+  that every process using it holds shared (its mtime, touched at most once a day, says when it
+  was last used); temporary files go to a scratch directory per tree and are locked while
+  written. A GC run takes a GC lock, then removes, after locking each exclusively and renaming
+  it to a trash name: trees unused for 7 days (under disk pressure every one not in use), stale
+  trash and temporary files, trees of older fsbpyr layouts; never the running app's own
+  generation, nothing locked, nothing outside our own subtrees and names.
+- Triggers: the launcher checks at start, with one `stat` and one `statvfs`, whether a run is
+  due (a day since the last, or under 10% free and an hour since the last); if so a detached
+  background process collects (closing every inherited descriptor, at idle priority), so the
+  app's start is not slowed. `FSBPYR_GC=1 app` collects in the foreground and exits;
+  `fsbpyr cache gc` collects the tool's cache and every app cache it finds by its marker.
+- The tool's cache: runtimes, Python distributions, sysroots and downloads that the running
+  fsbpyr does not use and nothing used for 7 days, under the same rules; checked when `fsbpyr`
+  runs, at most once a day.
+
+**8e — Cache-root ancestors and security tests**: walk the root's path from `/` (following
+symlinks component by component) and require every directory on the way to be owned by root
+or the user and not writable by others unless sticky; tests for path traversal in names,
+symlinked cache directories, a foreign-owned cache, a cache root below a directory others can
+write, a truncated binary.
+
 - ~~`FSBPYR_VERIFY=1` also checks the payload digest (D11)~~: D31 checks the whole file on
   every start and re-hashes cached files in every process; `FSBPYR_VERIFY` is gone.
 - **Exit:**
   - the edge-case tests pass; the fuzzer (10 minutes) and the sanitizers are clean; the
     launcher builds with `-Wvla` and the frame-size limit
+  - a 1 TB executable builds, runs and extracts, with RSS under 1 GB throughout
+  - GC removes what D38 says and nothing else; tests cover every rule, concurrent use included
   - security tests pass: path traversal in names, symlinked cache dirs, foreign-owned cache,
     a cache root below a directory others can write, truncated binary
-  - a native file over 1 GiB builds and loads with bounded memory
 
 ### Phase 9 — More Python versions and portability (L, later)
 

@@ -117,6 +117,7 @@ def _syncs(fsb: Any) -> dict[str, Any]:
             "batches": _sync_batches(fsb, tmp),
             "threads": _sync_threads(fsb, tmp),
             "no stderr": _sync_without_stderr(fsb, tmp),
+            "name too long": _sync(fsb, os.path.join(tmp, "toolong"), fsb.files_below("toolong")),
             "limited": _sync_limited(fsb, tmp),
         }
         out["descriptors left open"] = _descriptors() - descriptors

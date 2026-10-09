@@ -34,8 +34,8 @@
 #define MAX_DEPTH (PATH_SIZE / 2u) /* components of such a path */
 
 /* A cached file, as load_cached() finds it; NO_ROOM: it cannot be opened for lack of descriptors
- * or memory, which the files held for the pass so far may be taking. */
-enum { PRESENT, MISSING, CHANGED, NO_ROOM };
+ * or memory, which the files held for the pass so far may be taking; FAILED: the failure is set. */
+enum { PRESENT, MISSING, CHANGED, NO_ROOM, FAILED };
 
 struct entry {        /* one file to check, its records checked */
     uint64_t item;    /* its place in job->files */
@@ -309,20 +309,27 @@ static bool read_small(struct state *s, int fd, uint64_t size, const uint8_t **d
 
 /* PRESENT: the file is ours, of the payload's size, and in the pass: read into *data, or, if
  * larger than SMALL_FILE, open as *fd (until the pass is hashed); MISSING: nothing is there;
- * CHANGED: something else is (not a regular file of ours, another size, unreadable); NO_ROOM: no
- * descriptor or memory left to open it (s->no_room). A small file's descriptor is closed at once. */
+ * CHANGED: something else is (a symlink, a device, not a regular file of ours, another size,
+ * unreadable, stale on NFS), so it is replaced; NO_ROOM: no descriptor or memory left to open it
+ * (s->no_room); FAILED: the name is too long for the file system: no file can be there, so
+ * nothing to report or restore. A small file's descriptor is closed at once. */
 static int load_cached(struct state *s, int directory, const struct entry *e,
                        const uint8_t **data, int *fd) {
     uint64_t size = e->blob.size;
     *data = NULL;
-    /* O_NOFOLLOW: a symlink is replaced; O_NONBLOCK: a FIFO is replaced, never waited for */
-    *fd = openat(directory, base_name(e), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    do /* O_NOFOLLOW: a symlink is replaced; O_NONBLOCK: a FIFO is replaced, never waited for */
+        *fd = openat(directory, base_name(e), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    while (*fd < 0 && errno == EINTR);
     if (*fd < 0) {
         int error = errno;
         if (error == ENOENT) return MISSING;
-        if (error != EMFILE && error != ENFILE && error != ENOMEM) return CHANGED;
-        s->no_room = error; /* not the file's fault */
-        return NO_ROOM;
+        if (error == EMFILE || error == ENFILE || error == ENOMEM) {
+            s->no_room = error;
+            return NO_ROOM;
+        }
+        if (error != ENAMETOOLONG) return CHANGED;
+        file_failed(s, error, e);
+        return FAILED;
     }
     struct stat st;
     int found = CHANGED;
@@ -447,6 +454,7 @@ static bool sync_file(struct state *s, const struct entry *e) {
         found = load_cached(s, directory, e, &s->data[at], &s->descriptors[at]);
         if (found == NO_ROOM) return file_failed(s, s->no_room, e);
     }
+    if (found == FAILED) return false;
     if (found == PRESENT) {
         s->batch[at] = e;
         s->lengths[at] = size;

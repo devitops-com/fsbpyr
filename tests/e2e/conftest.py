@@ -24,14 +24,22 @@ def _private_cache(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
         yield
 
 
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """Tests marked ``sanitized`` run with both launchers: the release build and its ASan/UBSan
+    variant (D38), which turns any memory error or undefined behaviour into a failed run."""
+    if "runtime" in metafunc.fixturenames and metafunc.definition.get_closest_marker("sanitized"):
+        metafunc.parametrize("runtime", ["release", "sanitized"], indirect=True, scope="session")
+
+
 @pytest.fixture(scope="session")
-def runtime() -> registry.Runtime:
+def runtime(request: pytest.FixtureRequest) -> registry.Runtime:
+    sanitize = getattr(request, "param", "release") == "sanitized"
     try:
-        return registry.find_runtime("3.14")
+        return registry.find_runtime("3.14", sanitize=sanitize)
     except registry.RuntimeCacheError:
         pass
     try:
-        return registry.build_runtime("3.14", log=lambda _: None)
+        return registry.build_runtime("3.14", log=lambda _: None, sanitize=sanitize)
     except ToolchainError as exc:  # pragma: no cover - depends on the host
         pytest.skip(f"cannot build a runtime here: {exc}")
 

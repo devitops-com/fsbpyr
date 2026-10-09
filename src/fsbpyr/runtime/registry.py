@@ -70,12 +70,14 @@ def host_triple() -> str:
     raise RuntimeCacheError(f"unsupported host {sys.platform}/{platform.machine()}")
 
 
-def runtime_id(pin: pins.PbsPin) -> str:
+def runtime_id(pin: pins.PbsPin, *, sanitize: bool = False) -> str:
+    """``sanitize``: the ASan/UBSan test variant (D38), an identity of its own."""
     sysroot_pin = pins.sysroot_for(pin.triple)
-    identity = "\0".join((stub.launcher_digest(), pin.name, pin.sha256, sysroot_pin.identity,
-                          str(LAYOUT_VERSION)))  # fmt: skip
+    identity = "\0".join((stub.launcher_digest(sanitize=sanitize), pin.name, pin.sha256,
+                          sysroot_pin.identity, str(LAYOUT_VERSION)))  # fmt: skip
     digest = hashlib.sha256(identity.encode()).hexdigest()[:12]
-    return f"cp{pin.python.replace('.', '')}-{pin.triple}-{digest}"
+    suffix = "-sanitized" if sanitize else ""
+    return f"cp{pin.python.replace('.', '')}-{pin.triple}-{digest}{suffix}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,10 +226,14 @@ def select_runtime(python: str, cache: Path | None = None) -> Runtime:
     return find_runtime(python, cache)
 
 
-def find_runtime(python: str, cache: Path | None = None) -> Runtime:
+def find_runtime(python: str, cache: Path | None = None, *, sanitize: bool = False) -> Runtime:
     pin = pins.pin_for(python, host_triple())
-    directory = secure_directory(cache or cache_root()) / "runtimes" / runtime_id(pin)
+    directory = (
+        secure_directory(cache or cache_root()) / "runtimes" / runtime_id(pin, sanitize=sanitize)
+    )
     if not directory.exists():
+        if sanitize:  # a test variant (D38): the test run builds it
+            raise RuntimeCacheError(f"no sanitized runtime for Python {python}")
         raise RuntimeCacheError(
             f"no runtime for Python {python}; run `fsbpyr runtime build --python {python}`"
         )
@@ -240,11 +246,12 @@ def build_runtime(
     cache: Path | None = None,
     clang: Path | None = None,
     log: Callable[[str], None] = print,
+    sanitize: bool = False,
 ) -> Runtime:
     """Fetch PBS, link the stub and compile the stdlib; cached under the runtime id."""
     cache = secure_directory(cache or cache_root())
     pin = pins.pin_for(python, host_triple())
-    directory = cache / "runtimes" / runtime_id(pin)
+    directory = cache / "runtimes" / runtime_id(pin, sanitize=sanitize)
     if (directory / _META).exists():
         log(f"runtime {directory.name} is already built")
         return Runtime.load(directory)
@@ -254,10 +261,11 @@ def build_runtime(
     sysroot_pin = pins.sysroot_for(pin.triple)
     log(f"fetching glibc {sysroot_pin.glibc} sysroot {sysroot_pin.name}")
     toolchain = dataclasses.replace(toolchain, sysroot=sysroot.fetch_sysroot(sysroot_pin, cache))
-    log(f"linking launcher with {toolchain.clang} (full LTO, this takes a minute or two)")
+    how = "ASan and UBSan" if sanitize else "full LTO, this takes a minute or two"
+    log(f"linking launcher with {toolchain.clang} ({how})")
     with tempfile.TemporaryDirectory(prefix="fsbpyr-stub-") as tmp:
         stub_path = Path(tmp) / _STUB
-        stub.build_stub(dist, toolchain, stub_path)
+        stub.build_stub(dist, toolchain, stub_path, sanitize=sanitize)
         stub_bytes = stub_path.read_bytes()
     log("compiling the standard library")
     modules, files = stdlib.fragment(dist)

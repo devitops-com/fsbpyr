@@ -23,6 +23,21 @@
 
 struct fsb_payload fsb_self;
 
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+/* The sanitized test variant (D38): CPython frees little at exit by design (no leak report), and
+ * malloc returns NULL for a size no allocator can give, as it does without ASan: the launcher
+ * reports that as out of memory. A finding exits 99, a status neither Python nor we use (1 is a
+ * Python exception, 70 a refused start), so no test can take one for an expected failure. */
+const char *__asan_default_options(void) {
+    return "detect_leaks=0:allocator_may_return_null=1:exitcode=99";
+}
+const char *__ubsan_default_options(void) {
+    return "print_stacktrace=1:exitcode=99";
+}
+#endif
+#endif
+
 static const wchar_t BOOT_COMMAND[] = L"import _fsbpyr_boot\n_fsbpyr_boot.run()\n";
 
 _Noreturn static void fatal(const char *what) {

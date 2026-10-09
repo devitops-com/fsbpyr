@@ -44,6 +44,7 @@ static const char *check_trailer(const struct fsb_trailer *t, uint64_t file_size
     if (!fits(t->payload_offset, t->payload_size, file_size - sizeof *t) ||
         t->payload_offset + t->payload_size + sizeof *t != file_size)
         return "payload size does not match file size";
+    if (t->payload_size < sizeof(struct fsb_header)) return "payload truncated";
     return NULL;
 }
 
@@ -86,6 +87,23 @@ static void strip_deleted(char *path, size_t *length, const struct stat *self) {
     path[*length] = '\0';
 }
 
+/* The payload at base[0, size): its header and section table checked. */
+static const char *attach(struct fsb_payload *p, const uint8_t *base, uint64_t size) {
+    p->base = base;
+    p->size = size;
+    memcpy(&p->header, p->base, sizeof p->header);
+    return check_header(p);
+}
+
+const char *fsb_payload_parse(struct fsb_payload *p, const uint8_t *image, uint64_t size) {
+    struct fsb_trailer trailer;
+    memset(p, 0, sizeof *p);
+    if (size < sizeof trailer) return "no fsbpyr payload";
+    memcpy(&trailer, image + size - sizeof trailer, sizeof trailer);
+    const char *error = check_trailer(&trailer, size);
+    return error != NULL ? error : attach(p, image + trailer.payload_offset, trailer.payload_size);
+}
+
 bool fsb_payload_open(struct fsb_payload *p, const char **error) {
     memset(p, 0, sizeof *p);
     ssize_t n = readlink("/proc/self/exe", p->executable, sizeof p->executable - 1);
@@ -108,7 +126,6 @@ bool fsb_payload_open(struct fsb_payload *p, const char **error) {
     if (*error == NULL && !read_trailer(fd, (uint64_t)st.st_size, &trailer))
         *error = "cannot read own executable";
     if (*error == NULL) *error = check_trailer(&trailer, (uint64_t)st.st_size);
-    if (*error == NULL && trailer.payload_size < sizeof p->header) *error = "payload truncated";
     void *map = MAP_FAILED;
     if (*error == NULL) {
         map = mmap(NULL, trailer.payload_size, PROT_READ, MAP_PRIVATE, fd,
@@ -117,10 +134,7 @@ bool fsb_payload_open(struct fsb_payload *p, const char **error) {
     }
     close(fd);
     if (*error != NULL) return false;
-    p->base = map;
-    p->size = trailer.payload_size;
-    memcpy(&p->header, p->base, sizeof p->header);
-    *error = check_header(p);
+    *error = attach(p, map, trailer.payload_size);
     return *error == NULL;
 }
 

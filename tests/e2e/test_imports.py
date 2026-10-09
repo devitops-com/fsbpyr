@@ -16,7 +16,7 @@ from ..support import contract
 from ..support.apps import demo_app
 from ..support.standin import StandIn
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, pytest.mark.sanitized]
 
 
 @pytest.fixture(scope="module")
@@ -46,6 +46,8 @@ def test_c_module_and_standin_honour_the_same_contract(demo: Path) -> None:
     assert json.loads(result.stdout) == expected
     held = expected["sync"]["limited"][0][2:]  # both equal, and as they should be: (D36)
     assert held == [[["ok", []], ""]] * 2  # checked, through a pass's files held open
+    # a name the file system refuses fails the sync, and nothing is reported as modified (D38)
+    assert expected["sync"]["name too long"] == [["raises", "OSError", "ENAMETOOLONG"], ""]
 
 
 @pytest.mark.skipif(shutil.which("strace") is None, reason="needs strace")

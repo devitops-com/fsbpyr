@@ -240,3 +240,20 @@ def test_stub_command_hardens_launcher_code(tmp_path: Path) -> None:
 
     assert {"-fstack-protector-strong", "-D_FORTIFY_SOURCE=2"} <= set(cmd)
     assert not {"-no-pie", "-fno-pie"} & set(cmd)  # PIE by default (D17): ASLR for the image
+
+
+def test_sanitized_stub_command_checks_memory_and_undefined_behaviour(tmp_path: Path) -> None:
+    """D38: the test variant of the launcher, built with ASan and UBSan; LTO and stripping would
+    hide where a report points, and FORTIFY's own checks would overlap ASan's."""
+    dist = _fake_dist(tmp_path)
+    inputs = link_inputs(dist, set())
+    toolchain = Toolchain(clang=Path("/x/clang-22"), lld=Path("/x/ld.lld-22"), major=22,
+                          sysroot=Path("/s/sysroot"))  # fmt: skip
+
+    cmd = stub_command(dist, inputs, toolchain, [Path("/src/main.c")], tmp_path / "stub",
+                       sanitize=True)  # fmt: skip
+
+    wanted = {"-fsanitize=address,undefined", "-fno-sanitize-recover=undefined",
+              "-fno-omit-frame-pointer", "-g", "-Wvla", "--sysroot=/s/sysroot"}  # fmt: skip
+    assert wanted <= set(cmd)
+    assert not {"-flto=full", "-s", "-D_FORTIFY_SOURCE=2", "-O2"} & set(cmd)

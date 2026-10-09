@@ -1,6 +1,6 @@
 [project]
 name = "fsbpyr"
-version = "0.9.1"
+version = "0.10.0"
 description = "Fast single-binary Python CLI runtime and packager"
 authors = [{ name = "Kresimir Sparavec", email = "ksparavec@devitops.com" }]
 license = "MIT"
@@ -27,7 +27,12 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--strict-markers", "--strict-config", "-ra"]
-markers = ["slow: takes more than a few seconds"]
+# a run builds gigabytes of executables: keep only what failed tests left (/tmp is often tmpfs)
+tmp_path_retention_policy = "failed"
+markers = [
+    "slow: takes more than a few seconds",
+    "sanitized: also runs with the ASan/UBSan launcher (D38)",
+]
 
 [tool.coverage.run]
 # by path: boot code also runs in-process under its embedded names (_fsbpyr_boot, _fsbpyr_rt)

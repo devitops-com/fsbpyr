@@ -4,10 +4,11 @@
  * Layout: <root>/<chain>/<site-relative path>, such as <root>/runtime/<generation>/site/x.libs/
  * libx.so. The root must be ours; every directory below it is created private (0700), never
  * followed if it is a symlink, and must be ours. A cached file is used if it is a regular file
- * of ours with the payload's size and digest; anything else is reported and replaced. A file is
- * written under a temporary name and renamed into place, so racing processes only ever see whole
- * files and need no lock. Nothing is synced to disk (D34): a file a crash left incomplete differs
- * from its digest, and the next process that uses it replaces it.
+ * of ours with the payload's size and digest; anything else is reported and replaced (a name too
+ * long for the file system fails the sync: no file can be there). A file is written under a
+ * temporary name and renamed into place, so racing processes only ever see whole files and need
+ * no lock. Nothing is synced to disk (D34): a file a crash left incomplete differs from its
+ * digest, and the next process that uses it replaces it.
  */
 #ifndef FSBPYR_CACHE_H
 #define FSBPYR_CACHE_H

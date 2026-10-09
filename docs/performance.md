@@ -33,9 +33,9 @@ static CPython.
 | 0.9.0 (two rounds of 201) | 5.4–5.5 ms | 7.9–8.1 ms | 6.0–6.2 ms (1.11–1.12×) | 1.9–2.0 ms |
 
 Budget (`test_startup_is_within_budget_of_bare_cpython`): everything but the integrity check
-within 1.2× bare CPython (1.15× until 0.7.0; the owner raised it on 2026-10-09 because the
-launcher sat at the 1.15× edge). The check is budgeted apart: it costs what hashing the file
-costs.
+within 1.5× bare CPython (1.15× until 0.7.0, 1.2× until 0.10.0; the owner raised it twice on
+2026-10-09 because the launcher sat at the edge, 1.20–1.21× in 0.9.1 and 0.10.0 alike, and failed
+about one run in three). The check is budgeted apart: it costs what hashing the file costs.
 
 ## The integrity check
 

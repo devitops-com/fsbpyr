@@ -1,0 +1,81 @@
+/* libFuzzer harness (D38): the launcher's own payload parsing, record accessors, lookups, path
+ * checks and blob decoding, on any bytes, under ASan and UBSan. Built and run by
+ * tests/e2e/test_fuzz.py: once over every edge case (tests/support/edges.py), then exploring
+ * from them; the same binary replays a single input given as a file.
+ *
+ * Whatever the input, the launcher must refuse it or read it, never crash: every record of
+ * every table up to MAX_RECORDS is visited, every blob up to MAX_READ bytes decoded. */
+#include "cache.h"
+#include "integrity.h"
+#include "payload.h"
+
+#include <stdlib.h>
+
+#define MAX_RECORDS 4096u
+#define MAX_READ (16u << 20) /* larger blobs are left alone: the harness's memory is bounded */
+
+static uint64_t bounded(const struct fsb_payload *p, enum fsb_section section) {
+    uint64_t count = fsb_count(p, section);
+    return count < MAX_RECORDS ? count : MAX_RECORDS;
+}
+
+static void lookups(const struct fsb_payload *p, const char *key, size_t length) {
+    (void)fsb_find_module(p, key, length);
+    (void)fsb_find_file(p, key, length);
+    (void)fsb_find_dist(p, key, length);
+    for (int s = 0; s < FSB_SECTION_COUNT; s++) (void)fsb_lower_bound(p, s, key, length);
+    (void)fsb_cache_safe(key, length);
+}
+
+static void read_blob(const struct fsb_payload *p, uint32_t index) {
+    struct fsb_blob b;
+    if (!fsb_get_blob(p, index, &b) || b.size > MAX_READ) return;
+    uint8_t *content = malloc(b.size ? (size_t)b.size : 1);
+    if (content == NULL) return;
+    if (fsb_read_blob(p, NULL, &b, content)) {
+        uint8_t digest[FSB_DIGEST_SIZE];
+        (void)fsb_tree_digest(content, b.size, digest);
+        if (b.digest != FSB_NONE) (void)fsb_get_digest(p, b.digest, digest);
+    }
+    free(content);
+}
+
+static void walk(const struct fsb_payload *p) {
+    const char *text;
+    for (uint32_t i = 0; i < bounded(p, FSB_SECTION_BLOBS); i++) read_blob(p, i);
+    for (uint32_t i = 0; i < bounded(p, FSB_SECTION_FILES); i++) {
+        struct fsb_file f;
+        if (!fsb_get_file(p, i, &f)) continue;
+        if (fsb_str(p, f.path, &text)) lookups(p, text, f.path.length);
+        uint32_t word;
+        if (f.closure != FSB_NONE) (void)fsb_get_word(p, f.closure, &word);
+    }
+    for (uint32_t i = 0; i < bounded(p, FSB_SECTION_MODULES); i++) {
+        struct fsb_module m;
+        if (!fsb_get_module(p, i, &m)) continue;
+        if (fsb_str(p, m.name, &text)) lookups(p, text, m.name.length);
+        if (fsb_str(p, m.path, &text)) lookups(p, text, m.path.length);
+    }
+    for (uint32_t i = 0; i < bounded(p, FSB_SECTION_DISTS); i++) {
+        struct fsb_dist d;
+        if (!fsb_get_dist(p, i, &d)) continue;
+        if (fsb_str(p, d.name, &text)) lookups(p, text, d.name.length);
+        if (fsb_str(p, d.dist_info, &text)) lookups(p, text, d.dist_info.length);
+        if (fsb_str(p, d.version, &text)) lookups(p, text, d.version.length);
+    }
+    uint32_t word;
+    uint8_t digest[FSB_DIGEST_SIZE];
+    for (uint32_t i = 0; i < bounded(p, FSB_SECTION_CLOSURES); i++) (void)fsb_get_word(p, i, &word);
+    for (uint32_t i = 0; i < bounded(p, FSB_SECTION_DIGESTS); i++) (void)fsb_get_digest(p, i, digest);
+    for (uint32_t i = 0; i < bounded(p, FSB_SECTION_STARTUP); i++) (void)fsb_get_startup(p, i, &word);
+    for (uint64_t i = 0; i < bounded(p, FSB_SECTION_FILES); i++) /* every key, as the tables have it */
+        if (fsb_record_key(p, FSB_SECTION_FILES, i, &text, &word)) lookups(p, text, word);
+}
+
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    static struct fsb_payload payload; /* 4 KiB of path: not on the stack */
+    if (fsb_payload_parse(&payload, data, size) == NULL) walk(&payload);
+    uint8_t digest[FSB_DIGEST_SIZE]; /* the integrity digest of the input, whatever its size */
+    (void)fsb_tree_digest(data, size, digest);
+    return 0;
+}

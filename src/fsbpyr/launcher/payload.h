@@ -28,6 +28,10 @@ struct fsb_payload {
  * On failure returns false and stores a static description in *error. */
 bool fsb_payload_open(struct fsb_payload *payload, const char **error);
 
+/* The same checks on a whole executable image[0, size) in memory, without the integrity check
+ * (the fuzz harness and edge-case tests, D38); NULL, or a static description of the failure. */
+const char *fsb_payload_parse(struct fsb_payload *payload, const uint8_t *image, uint64_t size);
+
 /* Validated view of one string; false if the Str is out of bounds or not NUL-terminated. */
 bool fsb_str(const struct fsb_payload *payload, struct fsb_str ref, const char **text);
 
