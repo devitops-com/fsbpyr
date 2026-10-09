@@ -24,6 +24,7 @@
 #define FSB_DIGEST_LEAF (UINT64_C(1) << 20) /* the integrity digest's piece size (D31) */
 #define FSB_MAX_MODE 0777u
 #define FSB_MAX_BLOB_SIZE (UINT64_C(1) << 40)
+#define FSB_MAX_MEMORY_BLOB (UINT64_C(1) << 30) /* the largest blob read whole (no streaming yet) */
 #define FSB_MAX_BLOCK_SIZE (UINT64_C(1) << 20) /* a block holds small blobs (D30) */
 #define FSB_XZ_MEMLIMIT (UINT64_C(64) << 20)     /* decoder memory an xz stream may ask for */
 #define FSB_XZ_PIECE (UINT64_C(4) << 20)         /* content of each piece of a large xz library */

@@ -4,8 +4,10 @@ from pathlib import Path
 
 from fsbpyr import bytecode
 from fsbpyr.assemble import App
-from fsbpyr.payload.format import XZ_PIECE, Codec, FileKind, ModuleKind
+from fsbpyr.payload.format import MAX_MEMORY_BLOB, XZ_PIECE, Codec, FileKind, ModuleKind
 from fsbpyr.payload.spec import Blob, Dist, File, Module
+
+from .contract import DIGEST_SIZES
 
 SUPPORT = Path(__file__).parent
 
@@ -74,6 +76,26 @@ def library(blocks: int) -> bytes:
 
 
 PIECED = library(2200)  # about 9 MB: three pieces of xz (D33)
+# Resources the cache sync (D35) extracts on request: more directories than a low descriptor limit
+# leaves room for if each stayed open, and a name near the file system's limit.
+TREE = {f"tree/d{i:02}/f.txt": b"%d" % i for i in range(40)} | {"tree/" + "n" * 250: b"long"}
+SIZES = {f"sizes.libs/lib{size}.so": (bytes(range(251)) * (size // 251 + 1))[:size]
+         for size in DIGEST_SIZES}  # fmt: skip
+
+
+def _filler(name: str, size: int) -> bytes:
+    """``size`` bytes, compressible and of this file only."""
+    line = name.encode() + b"\n"
+    return (line * (size // len(line) + 1))[:size]
+
+
+# More files than one parallel pass checks (1024), more bytes of small files than its buffer holds
+# (16 MiB), and sizes around the read-or-map switch (64 KiB): the cache sync's batches (D35).
+BATCH = (
+    {f"batch/t{i:04}.txt": _filler(f"t{i}", 20 + i % 50) for i in range(1100)}
+    | {f"batch/m{i:03}.bin": _filler(f"m{i}", 60 << 10) for i in range(300)}
+    | {f"batch/edge{n}.bin": _filler(f"edge{n}", n) for n in (65535, 65536, 65537)}
+)
 
 
 def _bad_xz() -> list[File]:
@@ -90,10 +112,15 @@ def _bad_xz() -> list[File]:
     pieces = Blob.xz(PIECED, digest=True)  # three xz streams, decoded in parallel by the launcher
     bad = (*pieces.pieces[:1], Blob(pieces.pieces[1].stored + b"junk", XZ_PIECE, Codec.XZ),
            *pieces.pieces[2:])  # fmt: skip
+    wrong = Blob.zstd(b"\x7fELF wrong" * 500)  # intact content, another digest
+    huge = Blob(Blob.xz(bytes(4 << 20)).stored, MAX_MEMORY_BLOB + 1, Codec.XZ, bytes(32))
     files += [
         File("native.libs/libpieces.so", FileKind.NATIVE_LIB, pieces, mode=0o755),
         File("native.libs/libbadpiece.so", FileKind.NATIVE_LIB,
              Blob(b"", pieces.size, Codec.PIECES, bytes(32), bad), mode=0o755),
+        File("native.libs/libwrongdigest.so", FileKind.NATIVE_LIB,
+             Blob(wrong.stored, wrong.size, Codec.ZSTD, bytes(32)), mode=0o755),
+        File("native.libs/libhuge.so", FileKind.NATIVE_LIB, huge, mode=0o755),  # never read whole
     ]  # fmt: skip
     return files
 
@@ -107,12 +134,16 @@ def demo_app(entrypoint: str = "entry:main") -> App:
     files = [f for _, f in built]
     files += [File(p, FileKind.RESOURCE, Blob.zstd(d), dist="demo") for p, d in RESOURCES.items()]
     files += [File(p, FileKind.METADATA, Blob.zstd(d), dist="demo") for p, d in METADATA.items()]
-    files += [  # never loaded: they exercise file_at / closure / blob_info
+    files += [File(p, FileKind.RESOURCE, Blob.zstd(d)) for p, d in TREE.items()]
+    files += [File(p, FileKind.RESOURCE, Blob.zstd(d)) for p, d in BATCH.items()]
+    files += [  # never loaded: they exercise file_at / closure / blob_info / sync
         File(NATIVE_EXT, FileKind.NATIVE_EXT, Blob.zstd(b"\x7fELF ext", digest=True),
              mode=0o755, closure=(NATIVE_LIB,)),
         File(NATIVE_LIB, FileKind.NATIVE_LIB, Blob.xz(b"\x7fELF lib" * 2000, digest=True),
              mode=0o755),  # xz (D33): the launcher decodes it as the stand-in does
         *_bad_xz(),
+        *(File(path, FileKind.NATIVE_LIB, Blob.zstd(data, digest=True), mode=0o755)
+          for path, data in SIZES.items()),
     ]  # fmt: skip
     return App(
         "demo",

@@ -11,13 +11,14 @@ from . import ar
 from .pbs import LinkInputs, PbsDist, link_inputs
 from .toolchain import Toolchain
 
-LAUNCHER_SOURCES = ("main.c", "payload.c", "module.c", "integrity.c", "parallel.c")
+LAUNCHER_SOURCES = ("main.c", "payload.c", "module.c", "integrity.c", "parallel.c", "cache.c")
 LAUNCHER_FILES = (
     *LAUNCHER_SOURCES,
     "launcher.h",
     "payload.h",
     "integrity.h",
     "parallel.h",
+    "cache.h",
     "format.h",
     "vendor/zstd/zstd.h",
     "vendor/zstd/zstd_errors.h",

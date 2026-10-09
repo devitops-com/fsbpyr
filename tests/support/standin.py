@@ -9,9 +9,11 @@ import types
 from pathlib import Path
 from typing import Any
 
-from fsbpyr.payload.format import MAX_MEMORY_BLOB, NONE, tree_digest
+from fsbpyr.payload.format import MAX_MEMORY_BLOB, NONE
 from fsbpyr.payload.format import PayloadError as _ReaderError
 from fsbpyr.payload.reader import Executable
+
+from . import cache
 
 
 class PayloadError(ValueError):
@@ -42,6 +44,7 @@ def _index(value: object, what: str) -> int:
 class StandIn(types.ModuleType):
     NONE = NONE
     PayloadError = PayloadError
+    CacheError = cache.CacheError
 
     def __init__(self, executable: Path) -> None:
         super().__init__("_fsbpyr")
@@ -104,6 +107,13 @@ class StandIn(types.ModuleType):
         key = _key(path)
         return [] if key is None else list(self._payload.list_dir(key))
 
+    def files_below(self, path: object) -> tuple[int, ...]:
+        key = _key(path)
+        if key is None:
+            return ()
+        prefix = f"{key}/" if key else ""
+        return tuple(f.index for f in self._payload.files() if f.path.startswith(prefix))
+
     def is_dir(self, path: object) -> bool:
         key = _key(path)
         return False if key is None else self._payload.is_dir(key)
@@ -140,6 +150,5 @@ class StandIn(types.ModuleType):
     def stats(self) -> dict[str, int]:
         return {"reads": 0, "stored_bytes": 0, "decompressed_bytes": 0, "integrity_ns": 0}
 
-    def tree_digests(self, buffers: Any) -> list[bytes]:
-        """Mirror of tree_digests(): any sequence of bytes-like objects."""
-        return [tree_digest(buffer) for buffer in list(buffers)]
+    def sync(self, root: Any, chain: Any, files: Any, checked: Any, resources: Any) -> list[str]:
+        return cache.sync(self._payload, root, chain, files, checked, resources)

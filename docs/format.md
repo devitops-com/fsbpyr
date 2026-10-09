@@ -68,11 +68,14 @@ equal), for two things:
   way to hash).
 - Files extracted to the cache (natives, FS_REQUIRED packages, resources asked for as paths)
   run outside the file, so each process hashes them against DIGESTS once, before it first uses
-  them, with the same routine: up to 256 files of the expected size are mapped and hashed in
-  one parallel pass (`_fsbpyr.tree_digests`, which also checks data about to be written); a
-  changed file, or one that cannot be hashed, is reported on stderr and restored. A file
-  changed while a process runs is noticed by the next one. Files are written under a temporary
-  name and renamed, without fsync: one a crash left incomplete fails its check and is restored.
+  them, with the same routine: the launcher's `_fsbpyr.sync` (D35) reads up to 1024 files of the
+  expected size (those up to 64 KiB into a buffer, larger ones mapped) and hashes them in one
+  parallel pass, and checks data about to be written the same way; a changed file, or one that
+  cannot be read, is reported on stderr and restored. When the files mapped for a pass leave no
+  address space for the next one (`ulimit -v`), the pass is checked first; running out of
+  descriptors or memory fails the run instead. A file changed while a process runs is noticed by
+  the next one. Files are written under a temporary name and renamed, without fsync:
+  one a crash left incomplete fails its check and is restored.
 - `fsbpyr inspect` shows the stored digest, which proves nothing by itself; `--verify` and the
   shell recipe compute it from the bytes.
 

@@ -408,13 +408,15 @@ class Payload:
         return bytes(self._buf[record.offset : record.offset + record.stored_size])
 
     def _block(self, index: int) -> bytes:
-        """A block's content, from a small cache: a package's modules share blocks."""
-        content = self._block_cache.get(index)
+        """A block's content, from a small cache: a package's modules share blocks. Each step is
+        one dict operation, so threads reading at once (the tests' _fsbpyr stand-in) never see a
+        block go missing between two of them."""
+        content = self._block_cache.pop(index, None)
         if content is None:
-            content = self._block_cache[index] = self.read_blob(index)
-            if len(self._block_cache) > 32:
-                self._block_cache.popitem(last=False)
-        self._block_cache.move_to_end(index)
+            content = self.read_blob(index)
+        self._block_cache[index] = content  # the most recently used, last
+        while len(self._block_cache) > 32:
+            self._block_cache.popitem(last=False)
         return content
 
     def read_blob(self, index: int) -> bytes:

@@ -30,6 +30,7 @@ static CPython.
 | 0.6.0, check through OpenSSL's `SHA256()` (not released) | 5.2–5.3 ms | 9.5 ms | 6.0–6.2 ms (1.16×) | 3.4 ms |
 | 0.6.0 | 5.1–5.4 ms | 8.1 ms | 6.0 ms (1.11–1.17×) | 2.0 ms |
 | 0.7.0 | 5.2 ms | 7.9 ms | 6.15 ms (1.18×; app minus `integrity_ns`) | 1.7–1.8 ms |
+| 0.9.0 (two rounds of 201) | 5.4–5.5 ms | 7.9–8.1 ms | 6.0–6.2 ms (1.11–1.12×) | 1.9–2.0 ms |
 
 Budget (`test_startup_is_within_budget_of_bare_cpython`): everything but the integrity check
 within 1.2× bare CPython (1.15× until 0.7.0; the owner raised it on 2026-10-09 because the
@@ -135,7 +136,89 @@ for one stream each (8 threads).
 | The same script in its venv | 1.28 s (cold) | 465–500 ms | — |
 
 Of the later runs' 620 ms, about 60 ms check 12,151 cached files (about 120 ms one at a time;
-with size checks only, 560 ms); about 95 ms more go to walking their records in Python.
+with size checks only, 560 ms); about 95 ms more go to walking their records in Python. Since
+D35 the launcher does both: see below.
+
+### The three compression methods (0.8.0)
+
+The same app built with `--fast-compression`, by default and with `--best-compression`; first
+runs (3) start with an empty cache, later runs (11) with a full one; medians. "Anonymous" is
+the peak of the process's private memory (sampled every 2 ms); "RSS" is the kernel's peak
+resident size, which also counts the executable's pages while the integrity check maps them.
+
+| | venv | zstd 3 | zstd 9 | xz -6 in pieces |
+|---|---|---|---|---|
+| Size | — | 254.8 MB | 233.0 MB | 214.7 MB |
+| Build (uv staging included) | — | 17.1 s | 24.8 s | 32.3 s |
+| First run | — | 2.11 s | 2.09 s | 2.19 s |
+| First run: torch import | 1.28 s (cold) | 1.35 s | 1.34 s | 1.44 s |
+| Later runs | 1.16 s | 1.37 s | 1.37 s | 1.36 s |
+| Later runs: torch import | 447 ms | 612 ms | 613 ms | 610 ms |
+| Later runs: training loop | 380 ms | 415 ms | 415 ms | 415 ms |
+| Integrity check | — | 16.7 ms | 15.7 ms | 12.5 ms |
+| Anonymous memory, later / first run | 227 MB | 233 / 447 MB | 233 / 447 MB | 233 / 489 MB |
+| RSS, later / first run | 314 MB | 478 / 625 MB | 477 / 607 MB | 477 / 630 MB |
+| Disk (executable + cache) | 925 MB (venv 803 + Python 122) | 967 MB | 945 MB | 927 MB |
+
+The first run decodes 713 MB more than a later one and writes a 712 MB cache: about 0.74 s
+with zstd and 0.84 s with xz. The method matters only for size, build and first run; later
+runs are the same. A first run holds the largest library it extracts in memory
+(libtorch_cpu.so, 438 MB); xz adds about 42 MB of decoder state. The training loop runs about
+9% slower than in the venv in every build; not explained yet.
+
+## The cache sync in the launcher (D35)
+
+`_fsbpyr.sync` walks, checks and restores cached files in C, without the GIL; Python only asks
+for it. Measured on the torch app above (default build, later runs: medians of 31 runs of each
+build, interleaved; first runs: 5 each, empty cache):
+
+| | 0.8.0 | D35 | venv |
+|---|---|---|---|
+| Later runs | 1363 ms | 1279 ms | 1208 ms |
+| Later runs: torch import | 615 ms | 538 ms | 470 ms |
+| First run | 1967 ms | 1908 ms | — |
+| First run: torch import | 1249 ms | 1199 ms | — |
+
+Where the difference to the venv goes, later runs, medians of 21 runs of each, interleaved
+(another session than the table above):
+
+| | Executable | venv | Difference |
+|---|---|---|---|
+| Whole run | 1220 ms | 1158 ms | +62 ms |
+| torch import | 509 ms | 447 ms | +62 ms, the cache check of torch's 12,151 files 53.5 ms of it |
+| Training loop | 386 ms | 380 ms | +6 ms |
+| The rest: start and exit | 325 ms | 331 ms | −6 ms |
+| Start alone (`FSBPYR_SELFTEST=1`; `python -c "import torchopt.cli"`) | 20.6 ms | 10.5 ms | +10 ms; the executable's own check 14.0 ms of it |
+
+The venv checks nothing: it opens only the files an import needs, and the dynamic loader maps a
+library without reading it whole. The executable hashes torch's 712 MB of cached files and its
+own 233 MB on every run. The import also decompresses its code (66 MB from 24 MB stored, 1,756
+reads), where the venv reads `.pyc` files; how the two compare was not measured.
+
+`_fsbpyr.sync` of all 12,151 files of torch's cache, timed inside the app (medians of 9; a
+fresh record of checked files each time):
+
+| Files | Size | Every file mapped, 256 per pass | Up to 64 KiB read, 1024 per pass |
+|---|---|---|---|
+| all 12,151 | 712 MB | 80.0 ms | 53.5 ms |
+| the 12 native libraries | 476 MB | 16.1 ms | 16.2 ms |
+| the 12,139 others (headers, sources, data) | 235 MB | 64.9 ms | 38.1 ms |
+
+The libraries hash at about 30 GB/s; the small files cost their system calls, page faults and
+helper threads. A standalone program checking the 12,139 files the same way, with variants
+(medians of 9):
+
+| Variant (an `fstatat` before each open unless noted) | Time |
+|---|---|
+| all mapped, 256 per pass (as 0.8.0 checked them) | 58 ms |
+| all mapped, 1024 per pass | 55 ms |
+| read up to 64 KiB, 256 per pass | 38 ms |
+| read up to 64 KiB, 256 per pass, no `fstatat` | 36 ms |
+| read up to 64 KiB, 1024 per pass, no `fstatat` (D35) | 34 ms |
+| no `fstatat`, 1024 per pass, one helper per 4 MiB of data: read up to 16 KiB / 64 KiB / 1 MiB | 36 / 36 / 46 ms |
+| one helper per 4 MiB of data instead of per 4 leaves: all mapped, 256 / 1024 per pass | 70 / 62 ms |
+
+Mapping a large file still wins: its pages fault in on the hashing threads, in parallel.
 
 ## Known effects
 
@@ -152,7 +235,8 @@ with size checks only, 560 ms); about 95 ms more go to walking their records in 
 
 1. `FSBPYR_TRACE=1 app ...`: `integrity_ns` (the whole-file check), `decompressed_bytes` and
    `stored_bytes` (payload reads), `extracted` (files written to the cache) and the modules
-   loaded per distribution.
+   loaded per distribution. Under cProfile, `_fsbpyr.sync` is the cache check, and the extraction
+   on a first run.
 2. `FSBPYR_IMPORTTIME=1 app ...`: CPython's import-time table, per module.
 3. Compare with the tables above: the no-op app isolates the launcher and the integrity check,
    `heavy json` the payload imports, `heavy np` and `heavy onnx` the cache check and native

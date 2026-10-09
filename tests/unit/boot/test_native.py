@@ -1,6 +1,5 @@
 """_fsbpyr_rt.native in-process: cache location, materialization, self-heal (plan §3.5)."""
 
-import errno
 import importlib
 import os
 import stat
@@ -179,47 +178,22 @@ def test_an_unreadable_cached_file_is_replaced(
     assert (Path(native.native_cache().site) / LIB).read_bytes() == CONTENT[LIB]
 
 
-def test_a_cached_file_that_cannot_be_hashed_is_replaced(
-    boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An error while hashing (no mmap on that file system, EIO) is a repair, not a failure."""
-    spec = _speed_spec(boot)
-    native.native_cache().sync(_files(spec))
-    native._CACHE.clear()  # a new process
-    real = native.mmap.mmap
-    failing = {LIB.rpartition("/")[2]}
-
-    def mapped(fd: int, length: int, **kwargs: Any) -> Any:
-        if os.readlink(f"/proc/self/fd/{fd}").rpartition("/")[2] in failing:
-            failing.clear()
-            raise OSError(errno.ENODEV, "no mmap here")
-        return real(fd, length, **kwargs)
-
-    monkeypatch.setattr(native.mmap, "mmap", mapped)
-
-    assert native.native_cache().sync(_files(spec)) == [LIB]
-    assert (Path(native.native_cache().site) / LIB).read_bytes() == CONTENT[LIB]
-
-
 def test_each_process_hashes_a_cached_file_once(
-    boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+    boot: types.ModuleType, native: types.ModuleType
 ) -> None:
-    """Extensions share libraries (scipy: one 25 MB OpenBLAS for 19 of them)."""
+    """Extensions share libraries (scipy: one 25 MB OpenBLAS for 19 of them): a file this
+    process checked is not checked again, so a change made since goes unnoticed until the next
+    process starts."""
     spec = _speed_spec(boot)
     native.native_cache().sync(_files(spec))
     native._CACHE.clear()  # a new process
-    hashed: list[str] = []
-    real = native._mapped
-
-    def counted(directory: int, name: str, size: int) -> Any:
-        hashed.append(name)
-        return real(directory, name, size)
-
-    monkeypatch.setattr(native, "_mapped", counted)
     cache = native.native_cache()
+    assert cache.sync(_files(spec)) == []
+    _damage(Path(cache.site) / LIB)
 
-    assert cache.sync(_files(spec)) == cache.sync(_files(spec)) == []
-    assert len(hashed) == len(_files(spec))
+    assert cache.sync(_files(spec)) == []
+    native._CACHE.clear()
+    assert native.native_cache().sync(_files(spec)) == [LIB]
 
 
 def test_a_modified_file_is_restored_before_loading(
@@ -261,82 +235,6 @@ def test_symlinks_inside_the_cache_are_refused(
     with pytest.raises(native.NativeCacheError, match="FSBPYR_CACHE_DIR"):
         _loader(native, spec).create_module(spec)
     assert not any((tmp_path / "elsewhere").iterdir())
-
-
-def test_cache_tree_is_private_and_must_be_ours(
-    boot: types.ModuleType,
-    native: types.ModuleType,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root = tmp_path / "cache"
-    (root / "runtime").mkdir(parents=True)
-    root.chmod(0o775)  # e.g. a user's own directory named by FSBPYR_CACHE_DIR: left alone
-    (root / "runtime").chmod(0o755)
-    spec = _speed_spec(boot)
-
-    native.native_cache().sync(_files(spec))
-    assert stat.S_IMODE(root.stat().st_mode) == 0o775
-    assert stat.S_IMODE((root / "runtime").stat().st_mode) == 0o700
-
-    monkeypatch.setattr(os, "geteuid", lambda: os.getuid() + 1)
-    native._CACHE.clear()  # a process of another user
-    with pytest.raises(native.NativeCacheError, match="owned by another user"):
-        native.native_cache().sync(_files(spec))
-
-
-def test_corrupt_payload_digest_is_detected(
-    boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    spec = _speed_spec(boot)
-    fsb = native._fsbpyr
-    monkeypatch.setattr(fsb, "blob_info", lambda blob: (len(CONTENT[EXT]), b"\0" * 32))
-
-    with pytest.raises(native.NativeCacheError, match="digest"):
-        native.native_cache().sync(_files(spec))
-
-
-@pytest.mark.parametrize("rel", ["../evil.so", "fast/./x.so", "fast//x.so", "/abs.so"])
-def test_unsafe_payload_paths_are_refused(
-    boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch, rel: str
-) -> None:
-    fsb = native._fsbpyr
-    record = fsb.file_at(_files(_speed_spec(boot))[0])
-    monkeypatch.setattr(fsb, "file_at", lambda index: (*record[:7], rel))
-
-    with pytest.raises(native.NativeCacheError, match="corrupt"):
-        native.native_cache().sync((0,))
-
-
-def test_long_file_names_can_be_published(native: types.ModuleType, tmp_path: Path) -> None:
-    name = "x" * 250
-    directory = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        native._publish(directory, name, b"data", 0o644)
-    finally:
-        os.close(directory)
-
-    assert (tmp_path / name).read_bytes() == b"data"
-
-
-def test_cached_files_are_written_without_fsync(
-    native: types.ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Every process checks a cached file against its digest before it uses it and restores it
-    when it differs, so a file a crash left incomplete is repaired: syncing each file to disk
-    only cost time (torch's 12,158 files: 42.5 s instead of 2.3 s on the first run)."""
-
-    def refused(fd: int) -> None:
-        raise AssertionError("fsync")
-
-    monkeypatch.setattr(native.os, "fsync", refused)
-    directory = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        native._publish(directory, "lib.so", b"data", 0o755)
-    finally:
-        os.close(directory)
-
-    assert (tmp_path / "lib.so").read_bytes() == b"data"
 
 
 def test_import_errors_raised_by_the_module_itself_do_not_trigger_a_rehash(

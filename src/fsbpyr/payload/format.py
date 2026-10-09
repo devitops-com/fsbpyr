@@ -106,7 +106,7 @@ class FileKind(IntEnum):
     METADATA = 5
 
 
-MAX_MEMORY_BLOB = 1 << 30  # largest blob _fsbpyr.read() returns (launcher/module.c)
+MAX_MEMORY_BLOB = 1 << 30  # largest blob read whole: _fsbpyr.read(), the cache sync (format.h)
 NATIVE_KINDS = frozenset({FileKind.NATIVE_EXT, FileKind.NATIVE_LIB})
 
 

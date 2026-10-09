@@ -193,10 +193,51 @@ bool fsb_zstd_frame_ok(const uint8_t *src, uint64_t stored, uint64_t size) {
            ZSTD_getFrameContentSize(src, (size_t)stored) == size;
 }
 
-bool fsb_zstd_decompress(void *dst, uint64_t size, const uint8_t *src, uint64_t stored) {
-    static ZSTD_DCtx *dctx;
-    if (dctx == NULL && (dctx = ZSTD_createDCtx()) == NULL) return false;
-    size_t got = ZSTD_decompressDCtx(dctx, dst, (size_t)size, src, (size_t)stored);
+/* Recently decompressed blocks (D30): importing a package reads several of its modules from the
+ * same block, so each block is decompressed once while it stays among the decoder's last few. */
+#define BLOCK_CACHE 32 /* imports alternate between packages: 8 thrashed (aiagent --help) */
+
+struct block_slot {
+    uint32_t index;
+    uint64_t size;
+    uint64_t used; /* clock of the last use; 0: empty */
+    uint8_t *data; /* FSB_MAX_BLOCK_SIZE bytes once allocated */
+};
+
+struct fsb_decoder {
+    ZSTD_DCtx *dctx; /* created on first use */
+    uint64_t clock;
+    unsigned count;
+    struct block_slot blocks[];
+};
+
+struct fsb_decoder *fsb_decoder_new(unsigned blocks) {
+    if (blocks == 0) blocks = 1; /* block_content() takes a slot */
+    struct fsb_decoder *d = calloc(1, sizeof *d + blocks * sizeof d->blocks[0]);
+    if (d != NULL) d->count = blocks;
+    return d;
+}
+
+void fsb_decoder_free(struct fsb_decoder *d) {
+    if (d == NULL) return;
+    for (unsigned i = 0; i < d->count; i++) free(d->blocks[i].data);
+    ZSTD_freeDCtx(d->dctx);
+    free(d);
+}
+
+/* ``d``, or the process's own decoder (NULL if it cannot be created). */
+static struct fsb_decoder *decoder(struct fsb_decoder *d) {
+    static struct fsb_decoder *process;
+    if (d != NULL) return d;
+    if (process == NULL) process = fsb_decoder_new(BLOCK_CACHE);
+    return process;
+}
+
+/* Decompress one verified frame (fsb_zstd_frame_ok) into dst[size]. */
+static bool zstd_decompress(struct fsb_decoder *d, void *dst, uint64_t size, const uint8_t *src,
+                            uint64_t stored) {
+    if (d->dctx == NULL && (d->dctx = ZSTD_createDCtx()) == NULL) return false;
+    size_t got = ZSTD_decompressDCtx(d->dctx, dst, (size_t)size, src, (size_t)stored);
     if (ZSTD_isError(got) || got != size) return false;
     fsb_decompressed_bytes += size;
     return true;
@@ -223,22 +264,12 @@ static bool xz_decode(void *dst, uint64_t size, const uint8_t *src, uint64_t sto
     return true;
 }
 
-/* Recently decompressed blocks (D30): importing a package reads several of its modules from the
- * same block, so each block is decompressed once while it stays among the last BLOCK_CACHE. */
-#define BLOCK_CACHE 32 /* imports alternate between packages: 8 thrashed (aiagent --help) */
-static struct block_slot {
-    uint32_t index;
-    uint64_t size;
-    uint64_t used; /* clock of the last use; 0: empty */
-    uint8_t *data; /* FSB_MAX_BLOCK_SIZE bytes once allocated */
-} blocks[BLOCK_CACHE];
-static uint64_t block_clock;
-
-static const uint8_t *block_content(const struct fsb_payload *p, uint32_t index, uint64_t *size) {
-    struct block_slot *slot = &blocks[0];
-    for (int i = 0; i < BLOCK_CACHE; i++) {
+static const uint8_t *block_content(const struct fsb_payload *p, struct fsb_decoder *d,
+                                    uint32_t index, uint64_t *size) {
+    struct block_slot *blocks = d->blocks, *slot = &blocks[0];
+    for (unsigned i = 0; i < d->count; i++) {
         if (blocks[i].used != 0 && blocks[i].index == index) {
-            blocks[i].used = ++block_clock;
+            blocks[i].used = ++d->clock;
             *size = blocks[i].size;
             return blocks[i].data;
         }
@@ -253,10 +284,10 @@ static const uint8_t *block_content(const struct fsb_payload *p, uint32_t index,
     fsb_stored_bytes += block.stored_size;
     if (slot->data == NULL && (slot->data = malloc(FSB_MAX_BLOCK_SIZE)) == NULL) return NULL;
     slot->used = 0; /* invalid until the content is in place */
-    if (!fsb_zstd_decompress(slot->data, block.size, src, block.stored_size)) return NULL;
+    if (!zstd_decompress(d, slot->data, block.size, src, block.stored_size)) return NULL;
     slot->index = index;
     slot->size = block.size;
-    slot->used = ++block_clock;
+    slot->used = ++d->clock;
     *size = block.size;
     return slot->data;
 }
@@ -284,7 +315,9 @@ static void decode_piece(void *context, uint64_t number) {
         atomic_store(&job->failed, true);
 }
 
-bool fsb_read_blob(const struct fsb_payload *p, const struct fsb_blob *b, void *dst) {
+bool fsb_read_blob(const struct fsb_payload *p, struct fsb_decoder *with, const struct fsb_blob *b,
+                   void *dst) {
+    struct fsb_decoder *d;
     switch (b->codec) { /* offset is a data offset for NONE, ZSTD and XZ; a record index else */
     case FSB_CODEC_NONE:
         memcpy(dst, p->base + b->offset, (size_t)b->size);
@@ -292,11 +325,13 @@ bool fsb_read_blob(const struct fsb_payload *p, const struct fsb_blob *b, void *
         return true;
     case FSB_CODEC_ZSTD:
         if (!fsb_zstd_frame_ok(p->base + b->offset, b->stored_size, b->size)) return false;
+        if ((d = decoder(with)) == NULL) return false;
         fsb_stored_bytes += b->stored_size;
-        return fsb_zstd_decompress(dst, b->size, p->base + b->offset, b->stored_size);
+        return zstd_decompress(d, dst, b->size, p->base + b->offset, b->stored_size);
     case FSB_CODEC_BLOCK: {
         uint64_t size;
-        const uint8_t *block = block_content(p, (uint32_t)b->offset, &size);
+        if ((d = decoder(with)) == NULL) return false;
+        const uint8_t *block = block_content(p, d, (uint32_t)b->offset, &size);
         if (block == NULL || !fits(b->stored_size, b->size, size)) return false;
         memcpy(dst, block + b->stored_size, (size_t)b->size);
         return true;

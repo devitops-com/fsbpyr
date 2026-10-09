@@ -53,19 +53,25 @@ uint64_t fsb_lower_bound(const struct fsb_payload *payload, enum fsb_section sec
  * carries a content checksum (so decompression verifies integrity). */
 bool fsb_zstd_frame_ok(const uint8_t *src, uint64_t stored, uint64_t size);
 
-/* Decompress one verified frame (fsb_zstd_frame_ok) into dst[size] with a process-wide
- * decompression context; false on any error. Callers hold the GIL once Python is running. */
-bool fsb_zstd_decompress(void *dst, uint64_t size, const uint8_t *src, uint64_t stored);
+/* What decompressing zstd takes: a context, and the last ``blocks`` blocks decompressed. A thread
+ * uses its own: NULL in fsb_read_blob names the process's (32 blocks), for callers that hold the
+ * GIL or run before Python starts; a cache sync, which runs without the GIL, brings one (D35).
+ * Nothing is shared, so nothing is locked: a lock taken while another thread forks would stay
+ * taken in the child. */
+struct fsb_decoder;
+struct fsb_decoder *fsb_decoder_new(unsigned blocks); /* NULL if out of memory */
+void fsb_decoder_free(struct fsb_decoder *decoder);
 
-/* Read blob ``b`` (from fsb_get_blob) into dst[b->size]: copied, decompressed (zstd checksum
- * verified; xz bounded to exactly one stream of ``size`` bytes; pieces decoded in parallel), or
- * sliced out of its block, which is decompressed once into a small cache since a package's
- * modules share blocks. False on any corruption. Callers hold the GIL once Python is running,
- * except for xz and pieces, which touch only the atomic counters (D33: other threads may run). */
-bool fsb_read_blob(const struct fsb_payload *payload, const struct fsb_blob *b, void *dst);
+/* Read blob ``b`` (from fsb_get_blob) into dst[b->size] with ``decoder``: copied, decompressed
+ * (zstd checksum verified; xz bounded to exactly one stream of ``size`` bytes; pieces decoded in
+ * parallel), or sliced out of its block, which the decoder decompresses once and keeps since a
+ * package's modules share blocks. False on any corruption. xz and pieces touch only the atomic
+ * counters (D33). */
+bool fsb_read_blob(const struct fsb_payload *payload, struct fsb_decoder *decoder,
+                   const struct fsb_blob *b, void *dst);
 
 /* Payload bytes read and bytes decompressed so far, blocks included (FSBPYR_TRACE). */
-extern _Atomic unsigned long long fsb_stored_bytes, fsb_decompressed_bytes; /* xz: GIL free */
+extern _Atomic unsigned long long fsb_stored_bytes, fsb_decompressed_bytes; /* any thread */
 
 /* Binary search by key bytes; returns the record index or FSB_NONE. */
 uint32_t fsb_find_module(const struct fsb_payload *payload, const char *name, size_t length);

@@ -1,6 +1,7 @@
 """Phase 3 exit criteria on a real executable: import system, resources, metadata, contract."""
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,22 @@ def test_c_module_and_standin_honour_the_same_contract(demo: Path) -> None:
         standin.close()
 
     assert json.loads(result.stdout) == expected
+
+
+@pytest.mark.skipif(shutil.which("strace") is None, reason="needs strace")
+def test_extracted_files_are_never_synced_to_disk(demo: Path, tmp_path: Path) -> None:
+    """D34: every process checks a cached file against its digest before it uses it and
+    replaces it if it differs, so a file a crash left incomplete is repaired; syncing each file
+    only cost time (torch's 12,151 files: 42.5 s instead of 2.3 s on the first run)."""
+    log = tmp_path / "strace.log"
+    calls = "fsync,fdatasync,sync,syncfs,sync_file_range"
+    command = ["strace", "-f", "-qq", "-o", str(log), "-e", f"trace={calls}", str(demo), "contract"]
+
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["sync"]["natives"]["first"][0][0] == "ok"
+    assert log.read_text() == ""
 
 
 def test_boot_imports_only_builtin_frozen_and_startup_modules(

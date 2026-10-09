@@ -12,15 +12,19 @@
  *   read(blob)         -> bytes (decompressed, size-checked)
  *   info()             -> dict describing the executable
  *   stats()            -> read counters and integrity check time (FSBPYR_TRACE, benchmarks)
- *   tree_digests(bufs) -> integrity digests (D32) of bytes-like objects, in one parallel pass
+ *   files_below(path)  -> FILES indices of every file below a directory ('' is the root)
+ *   sync(root, chain, files, checked, resources) -> site-relative paths written (cache.h, D35)
  */
 #include "launcher.h"
 
+#include "cache.h"
 #include "integrity.h"
 
-#define MAX_MEMORY_BLOB (UINT64_C(1) << 30) /* larger blobs are extracted, never read whole */
+#ifdef Py_GIL_DISABLED /* read() shares the process's zstd decoder: the GIL serializes it */
+#error "the _fsbpyr module needs a CPython with the GIL"
+#endif
 
-static PyObject *PayloadError;
+static PyObject *PayloadError, *CacheError;
 static unsigned long long reads;
 
 static PyObject *corrupt(const char *what, unsigned long long index) {
@@ -135,54 +139,6 @@ static PyObject *blob_info(PyObject *self, PyObject *arg) {
                          (Py_ssize_t)FSB_DIGEST_SIZE);
 }
 
-/* tree_digests(buffers): the integrity digests (D32) of byte buffers, such as cached files
- * mapped by the boot code, in one parallel pass by the launcher's own routine; the GIL is
- * released while it hashes. */
-static PyObject *tree_digests(PyObject *self, PyObject *arg) {
-    (void)self;
-    PyObject *items = PySequence_Fast(arg, "expected a sequence of bytes-like objects");
-    if (items == NULL) return NULL;
-    Py_ssize_t count = PySequence_Fast_GET_SIZE(items), held = 0;
-    Py_buffer *views = PyMem_Calloc((size_t)count + 1, sizeof *views);
-    const uint8_t **data = PyMem_Calloc((size_t)count + 1, sizeof *data);
-    uint64_t *lengths = PyMem_Calloc((size_t)count + 1, sizeof *lengths);
-    uint8_t (*digests)[FSB_DIGEST_SIZE] = PyMem_Calloc((size_t)count + 1, sizeof *digests);
-    PyObject *result = NULL;
-    if (views == NULL || data == NULL || lengths == NULL || digests == NULL) {
-        PyErr_NoMemory();
-        goto done;
-    }
-    for (; held < count; held++) {
-        if (PyObject_GetBuffer(PySequence_Fast_GET_ITEM(items, held), &views[held],
-                               PyBUF_SIMPLE) != 0)
-            goto done;
-        data[held] = views[held].buf;
-        lengths[held] = (uint64_t)views[held].len;
-    }
-    bool hashed;
-    Py_BEGIN_ALLOW_THREADS
-    hashed = fsb_tree_digests((uint64_t)count, data, lengths, digests);
-    Py_END_ALLOW_THREADS
-    if (!hashed) {
-        PyErr_NoMemory();
-        goto done;
-    }
-    result = PyList_New(count);
-    for (Py_ssize_t i = 0; result != NULL && i < count; i++) {
-        PyObject *digest = PyBytes_FromStringAndSize((const char *)digests[i], FSB_DIGEST_SIZE);
-        if (digest == NULL) Py_CLEAR(result);
-        else PyList_SET_ITEM(result, i, digest);
-    }
-done:
-    for (Py_ssize_t i = 0; i < held; i++) PyBuffer_Release(&views[i]);
-    PyMem_Free(views);
-    PyMem_Free(data);
-    PyMem_Free(lengths);
-    PyMem_Free(digests);
-    Py_DECREF(items);
-    return result;
-}
-
 /* Keys of ``section`` starting with key[0:length], followed by ``separator`` when the key is
  * non-empty and the separator is not NUL ("pkg" -> "pkg/"; "" matches every key). */
 struct scan {
@@ -257,6 +213,29 @@ static PyObject *list_dir(PyObject *self, PyObject *arg) {
     Py_DECREF(names);
     if (result != NULL && PyList_Sort(result) < 0) Py_CLEAR(result);
     return result;
+}
+
+/* The files below a directory are one run of the sorted table: O(log n) to find. */
+static PyObject *files_below(PyObject *self, PyObject *arg) {
+    (void)self;
+    const char *key, *tail;
+    Py_ssize_t length;
+    size_t tail_length;
+    uint32_t index, first = 0, count = 0;
+    int status = key_arg(arg, &key, &length);
+    if (status != 0) return status < 0 ? NULL : PyTuple_New(0);
+    struct scan scan;
+    if (scan_start(&scan, FSB_SECTION_FILES, key, (size_t)length, '/') < 0) return NULL;
+    while ((status = scan_next(&scan, &tail, &tail_length, &index)) > 0)
+        if (count++ == 0) first = index;
+    PyMem_Free(scan.prefix);
+    PyObject *found = status < 0 ? NULL : PyTuple_New(count);
+    for (uint32_t i = 0; found != NULL && i < count; i++) {
+        PyObject *item = PyLong_FromUnsignedLong(first + i);
+        if (item == NULL) Py_CLEAR(found);
+        else PyTuple_SET_ITEM(found, i, item);
+    }
+    return found;
 }
 
 /* O(log n): does any file live below ``path`` ('' is the root)? */
@@ -349,7 +328,7 @@ static PyObject *read_blob(PyObject *self, PyObject *arg) {
     struct fsb_blob b;
     if (index > UINT32_MAX || !fsb_get_blob(&fsb_self, (uint32_t)index, &b))
         return corrupt("blob", index);
-    if (b.size > MAX_MEMORY_BLOB) return corrupt("blob too large to load into memory", index);
+    if (b.size > FSB_MAX_MEMORY_BLOB) return corrupt("blob too large to load into memory", index);
     if (b.codec == FSB_CODEC_ZSTD && !fsb_zstd_frame_ok(fsb_self.base + b.offset, b.stored_size,
                                                         b.size)) /* before allocating size */
         return corrupt("blob data", index);
@@ -357,12 +336,13 @@ static PyObject *read_blob(PyObject *self, PyObject *arg) {
     if (out == NULL) return NULL;
     char *dst = PyBytes_AS_STRING(out);
     bool done;
+    /* the GIL guards the process's decoder (NULL); xz and pieces use none, so they run without */
     if (b.codec == FSB_CODEC_XZ || b.codec == FSB_CODEC_PIECES) { /* slow: a native library */
         Py_BEGIN_ALLOW_THREADS
-        done = fsb_read_blob(&fsb_self, &b, dst);
+        done = fsb_read_blob(&fsb_self, NULL, &b, dst);
         Py_END_ALLOW_THREADS
     } else {
-        done = fsb_read_blob(&fsb_self, &b, dst);
+        done = fsb_read_blob(&fsb_self, NULL, &b, dst);
     }
     if (!done) {
         Py_DECREF(out);
@@ -370,6 +350,134 @@ static PyObject *read_blob(PyObject *self, PyObject *arg) {
     }
     reads++;
     return out;
+}
+
+/* The FILES indices of ``files`` that ``memo`` does not mark as checked yet (NULL: error set). */
+static uint32_t *unchecked(PyObject *files, const uint8_t *memo, uint64_t total, uint64_t *count) {
+    PyObject *items = PySequence_Fast(files, "expected a sequence of FILES indices");
+    if (items == NULL) return NULL;
+    Py_ssize_t size = PySequence_Fast_GET_SIZE(items);
+    uint32_t *todo = PyMem_Malloc(((size_t)size + 1) * sizeof *todo);
+    if (todo == NULL) PyErr_NoMemory();
+    *count = 0;
+    for (Py_ssize_t i = 0; todo != NULL && i < size; i++) {
+        unsigned long index = PyLong_AsUnsignedLong(PySequence_Fast_GET_ITEM(items, i));
+        bool bad = index == (unsigned long)-1 && PyErr_Occurred();
+        if (!bad && (index >= total || index > UINT32_MAX)) {
+            PyErr_Format(CacheError, "corrupt executable payload: file %lu", index);
+            bad = true;
+        }
+        if (bad) {
+            PyMem_Free(todo);
+            todo = NULL;
+        } else if (!memo[index]) {
+            todo[(*count)++] = (uint32_t)index;
+        }
+    }
+    Py_DECREF(items);
+    return todo;
+}
+
+/* After fsb_cache_sync, with the GIL again: report the changed files, mark those done in
+ * ``memo``, then return the paths written, or raise the failure. */
+static PyObject *synced(const struct fsb_cache_sync *job, PyObject *root, uint8_t *memo) {
+    PyObject *written = PyList_New(0);
+    for (uint64_t i = 0; i < job->count; i++) {
+        struct fsb_file f;
+        const char *path;
+        uint8_t outcome = job->outcome[i];
+        if (outcome == 0 || !fsb_get_file(&fsb_self, job->files[i], &f) ||
+            !fsb_str(&fsb_self, f.path, &path))
+            continue; /* not reached (the records of a file reached are checked) */
+        if (outcome & FSB_CACHE_CHANGED) /* stderr, not a warning: apps that silence warnings
+                                          * must not hide this, and it never raises */
+            PySys_FormatStderr("fsbpyr: %U/%s/%s was modified after extraction; restoring it\n",
+                               root, job->chain, path);
+        if (outcome & FSB_CACHE_DONE) memo[job->files[i]] = 1;
+        if (written != NULL && (outcome & FSB_CACHE_WRITTEN)) {
+            PyObject *name = PyUnicode_DecodeUTF8(path, (Py_ssize_t)f.path.length, NULL);
+            if (name == NULL || PyList_Append(written, name) < 0) Py_CLEAR(written);
+            Py_XDECREF(name);
+        }
+    }
+    if (job->failure == FSB_CACHE_OK) return written;
+    Py_XDECREF(written);
+    PyErr_Clear(); /* the failure says what went wrong first */
+    PyObject *path = PyUnicode_DecodeFSDefault(job->path);
+    if (path == NULL) return NULL;
+    switch (job->failure) {
+    case FSB_CACHE_CORRUPT:
+        PyErr_Format(CacheError, "corrupt executable payload: %s %u", job->reason,
+                     (unsigned)job->file);
+        break;
+    case FSB_CACHE_FOREIGN:
+        PyErr_Format(CacheError, "refusing cache directory %U: owned by another user", path);
+        break;
+    case FSB_CACHE_SYSTEM:
+        errno = job->error;
+        PyErr_SetFromErrnoWithFilenameObject(PyExc_OSError, path);
+        break;
+    default:
+        PyErr_NoMemory();
+    }
+    Py_DECREF(path);
+    return NULL;
+}
+
+/* sync(root, chain, files, checked, resources): extract the files (FILES indices) missing below
+ * <root>/<chain> and replace those that differ from the payload (cache.h, D35). Each process
+ * checks a file once: ``checked`` holds a byte per file, set once the file is checked or
+ * written. Returns the site-relative paths written; the GIL is released while it works. */
+static PyObject *cache_sync(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *root, *chain_arg, *files, *checked, *root_text = NULL, *result = NULL;
+    int resources;
+    if (!PyArg_ParseTuple(args, "O&UOOp:sync", PyUnicode_FSConverter, &root, &chain_arg, &files,
+                          &checked, &resources))
+        return NULL;
+    Py_buffer memo = {0};
+    uint32_t *todo = NULL;
+    uint64_t count = 0, total = fsb_count(&fsb_self, FSB_SECTION_FILES);
+    uint8_t *outcome = NULL;
+    struct fsb_cache_sync *job = NULL;
+    Py_ssize_t chain_length;
+    const char *chain = PyUnicode_AsUTF8AndSize(chain_arg, &chain_length);
+    if (chain == NULL) goto done;
+    if (!fsb_cache_safe(chain, (size_t)chain_length)) {
+        PyErr_Format(PyExc_ValueError, "unsafe cache chain %R", chain_arg);
+        goto done;
+    }
+    if (PyObject_GetBuffer(checked, &memo, PyBUF_WRITABLE) != 0) goto done;
+    if ((uint64_t)memo.len != total) {
+        PyErr_SetString(PyExc_ValueError, "checked must hold one byte per file");
+        goto done;
+    }
+    if ((todo = unchecked(files, memo.buf, total, &count)) == NULL) goto done;
+    outcome = PyMem_Calloc((size_t)count + 1, 1);
+    job = PyMem_Calloc(1, sizeof *job);
+    if (outcome == NULL || job == NULL) {
+        PyErr_NoMemory();
+        goto done;
+    }
+    if ((root_text = PyUnicode_DecodeFSDefault(PyBytes_AS_STRING(root))) == NULL) goto done;
+    job->root = PyBytes_AS_STRING(root);
+    job->chain = chain;
+    job->files = todo;
+    job->count = count;
+    job->resources = resources;
+    job->outcome = outcome;
+    Py_BEGIN_ALLOW_THREADS
+    fsb_cache_sync(&fsb_self, job);
+    Py_END_ALLOW_THREADS
+    result = synced(job, root_text, memo.buf);
+done:
+    if (memo.obj != NULL) PyBuffer_Release(&memo);
+    PyMem_Free(todo);
+    PyMem_Free(outcome);
+    PyMem_Free(job);
+    Py_XDECREF(root_text);
+    Py_DECREF(root);
+    return result;
 }
 
 static PyObject *info(PyObject *self, PyObject *noargs) {
@@ -414,7 +522,8 @@ static PyMethodDef methods[] = {
     {"dists", dists, METH_NOARGS, "All distributions, sorted by canonical name."},
     {"info", info, METH_NOARGS, "Describe the running executable."},
     {"stats", stats, METH_NOARGS, "Payload read counters and the integrity check's time."},
-    {"tree_digests", tree_digests, METH_O, "Integrity digests of bytes-like objects."},
+    {"files_below", files_below, METH_O, "FILES indices of every file below a directory."},
+    {"sync", cache_sync, METH_VARARGS, "Extract files to the cache, or check them there (D35)."},
     {NULL, NULL, 0, NULL},
 };
 
@@ -427,7 +536,12 @@ PyMODINIT_FUNC PyInit__fsbpyr(void) {
     PyObject *m = PyModule_Create(&module);
     if (m == NULL) return NULL;
     PayloadError = PyErr_NewException("_fsbpyr.PayloadError", PyExc_ValueError, NULL);
+    CacheError = PyErr_NewExceptionWithDoc(
+        "_fsbpyr.CacheError",
+        "The native cache cannot be used, or the payload's data for it is corrupt.",
+        PyExc_ImportError, NULL);
     if (PayloadError == NULL || PyModule_AddObjectRef(m, "PayloadError", PayloadError) < 0 ||
+        CacheError == NULL || PyModule_AddObjectRef(m, "CacheError", CacheError) < 0 ||
         PyModule_AddIntConstant(m, "NONE", FSB_NONE) < 0) {
         Py_DECREF(m);
         return NULL;

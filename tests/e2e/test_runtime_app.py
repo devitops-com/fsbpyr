@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import random
 import shutil
 import signal
 import statistics
@@ -324,6 +325,145 @@ def test_launcher_refuses_pieces_that_do_not_add_up(
     assert result.returncode == 0, result.stderr
     expected = f"read {len(data)}" if damage == "intact" else "refused corrupt executable payload"
     assert result.stdout.startswith(expected), result.stdout
+
+
+_SYNCS_THE_LIBRARIES = """\
+import _fsbpyr
+from _fsbpyr_rt.native import native_cache
+
+def main():
+    try:
+        print("written", native_cache().sync(_fsbpyr.files_below("x.libs")))
+    except ImportError as exc:
+        print("refused", exc)
+"""
+
+
+@pytest.mark.parametrize(
+    "unsafe", [b"x.libs/../evil.so", b"x.libs/libe\0il.so", b"x.libs/libe\\il.so"]
+)
+def test_launcher_never_extracts_a_file_whose_path_could_leave_the_cache(
+    runtime: Runtime, tmp_path: Path, unsafe: bytes
+) -> None:
+    """D35: the payload reader refuses such paths; the launcher checks them again before it
+    touches the cache, records and digest restamped as a deliberate change would have them."""
+    natives = tuple(File(f"x.libs/lib{name}.so", FileKind.NATIVE_LIB,
+                         Blob.zstd(b"\x7fELF " + name.encode(), digest=True), mode=0o755)
+                    for name in ("evil", "good"))  # fmt: skip
+    modules, files = app_content({"x.py": _SYNCS_THE_LIBRARIES})
+    app = tmp_path / "app"
+    build_executable(runtime, App("x", "x:main", modules=modules, files=(*files, *natives)), app)
+    raw = app.read_bytes()
+    assert raw.count(b"x.libs/libevil.so\0") == 1 and len(unsafe) == len("x.libs/libevil.so")
+    app.write_bytes(raw.replace(b"x.libs/libevil.so\0", unsafe + b"\0"))
+    _restamp(app)
+    cache = tmp_path / "cache"
+
+    result = _run(app, FSBPYR_CACHE_DIR=str(cache))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("refused corrupt executable payload: extracted file")
+    assert not cache.exists()  # every record is checked before anything is written
+
+
+_CHECKS_IN_LITTLE_ADDRESS_SPACE = """\
+import resource, sys
+import _fsbpyr
+
+def main():
+    root, files, count = sys.argv[1], _fsbpyr.files_below("x.libs"), _fsbpyr.info()["files"]
+    if sys.argv[2:] == ["limited"]:  # room for two of the libraries mapped at once
+        with open("/proc/self/status") as status:
+            size = next(int(line.split()[1]) for line in status if line.startswith("VmSize:"))
+        hard = resource.getrlimit(resource.RLIMIT_AS)[1]
+        resource.setrlimit(resource.RLIMIT_AS, ((size << 10) + (160 << 20), hard))
+    try:
+        print("written", len(_fsbpyr.sync(root, "runtime/g/site", files, bytearray(count), False)))
+    except OSError as exc:
+        print("failed", exc.errno)
+"""
+
+
+def test_a_batch_that_fills_the_address_space_is_checked_before_the_next_file_is_mapped(
+    runtime: Runtime, tmp_path: Path
+) -> None:
+    """D35: under an address-space limit (ulimit -v) the libraries mapped for one parallel pass
+    may leave no room for the next: they are hashed and unmapped first, never counted as changed
+    nor failing the run."""
+    natives = tuple(File(f"x.libs/lib{i}.so", FileKind.NATIVE_LIB,
+                         Blob.zstd((b"%d" % i * (64 << 20))[: 64 << 20], digest=True), mode=0o755)
+                    for i in range(6))  # fmt: skip
+    modules, files = app_content({"x.py": _CHECKS_IN_LITTLE_ADDRESS_SPACE})
+    app = tmp_path / "app"
+    build_executable(runtime, App("x", "x:main", modules=modules, files=(*files, *natives)), app)
+    root = str(tmp_path / "cache")
+
+    first, limited = _run(app, root), _run(app, root, "limited")
+
+    assert (first.stdout, first.stderr) == ("written 6\n", "")
+    assert (limited.stdout, limited.stderr) == ("written 0\n", "")
+
+
+_FORKS_WHILE_SYNCS_DECODE = """\
+import os, shutil, sys, threading, time, warnings
+import _fsbpyr
+
+def main():
+    warnings.simplefilter("ignore", DeprecationWarning)  # fork() with a thread running: the case
+    root, files, count = sys.argv[1], _fsbpyr.files_below("x.data"), _fsbpyr.info()["files"]
+    blobs = [_fsbpyr.find_file(path)[4] for path in ("x.data/big.bin", "x.data/r00.txt")]
+    stop = threading.Event()
+
+    def syncing():
+        while not stop.is_set():  # the tree removed each time: every file decoded and written
+            shutil.rmtree(os.path.join(root, "runtime"), ignore_errors=True)
+            _fsbpyr.sync(root, "runtime/r", files, bytearray(count), True)
+
+    thread = threading.Thread(target=syncing)
+    thread.start()
+    hung = forked = 0
+    while forked < 40 and not hung:
+        forked += 1
+        time.sleep(0.005)
+        pid = os.fork()
+        if pid == 0:  # the process's own decoder: zstd, and a block
+            for blob in blobs:
+                _fsbpyr.read(blob)
+            os._exit(0)
+        deadline = time.monotonic() + 3
+        while os.waitpid(pid, os.WNOHANG) == (0, 0):
+            if time.monotonic() > deadline:
+                os.kill(pid, 9)
+                os.waitpid(pid, 0)
+                hung += 1
+                break
+            time.sleep(0.01)
+    stop.set()
+    thread.join()
+    print(f"hung {hung} of {forked}")
+"""
+
+
+def test_a_fork_while_a_sync_decodes_leaves_the_child_able_to_read(
+    runtime: Runtime, tmp_path: Path
+) -> None:
+    """D35: a sync decodes with a decoder of its own, without the GIL; nothing it holds may stay
+    held in a child forked meanwhile (a lock shared with read() would be)."""
+    letters = bytes(b"abcdefgh"[i % 8] for i in range(256))  # 3 bits a byte: zstd decodes slowly
+    big = random.Random(0).randbytes(8 << 20).translate(letters)  # noqa: S311  # test data
+    data = {"x.data/big.bin": big} | {f"x.data/r{i:02}.txt": b"%d" % i * 500 for i in range(50)}
+    resources = tuple(File(path, FileKind.RESOURCE, Blob.zstd(content))
+                      for path, content in data.items())  # fmt: skip
+    modules, files = app_content({"x.py": _FORKS_WHILE_SYNCS_DECODE})
+    app = tmp_path / "app"
+    build_executable(runtime, App("x", "x:main", modules=modules, files=(*files, *resources)), app)
+    with Executable.open(app) as exe:
+        record = exe.payload.find_file("x.data/r00.txt")
+        assert record is not None and exe.payload.blob(record.blob).codec is Codec.BLOCK
+
+    result = _run(app, str(tmp_path / "cache"))
+
+    assert result.stdout == "hung 0 of 40\n", result.stderr
 
 
 def _restamp(app: Path) -> None:

@@ -3,19 +3,16 @@
 Layout (manifest §7, D9): ``<cache>/runtime/<generation>/site/<site-relative path>``. The
 ``site`` tree mirrors site-packages, so auditwheel's ``$ORIGIN`` RUNPATHs find the bundled
 libraries unchanged. ``<cache>`` is ``$FSBPYR_CACHE_DIR`` or
-``${XDG_CACHE_HOME:-~/.cache}/<app>``. A file is written under a temporary name, checked
-against its digest and renamed into place, so racing processes only ever see complete files
-and need no lock. Extensions are then loaded by CPython's ExtensionFileLoader (plain dlopen).
-Cached files run outside the executable's own integrity check, so each process hashes them once,
-before it first uses them, with the launcher's own digest routine (D31, D32): a modified file is
-reported and restored from the payload.
+``${XDG_CACHE_HOME:-~/.cache}/<app>``. Extensions are loaded by CPython's ExtensionFileLoader
+(plain dlopen) once the launcher's ``_fsbpyr.sync`` has put their files in place (D35): it
+writes a missing file under a temporary name and renames it into place, so racing processes
+only ever see complete files and need no lock. Cached files run outside the executable's own
+integrity check, so each process hashes them once, before it first uses them, with the
+launcher's own digest routine (D31, D32): a modified file is reported and restored from the
+payload.
 """
 
-import contextlib
-import mmap
 import os
-import stat
-import sys
 from _frozen_importlib import ModuleSpec
 from _frozen_importlib_external import ExtensionFileLoader
 
@@ -23,34 +20,22 @@ import _fsbpyr
 
 TYPE_CHECKING = False
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
     from types import ModuleType
-    from typing import Literal
 
-NATIVE_EXT, NATIVE_LIB = 3, 4
+NATIVE_EXT = 3
 GENERATION_DIGITS = 32
-_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
-_NEW_FILE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
-FS_REQUIRED = 1  # file flag: extracted together with its FS_REQUIRED package
-_MODE_MASK = 0o500  # owner read (and execute, where the payload says so); never writable
 EXTRACTED: list[str] = []  # site-relative paths this process wrote (FSBPYR_TRACE)
-_CHECK_BATCH = 256  # files mapped and hashed in one parallel pass
-
-
-class NativeCacheError(ImportError):
-    """The native cache cannot be used, or the payload's native data is corrupt."""
+# ImportError: the native cache cannot be used, or the payload's data for it is corrupt.
+NativeCacheError = _fsbpyr.CacheError
 
 
 def _corrupt(what: str) -> NativeCacheError:
     return NativeCacheError(f"corrupt executable payload: {what}")
 
 
-def _unsafe(path: str) -> bool:
-    return any(part in ("", ".", "..") for part in path.split("/"))
-
-
 def cache_directory(app: str, environ: Mapping[str, str]) -> str:
-    if _unsafe(app) or "/" in app:
+    if "/" in app or app in ("", ".", ".."):
         raise _corrupt(f"app name {app!r}")
     if explicit := environ.get("FSBPYR_CACHE_DIR"):
         return os.path.abspath(explicit)
@@ -62,199 +47,22 @@ def cache_directory(app: str, environ: Mapping[str, str]) -> str:
     return os.path.join(base, app)
 
 
-def _checked(fd: int, path: str, *, private: bool) -> int:
-    """``fd`` if the directory is ours; ``private`` ones (below the root) are forced to 0700."""
-    try:
-        info = os.fstat(fd)
-        if info.st_uid != os.geteuid():
-            raise NativeCacheError(f"refusing cache directory {path}: owned by another user")
-        if private and stat.S_IMODE(info.st_mode) & 0o077:
-            os.fchmod(fd, 0o700)
-    except BaseException:
-        os.close(fd)
-        raise
-    return fd
-
-
-def _open_root(path: str) -> int:
-    """The cache root: it must be ours, but its mode is the user's business."""
-    os.makedirs(path, 0o700, exist_ok=True)
-    return _checked(os.open(path, _DIRECTORY), path, private=False)
-
-
-def _open_child(parent: int, name: str, path: str) -> int:
-    """Directory ``name`` below ``parent`` (created 0700); never follows a symlink."""
-    with contextlib.suppress(FileExistsError):
-        os.mkdir(name, 0o700, dir_fd=parent)
-    return _checked(os.open(name, _DIRECTORY | os.O_NOFOLLOW, dir_fd=parent), path, private=True)
-
-
-def _mapped(directory: int, name: str, size: int) -> mmap.mmap | bytes | Literal[False] | None:
-    """The cached file, mapped for hashing (``b""`` when empty); None: nothing is there; False:
-    something else is (not ours, another size, unreadable or not mappable: a file changed after
-    it was extracted). The descriptor is closed at once: a batch holds mappings only."""
-    try:
-        info = os.stat(name, dir_fd=directory, follow_symlinks=False)
-    except FileNotFoundError:
-        return None
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_size != size:
-        return False
-    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK  # a FIFO must not block
-    try:
-        fd = os.open(name, flags, dir_fd=directory)
-    except OSError:
-        return False
-    try:
-        held = os.fstat(fd)  # the file opened, which a rename may have swapped meanwhile
-        if not stat.S_ISREG(held.st_mode) or held.st_size != size:
-            return False
-        return mmap.mmap(fd, size, access=mmap.ACCESS_READ) if size else b""
-    except OSError, ValueError:
-        return False
-    finally:
-        os.close(fd)
-
-
-def _unmap(mapped: mmap.mmap | bytes) -> None:
-    if not isinstance(mapped, bytes):
-        mapped.close()
-
-
-def _publish(directory: int, name: str, data: bytes, mode: int) -> None:
-    """Write under a temporary name, then rename: readers see a whole file or none. Not synced
-    to disk: every process checks a cached file against its digest before it uses it and
-    restores it when it differs, so one a crash left incomplete is repaired (fsync made torch's
-    first run 42.5 s instead of 2.3 s)."""
-    temporary = f".fsbpyr-{os.getpid()}-{os.urandom(6).hex()}"  # fits whatever ``name`` is
-    fd = os.open(temporary, _NEW_FILE, 0o600, dir_fd=directory)
-    try:
-        with open(fd, "wb", closefd=False) as out:
-            out.write(data)
-        os.fchmod(fd, mode & _MODE_MASK)
-        os.rename(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(temporary, dir_fd=directory)
-        raise
-    finally:
-        os.close(fd)
-
-
 class NativeCache:
     def __init__(self, root: str, *chain: str) -> None:
         self.root = root
         self.site = "/".join((root, *chain))
-        self._chain = chain
-        self._checked: set[str] = set()  # site-relative paths this process hashed or wrote
+        self._chain = "/".join(chain)
+        self._checked = bytearray(_fsbpyr.info()["files"])  # per FILES index: checked here
 
-    def _open_site(self) -> int:
-        fd = _open_root(self.root)
-        path = self.root
-        for name in self._chain:
-            path = f"{path}/{name}"
-            try:
-                child = _open_child(fd, name, path)
-            finally:
-                os.close(fd)
-            fd = child
-        return fd
-
-    def sync(self, files: tuple[int, ...], *, resources: bool = False) -> list[str]:
+    def sync(self, files: Sequence[int], *, resources: bool = False) -> list[str]:
         """Extract the files (FILES indices) that are missing or whose content does not match
         the payload's, reporting the changed ones; returns the site-relative paths written.
-        Each process hashes a file once (extensions share libraries), many files per parallel
-        pass. With ``resources`` any file may be extracted (importlib.resources asked for it on
-        disk); one without a digest is compared with its bytes in the payload."""
-        work = _Pass(self)
-        try:
-            for index in files:
-                _, kind, flags, mode, blob, _, _, rel = _fsbpyr.file_at(index)
-                size, digest = _fsbpyr.blob_info(blob)
-                extractable = resources or kind in (NATIVE_EXT, NATIVE_LIB) or flags & FS_REQUIRED
-                if not extractable or (digest is None and not resources) or _unsafe(rel):
-                    raise _corrupt(f"extracted file {rel!r}")
-                if rel in self._checked:
-                    continue
-                if digest is None:  # compare the cached file with the payload's bytes
-                    digest = _fsbpyr.tree_digests([_fsbpyr.read(blob)])[0]
-                work.add(rel, blob, size, digest, mode)
-            work.check()
-        finally:
-            work.close()
-        EXTRACTED.extend(work.written)
-        return work.written
-
-
-def _report_changed(path: str) -> None:
-    """On stderr, not as a warning: apps that silence warnings must not hide this. A closed
-    stderr must not stop the repair."""
-    if sys.stderr is not None:
-        with contextlib.suppress(OSError, ValueError):
-            sys.stderr.write(f"fsbpyr: {path} was modified after extraction; restoring it\n")
-
-
-class _Pass:
-    """One sync() of a cache: the chain of open directories, the files written, and the batch
-    of mapped files waiting for their parallel check."""
-
-    def __init__(self, cache: NativeCache) -> None:
-        self.cache = cache
-        self.opened: dict[str, int] = {}  # the chain of directories down to the current one
-        self.written: list[str] = []
-        self.batch: list[tuple[str, int, bytes, int, mmap.mmap | bytes]] = []
-
-    def directory(self, rel: str) -> int:
-        opened = self.opened
-        for other in [o for o in opened if o and o != rel and not rel.startswith(f"{o}/")]:
-            os.close(opened.pop(other))  # left behind: big trees must not exhaust fds
-        if rel not in opened:
-            if rel:
-                parent, _, name = rel.rpartition("/")
-                opened[rel] = _open_child(self.directory(parent), name, f"{self.cache.site}/{rel}")
-            else:
-                opened[rel] = self.cache._open_site()
-        return opened[rel]
-
-    def add(self, rel: str, blob: int, size: int, digest: bytes, mode: int) -> None:
-        parent, _, name = rel.rpartition("/")
-        mapped = _mapped(self.directory(parent), name, size)
-        if mapped is None or mapped is False:
-            self.restore(rel, blob, digest, mode, changed=mapped is False)
-            return
-        self.batch.append((rel, blob, digest, mode, mapped))
-        if len(self.batch) == _CHECK_BATCH:
-            self.check()
-
-    def check(self) -> None:
-        """Hash the batch's mapped files in one parallel pass; restore those that differ."""
-        checked, self.batch = self.batch, []
-        try:
-            digests = _fsbpyr.tree_digests([entry[4] for entry in checked]) if checked else []
-        finally:
-            for entry in checked:
-                _unmap(entry[4])
-        for (rel, blob, digest, mode, _), actual in zip(checked, digests, strict=True):
-            if actual == digest:
-                self.cache._checked.add(rel)
-            else:
-                self.restore(rel, blob, digest, mode, changed=True)
-
-    def restore(self, rel: str, blob: int, digest: bytes, mode: int, changed: bool) -> None:
-        if changed:
-            _report_changed(f"{self.cache.site}/{rel}")
-        data = _fsbpyr.read(blob)
-        if _fsbpyr.tree_digests([data])[0] != digest:
-            raise _corrupt(f"{rel!r} digest")
-        parent, _, name = rel.rpartition("/")
-        _publish(self.directory(parent), name, data, mode)
-        self.written.append(rel)
-        self.cache._checked.add(rel)
-
-    def close(self) -> None:
-        for entry in self.batch:  # an error left them mapped
-            _unmap(entry[4])
-        for fd in self.opened.values():
-            os.close(fd)
+        Each process hashes a file once (extensions share libraries). With ``resources`` any
+        file may be extracted (importlib.resources asked for it on disk); one without a digest
+        is compared with its bytes in the payload."""
+        written: list[str] = _fsbpyr.sync(self.root, self._chain, files, self._checked, resources)
+        EXTRACTED.extend(written)
+        return written
 
 
 _CACHE: list[NativeCache] = []
@@ -327,22 +135,12 @@ class PayloadExtensionLoader(ExtensionFileLoader):
             ) from exc
 
 
-def _files_below(directory: str) -> list[int]:
-    """FILES indices of every payload file below ``directory``."""
-    found = []
-    for name in _fsbpyr.list_dir(directory):
-        path = f"{directory}/{name}"
-        record = _fsbpyr.find_file(path)
-        found.extend(_files_below(path) if record is None else [record[0]])
-    return found
-
-
 def materialize_package(directory: str) -> str:
     """Extract every file of the FS_REQUIRED package at payload ``directory``; returns the
     prefix (with "/") that the package's modules live under."""
     cache = native_cache()
     try:
-        cache.sync(tuple(_files_below(directory)))
+        cache.sync(_fsbpyr.files_below(directory))
     except OSError as exc:
         raise NativeCacheError(
             f"cannot extract {directory} into {cache.root}: {exc}; "
@@ -361,12 +159,12 @@ def materialize(path: str) -> str:
     if path in _MATERIALIZED:
         return _MATERIALIZED[path]
     record = _fsbpyr.find_file(path) if path else None
-    files = [record[0]] if record is not None else _files_below(path) if path else []
+    files = (record[0],) if record is not None else _fsbpyr.files_below(path) if path else ()
     if not files:
         raise FileNotFoundError(2, "No such file in the executable payload", path)
     try:
         cache = resource_cache()
-        cache.sync(tuple(files), resources=True)
+        cache.sync(files, resources=True)
     except NativeCacheError as exc:  # its message says what to do
         raise OSError(f"cannot extract {path}: {exc}") from exc
     except OSError as exc:  # same class (PermissionError, ...), with the cache and the remedy

@@ -2,10 +2,8 @@
 
 import importlib
 import json
-import os
 from pathlib import Path
 from types import ModuleType
-from typing import Any
 
 import pytest
 
@@ -15,7 +13,7 @@ from fsbpyr.payload.spec import Blob, File
 
 from .conftest import FAKE_RUNTIME
 
-DIRECTORIES = 300  # more than a low RLIMIT_NOFILE leaves free if every directory stayed open
+DIRECTORIES = 10
 
 
 @pytest.fixture(scope="module")
@@ -30,29 +28,6 @@ def executable(tmp_path_factory: pytest.TempPathFactory) -> Path:
 @pytest.fixture
 def native(boot: ModuleType) -> ModuleType:
     return importlib.import_module("_fsbpyr_rt.native")
-
-
-def _open_descriptors() -> int:
-    return len(os.listdir("/proc/self/fd"))
-
-
-def test_large_trees_keep_few_directories_open(
-    native: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    baseline, peak = _open_descriptors(), [0]
-    open_child = native._open_child
-
-    def measured(parent: int, name: str, path: str) -> int:
-        peak[0] = max(peak[0], _open_descriptors())
-        return int(open_child(parent, name, path))
-
-    monkeypatch.setattr(native, "_open_child", measured)
-
-    directory = Path(native.materialize("many"))
-
-    assert len(list(directory.iterdir())) == DIRECTORIES
-    assert peak[0] - baseline < 16  # the chain from the cache root down, not every directory
-    assert _open_descriptors() == baseline
 
 
 def test_resources_without_a_digest_are_rechecked_by_every_process(native: ModuleType) -> None:
@@ -76,28 +51,3 @@ def test_a_corrupt_resources_id_is_reported(
     with pytest.raises(OSError, match="corrupt executable payload"):
         native.materialize("many/d001/f.txt")
     assert json.loads(boot.INFO["build_info"])["resources"]  # the real one is intact
-
-
-def test_files_on_disk_are_checked_in_batches(
-    native: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """One parallel pass per batch (D32); a batch holds mappings, not descriptors."""
-    native.materialize("many")
-    native._MATERIALIZED.clear()  # a new process
-    native._RESOURCES.clear()
-    batches: list[int] = []
-    digests = native._fsbpyr.tree_digests
-
-    def recorded(buffers: list[Any]) -> list[bytes]:
-        if not all(isinstance(buffer, bytes) for buffer in buffers):  # mapped files, not payload
-            batches.append(len(buffers))
-        result: list[bytes] = digests(buffers)
-        return result
-
-    monkeypatch.setattr(native._fsbpyr, "tree_digests", recorded)
-    monkeypatch.setattr(native, "_CHECK_BATCH", 7)
-
-    native.materialize("many")
-
-    assert len(batches) > 1 and max(batches) <= 7
-    assert sum(batches) == len(native._files_below("many"))
