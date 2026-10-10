@@ -6,6 +6,7 @@ import sys
 import time
 import uuid
 from types import CodeType
+from typing import Any
 
 import pytest
 
@@ -154,3 +155,29 @@ def test_nesting_limit_covers_compile_output() -> None:
     code = _code(f"x = {nested}\n")
 
     assert marshal.loads(canonicalize(marshal.dumps(code))) == code
+
+
+def _copy(value: Any) -> Any:
+    """An equal object of its own (marshal gives back new objects, frozenset() would not)."""
+    return marshal.loads(marshal.dumps(value))
+
+
+@pytest.mark.parametrize("value", [
+    frozenset({"g2", "h3"}), (1, 2), b"x" * 9, 2.5, 2**80, 10**6, 3j, ("a", frozenset({1})),
+], ids=["frozenset", "tuple", "bytes", "float", "long", "int", "complex", "nested"])  # fmt: skip
+def test_equal_values_are_one_node_however_they_came(value: Any) -> None:
+    """compile() shares an equal constant between functions, or makes two, depending on what
+    the process interned before (a build's workers each have their own history, D39): one
+    object referenced twice and two equal objects give the same canonical stream."""
+    shared = marshal.dumps((value, value))
+    apart = marshal.dumps((value, _copy(value)))
+
+    assert canonicalize(shared) == canonicalize(apart)
+    assert marshal.loads(canonicalize(apart)) == (value, value)
+
+
+def test_code_objects_are_never_merged() -> None:
+    """Two equal functions stay two code objects (they differ by name and line anyway)."""
+    code = _code("def f():\n    pass\n")
+
+    assert marshal.loads(canonicalize(marshal.dumps((code, _copy(code))))) == (code, code)

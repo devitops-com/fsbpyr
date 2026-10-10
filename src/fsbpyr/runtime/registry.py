@@ -26,7 +26,7 @@ from .hold import hold
 from .toolchain import find_toolchain
 
 BOOT_PACKAGES = ("_fsbpyr_boot", "_fsbpyr_rt")  # regenerated for every build, never runtime content
-LAYOUT_VERSION = 5  # bump when the stdlib selection or the runtime directory layout changes
+LAYOUT_VERSION = 6  # bump when the stdlib selection, its canonical bytecode or the layout changes
 _STUB = "stub"
 _STDLIB = "stdlib.fsbp"
 _META = "runtime.json"
@@ -295,10 +295,11 @@ def build_runtime(
     log(f"linking launcher with {toolchain.clang} ({how})")
     with tempfile.TemporaryDirectory(prefix="fsbpyr-stub-") as tmp:
         stub_path = Path(tmp) / _STUB
-        stub.build_stub(dist, toolchain, stub_path, sanitize=sanitize)
+        for line in stub.build_stub(dist, toolchain, stub_path, sanitize=sanitize):
+            log(line)  # every warning shown, not only failures
         stub_bytes = stub_path.read_bytes()
     log("compiling the standard library")
-    modules, files = stdlib.fragment(dist)
+    modules, files = stdlib.fragment(dist, warn=log)
     runtime = Runtime(
         tag=f"{dist.tag}-{dist.triple}",
         runtime_id=directory.name,

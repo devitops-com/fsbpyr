@@ -6,22 +6,27 @@ import os
 from collections.abc import Iterator
 from compression import zstd
 from dataclasses import dataclass, field
+from hashlib import sha256
 from pathlib import Path
 
 from .format import (
     DIGEST_LEAF,
     MAX_BLOB_SIZE,
+    PIECES_OF,
     XZ_PIECE,
     ZERO_LEAF,
+    ZSTD_PIECE,
     Codec,
     FileFlag,
     FileKind,
     ModuleFlag,
     ModuleKind,
     PayloadError,
+    Threads,
     TreeHasher,
     file_digest,
     is_hole,
+    parallel,
     tree_digest,
 )
 
@@ -36,6 +41,7 @@ NO_FILE_FLAGS = FileFlag(0)
 
 
 EXTENT_PIECE = DIGEST_LEAF  # an extent is read this much at a time: a leaf, hashed as it comes
+_LEAVES_AT_ONCE = 32  # leaves read and hashed at once (32 MiB): bounded memory (D38, D39)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,24 +64,28 @@ class Extent:
         changed while the build read it)."""
         fd = self.fd if self.fd >= 0 else os.open(self.path, os.O_RDONLY | os.O_CLOEXEC)
         hashed = TreeHasher()
+        starts = range(0, self.size, EXTENT_PIECE)
         try:
-            for start in range(0, self.size, EXTENT_PIECE):
-                length = min(EXTENT_PIECE, self.size - start)
-                if self.fd < 0 and is_hole(fd, self.offset + start, length):
-                    if length == EXTENT_PIECE:
-                        hashed.leaf(ZERO_LEAF)
-                    else:
-                        hashed.update(bytes(length))
-                    yield bytes(length), True
-                    continue
-                piece = _read(fd, self.offset + start, length, self.path)
-                hashed.update(piece)
-                yield piece, False
+            with Threads(len(starts)) as threads:  # read and hashed on up to 8 threads (D39)
+                for first in range(0, len(starts), _LEAVES_AT_ONCE):
+                    batch = starts[first : first + _LEAVES_AT_ONCE]
+                    for piece, hole, digest in threads.map(lambda at: self._leaf(fd, at), batch):
+                        hashed.leaf(digest)
+                        yield piece, hole
         finally:
             if self.fd < 0:
                 os.close(fd)
         if hashed.digest() != self.identity:
             raise OSError(errno.EIO, f"{self.path} changed while the build read it")
+
+    def _leaf(self, fd: int, start: int) -> tuple[bytes, bool, bytes]:
+        """The leaf at ``start``, whether it is a hole (zeros, not read), and its digest."""
+        length = min(EXTENT_PIECE, self.size - start)
+        if self.fd < 0 and is_hole(fd, self.offset + start, length):
+            zeros = bytes(length)
+            return zeros, True, ZERO_LEAF if length == EXTENT_PIECE else sha256(zeros).digest()
+        piece = _read(fd, self.offset + start, length, self.path)
+        return piece, False, sha256(piece).digest()
 
     def pieces(self) -> Iterator[bytes]:
         return (piece for piece, _ in self.leaves())
@@ -126,7 +136,7 @@ class Blob:
     size: int
     codec: Codec
     sha256: bytes | None = None
-    pieces: tuple[Blob, ...] = ()  # codec PIECES: xz streams of XZ_PIECE content each (D33)
+    pieces: tuple[Blob, ...] = ()  # PIECES, ZSTD_PIECES: their streams or frames (D33, D39)
     known: bytes | None = None  # the content's tree_digest when known, but not listed (D38)
 
     def __post_init__(self) -> None:
@@ -138,21 +148,24 @@ class Blob:
             raise PayloadError("an xz stream holds at most XZ_PIECE bytes: more is in pieces")
         if self.sha256 is not None and len(self.sha256) != 32:
             raise PayloadError("blob digest must be 32 bytes")
-        if (self.codec is Codec.PIECES) != bool(self.pieces):
-            raise PayloadError("pieces belong to a blob of codec PIECES, which needs them")
+        if (self.codec in PIECES_OF) != bool(self.pieces):
+            raise PayloadError("pieces belong to a blob of codec PIECES or ZSTD_PIECES, which "
+                               "needs them")  # fmt: skip
         if self.pieces:
+            codec, each = PIECES_OF[self.codec]
             sizes = [piece.size for piece in self.pieces]
             if (self.stored or len(sizes) < 2 or sum(sizes) != self.size
-                    or any(piece.codec is not Codec.XZ for piece in self.pieces)
-                    or any(size != XZ_PIECE for size in sizes[:-1])
-                    or not 0 < sizes[-1] <= XZ_PIECE):  # fmt: skip
-                raise PayloadError("pieces must be xz streams of XZ_PIECE bytes, the last of 1 to "
-                                   "XZ_PIECE")  # fmt: skip
+                    or any(piece.codec is not codec for piece in self.pieces)
+                    or any(size != each for size in sizes[:-1])
+                    or not 0 < sizes[-1] <= each):  # fmt: skip
+                raise PayloadError(f"pieces must be {codec.name.lower()} blobs of {each} bytes, "
+                                   "the last of 1 to that")  # fmt: skip
 
     def content(self) -> bytes:
-        """The content, whole: in memory, so for blobs whose size allows it."""
-        if self.codec is Codec.PIECES:
-            return b"".join(piece.content() for piece in self.pieces)
+        """The content, whole: in memory, so for blobs whose size allows it; pieces decoded on
+        up to format.THREADS threads."""
+        if self.pieces:
+            return b"".join(parallel(Blob.content, self.pieces))
         stored = stored_bytes(self.stored)
         if self.codec is Codec.XZ:
             return lzma.decompress(stored, format=lzma.FORMAT_XZ)
@@ -184,12 +197,21 @@ class Blob:
     def zstd(
         cls, data: bytes, *, level: int = ZSTD_LEVEL, digest: bool = False, allow_raw: bool = True
     ) -> Blob:
-        """One zstd frame with content size and checksum; stored raw if that is not smaller
-        (unless ``allow_raw`` is false)."""
-        compressed = zstd.compress(data, options=zstd_options(level))
-        if allow_raw and len(compressed) >= len(data):
+        """One zstd frame with content size and checksum, or one per ZSTD_PIECE of content,
+        compressed on up to format.THREADS threads (D39); stored raw if that is not smaller (unless
+        ``allow_raw`` is false)."""
+        if len(data) <= ZSTD_PIECE:
+            compressed = zstd.compress(data, options=zstd_options(level))
+            if allow_raw and len(compressed) >= len(data):
+                return cls.raw(data, digest=digest)
+            return cls(compressed, len(data), Codec.ZSTD, _digest(data, digest))
+        parts = [data[start : start + ZSTD_PIECE] for start in range(0, len(data), ZSTD_PIECE)]
+        frames = parallel(lambda part: zstd.compress(part, options=zstd_options(level)), parts)
+        if allow_raw and sum(map(len, frames)) >= len(data):
             return cls.raw(data, digest=digest)
-        return cls(compressed, len(data), Codec.ZSTD, _digest(data, digest))
+        pieces = tuple(cls(frame, len(part), Codec.ZSTD)
+                       for frame, part in zip(frames, parts, strict=True))  # fmt: skip
+        return cls(b"", len(data), Codec.ZSTD_PIECES, _digest(data, digest), pieces)
 
     @classmethod
     def xz(cls, data: bytes, *, digest: bool = False) -> Blob:

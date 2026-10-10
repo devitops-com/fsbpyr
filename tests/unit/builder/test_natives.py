@@ -274,3 +274,17 @@ def test_compiled_package_inits_are_extension_modules() -> None:
     assert is_extension_module(init, b"\0PyInit_cy\0")
     assert not is_extension_module(init, b"\0PyInit___init__\0")
     assert is_extension_module("_top.so", b"\0PyInit__top\0")
+
+
+def test_names_are_found_in_one_pass_as_whole_strings_or_path_ends() -> None:
+    from fsbpyr.natives import _contained_names, _contains_name  # noqa: PLC0415
+
+    data = (b"libfirst.so\0junk/opt/lib/libpath.so.1\0xlibpart.so\0libnoext\0"
+            + b"z" * 100 + b"\0libsuffix.so.2.3\0libtail.so")  # fmt: skip
+    names = [b"libfirst.so", b"libpath.so.1", b"libpart.so", b"libnoext", b"libsuffix.so.2.3",
+             b"libtail.so", b"libabsent.so", b"libsuffix.so"]  # fmt: skip
+
+    found = _contained_names(data, names)
+
+    assert found == {b"libfirst.so", b"libpath.so.1", b"libnoext", b"libsuffix.so.2.3"}
+    assert found == {name for name in names if _contains_name(data, name)}

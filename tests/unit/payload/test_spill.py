@@ -1,6 +1,7 @@
 """A build's compressed bytes go to a spill file, not memory (D38, Phase 8c): files are
-compressed a piece at a time from disk into it, giving the very blobs compressing their bytes in
-memory gives, and blobs made in memory move their bytes there; the writer streams them."""
+compressed a piece at a time from disk into it, their pieces on up to 8 threads (D39), giving
+the very blobs compressing their bytes in memory gives, and blobs made in memory move their
+bytes there; the writer streams them."""
 
 import dataclasses
 import random
@@ -8,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from fsbpyr.payload.format import DIGEST_LEAF, XZ_PIECE, Codec, tree_digest
+from fsbpyr.payload import format as format_module
+from fsbpyr.payload.format import DIGEST_LEAF, XZ_PIECE, ZSTD_PIECE, Codec, tree_digest
 from fsbpyr.payload.spec import Blob, Extent, stored_bytes
 from fsbpyr.payload.spill import Spill
 from fsbpyr.payload.writer import assemble, encode_payload, write_executable
@@ -39,10 +41,10 @@ def test_a_file_compresses_into_a_frame_of_its_bytes(
     (tmp_path / "f").write_bytes(data)
     in_memory = Blob.zstd(data, level=9, digest=digest)
     with Spill(tmp_path) as spill:
-        blob = spill.zstd_file(tmp_path / "f", level=9, digest=digest)
-        again = spill.zstd_file(tmp_path / "f", level=9, digest=digest)
+        blob = spill.compress_files({"f": tmp_path / "f"}, level=9, digest=digest)["f"]
+        again = spill.compress_files({"f": tmp_path / "f"}, level=9, digest=digest)["f"]
 
-        assert (blob.codec, blob.size, blob.sha256) == (in_memory.codec, size, in_memory.sha256)
+        _blobs_alike(blob, in_memory)
         assert blob.content() == data and blob.content_digest() == blob.known == tree_digest(data)
         assert stored_bytes(again.stored) == stored_bytes(blob.stored)  # reproducible
 
@@ -51,7 +53,7 @@ def test_a_file_that_does_not_compress_is_its_own_bytes(tmp_path: Path) -> None:
     data = random.Random(1).randbytes(DIGEST_LEAF + 7)  # noqa: S311  # incompressible test data
     (tmp_path / "f").write_bytes(data)
     with Spill(tmp_path) as spill:
-        blob = spill.zstd_file(tmp_path / "f", digest=True)
+        blob = spill.compress_files({"f": tmp_path / "f"}, digest=True)["f"]
 
         assert isinstance(blob.stored, Extent) and blob.stored.path == tmp_path / "f"
         _blobs_alike(blob, Blob.zstd(data, digest=True))
@@ -64,7 +66,7 @@ def test_a_sparse_file_compresses_as_its_zeros(tmp_path: Path) -> None:
         file.write(b"data in a hole")
     data = (tmp_path / "f").read_bytes()
     with Spill(tmp_path) as spill:
-        blob = spill.zstd_file(tmp_path / "f", digest=True)
+        blob = spill.compress_files({"f": tmp_path / "f"}, digest=True)["f"]
 
         assert blob.codec is Codec.ZSTD and blob.content() == data
         assert blob.sha256 == tree_digest(data)
@@ -79,11 +81,32 @@ def test_files_compress_into_the_xz_blobs_their_bytes_make(tmp_path: Path) -> No
     for name, data in contents.items():
         (tmp_path / name).write_bytes(data)
     with Spill(tmp_path) as spill:
-        blobs = spill.xz_files({name: tmp_path / name for name in contents}, threads=4)
+        blobs = spill.compress_files({name: tmp_path / name for name in contents}, xz=True,
+                                     digest=True)  # fmt: skip
 
         for name, data in contents.items():
             _blobs_alike(blobs[name], Blob.xz(data, digest=True))
         assert [blobs[n].codec for n in contents] == [Codec.XZ, Codec.PIECES, Codec.NONE]
+
+
+LARGE = (COMPRESSIBLE * 8)[: 2 * ZSTD_PIECE + 5]  # three pieces, the last of 5 bytes
+
+
+@pytest.mark.parametrize("threads", [1, 8])
+def test_files_over_a_piece_compress_into_the_pieces_their_bytes_make(
+    threads: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same bytes, whatever the number of threads: pieces are independent frames."""
+    monkeypatch.setattr(format_module, "THREADS", threads)
+    (tmp_path / "large").write_bytes(LARGE)
+    (tmp_path / "small").write_bytes(COMPRESSIBLE)
+    with Spill(tmp_path) as spill:
+        blobs = spill.compress_files({"large": tmp_path / "large", "small": tmp_path / "small"},
+                                     digest=True)  # fmt: skip
+
+        _blobs_alike(blobs["large"], Blob.zstd(LARGE, digest=True))
+        _blobs_alike(blobs["small"], Blob.zstd(COMPRESSIBLE, digest=True))
+        assert blobs["large"].codec is Codec.ZSTD_PIECES and len(blobs["large"].pieces) == 3
 
 
 def test_blobs_kept_in_the_spill_write_the_same_executable(tmp_path: Path) -> None:

@@ -128,7 +128,13 @@ def _copy_launcher(target: Path) -> list[Path]:
     return [target / name for name in LAUNCHER_SOURCES]
 
 
-def build_stub(dist: PbsDist, toolchain: Toolchain, out: Path, *, sanitize: bool = False) -> None:
+def build_stub(
+    dist: PbsDist, toolchain: Toolchain, out: Path, *, sanitize: bool = False
+) -> tuple[str, ...]:
+    """Link the launcher into ``out``; what the compiler and linker printed (their warnings), a
+    line each. A stack frame over the limit fails it: LTO inlines across sources, and CPython's
+    code into ours, and sizes the frames again at the link, where only a warning says so (D38;
+    cache_sync took 8888 bytes, unnoticed, until 0.15.0)."""
     inputs = link_inputs(
         dist, set(ar.members(dist.root / dist.info["build_info"]["core"]["static_lib"]))
     )
@@ -138,3 +144,9 @@ def build_stub(dist: PbsDist, toolchain: Toolchain, out: Path, *, sanitize: bool
         result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise StubBuildError(f"launcher link failed:\n{result.stderr[-_ERROR_TAIL:]}")
+    printed = tuple(line for line in result.stderr.splitlines() if line.strip())
+    if over := [line for line in printed if "stack frame size" in line]:
+        raise StubBuildError(
+            "launcher link: a stack frame over the limit (D38):\n" + "\n".join(over)
+        )
+    return printed

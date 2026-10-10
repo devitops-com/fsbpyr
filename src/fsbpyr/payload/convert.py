@@ -1,7 +1,7 @@
 """Turn a payload back into a spec, keeping every stored blob byte-for-byte (no recompression);
 a blob inside a block comes back as its raw content, which the writer packs again."""
 
-from .format import FORMAT_VERSION, NONE, Codec, PayloadError
+from .format import FORMAT_VERSION, NONE, PIECES_OF, Codec, PayloadError
 from .reader import Payload
 from .spec import Blob, Dist, File, Module, PayloadSpec
 
@@ -13,11 +13,11 @@ def _blob(payload: Payload, index: int) -> Blob | None:
     digest = None if record.digest == NONE else payload.digest(record.digest)
     if record.codec is Codec.BLOCK:
         return Blob(payload.read_blob(index), record.size, Codec.NONE, digest)
-    if record.codec is Codec.PIECES:
+    if record.codec in PIECES_OF:
         first, count = record.offset, record.stored_size
-        pieces = tuple(Blob(payload.stored(i), payload.blob(i).size, Codec.XZ)
+        pieces = tuple(Blob(payload.stored(i), payload.blob(i).size, PIECES_OF[record.codec][0])
                        for i in range(first, first + count))  # fmt: skip
-        return Blob(b"", record.size, Codec.PIECES, digest, pieces)
+        return Blob(b"", record.size, record.codec, digest, pieces)
     return Blob(payload.stored(index), record.size, record.codec, digest)
 
 

@@ -49,8 +49,9 @@ def test_c_module_and_standin_honour_the_same_contract(demo: Path) -> None:
     # a name the file system refuses fails the sync, and nothing is reported as modified (D38)
     too_long = [["raises", "OSError", "ENAMETOOLONG"], ""]
     assert expected["sync"]["name too long"] == too_long
-    # D38: a first chunk of 4096 files is written before the second fails; the done are marked
-    chunks = [["raises", "OSError"], 4100, "chunks/f0000.txt", "chunks/f4099.txt", 4101, 4100]
+    # D38: a first chunk of 4096 files is written before the second fails; the done are marked.
+    # D39: a chunk's files are all checked before any is written: none of the second's is
+    chunks = [["raises", "OSError"], 4096, "chunks/f0000.txt", "chunks/f4095.txt", 4101, 4096]
     assert expected["sync"]["chunks"] == [*chunks, True, too_long]
     deep = "deep/" + "d/" * 40 + "x.txt"  # D38: 40 levels deep with 24 descriptors to spare
     assert expected["sync"]["deep"][:2] == [[["ok", 1, [deep]], ""], [["ok", 0, []], ""]]

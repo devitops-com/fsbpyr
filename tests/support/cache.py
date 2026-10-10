@@ -2,8 +2,9 @@
 
 Used by the ``_fsbpyr`` stand-in, so the boot code's native cache runs in-process. Every step
 follows cache.c: the same validation before anything is touched, the same directories opened in
-the same order, the same checks of cached files, batches and outcomes; tests/support/contract.py
-checks that both behave alike.
+the same order, the same checks of cached files, batches and outcomes, the same files written in
+the same order once every file is checked (cache.c writes the pooled ones on up to 8 threads,
+D39; here one writes them); tests/support/contract.py checks that both behave alike.
 """
 
 import contextlib
@@ -17,7 +18,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from fsbpyr.boot._fsbpyr_rt.gc import MARKER, MARKER_TEXT, OURS, way_problem
-from fsbpyr.payload.format import NATIVE_KINDS, NONE, FileFlag, tree_digest
+from fsbpyr.payload.format import NATIVE_KINDS, NONE, ZSTD_PIECE, Codec, FileFlag, tree_digest
 from fsbpyr.payload.format import PayloadError as _ReaderError
 from fsbpyr.payload.reader import FileRecord, Payload
 
@@ -142,9 +143,14 @@ def _report(text: str) -> None:
             os.write(2, text.encode())
 
 
+_POOLED_CODECS = (Codec.NONE, Codec.ZSTD, Codec.BLOCK)  # cache.c's pooled(), up to ZSTD_PIECE
+
+
 class _Entry:
-    def __init__(self, item: int, record: FileRecord, size: int, digest: bytes) -> None:
+    def __init__(self, item: int, record: FileRecord, size: int, digest: bytes,
+                 codec: Codec) -> None:  # fmt: skip
         self.item, self.record, self.size, self.digest = item, record, size, digest
+        self.pooled = size <= ZSTD_PIECE and codec in _POOLED_CODECS
 
 
 class _Sync:
@@ -159,6 +165,7 @@ class _Sync:
         self.batch: list[tuple[_Entry, bytes | int]] = []  # small files' content, or descriptors
         self.buffered = 0  # bytes of small files read into the batch
         self.held = 0  # descriptors held by the batch
+        self.queue: list[_Entry] = []  # files to write once every file is checked
 
     def run(self) -> None:
         try:
@@ -180,8 +187,9 @@ class _Sync:
                 else:
                     if state == _CHANGED:
                         self.outcome[entry.item] |= CHANGED
-                    self._restore(entry)
+                    self.queue.append(entry)
             self._check()
+            self._write_queued()
         finally:
             _close(self.batch)
             for _, fd in self.levels:
@@ -202,10 +210,10 @@ class _Sync:
             raise self._corrupt("extracted file", record)
         blob = self.payload.blob(record.blob)
         if blob.digest != NONE:
-            return _Entry(item, record, blob.size, self.payload.digest(blob.digest))
+            return _Entry(item, record, blob.size, self.payload.digest(blob.digest), blob.codec)
         if not self.resources:
             raise self._corrupt("extracted file", record)
-        return _Entry(item, record, blob.size, tree_digest(self._content(record)))
+        return _Entry(item, record, blob.size, tree_digest(self._content(record)), blob.codec)
 
     def _content(self, record: FileRecord) -> bytes:
         try:
@@ -462,14 +470,32 @@ class _Sync:
                 self.outcome[entry.item] |= DONE
             else:
                 self.outcome[entry.item] |= CHANGED
-                self._restore(entry)
+                self.queue.append(entry)
+
+    def _write_queued(self) -> None:
+        """cache.c's write_queued(): the queued files in path order, the pooled ones first, once
+        the scratch directory is open and the checks' directories are closed."""
+        if not self.queue:
+            return
+        queue = sorted(self.queue, key=lambda entry: entry.item)
+        self._scratch()
+        for _, fd in self.levels:
+            if fd >= 0:
+                os.close(fd)
+        self.levels = []
+        for entry in [e for e in queue if e.pooled] + [e for e in queue if not e.pooled]:
+            self._restore(entry)
 
     def _restore(self, entry: _Entry) -> None:
-        """cache.c's restore(): the directory, a temporary file, the content written and hashed,
-        then the digest checked before the file is renamed into place."""
+        """cache.c's restore(): the directory, then a new file written unnamed there and linked
+        into place (place_unnamed), or, replacing another or where that cannot be done, a
+        temporary file in the scratch directory renamed into place; the content hashed as it is
+        written and the digest checked before the file is put in place."""
         directory = self._parent(entry)
-        _publish(directory, self._scratch(), entry.record.path.rpartition("/")[2],
-                 entry.record.mode, lambda: self._checked_content(entry))  # fmt: skip
+        name, mode = entry.record.path.rpartition("/")[2], entry.record.mode
+        content = lambda: self._checked_content(entry)  # noqa: E731
+        if self.outcome[entry.item] & CHANGED or not _place_unnamed(directory, name, mode, content):
+            _publish(directory, self._scratch(), name, mode, content)
         self.outcome[entry.item] |= DONE | WRITTEN
 
     def _checked_content(self, entry: _Entry) -> bytes:
@@ -505,6 +531,33 @@ def _close(batch: list[tuple[_Entry, bytes | int]]) -> None:
             os.close(content)
 
 
+def _write(fd: int, data: bytes, mode: int) -> None:
+    view = memoryview(data)
+    while view:  # in pieces, as cache.c writes them (it leaves pieces of zeros as holes)
+        view = view[os.write(fd, view[:WRITE_PIECE]) :]
+    os.fchmod(fd, 0o400 | (mode & 0o100))  # readable by its owner, never writable
+
+
+def _place_unnamed(directory: int, name: str, mode: int, content: Callable[[], bytes]) -> bool:
+    """cache.c's place_unnamed(): written as an unnamed file of the directory (O_TMPFILE), then
+    linked into place; False if that cannot be done here (no O_TMPFILE, no link, a file there)."""
+    try:
+        fd = os.open(".", os.O_TMPFILE | os.O_WRONLY | os.O_CLOEXEC, 0o600, dir_fd=directory)
+    except OSError:
+        return False
+    try:
+        _write(fd, content(), mode)
+        try:  # cache.c links by the descriptor first (AT_EMPTY_PATH), which os.link cannot
+            os.link(f"/proc/self/fd/{fd}", name, dst_dir_fd=directory, follow_symlinks=True)
+        except OSError:
+            return False
+        ours, there = os.fstat(fd), os.stat(name, dir_fd=directory, follow_symlinks=False)
+        # a /proc of another's may have linked a file of theirs: _publish renames over it
+        return (ours.st_dev, ours.st_ino) == (there.st_dev, there.st_ino)
+    finally:
+        os.close(fd)
+
+
 def _publish(directory: int, scratch: int, name: str, mode: int,
              content: Callable[[], bytes]) -> None:  # fmt: skip
     for _ in range(_TEMPORARY_ATTEMPTS):
@@ -519,10 +572,7 @@ def _publish(directory: int, scratch: int, name: str, mode: int,
         raise FileExistsError(17, "no temporary name left", name)
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # a new file: nobody else holds it
     try:
-        view = memoryview(content())
-        while view:  # in pieces, as cache.c writes them (it leaves pieces of zeros as holes)
-            view = view[os.write(fd, view[:WRITE_PIECE]) :]
-        os.fchmod(fd, 0o400 | (mode & 0o100))  # readable by its owner, never writable
+        _write(fd, content(), mode)
         os.rename(temporary, name, src_dir_fd=scratch, dst_dir_fd=directory)
     except BaseException:
         with contextlib.suppress(OSError):

@@ -184,7 +184,7 @@ def any_raw(request: pytest.FixtureRequest) -> bytes:
     ("offset", "fmt", "value", "message"),
     [
         (0, "<8s", b"NOTMAGIC", "magic"),
-        (8, "<I", 6, "version"),
+        (8, "<I", 7, "version"),
         (12, "<I", 191, "header size"),
     ],
 )

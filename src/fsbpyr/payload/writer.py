@@ -4,8 +4,10 @@ import hashlib
 import io
 import os
 import tempfile
-from collections.abc import Iterable, Iterator
+from collections import deque
+from collections.abc import Callable, Iterable, Iterator
 from compression import zstd
+from concurrent.futures import Future, ThreadPoolExecutor
 from enum import IntEnum
 from pathlib import Path
 from typing import BinaryIO
@@ -29,7 +31,9 @@ from .format import (
     NATIVE_KINDS,
     NONE,
     PAGE_SIZE,
+    PIECES_OF,
     TABLE_ALIGN,
+    THREADS,
     TRAILER,
     TRAILER_MAGIC,
     TRAILER_SIZE,
@@ -47,6 +51,7 @@ from .format import (
     encode_text,
     extractable,
     file_digest,
+    pooled_thread,
     tree_digest,
 )
 from .spec import (
@@ -91,7 +96,7 @@ def _identity(stored: Stored) -> bytes:
 
 
 def _blob_key(blob: Blob) -> _BlobKey:
-    if blob.codec is Codec.PIECES:  # its streams are its identity
+    if blob.pieces:  # its streams or frames are its identity
         streams = hashlib.sha256()
         for piece in blob.pieces:
             streams.update(hashlib.sha256(_identity(piece.stored)).digest())
@@ -176,7 +181,8 @@ class _Blobs:
     blocks: one stream of blocks per placement class (startup code, code, resources, sources),
     filled in blob order, so a package's modules share blocks and an import never decompresses
     sources. Block records follow the blob records, and the records of the pieces of large xz
-    libraries (D33) follow them; a library's pieces lie where its data would. Only identities
+    libraries and zstd content (D33, D39) follow them; a blob's pieces lie where its data
+    would. Only identities
     and sizes are held: a block's content is gathered from its members as it is written."""
 
     def __init__(
@@ -256,11 +262,13 @@ class _Blobs:
 
     def write(self, sink: _Sink, data_start: int) -> tuple[list[bytes], int]:
         """Write the blob data area into ``sink``: data in blob order, each block where its
-        first member would be. The BLOBS records, and where the data ends."""
+        first member would be (blocks compressed ahead on up to 8 threads, D39). The BLOBS
+        records, and where the data ends."""
         end = data_start
         rows: list[bytes] = [b""] * self.count
         first_block = len(self.order)
         next_piece = first_block + len(self.blocks)
+        needed = dict.fromkeys(self.members[key][0] for key in self.order if key in self.members)
 
         def place(stored: Stored) -> int:
             nonlocal end
@@ -269,34 +277,64 @@ class _Blobs:
             end = at + stored_size(stored)
             return at
 
-        for key in self.order:
-            _, size, codec = key
-            digest = self.digest_index.get(key, NONE)
-            member = self.members.get(key)
-            if codec is Codec.PIECES:  # the first piece's index and the number of pieces
-                pieces = self.pieces[key]
-                rows[self.index[key]] = BLOB.pack(next_piece, len(pieces), size, codec, 0, 0,
-                                                  digest)  # fmt: skip
-                for piece in pieces:
-                    rows[next_piece] = BLOB.pack(place(piece.stored), stored_size(piece.stored),
-                                                 piece.size, Codec.XZ, 0, 0, NONE)  # fmt: skip
-                    next_piece += 1
-                continue
-            if member is None:
-                stored = self._blob[key].stored
-                rows[self.index[key]] = BLOB.pack(place(stored), stored_size(stored), size, codec,
-                                                  0, 0, digest)  # fmt: skip
-                continue
-            number, position = member
-            if not rows[first_block + number]:
-                block = self._block(number)
-                rows[first_block + number] = BLOB.pack(
-                    place(block.stored), stored_size(block.stored), block.size, Codec.ZSTD, 0, 0,
-                    NONE
-                )  # fmt: skip
-            rows[self.index[key]] = BLOB.pack(first_block + number, position, size, Codec.BLOCK,
-                                              0, 0, digest)  # fmt: skip
+        with _Ahead(self._block, list(needed)) as blocks:
+            for key in self.order:
+                _, size, codec = key
+                digest = self.digest_index.get(key, NONE)
+                member = self.members.get(key)
+                if codec in PIECES_OF:  # the first piece's index and the number of pieces
+                    pieces = self.pieces[key]
+                    rows[self.index[key]] = BLOB.pack(next_piece, len(pieces), size, codec, 0, 0,
+                                                      digest)  # fmt: skip
+                    for piece in pieces:
+                        rows[next_piece] = BLOB.pack(place(piece.stored),
+                                                     stored_size(piece.stored), piece.size,
+                                                     piece.codec, 0, 0, NONE)  # fmt: skip
+                        next_piece += 1
+                    continue
+                if member is None:
+                    stored = self._blob[key].stored
+                    rows[self.index[key]] = BLOB.pack(place(stored), stored_size(stored), size,
+                                                      codec, 0, 0, digest)  # fmt: skip
+                    continue
+                number, position = member
+                if not rows[first_block + number]:
+                    block = blocks.get(number)
+                    rows[first_block + number] = BLOB.pack(
+                        place(block.stored), stored_size(block.stored), block.size, Codec.ZSTD,
+                        0, 0, NONE
+                    )  # fmt: skip
+                rows[self.index[key]] = BLOB.pack(first_block + number, position, size,
+                                                  Codec.BLOCK, 0, 0, digest)  # fmt: skip
         return rows, end
+
+
+class _Ahead:
+    """``make`` of each item, in the order given, on up to THREADS threads, a window of them
+    ahead of the one asked for (D39: blocks of up to 1 MiB each, so the window is bounded)."""
+
+    def __init__(self, make: Callable[[int], Blob], order: list[int]) -> None:
+        self._make, self._order = make, deque(order)
+        self._pool = ThreadPoolExecutor(THREADS, initializer=pooled_thread) if THREADS > 1 else None
+        self._ahead: dict[int, Future[Blob]] = {}
+        self._fill()
+
+    def _fill(self) -> None:
+        while self._pool is not None and self._order and len(self._ahead) < 4 * THREADS:
+            item = self._order.popleft()
+            self._ahead[item] = self._pool.submit(self._make, item)
+
+    def get(self, item: int) -> Blob:
+        future = self._ahead.pop(item, None)
+        self._fill()
+        return self._make(item) if future is None else future.result()
+
+    def __enter__(self) -> _Ahead:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        if self._pool is not None:
+            self._pool.shutdown(cancel_futures=True)
 
 
 def _code_placement(module: Module) -> _Placement:
@@ -389,7 +427,7 @@ def _check_module(module: Module, files: dict[str, File], dists: set[str], *, bl
             raise PayloadError(f"extension {module.name!r} file is not NATIVE_EXT")
     if (
         module.code is not None
-        and module.code.codec is not Codec.ZSTD
+        and module.code.codec not in (Codec.ZSTD, Codec.ZSTD_PIECES)  # every frame checksummed
         and not (  # raw, packed into a checksummed block
             blocks and module.code.codec is Codec.NONE and 0 < module.code.size < BLOCK_MEMBER_MAX
         )

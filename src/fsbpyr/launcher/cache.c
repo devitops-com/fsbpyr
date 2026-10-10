@@ -2,6 +2,7 @@
 #include "cache.h"
 
 #include "integrity.h"
+#include "parallel.h"
 #include "way.h"
 
 #include <dirent.h>
@@ -34,6 +35,20 @@
  * is not written: runs of zeros become holes (D38). */
 #define WRITE_PIECE (UINT64_C(1) << 20)
 #define DECODER_BLOCKS 4u /* blocks a sync's own decoder keeps (D30): files restored in path order */
+/* Files are written once every file of the sync is checked, on up to 8 threads (D39): those of
+ * at most POOLED_FILE bytes, raw, in one zstd frame or in a block, a chunk of neighbours at a
+ * time, CHUNK_FILES or CHUNK_BYTES and the rest of the last one's block, so that a block is
+ * decoded once. Larger files, xz and pieces are written by the calling thread, one at a time:
+ * their pieces are decoded in parallel already, and a thread each would hold up to 8 stream
+ * windows (64 MiB) and xz dictionaries at once (D38). torch's 12,139 files that are no native
+ * library took 302 ms to write on one thread, 140 on 8 (XFS, Core Ultra 9 285): threads that
+ * write in one large directory wait for one another there. */
+#define POOLED_FILE FSB_ZSTD_PIECE
+#define CHUNK_FILES 32u
+#define CHUNK_BYTES (UINT64_C(2) << 20)
+/* The descriptor table is grown to hold this one before the writers start (make_room): room for
+ * each writer's levels and file, beside the process's own. */
+#define ROOM (FSB_PARALLEL_MAX_THREADS * (OPEN_LEVELS + 3) + 64)
 #define DIRECTORY (O_RDONLY | O_DIRECTORY | O_CLOEXEC)
 #define TEMPORARY_ATTEMPTS 100u
 /* Directories kept open from the root down: a deeper one is opened again from the deepest open
@@ -92,9 +107,13 @@ struct state {
     unsigned held;        /* how many */
     int no_room;          /* the errno of the last NO_ROOM */
     uint8_t digests[CHECK_BATCH][FSB_DIGEST_SIZE];
+    /* Files to write, as the checks find them (write_queued): ``queued`` of them. */
+    const struct entry **queue;
+    uint64_t queued;
 };
 
 static atomic_ulong temporaries; /* names of temporary files: unique in this process */
+static atomic_bool unlinkable;    /* an unnamed file could not be linked: none is tried again */
 
 bool fsb_cache_safe(const char *path, size_t length) {
     if (length == 0 || memchr(path, '\0', length) || memchr(path, '\\', length)) return false;
@@ -241,13 +260,16 @@ static int owned(struct state *s, int fd, bool private, const char *below, size_
     return -1;
 }
 
-/* mkdir -p of the root: its parents 0755 as far as the umask leaves it, the root itself 0700. */
+/* mkdir -p of the root: its parents 0755 as far as the umask leaves it, the root itself 0700. The
+ * path is copied to the heap: on the stack, its PATH_MAX bytes took the frame that LTO makes of a
+ * sync and its caller (module.c's cache_sync) over the limit (D38). */
 static bool make_root(struct state *s) {
-    char path[PATH_MAX];
     size_t length = strlen(s->job->root);
-    if (length >= sizeof path) return failed_at(s, FSB_CACHE_SYSTEM, ENAMETOOLONG, NULL, 0);
-    memcpy(path, s->job->root, length + 1);
-    for (size_t i = 1; i < length; i++) {
+    if (length >= PATH_MAX) return failed_at(s, FSB_CACHE_SYSTEM, ENAMETOOLONG, NULL, 0);
+    char *path = strdup(s->job->root);
+    if (path == NULL) return out_of_memory(s);
+    bool ok = true;
+    for (size_t i = 1; ok && i < length; i++) {
         if (path[i] != '/') continue;
         path[i] = '\0';
         int made = mkdir(path, 0755), error = errno; /* by no one else, whatever the umask */
@@ -255,13 +277,14 @@ static bool make_root(struct state *s) {
             s->job->failure = FSB_CACHE_SYSTEM;
             s->job->error = error;
             snprintf(s->job->path, sizeof s->job->path, "%s", path);
-            return false;
+            ok = false;
         }
         path[i] = '/';
     }
-    if (mkdir(path, 0700) != 0 && errno != EEXIST)
-        return failed_at(s, FSB_CACHE_SYSTEM, errno, NULL, 0);
-    return true;
+    if (ok && mkdir(path, 0700) != 0 && errno != EEXIST)
+        ok = failed_at(s, FSB_CACHE_SYSTEM, errno, NULL, 0);
+    free(path);
+    return ok;
 }
 
 /* fsb_way_check's verdict on the root's way (way.h): TRUSTED, PARTIAL, or the failure set. */
@@ -511,15 +534,73 @@ static int load_cached(struct state *s, int directory, const struct entry *e,
     return found;
 }
 
-/* Write the entry's file from the payload under a temporary name in the scratch directory,
- * locked while it is written (a collector removes only what it can lock), a window at a time,
- * hashing what it writes, then rename it into place if it has the payload's digest: readers see
- * a whole file or none. Not synced to disk (D34; fsync made torch's first run 42.5 s instead of
- * 2.3 s). */
-static bool restore(struct state *s, const struct entry *e) {
-    int directory = open_parent(s, e);
-    int scratch = directory < 0 ? -1 : open_scratch(s);
-    if (scratch < 0) return false;
+/* The entry's content written to the file open as ``fd``, a window at a time, hashing what it
+ * writes; then the file made readable by its owner, executable where the payload says so, never
+ * writable. False with the failure set, a digest that is not the payload's included. */
+static bool fill(struct state *s, const struct entry *e, int fd) {
+    uint8_t digest[FSB_DIGEST_SIZE];
+    if (!stream_content(s, e, fd, digest)) return false;
+    if (memcmp(digest, e->digest, sizeof digest) != 0)
+        return corrupt(s, "digest of file", e->index);
+    if (fchmod(fd, S_IRUSR | (e->mode & S_IXUSR)) != 0) return file_failed(s, errno, e);
+    return true;
+}
+
+enum { PLACED, NOT_PLACED, ELSEWHERE }; /* NOT_PLACED: the failure set */
+
+/* Whether ``name`` in ``directory`` is the file open as ``fd``. */
+static bool same_file(int fd, int directory, const char *name) {
+    struct stat ours, there;
+    return fstat(fd, &ours) == 0 && fstatat(directory, name, &there, AT_SYMLINK_NOFOLLOW) == 0 &&
+           ours.st_dev == there.st_dev && ours.st_ino == there.st_ino;
+}
+
+/* The unnamed file open as ``fd`` linked into ``directory`` as ``name``: by its descriptor
+ * (Linux 6.10 lets its opener), else through /proc, where the file linked must then be the one
+ * written: a /proc that is no procfs (a chroot's, another user's) may name a file of its own,
+ * which place_renamed then replaces (unlinked here, it could be a file that a process of ours
+ * renamed there meanwhile; and no process uses a cached file that is not ours). If no link can
+ * be made here (an older kernel without /proc, such a /proc), no other file is written unnamed:
+ * each would be written twice. */
+static bool linked(int fd, int directory, const char *name) {
+    if (linkat(fd, "", directory, name, AT_EMPTY_PATH) == 0) return true;
+    if (errno == EEXIST) return false;
+    char proc[sizeof "/proc/self/fd/" + 11];
+    snprintf(proc, sizeof proc, "/proc/self/fd/%d", fd);
+    if (linkat(AT_FDCWD, proc, directory, name, AT_SYMLINK_FOLLOW) == 0) {
+        if (same_file(fd, directory, name)) return true;
+        atomic_store(&unlinkable, true);
+        return false;
+    }
+    int error = errno; /* only those that say no link can be made here, not a full disk */
+    if (error == EPERM || error == EACCES || error == ENOENT || error == ENOTDIR ||
+        error == ELOOP || error == EOPNOTSUPP || error == EINVAL || error == EXDEV)
+        atomic_store(&unlinkable, true);
+    return false;
+}
+
+/* A new file written unnamed in its own directory (O_TMPFILE) and linked into place once it has
+ * the payload's digest (D39): writers on many threads lock no directory but the file's own,
+ * where a temporary name in the scratch directory, which they all share, made them wait for one
+ * another (torch: 302 ms on one thread, 357 on 8), and a killed process leaves nothing behind.
+ * ELSEWHERE if it cannot be done here (no O_TMPFILE on the file system, no way to link the file,
+ * a file put there meanwhile). */
+static int place_unnamed(struct state *s, const struct entry *e, int directory) {
+    if (atomic_load(&unlinkable)) return ELSEWHERE;
+    int fd = openat(directory, ".", O_TMPFILE | O_WRONLY | O_CLOEXEC, 0600);
+    if (fd < 0) return ELSEWHERE;
+    int placed = !fill(s, e, fd)                          ? NOT_PLACED
+                 : linked(fd, directory, base_name(e)) ? PLACED
+                                                          : ELSEWHERE;
+    close(fd);
+    return placed;
+}
+
+/* The file written under a temporary name in the scratch directory, locked while it is written
+ * (a collector removes only what it can lock), then renamed into place, over what is there. */
+static int place_renamed(struct state *s, const struct entry *e, int directory) {
+    int scratch = open_scratch(s);
+    if (scratch < 0) return NOT_PLACED;
     char temporary[64];
     int fd = -1;
     for (unsigned attempt = 0; fd < 0 && attempt < TEMPORARY_ATTEMPTS; attempt++) {
@@ -529,20 +610,32 @@ static bool restore(struct state *s, const struct entry *e) {
                     0600);
         if (fd < 0 && errno != EEXIST) break;
     }
-    if (fd < 0) return file_failed(s, errno, e);
+    if (fd < 0) {
+        file_failed(s, errno, e);
+        return NOT_PLACED;
+    }
     flock(fd, LOCK_EX | LOCK_NB); /* a new file: nobody else holds it */
-    uint8_t digest[FSB_DIGEST_SIZE];
-    bool done = stream_content(s, e, fd, digest);
-    if (done && memcmp(digest, e->digest, sizeof digest) != 0)
-        done = corrupt(s, "digest of file", e->index);
-    /* readable by its owner, executable where the payload says so, never writable */
-    if (done && fchmod(fd, S_IRUSR | (e->mode & S_IXUSR)) != 0) done = file_failed(s, errno, e);
+    bool done = fill(s, e, fd);
     if (done && renameat(scratch, temporary, directory, base_name(e)) != 0)
         done = file_failed(s, errno, e);
     if (!done) unlinkat(scratch, temporary, 0);
     close(fd);
-    if (done) s->job->outcome[e->item] |= FSB_CACHE_DONE | FSB_CACHE_WRITTEN;
-    return done;
+    return done ? PLACED : NOT_PLACED;
+}
+
+/* Write the entry's file from the payload where it belongs, once it has the payload's digest:
+ * readers see a whole file or none. A new one is linked into place (place_unnamed); one that
+ * replaces another, or that cannot be linked, is renamed from the scratch directory
+ * (place_renamed). Not synced to disk (D34; fsync made torch's first run 42.5 s instead of
+ * 2.3 s). */
+static bool restore(struct state *s, const struct entry *e) {
+    int directory = open_parent(s, e);
+    if (directory < 0) return false;
+    int placed = s->job->outcome[e->item] & FSB_CACHE_CHANGED ? ELSEWHERE
+                                                              : place_unnamed(s, e, directory);
+    if (placed == ELSEWHERE) placed = place_renamed(s, e, directory);
+    if (placed == PLACED) s->job->outcome[e->item] |= FSB_CACHE_DONE | FSB_CACHE_WRITTEN;
+    return placed == PLACED;
 }
 
 static void close_batch(struct state *s, unsigned count) {
@@ -551,7 +644,7 @@ static void close_batch(struct state *s, unsigned count) {
     s->held = 0;
 }
 
-/* Hash the files of the batch in one parallel pass; restore those that differ. */
+/* Hash the files of the batch in one parallel pass; queue those that differ. */
 static bool check_batch(struct state *s) {
     unsigned count = s->batched;
     s->batched = 0;
@@ -568,7 +661,7 @@ static bool check_batch(struct state *s) {
             continue;
         }
         s->job->outcome[e->item] |= FSB_CACHE_CHANGED;
-        if (!restore(s, e)) return false;
+        s->queue[s->queued++] = e;
     }
     return true;
 }
@@ -615,7 +708,185 @@ static bool sync_file(struct state *s, const struct entry *e) {
         return (++s->batched < CHECK_BATCH && s->held < HELD_FILES) || check_batch(s);
     }
     if (found == CHANGED) s->job->outcome[e->item] |= FSB_CACHE_CHANGED;
-    return restore(s, e);
+    s->queue[s->queued++] = e;
+    return true;
+}
+
+static void close_levels(struct state *s) {
+    while (s->depth > 0)
+        if (s->levels[--s->depth].fd >= 0) close(s->levels[s->depth].fd);
+}
+
+/* Whether the pool writes the file (see POOLED_FILE). */
+static bool pooled(const struct fsb_blob *b) {
+    return b->size <= POOLED_FILE && (b->codec == FSB_CODEC_NONE || b->codec == FSB_CODEC_ZSTD ||
+                                      b->codec == FSB_CODEC_BLOCK);
+}
+
+struct writer {                /* one thread's share of the pool */
+    struct state *state;       /* its directories and decoder, once it writes */
+    struct fsb_cache_sync job; /* the sync's, for a failure of its own */
+    uint64_t failed;           /* the item it failed at */
+};
+
+struct pool {
+    struct state *caller;
+    const struct entry **files; /* the pooled ones, in path order */
+    uint64_t *starts;           /* chunk i: files[starts[i], starts[i + 1]) */
+    atomic_uint_fast64_t first; /* the first item a writer failed at; UINT64_MAX */
+    struct writer writers[FSB_PARALLEL_MAX_THREADS];
+};
+
+/* The chunks of files[0, count) (see POOLED_FILE): their starts, then ``count``; how many. */
+static uint64_t chunked(const struct entry *const *files, uint64_t count, uint64_t *starts) {
+    uint64_t chunks = 0, taken = 0, bytes = 0;
+    for (uint64_t i = 0; i < count; i++) {
+        const struct fsb_blob *b = &files[i]->blob, *last = i ? &files[i - 1]->blob : NULL;
+        bool same_block = last != NULL && b->codec == FSB_CODEC_BLOCK &&
+                          last->codec == FSB_CODEC_BLOCK && last->offset == b->offset;
+        if (i == 0 || ((taken >= CHUNK_FILES || bytes >= CHUNK_BYTES) && !same_block)) {
+            starts[chunks++] = i;
+            taken = bytes = 0;
+        }
+        taken++;
+        bytes += b->size;
+    }
+    starts[chunks] = count;
+    return chunks;
+}
+
+/* A writer's state: the caller's root and scratch directory, its own levels and decoder. */
+static struct state *writer_state(const struct state *caller, struct fsb_cache_sync *job) {
+    struct state *s = calloc(1, sizeof *s);
+    if (s == NULL) return NULL;
+    s->payload = caller->payload;
+    s->job = job;
+    s->chain_length = caller->chain_length;
+    s->uid = caller->uid;
+    s->root = caller->root;
+    s->scratch = caller->scratch;
+    return s;
+}
+
+static void free_writer(struct state *s) {
+    if (s == NULL) return;
+    close_levels(s);
+    free(s->levels);
+    free(s->path);
+    free(s->target);
+    fsb_decoder_free(s->decoder);
+    free(s);
+}
+
+/* One chunk, written in path order on the thread fsb_parallel gives it; a file after the first
+ * one a writer failed at is not written. */
+static void write_chunk(void *context, uint64_t chunk, unsigned worker) {
+    struct pool *pool = context;
+    struct writer *w = &pool->writers[worker];
+    for (uint64_t i = pool->starts[chunk]; i < pool->starts[chunk + 1]; i++) {
+        const struct entry *e = pool->files[i];
+        uint_fast64_t first = atomic_load(&pool->first);
+        if (e->item > first) return;
+        if (w->state == NULL && (w->state = writer_state(pool->caller, &w->job)) == NULL)
+            w->job.failure = FSB_CACHE_MEMORY;
+        if (w->state != NULL && restore(w->state, e)) continue;
+        w->failed = e->item;
+        while (e->item < first && !atomic_compare_exchange_weak(&pool->first, &first, e->item)) {}
+        return;
+    }
+}
+
+/* A process's descriptor table grows as descriptors are opened, and each time it grows while
+ * threads share it, the kernel waits for an RCU grace period, and every thread that opens a file
+ * meanwhile waits with it (expand_files: torch's files took 200 ms on 8 threads, 176 with the
+ * table grown first). Grown here, before the writers start, it costs at most that one wait, on
+ * this thread alone, and none in a process of one thread. Best effort: under a lower descriptor
+ * limit the table stays as it is. */
+static void make_room(int fd) {
+    int high = fcntl(fd, F_DUPFD_CLOEXEC, (int)ROOM);
+    if (high >= 0) close(high);
+}
+
+/* The pooled files of the queue written by up to 8 threads; false with the first failure among
+ * them in path order set (a file after it may be written all the same: it is the payload's). */
+static bool write_pooled(struct state *s) {
+    uint64_t count = 0, chunks;
+    for (uint64_t i = 0; i < s->queued; i++) count += pooled(&s->queue[i]->blob);
+    if (count == 0) return true;
+    struct pool *pool = calloc(1, sizeof *pool);
+    const struct entry **files = malloc(count * sizeof *files);
+    uint64_t *starts = malloc((count + 1) * sizeof *starts);
+    bool ok = pool != NULL && files != NULL && starts != NULL;
+    if (ok) {
+        for (uint64_t i = 0, n = 0; i < s->queued; i++)
+            if (pooled(&s->queue[i]->blob)) files[n++] = s->queue[i];
+        chunks = chunked(files, count, starts);
+        pool->caller = s; /* field by field: the pool is too large for the stack */
+        pool->files = files;
+        pool->starts = starts;
+        atomic_init(&pool->first, UINT64_MAX);
+        for (unsigned w = 0; w < FSB_PARALLEL_MAX_THREADS; w++) pool->writers[w].job = *s->job;
+        if (chunks > 1) make_room(s->root);
+        fsb_parallel(chunks, 1, write_chunk, pool);
+        uint64_t first = atomic_load(&pool->first);
+        for (unsigned w = 0; w < FSB_PARALLEL_MAX_THREADS; w++) {
+            const struct fsb_cache_sync *failed = &pool->writers[w].job;
+            if (first != UINT64_MAX && failed->failure != FSB_CACHE_OK &&
+                pool->writers[w].failed == first) {
+                s->job->failure = failed->failure;
+                s->job->reason = failed->reason;
+                s->job->file = failed->file;
+                s->job->error = failed->error;
+                memcpy(s->job->path, failed->path, sizeof s->job->path);
+            }
+            free_writer(pool->writers[w].state);
+        }
+        ok = first == UINT64_MAX;
+    } else {
+        out_of_memory(s);
+    }
+    free(starts);
+    free(files);
+    free(pool);
+    return ok;
+}
+
+/* The queued files that ``pooled_ones`` says (see pooled) and that are not written yet, written
+ * by this thread in path order. */
+static bool write_here(struct state *s, bool pooled_ones) {
+    for (uint64_t i = 0; i < s->queued; i++) {
+        const struct entry *e = s->queue[i];
+        if (pooled(&e->blob) == pooled_ones && !(s->job->outcome[e->item] & FSB_CACHE_DONE) &&
+            !restore(s, e))
+            return false;
+    }
+    return true;
+}
+
+static int by_item(const void *a, const void *b) {
+    const struct entry *x = *(const struct entry *const *)a, *y = *(const struct entry *const *)b;
+    return (x->item > y->item) - (x->item < y->item);
+}
+
+/* Write the queued files in path order (see POOLED_FILE): the pooled ones on up to 8 threads,
+ * which open directories of their own (this thread's are closed first: their descriptors are
+ * the writers'); then the others here. If the pool failed for want of descriptors or memory,
+ * this thread writes what it left. */
+static bool write_queued(struct state *s) {
+    if (s->queued == 0) return true;
+    qsort(s->queue, s->queued, sizeof *s->queue, by_item);
+    if (open_scratch(s) < 0) return false;
+    close_levels(s);
+    if (!write_pooled(s)) {
+        struct fsb_cache_sync *job = s->job;
+        if (job->failure != FSB_CACHE_MEMORY &&
+            (job->failure != FSB_CACHE_SYSTEM ||
+             (job->error != EMFILE && job->error != ENFILE && job->error != ENOMEM)))
+            return false;
+        job->failure = FSB_CACHE_OK;
+        job->error = 0;
+    }
+    return write_here(s, true) && write_here(s, false);
 }
 
 /* The names a cache root may hold (the collector's gc.OURS): the app cache's and the tool's,
@@ -739,12 +1010,15 @@ void fsb_cache_sync(const struct fsb_payload *payload, struct fsb_cache_sync *jo
     job->lock = -1;
     struct state *s = calloc(1, sizeof *s);
     struct entry *entries = malloc((size_t)job->count * sizeof *entries + 1);
-    if (s == NULL || entries == NULL) {
+    const struct entry **queue = malloc((size_t)job->count * sizeof *queue + 1);
+    if (s == NULL || entries == NULL || queue == NULL) {
         job->failure = FSB_CACHE_MEMORY;
         free(s);
         free(entries);
+        free(queue);
         return;
     }
+    s->queue = queue;
     s->payload = payload;
     s->job = job;
     s->chain_length = strlen(job->chain);
@@ -755,10 +1029,10 @@ void fsb_cache_sync(const struct fsb_payload *payload, struct fsb_cache_sync *jo
     ok = ok && job->count > 0 && open_root(s); /* nothing to check: nothing touched */
     if (ok && job->hold) job->lock = take(s);
     for (uint64_t i = 0; ok && i < job->count; i++) ok = sync_file(s, &entries[i]);
-    if (ok) check_batch(s);
+    ok = ok && check_batch(s);
     close_batch(s, s->batched); /* a failure left them open */
-    while (s->depth > 0)
-        if (s->levels[--s->depth].fd >= 0) close(s->levels[s->depth].fd);
+    if (ok) write_queued(s);
+    close_levels(s);
     if (s->root >= 0) close(s->root);
     if (s->scratch >= 0) close(s->scratch);
     free(s->levels);
@@ -766,6 +1040,7 @@ void fsb_cache_sync(const struct fsb_payload *payload, struct fsb_cache_sync *jo
     free(s->target);
     if (s->buffer != NULL) munmap(s->buffer, BATCH_BUFFER);
     fsb_decoder_free(s->decoder);
+    free(queue);
     free(entries);
     free(s);
 }

@@ -4,15 +4,18 @@ import base64
 import hashlib
 import json
 import marshal
+import os
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from fsbpyr.classify import ClassifyError, _digested, classify, compile_module
+from fsbpyr.classify import ClassifyError, _digested, classify
 from fsbpyr.closure import ClosureError, SiteIndex, resolve_entry
+from fsbpyr.compiler import compile_module
 from fsbpyr.payload.format import (
     NATIVE_KINDS,
     Codec,
@@ -458,7 +461,7 @@ def test_record_paths_with_commas_are_parsed_as_csv(site: Path) -> None:
 
 def test_bytecode_ignores_the_build_interpreters_optimization_level(tmp_path: Path) -> None:
     script = (
-        "from fsbpyr.classify import compile_module\n"
+        "from fsbpyr.compiler import compile_module\n"
         "import marshal, sys\n"
         'code = marshal.loads(compile_module(b\'"""doc"""\\nassert False\\n\', \'m.py\'))\n'
         "print(code.co_consts[0], 'assert' if 'AssertionError' in str(code.co_names) or "
@@ -751,25 +754,28 @@ def test_best_compression_stores_native_files_as_xz(site: Path) -> None:
     assert files["big/data.txt"].blob.codec is Codec.ZSTD
 
 
-def test_best_compression_uses_at_most_the_usable_cores(
+def test_compression_uses_at_most_the_usable_cores(
     site: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Up to 8 threads, never more than the usable cores (D33, D39): counted once."""
     from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+    from fsbpyr.payload import format as format_module  # noqa: PLC0415
 
     workers: list[int] = []
 
-    def recorded(max_workers: int) -> ThreadPoolExecutor:
+    def recorded(max_workers: int, initializer: Callable[[], None]) -> ThreadPoolExecutor:
         workers.append(max_workers)
-        return ThreadPoolExecutor(max_workers)
+        return ThreadPoolExecutor(max_workers, initializer=initializer)
 
     monkeypatch.setattr("fsbpyr.classify.ThreadPoolExecutor", recorded)
+    monkeypatch.setattr("fsbpyr.classify.THREADS", 3)
     _native_site(site)
-    dists = [SiteIndex.scan(site).dists["fast"]]
-    for cores in (3, 64):
-        monkeypatch.setattr("os.process_cpu_count", lambda cores=cores: cores)
-        classify(dists, extension_suffixes=SUFFIXES, include_source=True, xz_natives=True)
+    classify([SiteIndex.scan(site).dists["fast"]], extension_suffixes=SUFFIXES,
+             include_source=True, xz_natives=True)  # fmt: skip
 
-    assert workers == [3, 8]
+    assert min(8, os.process_cpu_count() or 1) == format_module.THREADS
+    assert workers and set(workers) == {3}
 
 
 def test_best_compression_stores_large_natives_as_pieces(site: Path) -> None:

@@ -1,4 +1,4 @@
-# fsbpyr executable format — version 5
+# fsbpyr executable format — version 6
 
 The single source of truth for this format is `src/fsbpyr/payload/format.py`.
 `src/fsbpyr/launcher/format.h` mirrors it, and a test checks that the two agree.
@@ -125,10 +125,10 @@ The MODULES, FILES and DISTS tables are sorted strictly ascending by their key's
 
 | Offset | Size | Field |
 |--------|------|-------|
-| 0 | 8 | `offset` of the stored bytes; codec 2: index of the block; codec 4: index of the first piece |
-| 8 | 8 | `stored_size`; codec 2: position of the content inside the block; codec 4: number of pieces |
+| 0 | 8 | `offset` of the stored bytes; codec 2: index of the block; codecs 4 and 5: index of the first piece |
+| 8 | 8 | `stored_size`; codec 2: position of the content inside the block; codecs 4 and 5: number of pieces |
 | 16 | 8 | `size` (uncompressed) |
-| 24 | 1 | `codec`: 0 = none, 1 = zstd (one frame with content size and checksum), 2 = in a block, 3 = xz, 4 = xz in pieces |
+| 24 | 1 | `codec`: 0 = none, 1 = zstd (one frame with content size and checksum), 2 = in a block, 3 = xz, 4 = xz in pieces, 5 = zstd in pieces |
 | 25 | 3 | reserved (0) |
 | 28 | 4 | `digest`: index into DIGESTS (integrity digest of the uncompressed data) or NONE |
 
@@ -156,6 +156,15 @@ The MODULES, FILES and DISTS tables are sorted strictly ascending by their key's
   table references them. Only native files (NATIVE_EXT, NATIVE_LIB) may use codecs 3 and 4. The
   launcher decodes them with the statically linked liblzma in `_fsbpyr.read`, without the GIL,
   the pieces of one library in parallel on the routine that hashes the integrity digest.
+- **zstd in pieces (version 6, D39).** Content larger than `ZSTD_PIECE` (8 MiB), of any file or
+  module, may be a blob of codec 5: like codec 4, with no stored bytes of its own, its content
+  is that of `stored_size` (at least 2) consecutive zstd blobs (codec 1: one frame each, with
+  content size and checksum) from index `offset` on, each `ZSTD_PIECE` bytes but the last, so
+  that `(stored_size - 1) * ZSTD_PIECE < size <= stored_size * ZSTD_PIECE`; their records follow
+  the block records as codec 4's do. Writers compress the pieces on up to 8 threads; the
+  launcher decodes them on up to 8, a window of `FSB_STREAM_WINDOW / ZSTD_PIECE` (8) at a time
+  when it streams. A piece is a frame of its own: the bytes are the same whatever the number
+  of threads.
 - **Blocks (version 2, D30).** A blob of codec 2 has no stored bytes of its own: its content is
   the `size` bytes at `stored_size` in the content of block `offset`, a zstd blob of at most
   `MAX_BLOCK_SIZE` (1 MiB); the writer references blocks only from members. The writer packs
@@ -245,9 +254,11 @@ this short list to build CPython's frozen-module table, so it never scans the MO
 ## Validation rules (readers MUST enforce)
 
 - Trailer and header magic and version must match. `header_size` must be 208. Trailer `flags`
-  must be 0. The launcher accepts only version 5; the Python reader also reads 1 to 4.
+  must be 0. The launcher accepts only version 6; the Python reader also reads 1 to 5.
 - A blob of codec 3 or 4 needs format version 5 and belongs only to native files, never to
-  another file or a module; no file or module names a piece directly. The Python reader and the
+  another file or a module; a blob of codec 5 needs version 6 and may belong to any file or
+  module (its pieces are checksummed frames, so module code may be in them); no file or module
+  names a piece directly. The Python reader and the
   writer enforce this; the launcher relies on the integrity digest, which only the writer's
   output passes.
 - The launcher checks the integrity digest (above) before any other rule.
@@ -265,7 +276,7 @@ this short list to build CPython's frozen-module table, so it never scans the MO
   dotted names whose parts are Python identifiers once `-` is read as `_`: CPython imports file
   stems such as `_sysconfigdata__linux_x86_64-linux-gnu` through `importlib.import_module`.
   Dist names are canonical.
-- The module kind invariants (including checksummed code: a zstd frame, or inside a block), the
+- The module kind invariants (including checksummed code: a zstd frame, zstd frames in pieces, or inside a block), the
   STARTUP rule (the STARTUP section lists exactly the flagged modules) and the closure rules
   hold.
 - Every zstd frame a reader decompresses must have the content-checksum flag set, declare its

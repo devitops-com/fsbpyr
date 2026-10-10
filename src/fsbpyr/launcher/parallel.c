@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include <sched.h>
+#include <stdbool.h>
 #include <stdatomic.h>
 #include <time.h>
 
@@ -17,6 +18,11 @@ struct job {
     void (*work)(void *context, uint64_t item, unsigned worker);
     void *context;
 };
+
+/* Set on a thread while it runs fsb_parallel's work: a call made from that work runs on its
+ * thread alone, so that work nested in work (hashing what a cache writer writes, D39) never
+ * makes more than MAX_THREADS threads. */
+static _Thread_local bool working;
 
 struct worker { /* one thread's view of the job */
     struct job *job;
@@ -45,6 +51,7 @@ static unsigned usable_cores(void) {
 static void *take_items(void *arg) {
     const struct worker *worker = arg;
     struct job *job = worker->job;
+    working = true;
     for (uint64_t item; (item = atomic_fetch_add(&job->next, 1)) < job->count;)
         job->work(job->context, item, worker->number);
     return NULL;
@@ -60,7 +67,7 @@ void fsb_parallel(uint64_t count, uint64_t per_thread,
     struct job job = {.count = count, .work = work, .context = context};
     atomic_init(&job.next, 0);
     uint64_t wanted = per_thread ? (count + per_thread - 1) / per_thread : count;
-    unsigned threads = usable_cores();
+    unsigned threads = working ? 1 : usable_cores();
     if (threads > MAX_THREADS) threads = MAX_THREADS;
     if (threads > wanted) threads = (unsigned)wanted;
     pthread_t helpers[MAX_THREADS - 1];
@@ -70,7 +77,9 @@ void fsb_parallel(uint64_t count, uint64_t per_thread,
     while (started + 1 < threads &&
            pthread_create(&helpers[started], NULL, take_items, &workers[started + 1]) == 0)
         started++; /* fewer helpers if one cannot start: this thread does what is left */
+    bool nested = working;
     take_items(&workers[0]); /* when it returns, every item is taken: what is left is in flight */
+    working = nested;
     unsigned joined = 0;
     unsigned long long deadline = fsb_monotonic_ns() + SPIN_NS;
     for (unsigned spins = 1; joined < started; spins++) {

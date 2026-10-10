@@ -5,12 +5,18 @@
  * libx.so. The root must be ours; every directory below it is created private (0700), never
  * followed if it is a symlink, and must be ours. A cached file is used if it is a regular file
  * of ours with the payload's size and digest; anything else is reported and replaced (a name too
- * long for the file system fails the sync: no file can be there). A file is written under a
- * temporary name and renamed into place, so racing processes only ever see whole files and need
- * no lock. Nothing is synced to disk (D34): a file a crash left incomplete differs from its
- * digest, and the next process that uses it replaces it. Files are written in <the chain's
- * parent>/.scratch, locked while written, and renamed from there into place: a collector
- * removes what a killed process left there (D38).
+ * long for the file system fails the sync: no file can be there). A file is put in place whole,
+ * once it has the payload's digest, so racing processes only ever see whole files and need no
+ * lock: a new one is written unnamed in its directory (O_TMPFILE) and linked into place, and a
+ * killed process leaves nothing behind (D39); one that replaces another, or that cannot be
+ * linked, is written in <the chain's parent>/.scratch, locked while written, and renamed from
+ * there into place: a collector removes what a killed process left there (D38). Nothing is
+ * synced to disk (D34): a file a crash left incomplete differs from its digest, and the next
+ * process that uses it replaces it. Files are written once every file of the job is checked,
+ * on up to 8 threads (D39): small ones by a pool, in path order a chunk at a time; then large
+ * ones, xz and pieces by the calling thread. The failure reported is the first in path order
+ * among the pool's files, else among the others; after it, a file that another thread was
+ * writing may be written all the same (it is the payload's).
  *
  * Collection (D38, _fsbpyr_rt/gc.py): the chain's parent ("runtime/<generation>") is a tree a
  * collector may remove once no process uses it. A sync asked to (``hold``) takes the tree for

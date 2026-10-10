@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from fsbpyr.payload.format import Codec
 from fsbpyr.runtime.registry import Runtime
 
 pytestmark = pytest.mark.slow
@@ -63,7 +64,8 @@ from fsbpyr.runtime import registry
 
 site, out, raw = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3] == "raw"
 if raw:  # files too large to read whole are stored as they are, not compressed
-    Spill.zstd_file = lambda self, path, level=0, digest=False: Blob.raw_file(path, digest=digest)
+    Spill.compress_files = lambda self, paths, **_: {rel: Blob.raw_file(path)
+                                                    for rel, path in paths.items()}
 runtime = registry.find_runtime("3.14")
 index = SiteIndex.scan(site)
 with Spill(out.parent) as spill:
@@ -121,7 +123,7 @@ def test_a_5_gib_file_builds_runs_and_extracts_in_bounded_memory(
 
     assert ran.returncode == 0, ran.stderr
     report = json.loads(ran.stdout)
-    assert build["codec"] == (0 if stored == "raw" else 1)  # NONE, or ZSTD
+    assert build["codec"] == (Codec.NONE if stored == "raw" else Codec.ZSTD_PIECES)  # D39
     assert report["streamed"] == [SIZE, SIZE]
     assert report["extracted"][0] == SIZE and report["extracted"][1] < (64 << 20)  # holes
     assert build["peak"] < LIMIT and report["peak"] < LIMIT, (build["peak"], report["peak"])

@@ -15,7 +15,7 @@
 #error "fsbpyr format readers assume a little-endian host"
 #endif
 
-#define FSB_FORMAT_VERSION 5u
+#define FSB_FORMAT_VERSION 6u
 #define FSB_PAGE_SIZE 4096u
 #define FSB_BLOB_ALIGN 16u
 #define FSB_TABLE_ALIGN 8u
@@ -27,6 +27,7 @@
 #define FSB_MAX_BLOCK_SIZE (UINT64_C(1) << 20) /* a block holds small blobs (D30) */
 #define FSB_XZ_MEMLIMIT (UINT64_C(64) << 20)     /* decoder memory an xz stream may ask for */
 #define FSB_XZ_PIECE (UINT64_C(4) << 20)         /* content of each piece of a large xz library */
+#define FSB_ZSTD_PIECE (UINT64_C(8) << 20)       /* content of each piece of large zstd content */
 
 #define FSB_TRAILER_MAGIC "FSBPYR\0T"
 #define FSB_HEADER_MAGIC "FSBPYR\0H"
@@ -47,13 +48,14 @@ enum fsb_section {
 /* BLOCK: inside a block; offset is the block's index, stored_size the position in it.
  * XZ: one xz stream of at most FSB_XZ_PIECE bytes, for native files only (D33). PIECES: the
  * content of stored_size xz blobs from index offset on, FSB_XZ_PIECE bytes each but the last
- * (D33). */
+ * (D33). ZSTD_PIECES: the same of zstd blobs, FSB_ZSTD_PIECE bytes each (D39). */
 enum fsb_codec {
     FSB_CODEC_NONE = 0,
     FSB_CODEC_ZSTD = 1,
     FSB_CODEC_BLOCK = 2,
     FSB_CODEC_XZ = 3,
     FSB_CODEC_PIECES = 4,
+    FSB_CODEC_ZSTD_PIECES = 5,
 };
 
 enum fsb_module_kind {

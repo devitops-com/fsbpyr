@@ -126,6 +126,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D36 | **Checks read files, never map them; restored files are written in pieces of 1 MiB** (owner decision 2026-10-09; 0.9.1). The executable's check and the cache check hash a file through its descriptor: each of up to 8 threads reads its 1 MiB leaves through a 64 KiB buffer of its own (`fsb_parallel` passes the worker's number), so a file's size never counts in the process's resident memory, as it did while the file was mapped; a leaf that cannot be read whole gets a digest that cannot match, so a file that shrinks while it is hashed fails its check instead of ending the process with SIGBUS. The cache check holds at most 64 files over 64 KiB open per pass; out of descriptors or memory while it holds some (opening a file or its directories), the pass is checked first and the step tried once more (this replaces D35's address-space retry: nothing is mapped; the security review found the directories missing at first). A read error in the executable's own check says it cannot read the file, not that it was modified; a cached file that cannot be read is restored like a changed one. A restored file is written in pieces of at most 1 MiB: written whole, torch's 438 MB libtorch_cpu.so stayed in XFS's page cache as 2 MiB folios, which the dynamic loader maps whole | torch app (zstd 9, later runs, 21 runs of each interleaved; Core Ultra 9 285, Linux 6.12, cache on XFS): peak RSS 577 → 349 MB (venv 314); by phase 226 → 14 MB once the executable is checked, 576 → 241 MB during the import (the cache check), 450 → 348 MB in the training loop, where libtorch_cpu.so holds 60 MB instead of 156 MB, as in the venv; whole run 1067 → 1071 ms, import 467 → 473 ms. The executable's check: the no-op app's 27.6 MB 1.82 → 1.93 ms (201 runs), the torch app's 233 MB 14.8 → 13.9 ms. Whole 1 MiB leaves read into a buffer per thread cost the no-op start more and left glibc 8 MB more heap (code review): 64 KiB pieces instead. The library written in 4 MiB pieces stayed at 156 MB; in 1 MiB, 256 KiB or 64 KiB pieces it took 60 MB. The executable's own pages, 42 MB against `python3.14`'s 11 MB, remain (`docs/performance.md`) | Capping the bytes mapped per pass (the peak stays at the largest file, 438 MB here); dropping a written file from the page cache (`posix_fadvise` leaves dirty pages, and the next run would read it from disk) |
 | D37 | **No more millisecond tuning; comparisons with other tools come last** (owner decision 2026-10-09). Phase 7 ends with what it has: the compression work (D29, D30, D33), the checks and the cache in the launcher (D31, D32, D35, D36), and `docs/performance.md` as the report (every release's measurements, how they were taken, where to look when a start gets slower). Regressions are caught by exact counts, not timings: the e2e tests read `FSBPYR_TRACE` (modules loaded per distribution, files extracted) and the contract the cache sync's outcomes; the one timing test stays the startup budget (1.2× bare CPython, the integrity check apart). Dropped: the benchmark harness, the 10% timing gate, the §8 speed targets, grouped frames for tiny modules, and an opt-in fast exit (it saves the libraries' teardown, about 215 ms for torch, but leaves unflushed files, killed threads and unrun finalizers behind). Comparisons with other tools (PyInstaller, a Rust and a Go CLI) move to Phase 10: there is no point in comparing unfinished work | The results are solid; a few milliseconds here or there are not worth the work, and a timing gate mostly catches noise | The §8 harness, targets and CI gate as planned |
 | D38 | **Phase 8 scope** (owner decisions 2026-10-09). (1) No size limits of ours: files and executables of 1 TB and more build and run if the file system and OS allow them; the only structural limit is the format's 32-bit indices (about 4.29 billion files, modules or blobs: the OS fails first). (2) fsbpyr's own work never needs more than 1 GB of resident memory, whatever the input size, when building and when running: data is streamed in bounded pieces; what an app asks for itself (`read()`, `read_bytes()`) is the app's. (3) Cache GC: at most once a day, or when the cache's file system has less than 10% free (then at most once an hour); generations and resource trees unused for 7 days are removed (under disk pressure every one not in use); never what a running process uses (locks); never anything we did not create (a marker names our cache roots; `FSBPYR_CACHE_DIR` may be a user's own directory); explicit runs: `fsbpyr cache gc` (the tool's cache and every app cache it finds) and `FSBPYR_GC=1 app` (that app's cache, then exit). (4) Every item gets explicit tests in the normal test run; principle: normal cases fast, edge and extreme cases correct, never a crash | User does not want to deal with stale cache objects; a removed object is recreated when needed; 1 TB inputs must work | `rm -rf` of the whole cache; a GC run on every start; 64-bit indices (format v6) |
+| D39 | **Up to 8 cores in every phase** (owner decision 2026-10-10: "all phases must use up to 8 cores"): building, running and checking use min(8, usable cores) wherever the work divides. (1) Format v6: codec 5, zstd in pieces: a blob of more than 8 MiB is stored as zstd frames of 8 MiB of content each (the last fewer), each with its content size and checksum, compressed on up to 8 threads and decoded on up to 8 threads (the launcher's extraction and streams, a window of 8 pieces at a time; the Python reader); codec 4 stays xz in pieces of 4 MiB. (2) A build compiles and canonicalizes modules in a pool of up to 8 processes (the GIL keeps threads from it) and registers the results in the original order, so the output is the same bytes whatever the number of cores; files, natives and blocks are compressed on up to 8 threads (zstd and hashlib release the GIL). The launcher writes the files a cache sync extracts on up to 8 threads: small ones in chunks of neighbours, large ones one at a time, their pieces decoded in parallel; work nested in that work runs on its own thread, so never more than 8. (3) What cannot divide stays one thread: a file under 8 MiB is one frame, decoded by one thread | Before (0.14.0, Core Ultra 9 285): the torch app's build used one core on average (22.2 s of CPU in 23.0 s); under cProfile 70% was compiling 4,959 modules (bytecode canonicalization 24 s, `compile()` 6 s of 44 s) and 9 s zstd; libtorch_cpu.so (418 MiB) compressed in 3.15 s and decoded in 566 ms on one thread; in 8 MiB pieces on 8 threads 0.60 s and 100 ms, 1.4% larger (4 MiB: +2.8%, 127 ms; 16 MiB: +0.6%, 219 ms, 26 pieces on 8 threads) | zstd's own multithreading (one frame: no parallel decoding); threads for compiling (the GIL); pieces of 4 MiB as for xz (twice the loss) |
 
 ---
 
@@ -1156,6 +1157,93 @@ write, a truncated binary.
     (`test_launcher_never_extracts_a_file_whose_path_could_leave_the_cache`,
     `test_symlinks_inside_the_cache_are_refused`, `test_foreign_owner_is_refused`,
     `test_corrupt_executable_fails_cleanly`, `test_executable_rejects_every_truncation`)
+
+**8f — Up to 8 cores in every phase** (D39):
+- **Design** (before the code):
+  - Format v6: `Codec.ZSTD_PIECES = 5`, `ZSTD_PIECE = 8 MiB`: the blob record names its first
+    piece and their number, as codec 4 does; each piece is a zstd blob of `ZSTD_PIECE` bytes of
+    content (the last 1 to `ZSTD_PIECE`), one frame with content size and checksum. Any file
+    (native or data) or module source may be in zstd pieces; xz pieces stay natives only
+  - Building: `Blob.zstd` and `Spill.compress_files` cut content over `ZSTD_PIECE` into pieces;
+    the natives and the large files of a build are compressed together, their pieces on up to 8
+    threads, largest first; a piece is read from its file, hashed and compressed on its thread;
+    the in-memory files and the blocks on up to 8 threads too
+  - Modules: the classifier collects the work (source, path, names) in its order, a pool of up
+    to 8 processes compiles, canonicalizes and compresses (code and source), and the results are
+    registered in that same order: the same warnings, the same winners, the same bytes; small
+    builds (under 256 modules) compile in the process itself, with the same results
+  - Running: the launcher decodes zstd pieces as it decodes xz ones (`decode_pieces`, a window
+    of `FSB_STREAM_WINDOW / ZSTD_PIECE` pieces at a time on up to 8 threads; a piece checked by
+    its frame's size and checksum); the Python reader decodes pieces on up to 8 threads
+  - Extracting: a cache sync checks every file first, then writes the missing and changed ones
+    on up to 8 threads: files of up to 8 MiB, raw, in one frame or in a block, in chunks of
+    neighbours (32 files or 2 MiB, and the rest of the last one's block, decoded once); larger
+    files, xz and pieces by the calling thread, one at a time, since their pieces are decoded in
+    parallel already. Work that `fsb_parallel` runs calls it again on its own thread only
+    (hashing what a writer writes): never more than 8 threads. The failure reported is the first
+    in path order among the pool's files, else among the others; a pool that runs out of
+    descriptors or memory leaves the rest to the calling thread
+  - A new file is written unnamed in its directory (`O_TMPFILE`) and linked into place
+    (`linkat` by descriptor, Linux 6.10+, else through /proc, the file linked then checked to
+    be the one written, since a /proc that is no procfs could name another's; once no link can
+    be made, the process stops trying): with temporary names in the one `.scratch` directory, its lock made 8 writers
+    slower than one (torch: 357 against 302 ms; creating summed 868 ms against 50, renaming 2294
+    against 51), and a killed process now leaves nothing behind. A file that replaces another
+    is still renamed from `.scratch` (a link cannot replace). The descriptor table is grown
+    before the writers start: grown while they run, each step waited for an RCU grace period
+    (`expand_files`), with every writer that opened a file waiting too (200 against 176 ms)
+  - Measured (Core Ultra 9 285, XFS, empty cache): torch's 12,139 small files take 140 ms
+    instead of 302 (120 on the 8 performance cores, 296 on one core); threads that write in one
+    large directory wait for one another there (`filename_create`) and on XFS's buffer locks.
+    120,000 files of 19 kB on average (2.4 GB, as ten torches, 20 files a directory) take
+    0.56 s on the 8 performance cores, 0.65 s on all 24, 3.05 s on one
+  - Memory stays under D38's 1 GB: a window of 8 pieces (64 MiB), 8 compressors, the pool's 8
+    processes (measured, and asserted by test_large for the build)
+
+- **Done (0.15.0):**
+  - format v6 (codec 5, zstd pieces of 8 MiB), written by `Blob.zstd` and
+    `Spill.compress_files` (natives and large files together, largest first, pieces on up to
+    8 threads), read by the launcher (`decode_piece`, a window of 8 pieces on up to 8 threads;
+    modules read without the GIL) and by the Python reader (pieces on up to 8 threads)
+  - modules compiled, canonicalized and compressed on up to 8 worker processes
+    (`compiler.py`: forked when the build runs one thread, else from a fork server), the
+    whole-read files compressed on the same workers, all registered in the classifier's order
+    within bounded windows (32 jobs, 64 MiB); the canonical bytecode merges equal immutable
+    values (`bytecode._merge`), since `compile()`'s constant sharing depends on what was
+    interned before: a build on 8 cores is the same bytes as on 1 (it was not, by one
+    frozenset reference); `LAYOUT_VERSION` 6
+  - the stdlib fragment compiles on the workers too; the natives' scan finds names in one
+    pass (`_contained_names`)
+  - the launcher writes extracted files on up to 8 threads (see the design above): unnamed
+    and linked, the descriptor table grown first, nested parallel work kept on its thread
+  - measured (Core Ultra 9 285): the torch app builds in 6.3 to 8.3 s instead of 22.75 (best
+    compression 16.0 instead of 27.2), the stdlib fragment in 0.31 s instead of 1.40, with all
+    build processes at 595 MiB PSS at most (629 at best compression); libtorch_cpu.so decodes
+    in about 100 ms instead of 566; torch's first run extracts its 12,139 small files in
+    140 ms instead of 302, its libraries in 125 ms instead of 390 on one core
+  - `fsbpyr runtime build` shows every warning of the launcher's link and of the stdlib's
+    compile (and each stdlib module kept as a plain file), where it showed only failures; a
+    stack frame over the limit fails it (D38): LTO inlines across sources, and CPython's code
+    into ours, and sizes frames again at the link, where only a warning said so. It did, unseen:
+    module.c's `cache_sync` took 8888 bytes, `fsb_cache_sync` inlined into it with `make_root`'s
+    PATH_MAX buffer, now on the heap; the link prints nothing now
+  - one thread still (known): the runtime's LTO link (51 s, 2.3 GB of RSS: over D38's 1 GB, in
+    `fsbpyr runtime build` only; lld's `--lto-partitions=8` fails on CPython's static
+    `compress` and `lzma_free`, which clash with zlib's and liblzma's once split, and took
+    4.9 GB), the closure search and the classifier's
+    bookkeeping (about 1 s of torch's build, the GIL), the in-order file writes of a build,
+    a frame of 8 MiB or less, a block, the collector's removals
+  - tests: zstd pieces (`test_zstd_pieces.py`: boundaries, validation, the same bytes on any
+    number of threads), the worker pool (`test_compiler.py`: the same results as one process,
+    jobs passed over, a 300-module build alike on 4 workers and on 1), the bytecode merge,
+    the launcher's writers (`test_restore.py`: helpers write, large files and xz by the
+    caller, never more than 8 threads, the first failure in path order, too few descriptors,
+    unnamed files linked, changed ones renamed, no link possible, a /proc that links another
+    file); the contract compares C and mirror on the new order
+  - checks before the release: 1272 tests pass; the fuzzer ran 10 minutes clean twice (after
+    the writers and after `make_root`); 1 TiB builds compressed (now in zstd pieces: the
+    test still expected one frame, and its first run stopped there) and raw, runs, streams,
+    extracts and verifies with each process under 1 GB
 
 - ~~`FSBPYR_VERIFY=1` also checks the payload digest (D11)~~: D31 checks the whole file on
   every start and re-hashes cached files in every process; `FSBPYR_VERIFY` is gone.

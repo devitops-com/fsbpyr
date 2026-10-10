@@ -31,9 +31,11 @@ from .format import (
     NATIVE_KINDS,
     NONE,
     PAGE_SIZE,
+    PIECES_OF,
     READABLE_VERSIONS,
     RECORD_SIZE,
     TABLE_ALIGN,
+    THREADS,
     TRAILER,
     TRAILER_MAGIC,
     TRAILER_SIZE,
@@ -53,6 +55,7 @@ from .format import (
     check_path,
     extractable,
     file_digest,
+    parallel,
     tree_digest,
 )
 
@@ -244,8 +247,8 @@ class Payload:
             kind = _enum(Codec, codec, "codec")
             if kind is Codec.BLOCK:  # offset: the block's index; stored: position inside it
                 self._check_member(i, stored, size)
-            elif kind is Codec.PIECES:  # offset: the first piece's index; stored: their number
-                self._check_parent(i, stored, size)
+            elif kind in PIECES_OF:  # offset: the first piece's index; stored: their number
+                self._check_parent(i, stored, size, kind)
             else:
                 self._check_data(i, offset, stored, size, kind)
             self._index(digest, self._digests, "digest index")
@@ -254,12 +257,13 @@ class Payload:
         self._piece_blobs = _check_pieces(blobs)
         return tuple(blobs)
 
-    def _check_parent(self, i: int, count: int, size: int) -> None:
-        if self.version < 5:
-            raise PayloadError(f"blob {i}: format version {self.version} has no pieces (codec 4)")
+    def _check_parent(self, i: int, count: int, size: int, kind: Codec) -> None:
+        if self.version < (5 if kind is Codec.PIECES else 6):
+            raise PayloadError(f"blob {i}: format version {self.version} has no codec {kind}")
         if size > MAX_BLOB_SIZE:
             raise PayloadError(f"blob {i}: size {size} exceeds the limit")
-        if count < 2 or not (count - 1) * XZ_PIECE < size <= count * XZ_PIECE:
+        each = PIECES_OF[kind][1]
+        if count < 2 or not (count - 1) * each < size <= count * each:
             raise PayloadError(f"blob {i}: {count} pieces cannot hold {size} bytes")
 
     def _check_member(self, i: int, position: int, size: int) -> None:
@@ -346,8 +350,10 @@ class Payload:
     def _check_module(self, m: ModuleRecord) -> None:
         if m.kind in (ModuleKind.MODULE, ModuleKind.PACKAGE):
             valid = m.code != NONE and m.file == NONE
-            # checksummed: a zstd frame of its own, or inside a block (itself a zstd frame)
-            valid = valid and self._blobs[m.code].codec in (Codec.ZSTD, Codec.BLOCK)
+            # checksummed: a zstd frame of its own, inside a block (itself a zstd frame), or
+            # zstd frames in pieces
+            valid = valid and self._blobs[m.code].codec in (Codec.ZSTD, Codec.BLOCK,
+                                                            Codec.ZSTD_PIECES)  # fmt: skip
         elif m.kind is ModuleKind.NAMESPACE:
             valid = m.code == m.source == m.file == NONE
         else:
@@ -409,7 +415,7 @@ class Payload:
     def stored(self, index: int) -> bytes:
         """Stored (possibly compressed) bytes, for copying a blob verbatim into a new payload."""
         record = self.blob(index)
-        if record.codec in (Codec.BLOCK, Codec.PIECES):
+        if record.codec is Codec.BLOCK or record.codec in PIECES_OF:
             raise PayloadError(
                 f"blob {index} has no stored bytes of its own (codec {record.codec})"
             )
@@ -433,9 +439,9 @@ class Payload:
         record = self.blob(index)
         if record.codec is Codec.BLOCK:
             return self._block(record.offset)[record.stored_size : record.stored_size + record.size]
-        if record.codec is Codec.PIECES:
+        if record.codec in PIECES_OF:  # decoded on up to THREADS threads (D39)
             first, count = record.offset, record.stored_size
-            return b"".join(self.read_blob(piece) for piece in range(first, first + count))
+            return b"".join(parallel(self.read_blob, range(first, first + count)))
         stored = self._buf[record.offset : record.offset + record.stored_size]
         if record.codec is Codec.NONE:
             return bytes(stored)
@@ -463,9 +469,12 @@ class Payload:
         """The content of a blob with data of its own (pieces: one after the other), at most
         ``chunk`` bytes at a time."""
         record = self.blob(index)
-        if record.codec is Codec.PIECES:
-            for piece in range(record.offset, record.offset + record.stored_size):
-                yield from self._chunks(piece, chunk)
+        if record.codec in PIECES_OF:  # THREADS pieces at a time, decoded in parallel (D39)
+            pieces = range(record.offset, record.offset + record.stored_size)
+            for first in range(0, len(pieces), THREADS):
+                for content in parallel(self.read_blob, pieces[first : first + THREADS]):
+                    for start in range(0, len(content), chunk):
+                        yield content[start : start + chunk]
             return
         stored = self._buf[record.offset : record.offset + record.stored_size]
         try:
@@ -584,20 +593,19 @@ def _check_blocks(blobs: list[BlobRecord]) -> None:
 
 
 def _check_pieces(blobs: list[BlobRecord]) -> frozenset[int]:
-    """Each blob of pieces names consecutive xz blobs, XZ_PIECE bytes of content each but the
-    last, used by no other blob of pieces; returns their indices."""
+    """Each blob of pieces names consecutive blobs of its pieces' codec (xz, zstd), a piece of
+    content each but the last, used by no other blob of pieces; returns their indices."""
     pieces: set[int] = set()
     for parent in blobs:
-        if parent.codec is not Codec.PIECES:
+        if parent.codec not in PIECES_OF:
             continue
+        codec, each = PIECES_OF[parent.codec]
         first, count = parent.offset, parent.stored_size
         if first + count > len(blobs):
             raise PayloadError(f"blob {parent.index}: its pieces lie outside the blob table")
         for number, piece in enumerate(blobs[first : first + count]):
-            last = parent.size - (count - 1) * XZ_PIECE
-            if piece.codec is not Codec.XZ or piece.size != (
-                last if number == count - 1 else XZ_PIECE
-            ):
+            last = parent.size - (count - 1) * each
+            if piece.codec is not codec or piece.size != (last if number == count - 1 else each):
                 raise PayloadError(f"blob {parent.index}: piece {piece.index} is not one of it")
             if piece.index in pieces:
                 raise PayloadError(f"blob {piece.index} is a piece of two blobs")

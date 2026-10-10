@@ -6,7 +6,7 @@ import io
 import json
 import tarfile
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -14,7 +14,7 @@ import pytest
 
 from fsbpyr.cli import main
 from fsbpyr.payload.format import ModuleFlag, ModuleKind
-from fsbpyr.payload.spec import Blob, Module
+from fsbpyr.payload.spec import Blob, File, Module
 from fsbpyr.runtime import pbs, pins, registry, stdlib, stub, sysroot
 from fsbpyr.runtime.pins import PbsPin, pin_for
 from fsbpyr.runtime.toolchain import Toolchain
@@ -136,13 +136,20 @@ def test_build_runtime_orchestrates_and_caches(
 
     def build_stub(
         dist: pbs.PbsDist, toolchain: Toolchain, out: Path, *, sanitize: bool = False
-    ) -> None:
+    ) -> tuple[str, ...]:
         assert toolchain.sysroot is not None and not sanitize
         linked_against.append(toolchain.sysroot)
         out.write_bytes(b"STUB")
+        return ("ld.lld-22: warning: from the link",)
+
+    def fragment(
+        dist: pbs.PbsDist, *, warn: Callable[[str], None]
+    ) -> tuple[tuple[Module, ...], tuple[File, ...]]:
+        warn("x.py: SyntaxWarning: from the stdlib")
+        return (boot,), ()
 
     monkeypatch.setattr(stub, "build_stub", build_stub)
-    monkeypatch.setattr(stdlib, "fragment", lambda d: ((boot,), ()))
+    monkeypatch.setattr(stdlib, "fragment", fragment)
     messages: list[str] = []
 
     runtime = registry.build_runtime("3.14", cache=tmp_path, log=messages.append)
@@ -156,6 +163,10 @@ def test_build_runtime_orchestrates_and_caches(
     assert (tmp_path / "runtimes" / runtime.runtime_id / ".lock").is_file()  # held (D38)
     assert registry.list_runtimes(tmp_path) == [(runtime.runtime_id, "3.14.8")]
     assert linked_against == [tmp_path / "sysroots" / "debian10-glibc2.28-x86_64"]  # stubbed
+    # every warning of the build is shown, not only its failures
+    assert {"ld.lld-22: warning: from the link", "x.py: SyntaxWarning: from the stdlib"} <= set(
+        messages
+    )
 
     again = registry.build_runtime("3.14", cache=tmp_path, log=messages.append)
     assert again == runtime and calls == ["fetch"]

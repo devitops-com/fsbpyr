@@ -2,13 +2,14 @@
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
 
-from fsbpyr.runtime import ar
+from fsbpyr.runtime import ar, stub
 from fsbpyr.runtime.pbs import PbsDist, link_inputs
-from fsbpyr.runtime.stub import stub_command
+from fsbpyr.runtime.stub import StubBuildError, stub_command
 from fsbpyr.runtime.toolchain import Toolchain, ToolchainError, clang_major, find_toolchain
 
 
@@ -257,3 +258,34 @@ def test_sanitized_stub_command_checks_memory_and_undefined_behaviour(tmp_path: 
               "-fno-omit-frame-pointer", "-g", "-Wvla", "--sysroot=/s/sysroot"}  # fmt: skip
     assert wanted <= set(cmd)
     assert not {"-flto=full", "-s", "-D_FORTIFY_SOURCE=2", "-O2"} & set(cmd)
+
+
+def _link_printing(stderr: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[str, ...]:
+    """build_stub with a linker that succeeds and prints ``stderr``."""
+    dist = _fake_dist(tmp_path)
+    toolchain = Toolchain(clang=Path("/x/clang-22"), lld=Path("/x/ld.lld-22"), major=22)
+    monkeypatch.setattr(ar, "members", lambda path: [])
+    monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: (
+        subprocess.CompletedProcess(command, 0, "", stderr)))  # fmt: skip
+    return stub.build_stub(dist, toolchain, tmp_path / "stub")
+
+
+def test_the_link_gives_its_warnings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    printed = "ld.lld-22: warning: one\n\nclang-22: warning: two\n"
+
+    assert _link_printing(printed, monkeypatch, tmp_path) == (
+        "ld.lld-22: warning: one",
+        "clang-22: warning: two",
+    )
+
+
+def test_a_frame_over_the_limit_fails_the_link(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D38: -Wframe-larger-than sizes each source's frames; LTO inlines across sources (and
+    CPython's code into ours) and sizes them again at the link, where only a warning says so."""
+    printed = ("ld.lld-22: warning: <unknown>:0:0: stack frame size (8888) exceeds limit (8192) "
+               "in function 'cache_sync'\n")  # fmt: skip
+
+    with pytest.raises(StubBuildError, match=r"stack frame size \(8888\).*cache_sync"):
+        _link_printing(printed, monkeypatch, tmp_path)

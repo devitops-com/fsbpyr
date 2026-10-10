@@ -8,9 +8,8 @@ import hashlib
 import os
 import tempfile
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from compression import zstd
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import TracebackType
 from typing import Self
@@ -19,15 +18,17 @@ from .format import (
     DIGEST_LEAF,
     XZ_PIECE,
     ZERO_LEAF,
+    ZSTD_PIECE,
     Codec,
     TreeHasher,
     file_digest,
     is_hole,
+    parallel,
     tree_digest,
 )
 from .spec import EXTENT_PIECE, ZSTD_LEVEL, Blob, Extent, xz_stream, zstd_options
 
-_XZ_BATCH = 256  # pieces submitted at once: the futures held do not grow with the input
+_BATCH = 64  # pieces compressed at once (at most 512 MiB of zstd content): bounded memory
 
 
 class Spill:
@@ -63,75 +64,59 @@ class Spill:
         return dataclasses.replace(blob, stored=self.add(blob.stored),
                                    known=_digest_of(content, blob.known))  # fmt: skip
 
-    def zstd_file(self, path: Path, *, level: int = ZSTD_LEVEL, digest: bool = False) -> Blob:
-        """A file's content as one zstd frame with its content size and checksum, as Blob.zstd
-        makes it of the bytes (fed a piece at a time, zstd cuts its blocks elsewhere, but the
-        same file always gives the same bytes), compressed into the spill and hashed as it is
-        read; the file's own bytes (an Extent of it) if that is not smaller. A piece at most
-        is in memory."""
-        with _File(path) as file:
-            compressor = zstd.ZstdCompressor(options=zstd_options(level))
-            compressor.set_pledged_input_size(file.size)
-            root = hashlib.sha256()
-            appender = self.appender()
-            try:
-                for piece, hole in file.pieces():
-                    root.update(ZERO_LEAF if hole and len(piece) == DIGEST_LEAF else
-                                hashlib.sha256(piece).digest())  # fmt: skip
-                    appender.write(compressor.compress(piece))
-                    if appender.size >= file.size:  # not smaller: stored raw
-                        break
-                else:
-                    appender.write(compressor.flush(zstd.ZstdCompressor.FLUSH_FRAME))
-            except BaseException:
-                appender.abandon()
-                raise
-            if appender.size < file.size:
-                tree = root.digest()
-                return Blob(appender.finish(), file.size, Codec.ZSTD, tree if digest else None,
-                            known=tree)  # fmt: skip
-            appender.abandon()
-            return file.raw(digest=digest)
-
-    def xz_files(self, paths: Mapping[str, Path], *, threads: int) -> dict[str, Blob]:
-        """Blob.xz of each file, with its digest: the pieces of every file compressed on
-        ``threads`` threads, largest first, each read from its file and put here as it is
-        done; a file whose streams are not smaller is its own bytes (D33, D38)."""
+    def compress_files(
+        self, paths: Mapping[str, Path], *, xz: bool = False, level: int = ZSTD_LEVEL,
+        digest: bool = False,
+    ) -> dict[str, Blob]:  # fmt: skip
+        """Each file as Blob.zstd (or, ``xz``, Blob.xz) makes it of its bytes: one frame or
+        stream, or pieces of ZSTD_PIECE (XZ_PIECE) content (D33, D39), compressed into the
+        spill. The pieces of every file are compressed together on up to THREADS threads,
+        largest first, each read from its file (whole leaves of holes not read), hashed and
+        compressed on its thread and put here as it is done; a file whose compressed bytes are
+        not smaller is its own bytes, an Extent of it. A batch of pieces at most is in memory."""
+        each = XZ_PIECE if xz else ZSTD_PIECE
         sizes = {rel: os.stat(path).st_size for rel, path in paths.items()}
 
-        def length(job: tuple[str, int]) -> int:
-            return min(XZ_PIECE, sizes[job[0]] - job[1] * XZ_PIECE)
+        def count(rel: str) -> int:
+            return max(1, -(-sizes[rel] // each))
 
-        every = [(rel, n) for rel, size in sizes.items() for n in range(-(-size // XZ_PIECE))]
-        jobs = sorted(every, key=lambda job: (-length(job), job))
-        done: dict[tuple[str, int], tuple[Extent, int, bytes]] = {}
+        def length(job: tuple[str, int]) -> int:
+            return min(each, sizes[job[0]] - job[1] * each)
 
         def compress(job: tuple[str, int]) -> tuple[Extent, int, bytes]:
-            rel, number = job
-            with _File(paths[rel]) as file:
-                piece = file.read(number * XZ_PIECE, length(job))
-            leaves = b"".join(hashlib.sha256(piece[start : start + DIGEST_LEAF]).digest()
-                              for start in range(0, len(piece), DIGEST_LEAF))  # fmt: skip
-            return self.add(xz_stream(piece)), len(piece), leaves
+            with _File(paths[job[0]]) as file:
+                piece, leaves = file.piece(job[1] * each, length(job))
+            stored = xz_stream(piece) if xz else zstd.compress(piece, options=zstd_options(level))
+            return self.add(stored), len(piece), leaves
 
-        with ThreadPoolExecutor(threads) as pool:
-            for first in range(0, len(jobs), _XZ_BATCH):
-                batch = jobs[first : first + _XZ_BATCH]
-                done.update(zip(batch, pool.map(compress, batch), strict=True))
-        blobs = {}
-        for rel, size in sizes.items():
-            parts = [done[rel, n] for n in range(-(-size // XZ_PIECE))]
-            root = hashlib.sha256(b"".join(leaves for _, _, leaves in parts))
-            tree = root.digest()
-            if sum(extent.size for extent, _, _ in parts) >= size:
-                blobs[rel] = Blob(Extent(paths[rel], 0, size, tree), size, Codec.NONE, tree,
-                                  known=tree)  # fmt: skip
-            elif len(parts) == 1:
-                blobs[rel] = Blob(parts[0][0], size, Codec.XZ, tree, known=tree)
-            else:
-                pieces = tuple(Blob(extent, length, Codec.XZ) for extent, length, _ in parts)
-                blobs[rel] = Blob(b"", size, Codec.PIECES, tree, pieces, known=tree)
-        return blobs
+        every = [(rel, n) for rel in sizes for n in range(count(rel))]
+        jobs = sorted(every, key=lambda job: (-length(job), job))
+        done: dict[tuple[str, int], tuple[Extent, int, bytes]] = {}
+        for first in range(0, len(jobs), _BATCH):
+            batch = jobs[first : first + _BATCH]
+            done.update(zip(batch, parallel(compress, batch), strict=True))
+        return {
+            rel: self._assembled(paths[rel], [done.pop((rel, n)) for n in range(count(rel))],
+                                 xz=xz, digest=digest)
+            for rel in sizes
+        }  # fmt: skip
+
+    @staticmethod
+    def _assembled(path: Path, parts: list[tuple[Extent, int, bytes]], *, xz: bool,
+                   digest: bool) -> Blob:  # fmt: skip
+        """The blob of a file compressed in ``parts`` (an Extent, its content's length, its
+        leaves' digests): as Blob.zstd and Blob.from_xz make them."""
+        size = sum(length for _, length, _ in parts)
+        tree = hashlib.sha256(b"".join(leaves for _, _, leaves in parts)).digest()
+        listed = tree if digest else None
+        if sum(extent.size for extent, _, _ in parts) >= size:
+            return Blob(Extent(path, 0, size, tree), size, Codec.NONE, listed, known=tree)
+        codec = Codec.XZ if xz else Codec.ZSTD
+        if len(parts) == 1:
+            return Blob(parts[0][0], size, codec, listed, known=tree)
+        pieces = tuple(Blob(extent, length, codec) for extent, length, _ in parts)
+        whole = Codec.PIECES if xz else Codec.ZSTD_PIECES
+        return Blob(b"", size, whole, listed, pieces, known=tree)
 
     def close(self) -> None:
         if self._fd >= 0:
@@ -205,14 +190,19 @@ class _File:
             data += more
         return data
 
-    def pieces(self) -> Iterator[tuple[bytes, bool]]:
-        """Each EXTENT_PIECE of the file, and whether it is a hole."""
-        for start in range(0, self.size, EXTENT_PIECE):
-            length = min(EXTENT_PIECE, self.size - start)
-            if is_hole(self._fd, start, length):
-                yield bytes(length), True
+    def piece(self, offset: int, length: int) -> tuple[bytes, bytes]:
+        """[offset, offset + length) of the file (whole leaves inside holes are zeros, not
+        read) and the digest of each of its DIGEST_LEAF leaves; ``offset`` is a leaf's."""
+        parts, leaves = [], []
+        for start in range(offset, offset + length, EXTENT_PIECE):
+            size = min(EXTENT_PIECE, offset + length - start)
+            if size == DIGEST_LEAF and is_hole(self._fd, start, size):
+                parts.append(bytes(size))
+                leaves.append(ZERO_LEAF)
             else:
-                yield self.read(start, length), False
+                parts.append(self.read(start, size))
+                leaves.append(hashlib.sha256(parts[-1]).digest())
+        return b"".join(parts), b"".join(leaves)
 
     def raw(self, *, digest: bool) -> Blob:
         """The file's own bytes, as Blob.raw_file makes them."""

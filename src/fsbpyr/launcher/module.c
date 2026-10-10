@@ -349,7 +349,8 @@ static PyObject *read_blob(PyObject *self, PyObject *arg) {
     /* the GIL guards the process's decoder (NULL), which only blocks need; xz, pieces, raw
      * blobs read from the file and streamed ones (larger than a window: never a block) use
      * none, so they run without */
-    if (b.codec == FSB_CODEC_XZ || b.codec == FSB_CODEC_PIECES || b.size > FSB_STREAM_WINDOW ||
+    if (b.codec == FSB_CODEC_XZ || b.codec == FSB_CODEC_PIECES ||
+        b.codec == FSB_CODEC_ZSTD_PIECES || b.size > FSB_STREAM_WINDOW ||
         (b.codec == FSB_CODEC_NONE && b.size >= FSB_DIGEST_LEAF)) {
         Py_BEGIN_ALLOW_THREADS
         done = fsb_read_blob(&fsb_self, NULL, &b, dst);

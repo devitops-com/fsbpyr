@@ -7,6 +7,9 @@ not be reproducible. ``canonicalize`` parses a marshal stream into an object gra
 resolve to the same node) and re-emits it with a policy that depends only on the graph:
 
 * strings are merged by value; a merged string is interned if any occurrence was interned;
+* equal immutable values (numbers, bytes, strings, and tuples and frozensets of them) are one
+  node: whether compile() shared an equal constant or made two depends on the strings the
+  process interned before (a build's worker processes each have their own history, D39);
 * FLAG_REF is set iff a node occurs at least twice, or it is an interned string;
 * reference indices are reassigned in pre-order, the order the reader uses;
 * set/frozenset elements are sorted by their canonical standalone encoding.
@@ -216,6 +219,37 @@ def _set_keys(root: _Node) -> dict[int, bytes]:
     return keys
 
 
+_SCALARS = frozenset(b"igyls")  # int, float, complex, long, bytes: merged by their encoding
+_TUPLES = frozenset(b"()")
+
+
+def _merge(root: _Node) -> None:
+    """Equal immutable values become one node, children first: each node's children are
+    replaced by the first node of their value."""
+    keys: dict[int, object] = {}  # id(node) -> its value, for nodes that are values
+    first: dict[object, _Node] = {}
+    for node in _postorder(root):
+        node.kids = [first.get(keys.get(id(kid)), kid) if isinstance(kid, _Node) else kid
+                     for kid in node.kids]  # fmt: skip
+        key = _value(node, keys)
+        if key is not None:
+            keys[id(node)] = key
+            first.setdefault(key, node)
+
+
+def _value(node: _Node, keys: dict[int, object]) -> object:
+    """What identifies the value of ``node`` among values, or None (code objects, sets, and
+    containers of them; None, True and the like, which marshal never references)."""
+    if node.tag in _STRINGS or node.tag in _SCALARS:
+        return node.tag, node.head
+    if node.tag not in _TUPLES and node.tag != ord(">"):
+        return None
+    kids = [keys.get(id(kid)) if isinstance(kid, _Node) else None for kid in node.kids]
+    if any(kid is None for kid in kids):
+        return None
+    return ("tuple", tuple(kids)) if node.tag in _TUPLES else ("frozenset", frozenset(kids))
+
+
 def _count(root: _Node) -> None:
     seen: set[int] = set()
     stack = [root]
@@ -235,6 +269,7 @@ def canonicalize(data: bytes) -> bytes:
         root = reader.node()
         if reader.pos != len(data):
             raise BytecodeError("trailing bytes after marshal object")
+        _merge(root)
         _count(root)
         writer = _Writer(_set_keys(root))
         writer.emit(root)

@@ -160,13 +160,27 @@ static bool get_record(const struct fsb_payload *p, enum fsb_section s, uint32_t
     return true;
 }
 
-/* PIECES: offset is the first piece's index, stored_size their number; each piece is checked
- * as it is decoded. */
+static bool in_pieces(const struct fsb_blob *b) {
+    return b->codec == FSB_CODEC_PIECES || b->codec == FSB_CODEC_ZSTD_PIECES;
+}
+
+/* The content of each piece of a blob in pieces (the last: 1 to that), and their codec. */
+static uint64_t piece_size(const struct fsb_blob *b) {
+    return b->codec == FSB_CODEC_PIECES ? FSB_XZ_PIECE : FSB_ZSTD_PIECE;
+}
+
+static unsigned piece_codec(const struct fsb_blob *b) {
+    return b->codec == FSB_CODEC_PIECES ? FSB_CODEC_XZ : FSB_CODEC_ZSTD;
+}
+
+/* PIECES, ZSTD_PIECES: offset is the first piece's index, stored_size their number; each piece
+ * is checked as it is decoded. */
 static bool pieces_ok(const struct fsb_payload *p, const struct fsb_blob *b) {
     uint64_t count = fsb_count(p, FSB_SECTION_BLOBS); /* no product of record fields: none overflows */
-    return b->size > FSB_XZ_PIECE && b->size <= FSB_MAX_BLOB_SIZE &&
-           b->stored_size == (b->size + FSB_XZ_PIECE - 1) / FSB_XZ_PIECE &&
-           b->offset <= count && b->stored_size <= count - b->offset;
+    uint64_t each = piece_size(b);
+    return b->size > each && b->size <= FSB_MAX_BLOB_SIZE &&
+           b->stored_size == (b->size + each - 1) / each && b->offset <= count &&
+           b->stored_size <= count - b->offset;
 }
 
 bool fsb_get_blob(const struct fsb_payload *p, uint32_t index, struct fsb_blob *b) {
@@ -174,7 +188,7 @@ bool fsb_get_blob(const struct fsb_payload *p, uint32_t index, struct fsb_blob *
     if (b->codec == FSB_CODEC_BLOCK) /* offset: the block's index; stored_size: the position */
         return b->offset < fsb_count(p, FSB_SECTION_BLOBS) && b->offset <= UINT32_MAX &&
                fits(b->stored_size, b->size, FSB_MAX_BLOCK_SIZE);
-    if (b->codec == FSB_CODEC_PIECES) return pieces_ok(p, b);
+    if (in_pieces(b)) return pieces_ok(p, b);
     if (b->offset % FSB_BLOB_ALIGN != 0 || b->offset < p->data_start ||
         !fits(b->offset, b->stored_size, p->size) || b->size > FSB_MAX_BLOB_SIZE)
         return false;
@@ -330,7 +344,7 @@ static const uint8_t *block_content(const struct fsb_payload *p, struct fsb_deco
     return slot->data;
 }
 
-struct pieces { /* pieces first, first + 1, ... of ``parent`` into dst, FSB_XZ_PIECE apart */
+struct pieces { /* pieces first, first + 1, ... of ``parent`` into dst, a piece apart */
     const struct fsb_payload *payload;
     const struct fsb_blob *parent;
     uint64_t first;
@@ -338,22 +352,34 @@ struct pieces { /* pieces first, first + 1, ... of ``parent`` into dst, FSB_XZ_P
     atomic_bool failed;
 };
 
+/* One verified frame (fsb_zstd_frame_ok) of exactly ``size`` bytes, with a context of its own:
+ * pieces are decoded on several threads at once. */
+static bool zstd_decode(void *dst, uint64_t size, const uint8_t *src, uint64_t stored) {
+    if (!fsb_zstd_frame_ok(src, stored, size)) return false;
+    size_t got = ZSTD_decompress(dst, (size_t)size, src, (size_t)stored);
+    if (ZSTD_isError(got) || got != size) return false;
+    fsb_decompressed_bytes += size;
+    return true;
+}
+
 static void decode_piece(void *context, uint64_t item, unsigned worker) {
     (void)worker;
     struct pieces *job = context;
     const struct fsb_blob *parent = job->parent;
-    uint64_t number = job->first + item, start = number * FSB_XZ_PIECE;
-    uint64_t size = number + 1 < parent->stored_size ? FSB_XZ_PIECE : parent->size - start;
+    uint64_t each = piece_size(parent), number = job->first + item, start = number * each;
+    uint64_t size = number + 1 < parent->stored_size ? each : parent->size - start;
     struct fsb_blob piece;
     if (!fsb_get_blob(job->payload, (uint32_t)(parent->offset + number), &piece) ||
-        piece.codec != FSB_CODEC_XZ || piece.size != size) {
+        piece.codec != piece_codec(parent) || piece.size != size) {
         atomic_store(&job->failed, true);
         return;
     }
     count_read(job->payload, piece.stored_size);
-    if (!xz_decode(job->dst + item * FSB_XZ_PIECE, size, job->payload->base + piece.offset,
-                   piece.stored_size))
-        atomic_store(&job->failed, true);
+    const uint8_t *src = job->payload->base + piece.offset;
+    bool done = piece.codec == FSB_CODEC_XZ
+                    ? xz_decode(job->dst + item * each, size, src, piece.stored_size)
+                    : zstd_decode(job->dst + item * each, size, src, piece.stored_size);
+    if (!done) atomic_store(&job->failed, true);
 }
 
 /* Pieces [first, first + count) of ``b`` into dst, in parallel. */
@@ -402,7 +428,8 @@ bool fsb_read_blob(const struct fsb_payload *p, struct fsb_decoder *with, const 
     case FSB_CODEC_XZ:
         count_read(p, b->stored_size);
         return xz_decode(dst, b->size, p->base + b->offset, b->stored_size);
-    case FSB_CODEC_PIECES: /* one stream per piece: decoded in parallel (D33) */
+    case FSB_CODEC_PIECES: /* one stream or frame per piece: decoded in parallel (D33, D39) */
+    case FSB_CODEC_ZSTD_PIECES:
         return decode_pieces(p, b, 0, b->stored_size, dst);
     default:
         return false;
@@ -427,7 +454,10 @@ struct fsb_stream {
 };
 
 /* Pieces decoded for one window: at least one, however small the window. */
-#define WINDOW_PIECES (FSB_STREAM_WINDOW > FSB_XZ_PIECE ? FSB_STREAM_WINDOW / FSB_XZ_PIECE : 1)
+static uint64_t window_pieces(const struct fsb_blob *b) {
+    uint64_t each = piece_size(b);
+    return FSB_STREAM_WINDOW > each ? FSB_STREAM_WINDOW / each : 1;
+}
 
 struct fsb_stream *fsb_stream_open(const struct fsb_payload *p, struct fsb_decoder *decoder,
                                    const struct fsb_blob *b) {
@@ -436,9 +466,9 @@ struct fsb_stream *fsb_stream_open(const struct fsb_payload *p, struct fsb_decod
     s->payload = p;
     s->decoder = decoder;
     s->blob = *b;
-    if (b->codec == FSB_CODEC_PIECES) {
-        uint64_t pieces = b->stored_size < WINDOW_PIECES ? b->stored_size : WINDOW_PIECES;
-        s->capacity = pieces * FSB_XZ_PIECE;
+    if (in_pieces(b)) {
+        uint64_t pieces = b->stored_size < window_pieces(b) ? b->stored_size : window_pieces(b);
+        s->capacity = pieces * piece_size(b);
     } else if (b->codec == FSB_CODEC_ZSTD || read_raw(p, b)) {
         s->capacity = b->size < FSB_STREAM_WINDOW ? b->size : FSB_STREAM_WINDOW;
     } else if (b->codec != FSB_CODEC_NONE) { /* decoded whole: at most a piece (fsb_get_blob) */
@@ -608,12 +638,13 @@ static int next_window(struct fsb_stream *s, const uint8_t **data, uint64_t *len
         *data = s->buffer + s->position;
         want = b->size - s->position;
         break;
-    case FSB_CODEC_PIECES: { /* the window's pieces, in parallel */
-        uint64_t first = s->position / FSB_XZ_PIECE, count = s->capacity / FSB_XZ_PIECE;
+    case FSB_CODEC_PIECES: /* the window's pieces, in parallel */
+    case FSB_CODEC_ZSTD_PIECES: {
+        uint64_t each = piece_size(b), first = s->position / each, count = s->capacity / each;
         if (count > b->stored_size - first) count = b->stored_size - first;
-        uint64_t end = (first + count) * FSB_XZ_PIECE;
+        uint64_t end = (first + count) * each;
         if (!decode_pieces(s->payload, b, first, count, s->buffer)) return FSB_STREAM_CORRUPT;
-        *data = s->buffer + (s->position - first * FSB_XZ_PIECE);
+        *data = s->buffer + (s->position - first * each);
         want = (end < b->size ? end : b->size) - s->position;
         break;
     }

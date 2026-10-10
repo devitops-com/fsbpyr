@@ -1,31 +1,31 @@
 """RECORD entries -> payload modules, files and namespace packages (plan §3.6 steps 6-7)."""
 
 import csv
-import os
 import posixpath
 import re
-import warnings
+from collections import deque
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 
-from . import bytecode
 from .closure import InstalledDist
+from .compiler import Compiled, Compiler, Job, compiled, compressed
 from .elf import ElfError, glibc_requirement, is_elf
 from .natives import NativeError, closures, is_extension_module, opened
 from .payload.format import (
     NATIVE_KINDS,
+    THREADS,
     FileFlag,
     FileKind,
     ModuleFlag,
     ModuleKind,
     is_module_part,
+    pooled_thread,
     tree_digest,
 )
 from .payload.spec import ZSTD_LEVEL, Blob, Dist, File, Module, xz_pieces, xz_stream
 from .payload.spill import Spill
-from .scan import file_relative_reads
 
 # Written by installers, not by the wheel: they embed paths, timestamps or the installer's name,
 # so packaging them would make builds machine-specific and non-reproducible.
@@ -53,24 +53,20 @@ def _digested(blob: Blob) -> Blob:
     return replace(blob, sha256=blob.known or tree_digest(blob.content()))
 
 
-_XZ_THREADS = 8  # owner decision: at most 8, never more than the usable cores
 _IN_MEMORY = 16 << 20  # files up to this size are read whole; larger ones streamed (D38)
+_COMPRESSING = 64 << 20  # bytes of files read whole waiting for a thread, at most (D38, D39)
 
 
 def _native_blobs(
     natives: dict[str, Path], level: int, xz: bool, spill: Spill | None
 ) -> dict[str, Blob]:
     """zstd at ``level``, or xz (D33): the pieces of every file on min(8, cores) threads,
-    largest first (lzma releases the GIL while it compresses). With a spill, compressed from
-    the files a piece at a time into it (D38)."""
-    threads = min(_XZ_THREADS, os.process_cpu_count() or 1)
-    if spill is not None and xz:
-        return spill.xz_files(natives, threads=threads)
+    largest first (zstd and lzma release the GIL while they compress; D39). With a spill,
+    compressed from the files a piece at a time into it (D38)."""
     if spill is not None:
-        return {rel: spill.zstd_file(path, level=level, digest=True)
-                for rel, path in natives.items()}  # fmt: skip
+        return spill.compress_files(natives, xz=xz, level=level, digest=True)
     return _native_blobs_in_memory({rel: path.read_bytes() for rel, path in natives.items()},
-                                   level, xz, threads)  # fmt: skip
+                                   level, xz, THREADS)  # fmt: skip
 
 
 def _native_blobs_in_memory(
@@ -81,7 +77,7 @@ def _native_blobs_in_memory(
     pieces = {rel: xz_pieces(data) for rel, data in natives.items()}
     jobs = sorted(((rel, n) for rel, parts in pieces.items() for n in range(len(parts))),
                   key=lambda job: (-len(pieces[job[0]][job[1]]), job))  # fmt: skip
-    with ThreadPoolExecutor(threads) as pool:
+    with ThreadPoolExecutor(threads, initializer=pooled_thread) as pool:
         streams = dict(zip(jobs, pool.map(lambda job: xz_stream(pieces[job[0]][job[1]]), jobs),
                            strict=True))  # fmt: skip
     return {rel: Blob.from_xz(data, [streams[rel, n] for n in range(len(pieces[rel]))],
@@ -140,14 +136,6 @@ def _record_path(line: str) -> str:
     return next(csv.reader([line]), [""])[0]
 
 
-def compile_module(source: bytes, rel: str) -> bytes:
-    """Canonical bytecode, independent of the build interpreter's -O / PYTHONOPTIMIZE (D15)."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        code = compile(source, rel, "exec", dont_inherit=True, optimize=0)
-    return bytecode.dumps(code)
-
-
 def _packaged(rel: str) -> bool:
     parts = PurePosixPath(rel).parts
     return bool(parts) and not (
@@ -187,6 +175,13 @@ class _Collector:
         self.reads: list[tuple[str, str, int]] = []  # (dist, path, line) reading next to __file__
         self.reached: set[str] = set()  # shared objects some extension's closure loads
         self.fs_directories: tuple[str, ...] = ()  # FS_REQUIRED package directories, with "/"
+        self.large: dict[str, tuple[Path, FileKind, str]] = {}  # rel -> file, kind, dist (D38)
+        self.compiler: Compiler | None = None  # modules compiled ahead on workers (D39)
+        self._compressor: ThreadPoolExecutor | None = None  # files compressed on threads (D39)
+        self._compressing: deque[tuple[str, FileKind, str, int, Future[tuple[Blob, bytes]]]] = (
+            deque()
+        )
+        self._compressing_bytes = 0
 
     def read_pth_files(self, dists: list[InstalledDist]) -> None:
         """Path lines of top-level .pth files become extra module roots; code lines never run."""
@@ -266,37 +261,37 @@ class _Collector:
         if names and large:  # compiling needs it whole (D38)
             self.warnings.append(f"{dist.name}: {rel} kept as data (over {_IN_MEMORY >> 20} MiB: "
                                  "too large to compile)")  # fmt: skip
-        elif names and self._add_module(dist, rel, names, path.read_bytes()):
+        elif names and self._add_module(dist, rel, names, path):
             return
         kind = FileKind.METADATA if rel.startswith(f"{dist.dist_info}/") else FileKind.RESOURCE
-        if self.spill is not None and large:  # streamed (D38)
-            blob = self.spill.zstd_file(path, level=self.level)
-            self.files[rel] = File(rel, kind, blob, dist=dist.name)
+        if self.spill is not None and large:  # streamed (D38), with the others (add_large)
+            self.large[rel] = (path, kind, dist.name)
             self.owners[rel] = dist.name
             return
         self._add_file(dist, rel, kind, path.read_bytes())
 
     def _add_module(
-        self, dist: InstalledDist, rel: str, names: list[tuple[tuple[str, bool], int]], data: bytes
+        self, dist: InstalledDist, rel: str, names: list[tuple[tuple[str, bool], int]], path: Path
     ) -> bool:
-        try:
-            code = compile_module(data, rel)
-        except SyntaxError as exc:
-            self.warnings.append(f"{dist.name}: {rel} kept as data ({exc.msg}, line {exc.lineno})")
+        tests = _TEST_DIRECTORIES.intersection(rel.split("/")[:-1])  # tests are never imported
+        hints = self.hints and not tests
+        result = self._compiled(dist, rel, path, hints)
+        if result.code is None:
+            message, line = result.error or ("does not compile", None)
+            self.warnings.append(f"{dist.name}: {rel} kept as data ({message}, line {line})")
             if names[0][0][1]:  # CPython cannot import this package either: no namespace stand-in
                 self.broken.add(rel.rpartition("/")[0])
             return False
-        tests = _TEST_DIRECTORIES.intersection(rel.split("/")[:-1])  # tests are never imported
-        if self.hints and not tests:
-            self.reads += [(dist.name, rel, line) for line in file_relative_reads(data, rel)]
+        if hints:
+            self.reads += [(dist.name, rel, line) for line in result.reads]
         source = None
-        if self.include_source:
-            source = self._kept(Blob.zstd(data, level=self.level), data)
+        if result.source is not None:
+            source = self._kept(result.source, result.source_digest)
+        code_blob = self._kept(result.code, result.code_digest)
         added = False
         for (name, is_package), entry in names:
             if self._prevails(name, (entry, not is_package, len(self.suffixes)), dist.name):
                 kind = ModuleKind.PACKAGE if is_package else ModuleKind.MODULE
-                code_blob = self._kept(Blob.code(code, level=self.level), code)
                 self.modules[name] = Module(name, rel, kind, code=code_blob, source=source,
                                             dist=dist.name)  # fmt: skip
                 added = True
@@ -306,6 +301,30 @@ class _Collector:
             self.files[rel] = File(rel, FileKind.SOURCE, source, dist=dist.name)
         self.owners[rel] = dist.name
         return True
+
+    def _compiled(self, dist: InstalledDist, rel: str, path: Path, hints: bool) -> Compiled:
+        if self.compiler is not None:
+            return self.compiler.get((dist.name, rel), path, rel, hints)
+        return compiled(path.read_bytes(), rel, self.level, self.include_source, hints)
+
+    def module_jobs(self, dists: list[InstalledDist]) -> list[Job]:
+        """The modules add_dist will compile, in the order it reaches them (add_dist and
+        _add_path's tests, without their effects): for the Compiler, ahead."""
+        jobs = []
+        for dist in sorted(dists, key=lambda d: d.name):
+            info = dist.dist_info
+            for line in dist.record:
+                rel = _record_path(line)
+                if not rel.endswith(".py") or not _packaged(rel) or rel.startswith(f"{info}/"):
+                    continue
+                path = dist.site / rel
+                if not self._names(rel, module_name) or not path.is_file():
+                    continue
+                if path.stat().st_size > _IN_MEMORY:
+                    continue
+                tests = _TEST_DIRECTORIES.intersection(rel.split("/")[:-1])
+                jobs.append(Job((dist.name, rel), path, rel, self.hints and not tests))
+        return jobs
 
     def _prevails(self, name: str, rank: tuple[int, bool, int], dist: str) -> bool:
         """Record ``name``'s rank if it beats the module already registered under that name."""
@@ -323,9 +342,10 @@ class _Collector:
         self.ranks[name] = rank
         return True
 
-    def _kept(self, blob: Blob, content: bytes) -> Blob:
-        """``blob`` of ``content``: its bytes go to the spill if there is one (D38)."""
-        return blob if self.spill is None else self.spill.keep(blob, content)
+    def _kept(self, blob: Blob, digest: bytes) -> Blob:
+        """``blob`` (its content's ``tree_digest``): its bytes go to the spill if there is one
+        (D38), the digest known."""
+        return blob if self.spill is None else self.spill.keep(replace(blob, known=digest))
 
     def _add_native(self, dist: InstalledDist, rel: str, path: Path) -> None:
         self.natives[rel] = path
@@ -336,6 +356,16 @@ class _Collector:
             if self._prevails(name, (entry, not is_package, rank), dist.name):
                 self.modules[name] = Module(name, rel, ModuleKind.EXTENSION, file=rel,
                                             dist=dist.name)  # fmt: skip
+
+    def add_large(self) -> None:
+        """The files too large to read whole (D38), compressed together from their files, their
+        pieces on up to 8 threads (D39)."""
+        if not self.large or self.spill is None:
+            return
+        paths = {rel: path for rel, (path, _, _) in self.large.items()}
+        blobs = self.spill.compress_files(paths, level=self.level)
+        for rel, (_, kind, dist) in self.large.items():
+            self.files[rel] = File(rel, kind, blobs[rel], dist=dist)
 
     def add_natives(self, allowed: frozenset[str]) -> None:
         """NATIVE_EXT files (backing an extension module) and NATIVE_LIB files, with closures."""
@@ -353,9 +383,31 @@ class _Collector:
                                    dist=self.owners[rel], closure=needs.get(rel, ()))  # fmt: skip
 
     def _add_file(self, dist: InstalledDist, rel: str, kind: FileKind, data: bytes) -> None:
-        blob = self._kept(Blob.zstd(data, level=self.level), data)
-        self.files[rel] = File(rel, kind, blob, dist=dist.name)
+        """A file read whole, compressed on up to 8 threads (D39): in its place once done."""
         self.owners[rel] = dist.name
+        future = None if self.compiler is None else self.compiler.compress(data)
+        if future is None:  # no workers: threads of the build's own
+            if self._compressor is None:
+                self._compressor = ThreadPoolExecutor(THREADS, initializer=pooled_thread)
+            future = self._compressor.submit(compressed, data, self.level)
+        self._compressing.append((rel, kind, dist.name, len(data), future))
+        self._compressing_bytes += len(data)
+        while self._compressing_bytes > _COMPRESSING:  # bounded memory (D38)
+            self._file_done()
+
+    def _file_done(self) -> None:
+        rel, kind, dist, size, future = self._compressing.popleft()
+        self._compressing_bytes -= size
+        blob, digest = future.result()
+        self.files[rel] = File(rel, kind, self._kept(blob, digest), dist=dist)
+
+    def files_done(self) -> None:
+        """Every file _add_file compressed, in its place."""
+        while self._compressing:
+            self._file_done()
+        if self._compressor is not None:
+            self._compressor.shutdown()
+            self._compressor = None
 
     def mark_fs_packages(self, configured: frozenset[str], namespaces: list[Module]) -> None:
         """FS_REQUIRED: every file below these packages is extracted when they are imported."""
@@ -500,8 +552,16 @@ def classify(  # noqa: PLR0913  the build options, keyword-only
     collector = _Collector(extension_suffixes, include_source, hints=hints, level=level,
                            xz_natives=xz_natives, spill=spill)  # fmt: skip
     collector.read_pth_files(dists)
-    for dist in sorted(dists, key=lambda d: d.name):
-        collector.add_dist(dist)
+    collector.compiler = Compiler(collector.module_jobs(dists), level=level,
+                                  include_source=include_source)  # fmt: skip
+    try:
+        for dist in sorted(dists, key=lambda d: d.name):
+            collector.add_dist(dist)
+        collector.files_done()
+    finally:
+        collector.compiler.close()
+        collector.compiler = None
+    collector.add_large()
     collector.add_natives(allowed_system_libs)
     namespaces = collector.namespaces()
     collector.mark_fs_packages(fs_packages, namespaces)

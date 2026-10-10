@@ -1,16 +1,17 @@
-"""Binary layout of the fsbpyr executable format, version 5 (normative spec: docs/format.md)."""
+"""Binary layout of the fsbpyr executable format, version 6 (normative spec: docs/format.md)."""
 
 import errno
 import hashlib
 import os
 import re
 import struct
-from collections.abc import Buffer
+import threading
+from collections.abc import Buffer, Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from enum import IntEnum, IntFlag
 
-FORMAT_VERSION = 5
-READABLE_VERSIONS = (1, 2, 3, 4, 5)  # the Python reader (inspect) also reads older executables
+FORMAT_VERSION = 6
+READABLE_VERSIONS = (1, 2, 3, 4, 5, 6)  # the Python reader (inspect) also reads older executables
 PAGE_SIZE = 4096
 BLOB_ALIGN = 16
 TABLE_ALIGN = 8
@@ -19,6 +20,7 @@ DIGEST_SIZE = 32
 DIGEST_LEAF = 1 << 20  # the integrity digest hashes the file in pieces of this size (D31)
 XZ_MEMLIMIT = 64 << 20  # decoder memory an xz stream may ask for (xz -6 needs about 9 MiB)
 XZ_PIECE = 4 << 20  # libraries larger than this are xz in pieces of this much content (D33)
+ZSTD_PIECE = 8 << 20  # content larger than this is zstd in pieces of this much content (D39)
 MAX_MODE = 0o777
 MAX_BLOB_SIZE = 1 << 62  # far inside off_t; no limit of ours below what OSes hold (D38)
 MAX_STRTAB_SIZE = 0xFFFFFFFF
@@ -81,6 +83,11 @@ class Codec(IntEnum):
     BLOCK = 2  # v2: content inside a block (a zstd blob holding many small blobs, D30)
     XZ = 3  # v5: one xz stream, for native files only (--best-compression, D33)
     PIECES = 4  # v5: the concatenated content of XZ_PIECE-sized xz streams, decoded in parallel
+    ZSTD_PIECES = 5  # v6: the same of ZSTD_PIECE-sized zstd frames (D39)
+
+
+# A blob in pieces: the codec of its pieces, and the content each holds (the last, 1 to that).
+PIECES_OF = {Codec.PIECES: (Codec.XZ, XZ_PIECE), Codec.ZSTD_PIECES: (Codec.ZSTD, ZSTD_PIECE)}
 
 
 BLOCK_SIZE = 256 * 1024  # blocks of sources and data, rarely read
@@ -133,6 +140,48 @@ def tree_digest(data: Buffer) -> bytes:
 
 
 DIGEST_THREADS = 8  # as the launcher (D31): at most 8, never more than the usable cores
+THREADS = min(DIGEST_THREADS, os.process_cpu_count() or 1)  # every phase's (D39)
+
+
+_POOLED = threading.local()
+
+
+def pooled_thread() -> None:
+    """Initializer of a pool's threads: parallel() called on one runs in it, no pool in a pool."""
+    _POOLED.busy = True
+
+
+class Threads:
+    """Up to THREADS threads for one task's batches (zstd, lzma and hashlib release the GIL);
+    the caller's own thread when one would do: THREADS 1, or a pool's thread already (D39)."""
+
+    def __init__(self, count: int = THREADS) -> None:
+        inline = min(count, THREADS) < 2 or getattr(_POOLED, "busy", False)
+        self._pool = None if inline else ThreadPoolExecutor(min(count, THREADS),
+                                                            initializer=pooled_thread)  # fmt: skip
+
+    def map[T, R](self, function: Callable[[T], R], items: Sequence[T]) -> list[R]:
+        """``function`` of each item, in order."""
+        if self._pool is None or len(items) < 2:
+            return [function(item) for item in items]
+        return list(self._pool.map(function, items))
+
+    def __enter__(self) -> Threads:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        if self._pool is not None:
+            self._pool.shutdown(cancel_futures=True)
+
+
+def parallel[T, R](function: Callable[[T], R], items: Sequence[T]) -> list[R]:
+    """``function`` of each item, in order, on up to THREADS threads (Threads)."""
+    if len(items) < 2:
+        return [function(item) for item in items]
+    with Threads(len(items)) as threads:
+        return threads.map(function, items)
+
+
 _PASS_LEAVES = 4096  # leaves hashed per pass: their digests are all the memory a file needs
 
 

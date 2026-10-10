@@ -15,7 +15,7 @@ import contextlib
 import mmap
 import posixpath
 import re
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 
 from .elf import ElfError, dynamic_info
@@ -102,17 +102,33 @@ def _contains_name(data: Native, name: bytes) -> bool:
     return any(start == 0 or data[start - 1] in b"\0/" for start in _found(data, name + b"\0"))
 
 
+def _contained_names(data: Native, names: Iterable[bytes]) -> set[bytes]:
+    """The names ``data`` holds as whole C strings, or as the last part of a path: one pass for
+    ``.so``, which every shared object's name holds (torch's 438 MB library has it 75 times:
+    0.18 s instead of 1.02 s for its 12 neighbours searched one by one), each name checked
+    where it would start; a name without it is searched alone."""
+    names = list(dict.fromkeys(names))
+    found = {name for name in names if b".so" not in name and _contains_name(data, name)}
+    shared = {name: name.find(b".so") for name in names if b".so" in name}
+    for position in _found(data, b".so") if shared else ():
+        for name, offset in shared.items():
+            start = position - offset
+            if (name not in found and start >= 0 and data[start : start + len(name) + 1]
+                    == name + b"\0" and (start == 0 or data[start - 1] in b"\0/")):  # fmt: skip
+                found.add(name)
+    return found
+
+
 def _opened_by_name(
     path: str, data: Native, libraries: dict[str, list[str]], directories: list[str]
 ) -> list[str]:
     """Bundled libraries where the loader (and code next to ``path``) looks for bare names,
     which ``path`` names: loaded with dlopen at run time."""
-    found = []
-    for directory in dict.fromkeys([posixpath.dirname(path) or ".", *directories]):
-        for library in libraries.get(directory, ()):
-            if library != path and _contains_name(data, posixpath.basename(library).encode()):
-                found.append(library)
-    return found
+    candidates = [library
+                  for directory in dict.fromkeys([posixpath.dirname(path) or ".", *directories])
+                  for library in libraries.get(directory, ()) if library != path]  # fmt: skip
+    named = _contained_names(data, (posixpath.basename(c).encode() for c in candidates))
+    return [library for library in candidates if posixpath.basename(library).encode() in named]
 
 
 def _direct_dependencies(

@@ -32,6 +32,8 @@ int main(void) {
            (unsigned long long)FSB_XZ_MEMLIMIT);
     printf("const codec_pieces %d\nconst xz_piece %llu\n", FSB_CODEC_PIECES,
            (unsigned long long)FSB_XZ_PIECE);
+    printf("const codec_zstd_pieces %d\nconst zstd_piece %llu\n", FSB_CODEC_ZSTD_PIECES,
+           (unsigned long long)FSB_ZSTD_PIECE);
     FIELD(fsb_header, python_hexversion); FIELD(fsb_header, bytecode_magic);
     FIELD(fsb_header, generation_id); FIELD(fsb_header, app_name); FIELD(fsb_header, sections);
     FIELD(fsb_blob, codec); FIELD(fsb_blob, digest);
@@ -84,6 +86,8 @@ def test_constants_match(probe: dict[str, tuple[int, ...]]) -> None:
     assert probe["const xz_memlimit"] == (fmt.XZ_MEMLIMIT,)
     assert probe["const codec_pieces"] == (fmt.Codec.PIECES,)
     assert probe["const xz_piece"] == (fmt.XZ_PIECE,)
+    assert probe["const codec_zstd_pieces"] == (fmt.Codec.ZSTD_PIECES,)
+    assert probe["const zstd_piece"] == (fmt.ZSTD_PIECE,)
 
 
 def _offset(layout: str, index: int) -> int:
