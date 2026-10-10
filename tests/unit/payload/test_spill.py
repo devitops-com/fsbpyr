@@ -6,6 +6,7 @@ bytes there; the writer streams them."""
 import dataclasses
 import random
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -137,3 +138,31 @@ def test_kept_blobs_know_their_content_digest(tmp_path: Path) -> None:
 
         assert blob.sha256 is None and blob.known == tree_digest(COMPRESSIBLE)  # not listed
         assert blob.content() == COMPRESSIBLE
+
+
+def test_holes_are_never_sent_to_the_threads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D38, D39: a sparse file of 1 TiB has a million leaves of holes; each sent to a thread took
+    0.15.0's raw build of it from 26 to 66 s. Only leaves with data are read on the threads."""
+    path = tmp_path / "sparse"
+    with path.open("wb") as file:
+        file.truncate(40 * DIGEST_LEAF + 7)
+        for leaf in (5, 30):
+            file.seek(leaf * DIGEST_LEAF + 3)
+            file.write(b"data")
+    sent: list[int] = []
+    real_map = format_module.Threads.map
+
+    def counted(threads: format_module.Threads, function: Any, items: Any) -> Any:
+        sent.extend(items)
+        return real_map(threads, function, items)
+
+    monkeypatch.setattr(format_module.Threads, "map", counted)
+    extent = Extent.of_file(path)
+
+    leaves = list(extent.leaves())
+
+    assert sent == [5 * DIGEST_LEAF, 30 * DIGEST_LEAF]
+    assert b"".join(piece for piece, _ in leaves) == path.read_bytes()
+    assert [hole for _, hole in leaves].count(False) == 2

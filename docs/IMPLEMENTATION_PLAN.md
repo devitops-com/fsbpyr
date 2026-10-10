@@ -1244,6 +1244,13 @@ write, a truncated binary.
     the writers and after `make_root`); 1 TiB builds compressed (now in zstd pieces: the
     test still expected one frame, and its first run stopped there) and raw, runs, streams,
     extracts and verifies with each process under 1 GB
+- **Fixed (0.15.1):** measuring 0.15.0 (docs/performance.md) showed a raw build of a sparse
+  1 TiB file taking 65.7 s instead of 0.14.0's 26.1 (peak 318 MiB instead of 91):
+  `Extent.leaves` sent each 1 MiB leaf to a thread, holes included, each holding 1 MiB of
+  zeros. Holes are found on the calling thread now (one `lseek` each) and share one buffer;
+  only leaves with data are read on the threads: 14.2 s, 106 MiB
+  (`test_holes_are_never_sent_to_the_threads`). Known, not done: one `lseek` per leaf of a
+  hole; skipping a hole's whole run would take fewer
 
 - ~~`FSBPYR_VERIFY=1` also checks the payload digest (D11)~~: D31 checks the whole file on
   every start and re-hashes cached files in every process; `FSBPYR_VERIFY` is gone.

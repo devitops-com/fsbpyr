@@ -31,6 +31,8 @@ static CPython.
 | 0.6.0 | 5.1–5.4 ms | 8.1 ms | 6.0 ms (1.11–1.17×) | 2.0 ms |
 | 0.7.0 | 5.2 ms | 7.9 ms | 6.15 ms (1.18×; app minus `integrity_ns`) | 1.7–1.8 ms |
 | 0.9.0 (two rounds of 201) | 5.4–5.5 ms | 7.9–8.1 ms | 6.0–6.2 ms (1.11–1.12×) | 1.9–2.0 ms |
+| 0.14.0 (two rounds of 201) | 5.50–5.51 ms | 7.83–7.86 ms | 6.06–6.09 ms (1.10×) | 1.77 ms |
+| 0.15.0 (two rounds of 201; bare: PBS CPython 3.14.8) | 5.53–5.54 ms | 7.82 ms | 6.06 ms (1.10×) | 1.76 ms |
 
 Budget (`test_startup_is_within_budget_of_bare_cpython`): everything but the integrity check
 within 1.5× bare CPython (1.15× until 0.7.0, 1.2× until 0.10.0; the owner raised it twice on
@@ -79,16 +81,20 @@ more to be loaded.
 
 ## Whole runs
 
-| Run | 0.7.0 |
-|---|---|
-| `heavy json` | 34.5 ms |
-| `heavy crypto` | 43.2 ms |
-| `heavy model` | 79.2 ms |
-| `heavy np` | 120.1–120.6 ms (performance cores only: 70 ms) |
-| `heavy onnx` | 195.4–195.8 ms (performance cores only: 131 ms) |
-| `aiagent version` | 142.8 ms |
-| `aiagent skills list` | 146.2 ms |
-| `aiagent --help` | 182.6 ms |
+| Run | 0.7.0 | 0.14.0 | 0.15.0 |
+|---|---|---|---|
+| `heavy json` | 34.5 ms | 37.5 ms | 37.8 ms |
+| `heavy crypto` | 43.2 ms | 42.5 ms | 42.4 ms |
+| `heavy model` | 79.2 ms | 76.3 ms | 76.2 ms |
+| `heavy np` | 120.1–120.6 ms (performance cores only: 70 ms) | 67.9 ms | 66.5 ms |
+| `heavy onnx` | 195.4–195.8 ms (performance cores only: 131 ms) | 142.8 ms | 143.2 ms |
+| `aiagent version` | 142.8 ms | 132.9 ms | 133.0 ms |
+| `aiagent skills list` | 146.2 ms | 139.3 ms | 139.2 ms |
+| `aiagent --help` | 182.6 ms | 169.2 ms | 170.7 ms |
+
+0.14.0 and 0.15.0: medians of 31 runs each, interleaved, peak RSS 23 (`json`) to 68 MB (`onnx`),
+the same in both; each release's own builds. Later runs did not change with 0.15.0: it changed
+building, decoding and extraction, which they do not do.
 
 Blocks (D30, 0.5.0) cost aiagent's `version`, `--help` and `skills list` 4.7, 5.3 and 5.6 ms
 against 0.4.0; `hello` did not change.
@@ -235,6 +241,84 @@ each). Reading each thread's leaves through a whole 1 MiB buffer instead of 64 K
 no-op app's start more (the code review measured 1.94 against 1.71 ms) and left 8 MB more heap
 in the torch app (127 against 119 MB), since glibc keeps the freed buffers.
 
+### The same app with 0.14.0 and 0.15.0 (D39)
+
+0.15.0 uses up to 8 cores in every phase: modules compiled on worker processes, zstd in pieces
+of 8 MiB compressed and decoded on up to 8 threads, extracted files written on up to 8. Each
+release's installed `fsbpyr`, measured in separate sessions as above (first runs 5, later runs
+21, medians; builds include uv's staging):
+
+| | venv | zstd 3 | zstd 9 | xz -6 in pieces |
+|---|---|---|---|---|
+| Size, 0.14.0 / 0.15.0 | — | 255.3 / 255.5 MB | 233.3 / 234.4 MB | 214.8 / 214.9 MB |
+| Build, 0.14.0 | — | 16.28 s | 22.75 s | 27.16 s |
+| Build, 0.15.0 | — | 6.02 s | 6.99 s | 14.54 s |
+| First run, 0.14.0 | — | 1705 ms | 1679 ms | 1796 ms |
+| First run, 0.15.0 | — | 1294 ms | 1292 ms | 1608 ms |
+| First run: torch import, 0.14.0 / 0.15.0 | — | 1105 / 692 ms | 1080 / 687 ms | 1195 / 1014 ms |
+| Later runs, 0.14.0 / 0.15.0 | 1003 ms | 1078 / 1076 ms | 1079 / 1076 ms | 1075 / 1078 ms |
+| Later runs: torch import | 411 ms | 477 / 475 ms | 479 / 476 ms | 477 / 478 ms |
+| Integrity check (21 runs) | — | 13.2 / 13.6 ms | 12.8 / 12.8 ms | 11.8 / 12.2 ms |
+| Peak RSS, first run | — | 527 / 552 MB | 509 / 534 MB | 532 / 529 MB |
+| Peak RSS, later runs | 313 / 298 MB | 348 / 345 MB | 346 / 343 MB | 346 / 344 MB |
+
+A first run now writes torch's 12,139 small files on up to 8 threads and decodes
+libtorch_cpu.so (418 MiB) in zstd pieces on up to 8 (about 100 ms instead of 566 in one frame):
+387 ms less with zstd. xz pieces were parallel before; they gain the file writes only. Later
+runs are the same. The builds' peak and their cores: below.
+
+## Builds (0.14.0, 0.15.0; D39)
+
+Each release's installed `fsbpyr` (`/usr/bin/time`: wall time, CPU, peak RSS of the largest
+process; 0.15.0's workers each have their own):
+
+| App | 0.14.0 | 0.15.0 | 0.15.0 CPU | Peak RSS, 0.14.0 / 0.15.0 |
+|---|---|---|---|---|
+| no-op app (`hello`) | 0.44 s | 0.34 s | 157% | 143 / 144 MB |
+| `heavy` | 4.76 s | 1.72 s | 408% | 160 / 321 MB |
+| aiagent (79 distributions) | 17.59 s | 6.79 s | 356% | 537 / 503 MB |
+| torch app, `--fast-compression` | 16.28 s | 6.02 s | 381% | 245 / 339 MB |
+| torch app, default | 22.75 s | 6.99 s | 452% | 246 / 422 MB |
+| torch app, `--best-compression` | 27.16 s | 14.54 s | 624% | 630 / 622 MB |
+
+The 1 GB rule (D38) counts all the build's processes: their proportional set size (PSS,
+shared pages divided among the processes that map them) peaked at 673 MiB for the torch app's
+default build and 647 MiB for its best compression (9 processes; their RSS summed, which counts
+shared pages once per process, 1258 and 1234 MiB). The workers are bounded: 32 jobs or 64 MiB of
+sources in flight. What was measured on the way (development builds, the dev venv):
+
+- One core or eight build the same bytes: compile()'s constant sharing depends on what was
+  interned before, so a worker's code could differ from the process's by one reference; the
+  canonical bytecode merges equal immutable values (D39).
+- The main process held about 440 MiB while 8 compression threads overlapped 8 compile workers:
+  glibc keeps freed memory in its arenas and above its mmap threshold. Compressing the files
+  read whole on the workers instead took the build from 729 to 595 MiB PSS. `mallopt` was not
+  adopted.
+- The classifier's own work and the closure search stay on one thread (the GIL): about 1 s of
+  the torch build; the natives' scan finds names in one pass now.
+- The stdlib fragment of a runtime compiles in 0.31 s instead of 1.40 (the compile workers).
+
+## Very large files (D38, D39)
+
+`tests/e2e/test_large.py`'s app: one sparse file of zeros, built compressed (zstd) and raw,
+run (the integrity check, a stream through it, an extraction), and `inspect --verify` of the
+raw one; each process's peak RSS (`VmHWM`). Wall times, one run each:
+
+| | 0.14.0 | 0.15.0 | 0.15.1 |
+|---|---|---|---|
+| 5 GiB compressed: build / run | 3.5 / 3.6 s | 1.0 / 2.4 s | — |
+| 5 GiB raw: build / run | 0.4 / 3.0 s | 0.6 / 3.0 s | — |
+| 1 TiB compressed: build / run | 643.6 / 733.2 s | 150.3 / 484.9 s | — |
+| 1 TiB raw: build / run / inspect | 26.1 / 614.9 / 5.1 s | 65.7 / 606.3 / 4.8 s | 14.2 s (build) |
+| Peak, builds | 88–91 MiB | 240–414 MiB | 106 MiB (raw) |
+| Peak, runs | 118–184 MiB | 118–158 MiB | — |
+
+Compressed, the file is zstd pieces of 8 MiB since 0.15.0, compressed and decoded on up to 8
+threads. 0.15.0's raw build was slower: it sent each 1 MiB leaf of the file to a thread, holes
+included, a million of them each holding 1 MiB of zeros; 0.15.1 finds holes on the calling
+thread and reads only data on the threads (64 GiB raw: 1.0 s, 0.14.0 1.9 s). A raw run reads
+and writes the whole file once and did not change.
+
 ## The cache sync in the launcher (D35)
 
 `_fsbpyr.sync` walks, checks and restores cached files in C, without the GIL; Python only asks
@@ -289,6 +373,33 @@ helper threads. A standalone program checking the 12,139 files the same way, wit
 
 Mapping a large file still wins: its pages fault in on the hashing threads, in parallel.
 
+### Writing on 8 threads (0.15.0, D39)
+
+A sync checks every file first, then writes the missing and changed ones: files of up to 8 MiB
+on up to 8 threads, in chunks of neighbours; larger ones, xz and pieces by the calling thread,
+their pieces decoded in parallel. Extraction into an empty cache on XFS (`_fsbpyr.sync` timed in
+the app; medians of 3 to 5 runs):
+
+| | One thread (0.14.0's way) | 8 threads, temporaries in `.scratch` | 8 threads, unnamed files (0.15.0) | 0.15.0, 8 performance cores | 0.15.0, one core |
+|---|---|---|---|---|---|
+| torch's 12,139 small files (235 MB) | 302 ms | 307–362 ms | 139–146 ms | 120 ms | 296 ms |
+| 120,000 files of 19 kB on average (2.4 GB, 20 a directory) | — | — | 0.65 s | 0.56 s | 3.05 s |
+| torch's 12 libraries (708 MB on disk) | — | — | 123–127 ms | 125 ms | 389 ms |
+
+Written on 8 threads with temporary names in the tree's one `.scratch` directory, files took
+longer than on one: every create and every rename locks that directory. Summed over the
+threads (all 24 cores usable), creating took 868 ms (one thread: 50) and the chmod, rename and
+close 2294 ms (51), while decoding, hashing and writing scaled (329 against 255 ms). A new file is now written
+unnamed in its own directory (`O_TMPFILE`) and linked into place once it has the payload's
+digest; a killed process leaves nothing behind. The descriptor table is grown before the writers
+start: grown while they ran, each step waited for an RCU grace period (`expand_files`), with
+every writer that opened a file meanwhile (200 against 176 ms in a C harness). What is left is
+the file system's: threads writing into one large directory wait for one another there
+(`filename_create`, torch has directories of thousands of headers), and on XFS's buffer locks.
+The same 12,139 files written by a standalone program with temporaries in one shared directory,
+one per thread, in the target directory, or unnamed: 92, 44, 30 and 25 ms on 8 threads (127 ms
+on one).
+
 ## Fast exit (evaluated, dropped)
 
 Ending a run by flushing stdout and stderr, running the `atexit` handlers and calling `os._exit`
@@ -306,6 +417,17 @@ skips: buffered files the app never closed lose their data, non-daemon threads a
 `__del__` methods do not run. Dropped (D37): an exit that leaves debris for something else to
 clean up is not worth it.
 
+## Building a runtime
+
+`fsbpyr runtime build` links the launcher with PBS's static CPython under full LTO: 51.4 s on
+one core (49.8 s of CPU), 2.3 GB peak RSS, over D38's 1 GB, in this one command (app builds
+reuse the runtime and never link). lld's `--lto-partitions=8` failed: CPython's static
+`compress` (`_bz2module.c`) and `lzma_free` (`_lzmamodule.c`) clash with zlib's and liblzma's
+once split, and it took 4.9 GB on 1.7 cores. The link printed one warning, unseen until 0.15.0
+showed every warning: `cache_sync`'s frame was 8888 bytes, over the 8192 limit, with
+`fsb_cache_sync` and `make_root`'s 4 KiB path buffer inlined into it; the buffer is on the heap
+and the link prints nothing now.
+
 ## Known effects
 
 - **OpenBLAS on a hybrid CPU.** numpy's OpenBLAS starts one busy-waiting thread per core at
@@ -316,6 +438,13 @@ clean up is not worth it.
   (for at most 2 ms, then a normal join) +4–5 ms (D32).
 - **Whatever the run loads is hashed.** The cache check grows with the natives a run imports,
   about 0.1–0.3 ms per MB on this machine; the integrity check with the executable's size.
+- **The builder's CPython compiles the app's modules.** A build by the installed `fsbpyr` (its
+  runtime's CPython 3.14.8) and one from a development venv on 3.14.7 differed in 3 of the torch
+  app's 5,840 modules: CPython's compiler changed between the two patch releases. Each is
+  reproducible; both run on 3.14.8 (one bytecode magic per minor version). The stdlib is
+  compiled by the runtime's own interpreter.
+- **All 24 cores can be slower than the 8 performance cores.** Work of 8 threads spread over
+  all 24 lands partly on efficiency cores: 120,000 files took 0.65 s on all, 0.56 s on CPUs 0–7.
 
 ## Where to look when a start gets slower
 

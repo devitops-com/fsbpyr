@@ -42,6 +42,7 @@ NO_FILE_FLAGS = FileFlag(0)
 
 EXTENT_PIECE = DIGEST_LEAF  # an extent is read this much at a time: a leaf, hashed as it comes
 _LEAVES_AT_ONCE = 32  # leaves read and hashed at once (32 MiB): bounded memory (D38, D39)
+_ZERO_PIECE = bytes(EXTENT_PIECE)  # every whole leaf of a hole: one buffer, not one each
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +70,12 @@ class Extent:
             with Threads(len(starts)) as threads:  # read and hashed on up to 8 threads (D39)
                 for first in range(0, len(starts), _LEAVES_AT_ONCE):
                     batch = starts[first : first + _LEAVES_AT_ONCE]
-                    for piece, hole, digest in threads.map(lambda at: self._leaf(fd, at), batch):
+                    # holes found here, one lseek each: a thread per hole cost more than the hole
+                    holes = [self._hole(fd, at) for at in batch]
+                    data = [at for at, hole in zip(batch, holes, strict=True) if not hole]
+                    read = iter(threads.map(lambda at: self._leaf(fd, at), data))
+                    for at, hole in zip(batch, holes, strict=True):
+                        piece, digest = self._zeros(at) if hole else next(read)
                         hashed.leaf(digest)
                         yield piece, hole
         finally:
@@ -78,14 +84,22 @@ class Extent:
         if hashed.digest() != self.identity:
             raise OSError(errno.EIO, f"{self.path} changed while the build read it")
 
-    def _leaf(self, fd: int, start: int) -> tuple[bytes, bool, bytes]:
-        """The leaf at ``start``, whether it is a hole (zeros, not read), and its digest."""
+    def _hole(self, fd: int, start: int) -> bool:
+        """Whether the leaf at ``start`` lies inside a hole (zeros, not read)."""
         length = min(EXTENT_PIECE, self.size - start)
-        if self.fd < 0 and is_hole(fd, self.offset + start, length):
-            zeros = bytes(length)
-            return zeros, True, ZERO_LEAF if length == EXTENT_PIECE else sha256(zeros).digest()
-        piece = _read(fd, self.offset + start, length, self.path)
-        return piece, False, sha256(piece).digest()
+        return self.fd < 0 and is_hole(fd, self.offset + start, length)
+
+    def _zeros(self, start: int) -> tuple[bytes, bytes]:
+        """A hole's leaf at ``start`` and its digest: a whole one is the same bytes each time."""
+        length = min(EXTENT_PIECE, self.size - start)
+        if length == EXTENT_PIECE:
+            return _ZERO_PIECE, ZERO_LEAF
+        return bytes(length), sha256(bytes(length)).digest()
+
+    def _leaf(self, fd: int, start: int) -> tuple[bytes, bytes]:
+        """The leaf at ``start``, read, and its digest."""
+        piece = _read(fd, self.offset + start, min(EXTENT_PIECE, self.size - start), self.path)
+        return piece, sha256(piece).digest()
 
     def pieces(self) -> Iterator[bytes]:
         return (piece for piece, _ in self.leaves())
