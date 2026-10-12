@@ -168,6 +168,38 @@ def test_runpath_takes_precedence_over_rpath() -> None:
     assert closures(natives, {"p/_x.so"}, allowed=frozenset())["p/_x.so"] == ("p/new/liba.so",)
 
 
+def test_libraries_without_runpath_inherit_the_rpath_of_their_loaders() -> None:
+    """gnureadline 8.3.3's bundled libncurses has no RPATH: ld.so finds its libtinfo through
+    the RPATH of the extension that loaded it."""
+    natives = {
+        "_r.so": make_elf(needed=("libncurses-1.so.6",), rpath="$ORIGIN/r.libs",
+                          soname="PyInit__r"),
+        "r.libs/libncurses-1.so.6": make_elf(needed=("libtinfo-2.so.6",)),
+        "r.libs/libtinfo-2.so.6": make_elf(),
+    }  # fmt: skip
+
+    assert closures(natives, {"_r.so"}, allowed=frozenset()) == {
+        "_r.so": ("r.libs/libncurses-1.so.6", "r.libs/libtinfo-2.so.6")
+    }
+
+
+def test_a_runpath_ends_the_inherited_search_for_its_own_object_only() -> None:
+    """ld.so ignores the loaders' RPATHs for an object with a RUNPATH, but passes them on to
+    what that object loads."""
+    natives = {
+        "p/_x.so": make_elf(needed=("liba.so",), rpath="$ORIGIN/x.libs", soname="PyInit__x"),
+        "p/x.libs/liba.so": make_elf(needed=("libb.so",), runpath="$ORIGIN/a"),
+        "p/x.libs/a/libb.so": make_elf(needed=("libd.so",)),
+        "p/x.libs/libd.so": make_elf(),
+    }
+
+    assert closures(natives, {"p/_x.so"}, allowed=frozenset())["p/_x.so"] == (
+        "p/x.libs/a/libb.so", "p/x.libs/liba.so", "p/x.libs/libd.so")  # fmt: skip
+    natives["p/x.libs/liba.so"] = make_elf(needed=("libd.so",), runpath="$ORIGIN/a")
+    with pytest.raises(NativeError, match="libd"):
+        closures(natives, {"p/_x.so"}, allowed=frozenset())
+
+
 def test_unresolved_library_is_an_error_unless_allowed() -> None:
     natives = {"p/_x.so": make_elf(needed=("libssl.so.3",))}
 

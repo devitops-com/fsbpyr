@@ -254,7 +254,9 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
 
 - **Build time.** `fsbpyr/elf.py` is a pure-Python ELF64 parser (`PT_DYNAMIC` → `DT_NEEDED`,
   `DT_RPATH`, `DT_RUNPATH`, `DT_SONAME`). Each NEEDED entry resolves in one of three ways:
-  - (a) Inside the payload through RPATH/RUNPATH with `$ORIGIN`: **bundled**.
+  - (a) Inside the payload through RPATH/RUNPATH with `$ORIGIN`: **bundled**. An object
+    without RUNPATH also searches the RPATHs of the objects that loaded it, as ld.so does
+    (auditwheel leaves bundled libraries such as gnureadline's libncurses without one).
   - (b) In the system allowlist (auditwheel's manylinux policy for the target glibc): **system**.
   - (c) Otherwise the build fails and names the library. `--allow-system-lib NAME` overrides
     this.
@@ -1260,6 +1262,15 @@ write, a truncated binary.
   still fails the build in assemble
   (`test_a_dependency_module_the_runtime_shadows_is_kept_as_a_file`,
   `test_a_project_module_the_runtime_shadows_stays_to_fail_the_build`)
+- **Fixed (0.15.3):** a library without RUNPATH also resolves its NEEDED entries through the
+  RPATHs of the objects that loaded it, as ld.so does. gnureadline 8.3.3 bundles libncurses
+  and libtinfo without an RPATH of their own: libncurses finds libtinfo through the
+  extension's `$ORIGIN/gnureadline.libs`, and the build asked for
+  `--allow-system-lib libtinfo-3a2cb85b.so.6.1`. The closure search passes those directories
+  down each chain; an object with RUNPATH does not search them but passes them on
+  (`test_libraries_without_runpath_inherit_the_rpath_of_their_loaders`,
+  `test_a_runpath_ends_the_inherited_search_for_its_own_object_only`). Known, not done: ld.so
+  also reuses an object already loaded under the same soname
 
 - ~~`FSBPYR_VERIFY=1` also checks the payload digest (D11)~~: D31 checks the whole file on
   every start and re-hashes cached files in every process; `FSBPYR_VERIFY` is gone.
