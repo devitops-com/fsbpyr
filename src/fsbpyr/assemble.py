@@ -83,7 +83,12 @@ def _builtin_or_frozen() -> set[str]:
     return {*sys.builtin_module_names, *_imp._frozen_module_names(), "_fsbpyr"}  # type: ignore[attr-defined]
 
 
-def _check_clashes(kind: str, runtime: set[str], app: list[str]) -> None:
+def runtime_module_names(runtime: Runtime) -> frozenset[str]:
+    """Modules found before the payload's: built-in and frozen ones, and the runtime's own."""
+    return frozenset({m.name for m in (*runtime.modules, *boot_modules())} | _builtin_or_frozen())
+
+
+def _check_clashes(kind: str, runtime: set[str] | frozenset[str], app: list[str]) -> None:
     clashes = sorted(runtime.intersection(app))
     if clashes:
         raise AssemblyError(f"application {kind} shadow the runtime: {clashes[:10]}")
@@ -110,8 +115,7 @@ def build_executable(runtime: Runtime, app: App, out: Path) -> None:
         )
     boot = boot_modules()
     # built-in and frozen modules are found before the payload, so app modules could never load
-    runtime_names = {m.name for m in (*runtime.modules, *boot)} | _builtin_or_frozen()
-    _check_clashes("modules", runtime_names, [m.name for m in app.modules])
+    _check_clashes("modules", runtime_module_names(runtime), [m.name for m in app.modules])
     _check_clashes("files", {f.path for f in runtime.files}, [f.path for f in app.files])
     all_files = (*runtime.files, *app.files)
     info: dict[str, object] = {
