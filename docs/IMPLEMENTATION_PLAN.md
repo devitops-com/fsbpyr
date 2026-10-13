@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.15, 2026-10-13. Phases 0–7, 6b and 6c are complete (Phase 7 reduced by D37); uv is required (D26); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.16, 2026-10-13. Phases 0–7, 6b and 6c are complete (Phase 7 reduced by D37); uv is required (D26); the CLI runs on click, which also gives the completions and the man page (D40); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -127,6 +127,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D37 | **No more millisecond tuning; comparisons with other tools come last** (owner decision 2026-10-09). Phase 7 ends with what it has: the compression work (D29, D30, D33), the checks and the cache in the launcher (D31, D32, D35, D36), and `docs/performance.md` as the report (every release's measurements, how they were taken, where to look when a start gets slower). Regressions are caught by exact counts, not timings: the e2e tests read `FSBPYR_TRACE` (modules loaded per distribution, files extracted) and the contract the cache sync's outcomes; the one timing test stays the startup budget (1.2× bare CPython, the integrity check apart). Dropped: the benchmark harness, the 10% timing gate, the §8 speed targets, grouped frames for tiny modules, and an opt-in fast exit (it saves the libraries' teardown, about 215 ms for torch, but leaves unflushed files, killed threads and unrun finalizers behind). Comparisons with other tools (PyInstaller, a Rust and a Go CLI) move to Phase 10: there is no point in comparing unfinished work | The results are solid; a few milliseconds here or there are not worth the work, and a timing gate mostly catches noise | The §8 harness, targets and CI gate as planned |
 | D38 | **Phase 8 scope** (owner decisions 2026-10-09). (1) No size limits of ours: files and executables of 1 TB and more build and run if the file system and OS allow them; the only structural limit is the format's 32-bit indices (about 4.29 billion files, modules or blobs: the OS fails first). (2) fsbpyr's own work never needs more than 1 GB of resident memory, whatever the input size, when building and when running: data is streamed in bounded pieces; what an app asks for itself (`read()`, `read_bytes()`) is the app's. (3) Cache GC: at most once a day, or when the cache's file system has less than 10% free (then at most once an hour); generations and resource trees unused for 7 days are removed (under disk pressure every one not in use); never what a running process uses (locks); never anything we did not create (a marker names our cache roots; `FSBPYR_CACHE_DIR` may be a user's own directory); explicit runs: `fsbpyr cache gc` (the tool's cache and every app cache it finds) and `FSBPYR_GC=1 app` (that app's cache, then exit). (4) Every item gets explicit tests in the normal test run; principle: normal cases fast, edge and extreme cases correct, never a crash | User does not want to deal with stale cache objects; a removed object is recreated when needed; 1 TB inputs must work | `rm -rf` of the whole cache; a GC run on every start; 64-bit indices (format v6) |
 | D39 | **Up to 8 cores in every phase** (owner decision 2026-10-10: "all phases must use up to 8 cores"): building, running and checking use min(8, usable cores) wherever the work divides. (1) Format v6: codec 5, zstd in pieces: a blob of more than 8 MiB is stored as zstd frames of 8 MiB of content each (the last fewer), each with its content size and checksum, compressed on up to 8 threads and decoded on up to 8 threads (the launcher's extraction and streams, a window of 8 pieces at a time; the Python reader); codec 4 stays xz in pieces of 4 MiB. (2) A build compiles and canonicalizes modules in a pool of up to 8 processes (the GIL keeps threads from it) and registers the results in the original order, so the output is the same bytes whatever the number of cores; files, natives and blocks are compressed on up to 8 threads (zstd and hashlib release the GIL). The launcher writes the files a cache sync extracts on up to 8 threads: small ones in chunks of neighbours, large ones one at a time, their pieces decoded in parallel; work nested in that work runs on its own thread, so never more than 8. (3) What cannot divide stays one thread: a file under 8 MiB is one frame, decoded by one thread | Before (0.14.0, Core Ultra 9 285): the torch app's build used one core on average (22.2 s of CPU in 23.0 s); under cProfile 70% was compiling 4,959 modules (bytecode canonicalization 24 s, `compile()` 6 s of 44 s) and 9 s zstd; libtorch_cpu.so (418 MiB) compressed in 3.15 s and decoded in 566 ms on one thread; in 8 MiB pieces on 8 threads 0.60 s and 100 ms, 1.4% larger (4 MiB: +2.8%, 127 ms; 16 MiB: +0.6%, 219 ms, 26 pieces on 8 threads) | zstd's own multithreading (one frame: no parallel decoding); threads for compiling (the GIL); pieces of 4 MiB as for xz (twice the loss) |
+| D40 | **The CLI runs on click; its commands are the one source of the help text, the shell completions and the man page** (owner decision 2026-10-13). `fsbpyr completion bash\|zsh\|fish` prints a script that asks fsbpyr for the words as the user types (click's `_FSBPYR_COMPLETE` protocol), so `--entry` and `--extra` offer the console scripts and extras of the project being built; `fsbpyr man` prints the roff page, rendered from the commands through click's public API (`manpage.py`); help texts set code in backticks, which the page sets in bold. Every on/off option of `build` has a `--no-` form, so the command line also switches off what `[tool.fsbpyr]` switches on. The README's option table is the `build` command's help records, checked by a test. Usage errors still exit 2, `main(argv)` still returns the exit code | The binary carries no install step, so it carries its completions and its man page; click's completion is dynamic, which is what lets it read the project. click costs the executable 4–5 ms (median of 31 starts: `--version` 66.7 → 70.6 ms, `build -h` 60.5 → 65.5 ms); a completion that reads the project takes about 85 ms | argparse plus an own declarative spec rendering all three (no dependency, more code of our own); argparse plus shtab and argparse-manpage (both walk argparse's private attributes; the page could only repeat `--help`); static completion scripts (could not offer the project's scripts or extras) |
 
 ---
 
@@ -388,7 +389,7 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
 ## 4. Repository layout
 
 ```
-pyproject.toml              name=fsbpyr, requires-python>=3.14, deps=[packaging],
+pyproject.toml              name=fsbpyr, requires-python>=3.14, deps=[click, packaging],
                             scripts: fsbpyr = "fsbpyr.cli:main", build backend: uv_build
 stubs/_fsbpyr.pyi          type stub of the C module (for mypy)
 src/fsbpyr/
@@ -399,7 +400,8 @@ src/fsbpyr/
     format.h, launcher.h    C mirror of payload/format.py; shared declarations
     vendor/zstd/            zstd 1.5.7 public headers (BSD); libzstd.a comes from PBS
   assemble.py               runtime + boot + app content -> executable
-  cli.py                    argparse: build | inspect | runtime
+  cli.py                    click: build | inspect | runtime | cache | completion | man (D40)
+  manpage.py                roff man page from the click commands (D40)
   config.py                 [tool.fsbpyr] + CLI merge (tomllib)
   project.py                project discovery, pyproject/requires-python, lock-source selection
   staging.py                fresh install into staging (uv sync / uv venv + uv pip install)
@@ -1319,6 +1321,24 @@ write, a truncated binary.
   one, the launcher never checks names
   (`test_module_files_starting_with_a_digit_are_modules`,
   `test_module_names_starting_with_a_digit_are_allowed`)
+- **0.18.0 (D40):** the CLI runs on click; its commands give `--help`, the shell completions
+  (`fsbpyr completion bash|zsh|fish`) and the man page (`fsbpyr man`, `manpage.py`). Every
+  on/off option of `build` has a `--no-` form (`--source/--no-source` replaces `--no-source`
+  alone, `--smoke/--no-smoke` `--no-smoke`), so the command line also switches off what the
+  project switches on. `--entry` and `--extra` complete from the project's `pyproject.toml`
+  (`Project.extras` is new). Changed with click: commands are listed alphabetically, options can
+  no longer be abbreviated (`--off`: "Did you mean '--offline'?"), a usage error prints
+  `Error: ...` (still exit 2), `fsbpyr` alone prints the help (exit 2), and a project path that
+  is a file is a usage error. click costs the executable 4–5 ms of startup
+  - tests: `test_cli_docs.py` (the subcommands and both forms of on/off options complete;
+    `--entry` and `--extra` from the current or the named project, nothing and no message on
+    stderr for a missing, broken or non-UTF-8 one; bash
+    runs the script's function, which runs fsbpyr from `PATH`; the man page names every command
+    and option, sets code in bold and passes `groff -ww` clean; the README's option table is
+    the `build` command's help), and in `test_cli.py` the `--no-` forms over the project, `-h`,
+    and which commands collect the cache (as before: `build`, `inspect` and `runtime build|list`
+    when they run, never for help or a usage error). zsh ran by hand through a pty (`--entry`, `--extra`, `--no-o`, subcommands); fish was
+    not available here, so its script is only checked for calling fsbpyr
 
 - ~~`FSBPYR_VERIFY=1` also checks the payload digest (D11)~~: D31 checks the whole file on
   every start and re-hashes cached files in every process; `FSBPYR_VERIFY` is gone.
@@ -1400,14 +1420,20 @@ Reduced by D37 (owner decision 2026-10-09): no harness, timing gate or speed tar
 
 ```
 fsbpyr build [PROJECT_DIR] [--entry NAME | module | module:func] [-o OUT]
-             [--requirements FILE] [--offline]
-             [--fast-compression | --best-compression] [--extra NAME]... [--no-source]
-             [--fs-package NAME]... [--allow-system-lib SONAME]... [--no-smoke]
-             [--hints] [--interpreter-reexec]
+             [--requirements FILE] [--[no-]offline]
+             [--[no-]fast-compression | --[no-]best-compression] [--extra NAME]...
+             [--[no-]source] [--fs-package PACKAGE]... [--allow-system-lib SONAME]...
+             [--[no-]smoke] [--[no-]hints] [--[no-]interpreter-reexec]
 fsbpyr inspect BINARY [--json] [--verify] [--all-modules]   # D28, v0.3.0
-fsbpyr runtime list | build --python X.Y | path
+fsbpyr runtime list | build [--python X.Y] [--clang PATH]
+fsbpyr cache gc                                             # D38
+fsbpyr completion bash | zsh | fish                         # D40, v0.18.0
+fsbpyr man                                                  # D40, v0.18.0
 fsbpyr --version                 # 0.1.0-6457a95b at tag v0.1.0, else untagged-6457a95b (D28)
 ```
+
+`fsbpyr build -h`, the completions and `fsbpyr man` all come from the click commands in
+`cli.py` (D40).
 
 ```toml
 [tool.fsbpyr]

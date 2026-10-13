@@ -42,23 +42,28 @@ offline, the host's build is packaged and the build warns which glibc it needs.
 | Option | |
 |---|---|
 | `--entry NAME` | console script name, `module` or `module:function` (default: the only script) |
-| `-o, --output PATH` | where to write the executable |
+| `-o, --output PATH` | where to write the executable (default: `dist/` and the console script's name) |
 | `--requirements FILE` | pinned requirements file, for pip projects without `pylock.toml` |
 | `--extra NAME` | install a project extra (repeat) |
-| `--fs-package NAME` | a package whose files must exist on disk (repeat; see below) |
+| `--fs-package PACKAGE` | a package whose files must exist on disk (repeat) |
 | `--allow-system-lib SONAME` | let native code use this library from the host (repeat) |
-| `--offline` | no network access during the build |
-| `--no-source` | leave out `.py` sources; see [Leaving out sources](#leaving-out-sources) |
-| `--fast-compression` | zstd level 3 instead of 9: a faster build, up to ~8% larger for large apps (the standard library's files of 64 KiB and more stay level 9) |
-| `--best-compression` | native libraries as xz -6 instead of zstd 9: about 6.5% smaller for aiagent, a slower build, and a slower first run, which decodes them into the cache (see below); not with `--fast-compression` |
-| `--hints` | also list packages that may read files next to `__file__` (a guess) |
-| `--interpreter-reexec` | let the app's own children started as `sys.executable -m MODULE` or `-c CODE` run as Python; see [Helper interpreters](#helper-interpreters) |
-| `--no-smoke` | skip the smoke test that runs the new executable once |
+| `--offline / --no-offline` | no network access during the build |
+| `--source / --no-source` | keep the `.py` sources (default) or leave them out: smaller, but tracebacks show no source lines and `inspect.getsource()` fails |
+| `--fast-compression / --no-fast-compression` | zstd level 3 instead of 9: a faster build, up to ~8% larger for large apps (the standard library's files of 64 KiB and more stay level 9) |
+| `--best-compression / --no-best-compression` | native libraries as xz -6 instead of zstd 9: about 6.5% smaller for aiagent, a slower build, and a slower first run, which decodes them into the cache; not with `--fast-compression` |
+| `--hints / --no-hints` | also list packages that may read files next to `__file__` (a guess) |
+| `--interpreter-reexec / --no-interpreter-reexec` | let the app's own children started as `sys.executable -m MODULE` or `-c CODE` run as Python |
+| `--smoke / --no-smoke` | run the new executable once as a smoke test (default) or skip it |
 
-The same settings can live in the project's `pyproject.toml`; command-line options win (a
-compression flag on the command line also replaces the other one set in the project). The
-boolean settings below can only be switched on from the command line, so a project that sets
-them in `pyproject.toml` changes them there:
+`fsbpyr build -h` shows the same list. [Leaving out sources](#leaving-out-sources) explains
+`--no-source`, [At run time](#at-run-time) `--fs-package` and the cache that
+`--best-compression` decodes into, and [Helper interpreters](#helper-interpreters)
+`--interpreter-reexec`.
+
+The same settings can live in the project's `pyproject.toml`; command-line options win, both
+ways for on/off settings (`--source` keeps the sources of a project that sets
+`include-source = false`), and a compression flag on the command line also replaces the other
+one set in the project:
 
 ```toml
 [tool.fsbpyr]
@@ -119,6 +124,22 @@ form: `0.4.0-1a2b3c4d`), Python and glibc, the file's digest, the bundled shared
 extension modules, and the top-level modules of each distribution, in as many columns as the
 terminal fits. `--all-modules` lists every module, `--json` prints everything as JSON, and
 `--verify` recomputes the digest.
+
+## Shell completion and the man page
+
+fsbpyr prints both. They come from the same definitions as `--help`, so all three always
+agree:
+
+```
+fsbpyr completion bash > ~/.local/share/bash-completion/completions/fsbpyr
+fsbpyr completion zsh > ~/.zfunc/_fsbpyr     # a directory in $fpath, before compinit
+fsbpyr completion fish > ~/.config/fish/completions/fsbpyr.fish
+fsbpyr man > ~/.local/share/man/man1/fsbpyr.1
+```
+
+The shell asks fsbpyr for the words as you type, so after `--entry` and `--extra` it offers
+the console scripts and extras of the project being built: the directory named before them,
+or the current one.
 
 ## Integrity
 

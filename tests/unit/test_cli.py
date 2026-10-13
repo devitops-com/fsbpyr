@@ -32,10 +32,7 @@ def test_main_prints_the_version_of_the_checkout(
         "fsbpyr.vcs.git_state", lambda directory: {"commit": COMMIT, "tag": "v0.1.0"}
     )
 
-    with pytest.raises(SystemExit) as exc:
-        main(["--version"])
-
-    assert exc.value.code == 0
+    assert main(["--version"]) == 0
     assert capsys.readouterr().out == "0.1.0-6457a95b\n"
 
 
@@ -48,9 +45,7 @@ def test_executables_print_the_version_recorded_by_their_build(
     )
     monkeypatch.setattr("fsbpyr.vcs.git_state", lambda directory: pytest.fail("ran git"))
 
-    with pytest.raises(SystemExit):
-        main(["--version"])
-
+    assert main(["--version"]) == 0
     assert capsys.readouterr().out == "untagged-6457a95b\n"
 
 
@@ -65,7 +60,7 @@ def test_other_commands_never_run_git(
 
 def test_main_without_command_shows_usage(capsys: pytest.CaptureFixture[str]) -> None:
     assert main([]) == 2
-    assert "usage: fsbpyr" in capsys.readouterr().err
+    assert "Usage: fsbpyr" in capsys.readouterr().err
 
 
 def test_module_entry_point() -> None:
@@ -107,9 +102,8 @@ def test_best_compression_is_opt_in_and_excludes_fast_compression(
     main(["build", str(tmp_path)])
     main(["build", str(tmp_path), "--best-compression"])
     assert seen == [False, True]
-    with pytest.raises(SystemExit):
-        main(["build", str(tmp_path), "--best-compression", "--fast-compression"])
-    assert "not allowed with argument" in capsys.readouterr().err
+    assert main(["build", str(tmp_path), "--best-compression", "--fast-compression"]) == 2
+    assert "exclude each other" in capsys.readouterr().err
 
 
 def test_fast_compression_is_opt_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -126,6 +120,60 @@ def test_fast_compression_is_opt_in(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     main(["build", str(tmp_path), "--fast-compression"])
 
     assert seen == [False, True]
+
+
+def test_on_off_options_switch_off_what_the_project_switches_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "app"\nversion = "1"\n\n[tool.fsbpyr]\ninclude-source = false\n'
+        "interpreter-reexec = true\nfast-compression = true\n"
+    )
+    seen: list[tuple[bool, bool, bool]] = []
+
+    def build(project: Path, config: object, **kwargs: object) -> None:
+        seen.append((config.include_source, config.interpreter_reexec,  # type: ignore[attr-defined]
+                     config.fast_compression))  # type: ignore[attr-defined]  # fmt: skip
+        raise OSError("stop here")
+
+    monkeypatch.setattr("fsbpyr.build.build", build)
+
+    main(["build", str(tmp_path)])
+    main(["build", str(tmp_path), "--source", "--no-interpreter-reexec", "--no-fast-compression"])
+
+    assert seen == [(False, True, True), (True, False, False)]
+
+
+def test_help_has_a_short_option(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["build", "-h"]) == 0
+    assert "--source / --no-source" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("argv", "collections"),
+    [
+        (["runtime", "list"], 1),
+        (["inspect", "missing"], 1),
+        (["build", "--help"], 0),
+        (["inspect", "--help"], 0),
+        (["runtime", "build", "--help"], 0),
+        (["runtime", "list", "extra"], 0),
+        (["runtime", "build", "--bogus"], 0),
+        (["cache", "--help"], 0),
+        (["completion", "bash"], 0),
+        (["man"], 0),
+    ],
+)
+def test_only_commands_that_run_collect_the_cache(
+    argv: list[str], collections: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[None] = []
+    monkeypatch.setattr("fsbpyr.cli._collect_when_due", lambda: calls.append(None))
+    monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path))
+
+    main(argv)
+
+    assert len(calls) == collections
 
 
 def test_runtime_list_on_empty_cache(
