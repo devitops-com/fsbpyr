@@ -290,9 +290,10 @@ def check_path(path: str) -> None:
 
 
 def is_module_part(part: str) -> bool:
-    """An identifier, or a file stem with hyphens that only ``importlib.import_module`` reaches
-    (sysconfig's ``_sysconfigdata__linux_x86_64-linux-gnu``)."""
-    return part.replace("-", "_").isidentifier()
+    """An identifier, or a file stem that only ``importlib.import_module`` reaches: one with
+    hyphens (sysconfig's ``_sysconfigdata__linux_x86_64-linux-gnu``) or starting with a digit
+    (mypyc's shared ``81d243bd2c585b0f4821__mypyc``, which the extensions it compiled import)."""
+    return part != "" and ("_" + part.replace("-", "_")).isidentifier()
 
 
 def check_module_name(name: str) -> None:

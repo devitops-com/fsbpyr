@@ -99,8 +99,9 @@ class Content:
 
 def module_name(rel: str) -> tuple[str, bool] | None:
     """Dotted name and is-package flag of a site-relative .py path, if importable. A module
-    file's stem may contain hyphens: ``importlib.import_module`` reaches it (rich's tables).
-    Like any module, such a file is kept as bytecode only under ``--no-source``."""
+    file's stem may contain hyphens or start with a digit: ``importlib.import_module`` reaches
+    it (rich's tables, Django's ``0001_initial`` migrations). Like any module, such a file is
+    kept as bytecode only under ``--no-source``."""
     parts = list(PurePosixPath(rel).with_suffix("").parts)
     is_package = parts[-1] == "__init__"
     if is_package:
@@ -114,14 +115,17 @@ def module_name(rel: str) -> tuple[str, bool] | None:
 
 def extension_name(rel: str, suffixes: tuple[str, ...]) -> tuple[str, bool, int] | None:
     """Dotted name, is-package flag (``__init__`` compiled by Cython and the like) and suffix
-    rank of an extension module file, if importable."""
+    rank of an extension module file, if importable. CPython calls ``PyInit_<stem>``, so a
+    module file's stem may start with a digit (mypyc's shared ``<hash>__mypyc``, which the
+    extensions it compiled import by name) but never contains a hyphen (``libbar-2.so``)."""
     for rank, suffix in enumerate(suffixes):
         if rel.endswith(suffix):
             parts = rel[: -len(suffix)].split("/")
             is_package = len(parts) > 1 and parts[-1] == "__init__"
             if is_package:
                 parts.pop()
-            if all(part.isidentifier() for part in parts):
+            last = parts[-1] if is_package else f"_{parts[-1]}"
+            if all(part.isidentifier() for part in parts[:-1]) and last.isidentifier():
                 return ".".join(parts), is_package, rank
     return None
 

@@ -342,8 +342,10 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
    `_virtualenv.py`) are not packaged. Every directory with an identifier name and no
    `__init__.py` gets a NAMESPACE record, matching CPython's implicit namespace packages, so
    that `importlib.resources.files("pkg.data")` works for data directories. A module file's
-   stem may contain hyphens (`rich/_unicode_data/unicode17-0-0.py`), since
-   `importlib.import_module` reaches it; package directories must be identifiers.
+   stem may contain hyphens (`rich/_unicode_data/unicode17-0-0.py`) or start with a digit
+   (mypyc's `81d243bd2c585b0f4821__mypyc`), since `importlib.import_module` reaches it; an
+   extension's never contains a hyphen (CPython calls `PyInit_<stem>`), and package
+   directories must be identifiers.
 7. **Compile** in-process when the runtime is self; otherwise use the runtime's compile helper
    (Phase 9). Every result is canonicalized (D16). A `SyntaxError` keeps the file as a resource
    and prints a warning.
@@ -1306,6 +1308,17 @@ write, a truncated binary.
     wheels, not builds within it), a failed and an offline rebuild. tsim's shell built twice
     against a uv cache that held the host's posix_ipc build: the first rebuilt it (glibc 2.28),
     the second found the sysroot's build
+- **Fixed (0.17.1):** a module file whose stem starts with a digit is a module. mypyc puts the
+  code its extensions share in a top-level extension named after a hash, which they import by
+  name: charset-normalizer's `cd` and `md` import `81d243bd2c585b0f4821__mypyc`. Not an
+  identifier, it was packaged as a library, so `import charset_normalizer` failed and requests
+  warned that it had no character detection. An extension's stem may start with a digit,
+  since CPython calls `PyInit_<stem>`, but still never contains a hyphen (`libbar-2.so` stays
+  a library); a `.py` stem may do both, so `0001_initial.py` migrations are modules too. The
+  payload format allows such names; an older `fsbpyr inspect` refuses an executable holding
+  one, the launcher never checks names
+  (`test_module_files_starting_with_a_digit_are_modules`,
+  `test_module_names_starting_with_a_digit_are_allowed`)
 
 - ~~`FSBPYR_VERIFY=1` also checks the payload digest (D11)~~: D31 checks the whole file on
   every start and re-hashes cached files in every process; `FSBPYR_VERIFY` is gone.
