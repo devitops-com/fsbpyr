@@ -170,6 +170,7 @@ def build(
                     ("glibc", glibc),
                     ("zstd_level", level),  # of the app's content and of every block
                     ("native_compression", natives),
+                    ("interpreter_reexec", config.interpreter_reexec),  # read at start (D23)
                     ("git", git_state(project.directory, warn=warnings.append)),
                 ),
                 zstd_level=level,

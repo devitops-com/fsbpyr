@@ -26,6 +26,7 @@ class BuildConfig:
     hints: bool = False  # also print guesses (packages that may read files next to __file__)
     fast_compression: bool = False  # zstd level 3 instead of 9 for app content (D29)
     best_compression: bool = False  # native files as xz -6 (D33): smaller, slower to build
+    interpreter_reexec: bool = False  # -m/-c from the app's own children run as Python (D23)
 
     def __post_init__(self) -> None:
         if self.fast_compression and self.best_compression:
@@ -74,6 +75,8 @@ def _from_tool(project: Project) -> dict[str, Any]:
             values["fast_compression"] = _expect(key, value, bool)
         elif key == "best-compression":
             values["best_compression"] = _expect(key, value, bool)
+        elif key == "interpreter-reexec":
+            values["interpreter_reexec"] = _expect(key, value, bool)
         elif key == "allow-system-libs":
             libs = _expect(key, value, list)
             values["allowed_system_libs"] = tuple(_soname(key, lib) for lib in libs)
@@ -84,7 +87,7 @@ def _from_tool(project: Project) -> dict[str, Any]:
             raise ConfigError(
                 f"unknown [tool.fsbpyr] key {key!r}; supported: entry, output, requirements, "
                 "extras, include-source, fast-compression, best-compression, "
-                "allow-system-libs, fs-packages"
+                "allow-system-libs, fs-packages, interpreter-reexec"
             )
     return values
 

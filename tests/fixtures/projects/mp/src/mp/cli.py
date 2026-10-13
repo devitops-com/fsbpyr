@@ -1,6 +1,7 @@
 """Every multiprocessing start method except fork re-executes ``sys.executable`` (the app)."""
 
 import multiprocessing
+import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import shared_memory
@@ -10,7 +11,19 @@ def square(x: int) -> int:
     return x * x
 
 
+HELPERS = (
+    ["-u", "-B", "-m", "mp.helper", "a"],
+    ["-c", "import sys; print('code', sys.argv)", "b"],
+)
+
+
 def main() -> None:
+    if sys.argv[1:] == ["reexec"]:  # helper interpreters through sys.executable (D23)
+        for helper in HELPERS:
+            child = subprocess.run([sys.executable, *helper], capture_output=True, text=True,
+                                   check=False)  # fmt: skip
+            print(child.returncode, child.stdout.strip())
+        return
     if "--wait" in sys.argv:  # lets a test replace the binary on disk before any child starts
         print("ready", flush=True)
         sys.stdin.readline()
