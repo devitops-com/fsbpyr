@@ -2,7 +2,7 @@
 completions (D40). Help texts set code in backticks; the page sets it in bold."""
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 
 import click
 
@@ -12,8 +12,9 @@ _CODE = re.compile(r"`([^`]+)`")
 _NO_REWRAP = "\b"  # click: a paragraph whose first line is this keeps its lines
 
 
-def render(group: click.Group, name: str) -> str:
-    """The page for man(7): the group's own options, then every command below it."""
+def render(group: click.Group, name: str, examples: Sequence[tuple[str, str]] = ()) -> str:
+    """The page for man(7): the group's own options, every command below it, then the
+    examples, each a command line and what it does."""
     ctx = click.Context(group, info_name=name)
     lines = [
         f'.TH {name.upper()} 1 "" "{name} {__version__}" "User Commands"',
@@ -31,6 +32,10 @@ def render(group: click.Group, name: str) -> str:
         usage = " ".join(sub.command.collect_usage_pieces(sub))
         lines += [f'.SS "{_text(sub.command_path)} {_text(usage)}"', *_paragraphs(sub.command.help)]
         lines += _options(sub)
+    if examples:
+        lines += [".SH EXAMPLES", ".nh", ".ad l"]  # command lines: no hyphens added, no gaps
+    for command, text in examples:
+        lines += [".TP", f"\\fB{_text(command)}\\fR", _text(text)]
     return "\n".join(lines) + "\n"
 
 

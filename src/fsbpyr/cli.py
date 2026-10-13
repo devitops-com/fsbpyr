@@ -281,12 +281,49 @@ def completion(*, shell: str) -> int:
     return 0
 
 
+# The man page's EXAMPLES: a command line, then what it does. A test runs each one through the
+# commands above, so no example can name an option or a command that is gone.
+EXAMPLES = (
+    ("fsbpyr build",
+     "Build the project in the current directory into `dist/`, named after its console "
+     "script."),
+    ("fsbpyr build ~/src/mytool -o ~/.local/bin/mytool",
+     "Build another project, straight into a directory on `PATH`."),
+    ("fsbpyr build --entry mytool --extra fancy",
+     "Pick one of the project's console scripts, and install the project's extra `fancy` "
+     "with it."),
+    ("fsbpyr build --no-source --best-compression",
+     "The smallest executable: bytecode without the `.py` sources, native libraries as xz. "
+     "Tracebacks show no source lines, and the first run takes longer."),
+    ("fsbpyr build --source",
+     "Keep the sources, for a build to debug, of a project whose `pyproject.toml` sets "
+     "`include-source = false`."),
+    ("fsbpyr build --fs-package mypkg.templates --allow-system-lib libGL.so.1",
+     "Put the files of `mypkg.templates` on disk for code that opens them by path, and let "
+     "native code load `libGL.so.1` from the host."),
+    ("fsbpyr inspect --verify ~/.local/bin/mytool",
+     "Show what an executable was built from, and recompute its digest."),
+    ("fsbpyr inspect --json --all-modules dist/mytool",
+     "The same report as JSON, with every module listed."),
+    ("fsbpyr runtime build",
+     "Build the runtime that fsbpyr needs when it runs from a checkout or a wheel: once, with "
+     "clang and lld 22 or newer."),
+    ("fsbpyr cache gc",
+     "Collect fsbpyr's own cache and every app cache now, rather than when the next "
+     "collection is due."),
+    ("fsbpyr completion bash > ~/.local/share/bash-completion/completions/fsbpyr",
+     "Install the completion for bash; new shells pick it up."),
+    ("fsbpyr man > ~/.local/share/man/man1/fsbpyr.1",
+     "Install this page."),
+)  # fmt: skip
+
+
 @cli.command("man", help="print the man page (roff)\n\n\b\n"
              "fsbpyr man > ~/.local/share/man/man1/fsbpyr.1")  # fmt: skip
 def man() -> int:
     from .manpage import render  # noqa: PLC0415  keep --version fast
 
-    print(render(cli, PROG), end="")
+    print(render(cli, PROG, EXAMPLES), end="")
     return 0
 
 

@@ -1332,13 +1332,20 @@ write, a truncated binary.
   is a file is a usage error. click costs the executable 4–5 ms of startup
   - tests: `test_cli_docs.py` (the subcommands and both forms of on/off options complete;
     `--entry` and `--extra` from the current or the named project, nothing and no message on
-    stderr for a missing, broken or non-UTF-8 one; bash
-    runs the script's function, which runs fsbpyr from `PATH`; the man page names every command
-    and option, sets code in bold and passes `groff -ww` clean; the README's option table is
-    the `build` command's help), and in `test_cli.py` the `--no-` forms over the project, `-h`,
-    and which commands collect the cache (as before: `build`, `inspect` and `runtime build|list`
-    when they run, never for help or a usage error). zsh ran by hand through a pty (`--entry`, `--extra`, `--no-o`, subcommands); fish was
-    not available here, so its script is only checked for calling fsbpyr
+    stderr for a missing, broken or non-UTF-8 one; bash runs the script's function, which runs
+    fsbpyr from `PATH`; the man page names every command and option, sets code in bold and
+    passes `groff -ww` clean; the README's option table is the `build` command's help), and in
+    `test_cli.py` the `--no-` forms over the project, `-h`, and which commands collect the cache
+    (as before: `build`, `inspect` and `runtime build|list` when they run, never for help or a
+    usage error). zsh ran by hand through a pty (`--entry`, `--extra`, `--no-o`, subcommands);
+    fish was not available here, so its script is only checked for calling fsbpyr
+- **0.18.1:** the man page ends with EXAMPLES: a command line and what it does, for every
+  command. They sit in `cli.py` next to the commands (`EXAMPLES`), and a test runs each one
+  through the commands with their callbacks replaced, so no example can name an option or a
+  command that is gone. The section is set without hyphenation and left-aligned: groff split
+  `fsbpyr` in a command line and stretched the long ones
+  - tests: every example is a command line fsbpyr accepts and sits in EXAMPLES; no line of the
+    rendered section ends in a hyphen (two do without `.nh`)
 
 - ~~`FSBPYR_VERIFY=1` also checks the payload digest (D11)~~: D31 checks the whole file on
   every start and re-hashes cached files in every process; `FSBPYR_VERIFY` is gone.

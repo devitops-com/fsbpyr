@@ -2,6 +2,7 @@
 ``fsbpyr.cli`` (D40). The README's option table is checked against them."""
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -12,7 +13,7 @@ import click
 import pytest
 from click.shell_completion import ShellComplete
 
-from fsbpyr.cli import cli, main
+from fsbpyr.cli import EXAMPLES, cli, main
 
 ROOT = Path(__file__).parents[2]
 PYPROJECT = """\
@@ -173,6 +174,41 @@ def test_man_page_documents_every_command_and_option(capsys: pytest.CaptureFixtu
             if isinstance(param, click.Option) and param.name != "help":
                 for flag in (*param.opts, *param.secondary_opts):
                     assert flag.replace("-", "\\-") in page, flag
+
+
+def test_man_page_ends_with_the_examples(capsys: pytest.CaptureFixture[str]) -> None:
+    main(["man"])
+    page = capsys.readouterr().out
+
+    examples = page[page.index(".SH EXAMPLES") :]
+    assert ".SH" not in examples.removeprefix(".SH EXAMPLES")
+    for command, _ in EXAMPLES:
+        assert f".TP\n\\fB{command.replace('-', '\\-')}\\fR\n" in examples
+
+
+def test_example_command_lines_are_never_hyphenated(capsys: pytest.CaptureFixture[str]) -> None:
+    groff = shutil.which("groff")
+    if groff is None:
+        pytest.skip("needs groff")
+    main(["man"])
+
+    plain = [groff, "-man", "-Tascii", "-P-cbou", "-rLL=80n"]  # no bold, colour or overstrike
+    result = subprocess.run(plain, input=capsys.readouterr().out, capture_output=True, text=True,
+                            check=True)  # fmt: skip
+
+    examples = result.stdout.split("EXAMPLES")[1].splitlines()
+    assert [line for line in examples if line.endswith("-")] == []
+
+
+def test_every_example_is_a_command_line_fsbpyr_accepts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Parsed and checked by the commands themselves, which then do nothing."""
+    for ctx in _commands(click.Context(cli, info_name="fsbpyr")):
+        monkeypatch.setattr(ctx.command, "callback", lambda **_: 0)
+
+    for command, _ in EXAMPLES:
+        argv = shlex.split(command.partition(" > ")[0])
+        assert argv[0] == "fsbpyr"
+        assert main(argv[1:]) == 0, command
 
 
 def test_man_page_sets_code_in_bold(capsys: pytest.CaptureFixture[str]) -> None:

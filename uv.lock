@@ -159,7 +159,7 @@ wheels = [
 
 [[package]]
 name = "fsbpyr"
-version = "0.18.0"
+version = "0.18.1"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
