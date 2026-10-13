@@ -4,10 +4,19 @@ from pathlib import Path
 
 import pytest
 
-from fsbpyr.build import BuildError, build, glibc_report, smoke_test
+from fsbpyr.build import (
+    BuildError,
+    build,
+    built_here_above,
+    glibc_report,
+    rebuild_on_baseline,
+    smoke_test,
+)
 from fsbpyr.cli import main
+from fsbpyr.closure import SiteIndex
 from fsbpyr.config import BuildConfig
-from fsbpyr.staging import StagingError
+from fsbpyr.runtime import pins
+from fsbpyr.staging import StagingError, StagingPlan
 
 from ...support.elf import make_elf
 
@@ -84,3 +93,61 @@ def test_glibc_requirement_is_the_highest_of_stub_and_natives(
 
 def test_glibc_requirement_of_an_unreadable_stub_is_unknown() -> None:
     assert glibc_report(b"\x7fELF-fake", None, baseline=(2, 28)) == (None, [])
+
+
+def _installed(site: Path, name: str, tag: str, files: dict[str, bytes]) -> None:
+    info = site / f"{name}-1.0.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text(f"Metadata-Version: 2.4\nName: {name}\nVersion: 1.0\n")
+    (info / "WHEEL").write_text(f"Wheel-Version: 1.0\nRoot-Is-Purelib: false\nTag: {tag}\n")
+    for rel, data in files.items():
+        (site / rel).write_bytes(data)
+    lines = [f"{rel},," for rel in files] + [f"{info.name}/{f},," for f in ("METADATA", "WHEEL")]
+    (info / "RECORD").write_text("\n".join([*lines, f"{info.name}/RECORD,,"]) + "\n")
+
+
+def test_dependencies_built_here_that_need_more_than_the_baseline_are_found(tmp_path: Path) -> None:
+    new = make_elf(versions=(("libc.so.6", ("GLIBC_2.2.5", "GLIBC_2.34")),))
+    old = make_elf(versions=(("libc.so.6", ("GLIBC_2.17",)),))
+    _installed(tmp_path, "native_src", "cp314-cp314-linux_x86_64", {"native_src.so": new})
+    _installed(tmp_path, "native_wheel", "cp314-cp314-manylinux_2_34_x86_64",
+               {"native_wheel.so": new})  # fmt: skip
+    _installed(tmp_path, "old_src", "cp314-cp314-linux_x86_64", {"old_src.so": old})
+    _installed(tmp_path, "pure_src", "py3-none-any", {"pure_src.py": b"x = 1\n"})
+
+    found = built_here_above(SiteIndex.scan(tmp_path).dists.values(), (2, 28))
+
+    assert found == ["native-src"]  # a wheel from the index got its glibc from its tag
+
+
+BASELINE = pins.sysroot_for("x86_64-unknown-linux-gnu")
+
+
+def _rebuild(tmp_path: Path, *, offline: bool = False) -> list[str]:
+    plan = StagingPlan(site=tmp_path, build=[], install=[], wheel_dir=tmp_path)
+    return rebuild_on_baseline(plan, tmp_path, tmp_path / "app.whl", ["cxx-ext"], BASELINE,
+                               offline=offline)  # fmt: skip
+
+
+def test_a_failed_rebuild_keeps_the_hosts_build_with_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failed(*_: object) -> None:
+        raise StagingError("uv pip install ... failed:\n  error: command 'g++' failed\n\n")
+
+    monkeypatch.setattr("fsbpyr.build.fetch_sysroot", lambda pin, cache: tmp_path)
+    monkeypatch.setattr("fsbpyr.build.rebuild", failed)
+
+    assert _rebuild(tmp_path) == [
+        "cxx-ext: building from source against the glibc 2.28 sysroot failed, the build host's "
+        "builds are packaged: error: command 'g++' failed"
+    ]
+
+
+def test_an_offline_build_rebuilds_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("fsbpyr.build.fetch_sysroot", lambda pin, cache: pytest.fail("fetch"))
+    monkeypatch.setattr("fsbpyr.build.rebuild", lambda *_: pytest.fail("rebuild"))
+
+    assert _rebuild(tmp_path, offline=True) == [
+        "cxx-ext: not rebuilt against the glibc 2.28 sysroot: the build is offline"
+    ]

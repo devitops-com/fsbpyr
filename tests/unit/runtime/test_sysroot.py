@@ -10,7 +10,7 @@ import pytest
 from fsbpyr.runtime import ar
 from fsbpyr.runtime.pbs import PbsError, download
 from fsbpyr.runtime.pins import SysrootPin
-from fsbpyr.runtime.sysroot import SysrootError, extract_deb, fetch_sysroot
+from fsbpyr.runtime.sysroot import SysrootError, build_flags, extract_deb, fetch_sysroot
 
 
 def _ar(members: dict[str, bytes]) -> bytes:
@@ -153,3 +153,19 @@ def test_pin_identity_covers_the_package_hashes() -> None:
 def test_downloads_must_use_https(tmp_path: Path) -> None:
     with pytest.raises(PbsError, match="https"):
         download("http://example.invalid/a.deb", "0" * 64, tmp_path / "a.deb")
+
+
+def test_build_flags_point_the_host_compiler_at_the_sysroot(tmp_path: Path) -> None:
+    root = tmp_path / "sysroot"
+    (root / "usr/lib/gcc/x86_64-linux-gnu/8").mkdir(parents=True)
+
+    flags = build_flags(root, {"CFLAGS": "-O2", "CPPFLAGS": "-DX"})
+
+    cflags, ldflags = flags["CFLAGS"].split(), flags["LDFLAGS"].split()
+    assert cflags == [f"--sysroot={root}", "-isystem", f"{root}/usr/include/x86_64-linux-gnu",
+                      "-O2"]  # the caller's own flags last  # fmt: skip
+    assert ldflags == [f"--sysroot={root}", f"-B{root}/usr/lib/x86_64-linux-gnu",
+                       f"-B{root}/usr/lib/gcc/x86_64-linux-gnu/8",  # crtbeginS.o, libgcc
+                       f"-L{root}/usr/lib/x86_64-linux-gnu",
+                       f"-L{root}/lib/x86_64-linux-gnu"]  # fmt: skip
+    assert "CPPFLAGS" not in flags

@@ -841,7 +841,8 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
     Every uv install now passes `--python-platform x86_64-manylinux_2_28` (from the runtime's
     sysroot pin; uv also accepts the project's own locally built wheel with it). A dependency
     without such a wheel is built from its sdist on the build host, and the build warns when a
-    native file needs more than the 2.28 baseline. The pip fallback was later removed (D26)
+    native file needs more than the 2.28 baseline. The pip fallback was later removed (D26).
+    Since 0.17.0 such a build is redone against the sysroot (below)
   - `fsbpyr build` reports the requirement (`glibc >= 2.25`), stores it in the build info,
     and reads it from DT_VERNEED of the stub and every bundled native file
   - `hello`, `heavy` and `compat` (every check except the two HTTP clients, which need the
@@ -1286,6 +1287,25 @@ write, a truncated binary.
   (`test_libraries_without_runpath_inherit_the_rpath_of_their_loaders`,
   `test_a_runpath_ends_the_inherited_search_for_its_own_object_only`). Known, not done: ld.so
   also reuses an object already loaded under the same soname
+- **0.17.0:** a dependency built from its sdist on the build host (wheel tag `linux_*`) whose
+  native files need more than the 2.28 baseline is built again against the D25 sysroot. posix_ipc
+  publishes no wheel for Python 3.14; built on a glibc 2.34 host it bound sem_*, shm_* and mq_*
+  to GLIBC_2.34 (librt moved into libc in 2.34), and tsim's executable needed glibc 2.34.
+  Against the sysroot it needs GLIBC_2.7 and librt.so.1, and the executable glibc 2.28.
+  - the host's compiler (gcc or clang) gets the sysroot through CFLAGS and LDFLAGS
+    (`--sysroot`, Debian's multiarch include and library directories, the sysroot's GCC 8
+    crtbeginS.o and libgcc), not through CC: build probes run CC as a bare command
+  - uv reuses a wheel it built, whatever the flags (`--refresh-package` only revalidates the
+    index): `uv cache clean` drops its builds of those packages first, and the sysroot's builds
+    take their place, so the next build finds them and rebuilds nothing
+  - a failed rebuild (a C++ extension: the sysroot has no libstdc++) keeps the host's build,
+    with a warning, as does an offline build; uv builds before it installs, so the staged site
+    is unchanged
+  - tests: the flags, the staging rebuild (cache cleaned, installs repeated, the venv not
+    recreated), which dependencies need it (built here and above the baseline: not index
+    wheels, not builds within it), a failed and an offline rebuild. tsim's shell built twice
+    against a uv cache that held the host's posix_ipc build: the first rebuilt it (glibc 2.28),
+    the second found the sysroot's build
 
 - ~~`FSBPYR_VERIFY=1` also checks the payload digest (D11)~~: D31 checks the whole file on
   every start and re-hashes cached files in every process; `FSBPYR_VERIFY` is gone.

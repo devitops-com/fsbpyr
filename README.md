@@ -32,6 +32,13 @@ time (uv fetches a Python 3.14 and the locked dependencies; later builds work fr
 with `--offline`). git is optional: with it, the executable records the commit it was built
 from. The output defaults to `dist/<console-script-name>`.
 
+uv picks wheels that run on glibc 2.28. A dependency without one is built from its sdist with
+the build host's C compiler, against the host's glibc. When such a build needs a newer glibc
+than 2.28, fsbpyr builds it again against the glibc 2.28 sysroot it links the launcher with
+(downloaded once), so the executable keeps the baseline; uv's cached build of it is replaced.
+If that build fails, as a C++ extension does (the sysroot has no libstdc++), or the build is
+offline, the host's build is packaged and the build warns which glibc it needs.
+
 | Option | |
 |---|---|
 | `--entry NAME` | console script name, `module` or `module:function` (default: the only script) |
