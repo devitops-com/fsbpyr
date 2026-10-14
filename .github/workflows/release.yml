@@ -33,9 +33,11 @@ jobs:
     env:
       PREFIX: ${{ github.workspace }}/../prefix
       # The container runs as root, but GitHub mounts its HOME (/github/home) owned by the
-      # runner's user: fsbpyr refuses a cache whose way from / another user owns. uv, its
-      # Pythons and fsbpyr's caches go under root's own home instead.
-      HOME: /root
+      # runner's user: fsbpyr refuses a cache whose way from / another user owns. The caches
+      # (fsbpyr's, the executables' and uv's) go under root's own home instead. Not HOME
+      # itself: job env also reaches the runner's docker CLI on the host, which then warns
+      # that it cannot read /root/.docker/config.json.
+      XDG_CACHE_HOME: /root/.cache
     steps:
       # git before the checkout: without it actions/checkout downloads a tarball, with no tags.
       # make runs `make bootstrap`, which installs the rest.
