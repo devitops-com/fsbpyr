@@ -70,8 +70,8 @@ jobs:
             exit 1
           fi
 
-      # OS packages, uv, the Python of .python-version, the runtime, fsbpyr from source and
-      # `make install` under $PREFIX. No cache: the release is built from the lock, never from
+      # OS packages, uv, the Python of .python-version, the runtime, fsbpyr in three stages
+      # (each verified, stages 2 and 3 identical) and `make install` under $PREFIX. No cache: the release is built from the lock, never from
       # files another run cached.
       - name: make bootstrap
         run: make bootstrap

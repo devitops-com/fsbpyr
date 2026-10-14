@@ -14,8 +14,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`VERSION=X.Y.Z` to bump) promotes `[Unreleased]`, commits, tags and pushes.
 - **A Makefile: `make bootstrap`, `make build`, `make install`.** `make bootstrap` takes a
   checkout to an installed fsbpyr: on Debian trixie it installs clang/lld 22 and the other
-  OS packages with sudo and uv from astral.sh, then builds the runtime and fsbpyr from
-  source; on any other Linux x86-64 the build runs in a Debian trixie podman container
+  OS packages with sudo and uv from astral.sh, then builds the runtime and fsbpyr in three
+  stages (from source, then twice by the previous stage's executable; every stage must pass
+  `inspect --verify` and stages 2 and 3 must be byte-identical); on any other Linux x86-64 the build runs in a Debian trixie podman container
   (`Containerfile`, IPv4-only). `make build` builds `dist/fsbpyr` with the installed fsbpyr
   (bootstrapping first if there is none), and `make install` installs it with its man page
   and bash, zsh and fish completions under `~/.local` (`PREFIX=` for elsewhere).

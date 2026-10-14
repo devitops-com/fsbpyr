@@ -42,9 +42,14 @@ the host:
 3. builds the runtime (`fsbpyr runtime build`: the pinned CPython from python-build-standalone
    and a glibc 2.28 sysroot are downloaded, the launcher linked, the standard library
    compiled; a minute or two, cached in `~/.cache/fsbpyr`);
-4. builds fsbpyr from source into `dist/fsbpyr` and runs `make install`.
+4. builds fsbpyr in three stages: fsbpyr run from source builds `dist/stage1/fsbpyr`, that
+   executable builds `dist/stage2/fsbpyr`, and that one builds `dist/stage3/fsbpyr`. Each
+   stage must pass `fsbpyr inspect --verify` (its digest is recomputed over the whole file),
+   and stages 2 and 3 must be byte-identical: builds are reproducible, so a difference means
+   fsbpyr does not build itself faithfully, and bootstrap stops there;
+5. copies stage 3 to `dist/fsbpyr` and runs `make install`.
 
-On **any other Linux x86-64** steps 1 to 3 and the build run in a Debian trixie podman image
+On **any other Linux x86-64** steps 1 to 4 run in a Debian trixie podman image
 (`Containerfile`: the same OS packages and uv from astral.sh), on the checkout mounted into it,
 and `make install` runs on the host. uv is installed on the host too, for `make build`. The
 container is IPv4-only: on podman's default network, TLS handshakes from Python with GitHub's

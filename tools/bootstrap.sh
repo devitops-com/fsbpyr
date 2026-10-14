@@ -13,7 +13,9 @@
 #    too, for `make build`.
 # 2. The locked environment on the Python pinned in .python-version, then the runtime
 #    (`fsbpyr runtime build`, which links with clang/lld 22).
-# 3. fsbpyr built from source with that runtime -> dist/fsbpyr.
+# 3. Three stages: fsbpyr from source builds dist/stage1/fsbpyr, which builds
+#    dist/stage2/fsbpyr, which builds dist/stage3/fsbpyr. `inspect --verify` must confirm each
+#    one's digest, and stages 2 and 3 must be identical; stage 3 becomes dist/fsbpyr.
 # 4. `make install`: dist/fsbpyr, its man page and completions under PREFIX (on the host,
 #    also after a podman build).
 #
@@ -89,6 +91,16 @@ uv_present() {
     command -v uv >/dev/null || die "uv is not on PATH after installing it"
 }
 
+# verify EXECUTABLE: `inspect --verify` recomputes its digest over the whole file; the report
+# must say so (exit status 0 and "digest <hex> verified").
+verify() {
+    local report
+    report="$("$1" inspect --verify "$1")" || die "$1 does not verify"
+    grep -Eq '^digest +[0-9a-f]{64} verified$' <<<"$report" \
+        || die "inspect --verify did not confirm the digest of $1"
+    say "$1: $(grep -E '^digest' <<<"$report" | tr -s ' ')"
+}
+
 from_source() {
     uv_present
     say "Locked environment on Python $(cat .python-version)"
@@ -96,9 +108,24 @@ from_source() {
     uv sync --locked
     say "Runtime (links with clang/lld 22; cached after the first run)"
     uv run --locked fsbpyr runtime build
-    say "Building dist/fsbpyr from source"
-    mkdir -p dist
-    uv run --locked fsbpyr build . -o dist/fsbpyr
+    rm -rf dist/stage1 dist/stage2 dist/stage3
+    mkdir -p dist/stage1 dist/stage2 dist/stage3
+    say "Stage 1: fsbpyr from source builds dist/stage1/fsbpyr"
+    uv run --locked fsbpyr build . -o dist/stage1/fsbpyr
+    verify dist/stage1/fsbpyr
+    say "Stage 2: dist/stage1/fsbpyr builds dist/stage2/fsbpyr"
+    dist/stage1/fsbpyr build . -o dist/stage2/fsbpyr
+    verify dist/stage2/fsbpyr
+    say "Stage 3: dist/stage2/fsbpyr builds dist/stage3/fsbpyr"
+    dist/stage2/fsbpyr build . -o dist/stage3/fsbpyr
+    verify dist/stage3/fsbpyr
+    # Builds are reproducible: two executables built from the same checkout by builders of the
+    # same version are the same bytes. Stage 2 and 3 differ only if building changes fsbpyr.
+    cmp -s dist/stage2/fsbpyr dist/stage3/fsbpyr \
+        || die "stage 2 and stage 3 differ:
+$(sha256sum dist/stage2/fsbpyr dist/stage3/fsbpyr)"
+    say "Stage 2 and stage 3 are identical: $(sha256sum dist/stage3/fsbpyr | cut -d' ' -f1)"
+    cp dist/stage3/fsbpyr dist/fsbpyr.tmp && mv dist/fsbpyr.tmp dist/fsbpyr
 }
 
 in_podman() {
