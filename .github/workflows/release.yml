@@ -41,11 +41,11 @@ jobs:
       XDG_CACHE_HOME: /root/.cache
     steps:
       # git before the checkout: without it actions/checkout downloads a tarball, with no tags.
-      # make runs `make bootstrap`, which installs the rest.
-      - name: Install git and make
+      # make runs `make bootstrap`, which installs the rest; xz compresses the release's copy.
+      - name: Install git, make and xz
         run: |
           apt-get update -q
-          apt-get install -y -q --no-install-recommends ca-certificates git make
+          apt-get install -y -q --no-install-recommends ca-certificates git make xz-utils
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -107,11 +107,20 @@ jobs:
       - name: make test-ci
         run: make test-ci
 
+      # The same executable, about half the download. One thread: the same input gives the same
+      # .xz with the same xz (multithreaded xz splits the stream by thread count).
+      - name: Compress the executable
+        run: |
+          xz --x86 --lzma2=preset=9e --threads=1 --keep dist/fsbpyr
+          xz --decompress --stdout dist/fsbpyr.xz | cmp - dist/fsbpyr
+
       - name: Upload the executable
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: fsbpyr
-          path: dist/fsbpyr
+          path: |
+            dist/fsbpyr
+            dist/fsbpyr.xz
           if-no-files-found: error
 
   publish:
@@ -141,11 +150,13 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: bash tools/release/release-notes.sh "${TAG#v}" > "$RUNNER_TEMP/notes.md"
 
-      # Verify with: gh attestation verify fsbpyr --repo devitops-com/fsbpyr
+      # Verify with: gh attestation verify fsbpyr --repo devitops-com/fsbpyr (or fsbpyr.xz)
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/fsbpyr
+          subject-path: |
+            dist/fsbpyr
+            dist/fsbpyr.xz
 
       - name: Publish the GitHub release
         env:
@@ -153,4 +164,4 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
           NOTES: ${{ runner.temp }}/notes.md
-        run: gh release create "$TAG" --verify-tag --title "fsbpyr $TAG" --notes-file "$NOTES" dist/fsbpyr
+        run: gh release create "$TAG" --verify-tag --title "fsbpyr $TAG" --notes-file "$NOTES" dist/fsbpyr dist/fsbpyr.xz
