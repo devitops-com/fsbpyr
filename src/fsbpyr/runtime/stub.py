@@ -3,6 +3,7 @@
 import hashlib
 import importlib.resources
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -35,6 +36,7 @@ LAUNCHER_FILES = (
     "vendor/zstd/zstd_errors.h",
 )
 _ERROR_TAIL = 4000
+_LINKED = "stub"  # the link's output, inside its temporary directory
 # Fixed compiler/linker flags; hashed into the runtime id so a flag change yields a new runtime.
 # -Wvla and the frame limit keep the stack bounded by construction (D38;
 # tests/e2e/test_launcher_build.py compiles without LTO, where every frame is sized, and fails).
@@ -101,6 +103,13 @@ def stub_command(  # noqa: PLR0913  # the build's inputs, and which variant
         *compile_flags(sanitize=sanitize),
         # a glibc baseline instead of the build host's (D25)
         *([f"--sysroot={toolchain.sysroot}"] if toolchain.sysroot is not None else []),
+        # reproducible: where the cache lives (whose ~/.cache) never reaches the launcher
+        f"-ffile-prefix-map={dist.root}=/fsbpyr/python",
+        *(
+            [f"-ffile-prefix-map={toolchain.sysroot}=/fsbpyr/sysroot"]
+            if toolchain.sysroot is not None
+            else []
+        ),
         f"--ld-path={toolchain.lld}",
         f"-DFSBPYR_BYTECODE_MAGIC=0x{magic:08x}u",
         f"-I{dist.include}",
@@ -138,12 +147,18 @@ def build_stub(
     inputs = link_inputs(
         dist, set(ar.members(dist.root / dist.info["build_info"]["core"]["static_lib"]))
     )
+    # Reproducible: clang runs inside the temporary directory on relative paths, so its random
+    # name reaches neither __FILE__ nor the names LTO gives local symbols (it did, and every
+    # runtime build linked a different launcher).
     with tempfile.TemporaryDirectory(prefix="fsbpyr-launcher-") as tmp:
-        sources = _copy_launcher(Path(tmp))
-        command = stub_command(dist, inputs, toolchain, sources, out, sanitize=sanitize)
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        raise StubBuildError(f"launcher link failed:\n{result.stderr[-_ERROR_TAIL:]}")
+        work = Path(tmp)
+        _copy_launcher(work)
+        sources = [Path(name) for name in LAUNCHER_SOURCES]
+        command = stub_command(dist, inputs, toolchain, sources, Path(_LINKED), sanitize=sanitize)
+        result = subprocess.run(command, cwd=work, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            raise StubBuildError(f"launcher link failed:\n{result.stderr[-_ERROR_TAIL:]}")
+        shutil.copyfile(work / _LINKED, out)
     printed = tuple(line for line in result.stderr.splitlines() if line.strip())
     if over := [line for line in printed if "stack frame size" in line]:
         raise StubBuildError(

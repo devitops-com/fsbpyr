@@ -31,6 +31,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   command line or stretches the long ones.
 
 ### Fixed
+- **The launcher links reproducibly, so executables do too.** The runtime build copied the
+  launcher's sources into a randomly named temporary directory, and that name reached the
+  launcher through LTO: every runtime build linked a different launcher, and the same commit
+  built on two machines gave different executables. clang now runs inside that directory on
+  relative paths, and the cache's own location is mapped out (`-ffile-prefix-map`), so the
+  same inputs link the same bytes wherever the cache is. Runtimes are rebuilt once (layout 7).
 - **`fsbpyr runtime build` retries a download that fails on the network.** The pinned
   CPython archive and the sysroot's packages are tried up to four times, after 2, 5 and
   10 s, when a TLS handshake times out or a connection is reset; an HTTP error such as a

@@ -2,6 +2,7 @@
 over FRAME_LIMIT bytes (and, by review, no recursion over input). Each source is compiled as the
 runtime build compiles it, but without LTO, so the compiler sizes every function's frame."""
 
+import dataclasses
 import os
 import subprocess
 from pathlib import Path
@@ -98,3 +99,19 @@ def test_the_sanitized_launcher_runs_under_asan_and_ubsan(runtime: Runtime, tmp_
     assert ran.returncode == 0 and ran.stdout == "ran\n", ran.stderr
     assert read.returncode == 99 and "ERROR: AddressSanitizer: SEGV" in read.stderr, read.stderr
     assert b"__ubsan_handle_" in app.read_bytes()  # UBSan runs inside ASan's runtime
+
+
+def test_the_launcher_links_reproducibly(runtime: Runtime, tmp_path: Path) -> None:
+    """Two links of the same inputs are the same bytes, so executables built from one commit
+    are the same wherever their runtime was built (the temporary directory's name reached the
+    launcher through LTO until 0.18.1)."""
+    pin = pins.pin_for(runtime.python_version.rpartition(".")[0], registry.host_triple())
+    cache = registry.cache_root()
+    dist = pbs.fetch(pin, cache)
+    root = sysroot.fetch_sysroot(pins.sysroot_for(pin.triple), cache)
+    toolchain = dataclasses.replace(find_toolchain(dist.llvm_major), sysroot=root)
+
+    for name in ("a", "b"):
+        stub.build_stub(dist, toolchain, tmp_path / name)
+
+    assert (tmp_path / "a").read_bytes() == (tmp_path / "b").read_bytes()

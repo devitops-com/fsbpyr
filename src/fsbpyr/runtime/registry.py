@@ -26,7 +26,8 @@ from .hold import hold
 from .toolchain import find_toolchain
 
 BOOT_PACKAGES = ("_fsbpyr_boot", "_fsbpyr_rt")  # regenerated for every build, never runtime content
-LAYOUT_VERSION = 6  # bump when the stdlib selection, its canonical bytecode or the layout changes
+LAYOUT_VERSION = 7  # bump when the stdlib selection, its canonical bytecode, the layout or the
+# launcher's link changes (7: a reproducible link)
 _STUB = "stub"
 _STDLIB = "stdlib.fsbp"
 _META = "runtime.json"
