@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-10-14
+
 ### Added
 - **Releases on GitHub, with the executable attached.** A pushed `vX.Y.Z` tag makes GitHub
   Actions build fsbpyr with itself, smoke-test it, attest its build provenance and publish
