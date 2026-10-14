@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Releases also carry `fsbpyr.xz`**, the same executable compressed with xz (about 14 MB
+  instead of 29 MB), attested like the executable itself.
+
 ## [0.18.2] - 2026-10-14
 
 ### Fixed
