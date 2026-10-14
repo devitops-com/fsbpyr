@@ -1,0 +1,145 @@
+name: Release
+
+# One build definition for both uses:
+#   - pull requests: prove the release build works (`make bootstrap` on Debian trixie, then the
+#     installed fsbpyr builds itself with `make build`, then a smoke test) before any tag exists;
+#   - a pushed version tag (tools/release/release.sh pushes it): build, then attest and
+#     publish the GitHub release.
+# GitHub artifact attestations can only be made inside GitHub Actions, so releases are built
+# here and not on the maintainer's machine.
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+
+# A tag is built once: a second run for the same tag waits instead of cancelling the first.
+# Runs for a pull request replace their predecessor.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build + smoke test
+    runs-on: ubuntu-24.04
+    # Debian trixie, as `make bootstrap` expects: it installs clang/lld 22 and the rest from
+    # Debian's packages (as root here, so without sudo) and uv from astral.sh.
+    container: docker.io/library/debian:trixie
+    timeout-minutes: 45
+    env:
+      PREFIX: ${{ github.workspace }}/../prefix
+      # The container runs as root, but GitHub mounts its HOME (/github/home) owned by the
+      # runner's user: fsbpyr refuses a cache whose way from / another user owns. uv, its
+      # Pythons and fsbpyr's caches go under root's own home instead.
+      HOME: /root
+    steps:
+      # git before the checkout: without it actions/checkout downloads a tarball, with no tags.
+      # make runs `make bootstrap`, which installs the rest.
+      - name: Install git and make
+        run: |
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends ca-certificates git make
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false  # no later step needs the token in .git/config
+          fetch-depth: 0  # the tags: the executable's --version names the vX.Y.Z tag on HEAD
+
+      # The checkout belongs to another uid than the container's root: fsbpyr's git calls
+      # (the commit and tag it records) would otherwise be refused.
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # Before a build is spent on it: the tag must name the version all three files declare.
+      - name: Check the tag against the version
+        if: github.ref_type == 'tag'
+        run: |
+          version="$(awk '/^\[/ { s = ($0 == "[project]") } s && /^version *=/ { print; exit }' pyproject.toml | cut -d'"' -f2)"
+          module="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/fsbpyr/__init__.py)"
+          lock="$(awk '/^\[\[package\]\]/ { s = 0 } /^name = "fsbpyr"$/ { s = 1 } s && /^version *=/ { print; exit }' uv.lock | cut -d'"' -f2)"
+          if [ "$module" != "$version" ] || [ "$lock" != "$version" ]; then
+            echo "::error::versions disagree: pyproject.toml $version, __init__.py $module, uv.lock $lock"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version $version"
+            exit 1
+          fi
+
+      # OS packages, uv, the Python of .python-version, the runtime, fsbpyr in three stages
+      # (each verified, stages 2 and 3 identical) and `make install` under $PREFIX. No cache: the release is built from the lock, never from
+      # files another run cached.
+      - name: make bootstrap
+        run: make bootstrap
+
+      # The installed fsbpyr builds itself again: what `make build` does once fsbpyr exists.
+      - name: make build
+        run: make build
+
+      - name: Smoke test
+        run: |
+          dist/fsbpyr --version
+          dist/fsbpyr inspect --verify dist/fsbpyr
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            case "$(dist/fsbpyr --version)" in
+              *"${GITHUB_REF_NAME#v}-"*) ;;
+              *) echo "::error::--version does not name $GITHUB_REF_NAME"; exit 1 ;;
+            esac
+          fi
+          "$PREFIX/bin/fsbpyr" --version
+          for f in share/man/man1/fsbpyr.1 share/bash-completion/completions/fsbpyr \
+                   share/zsh/site-functions/_fsbpyr share/fish/vendor_completions.d/fsbpyr.fish; do
+            test -s "$PREFIX/$f" || { echo "::error::make install left $f empty or missing"; exit 1; }
+          done
+
+      - name: Upload the executable
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fsbpyr
+          path: dist/fsbpyr
+          if-no-files-found: error
+
+  publish:
+    name: attest + publish
+    needs: build
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The only job that may write: the build above ran with a read-only token.
+    permissions:
+      contents: write      # create the GitHub release
+      id-token: write      # sign the attestation (Sigstore, through the job's OIDC token)
+      attestations: write  # store it with the repository
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false  # gh gets the token through GH_TOKEN
+
+      - name: Download the executable
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: fsbpyr
+          path: dist
+
+      - name: Release notes from CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: bash tools/release/release-notes.sh "${TAG#v}" > "$RUNNER_TEMP/notes.md"
+
+      # Verify with: gh attestation verify fsbpyr --repo devitops-com/fsbpyr
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/fsbpyr
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          NOTES: ${{ runner.temp }}/notes.md
+        run: gh release create "$TAG" --verify-tag --title "fsbpyr $TAG" --notes-file "$NOTES" dist/fsbpyr

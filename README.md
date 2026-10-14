@@ -10,12 +10,72 @@ startup stays close to plain CPython.
 
 fsbpyr builds itself into a single executable, and that executable is the easiest way to run
 it: it carries its own runtime (CPython 3.14 and the launcher), so building apps with it needs
-no compiler. From a source checkout:
+no compiler. Each [release](https://github.com/devitops-com/fsbpyr/releases) carries it,
+built and attested by GitHub Actions:
 
 ```
-uv run fsbpyr runtime build      # once: needs clang and lld 22 or newer, and network access
-uv run fsbpyr build . -o ~/.local/bin/fsbpyr
+curl -fLo ~/.local/bin/fsbpyr https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr
+chmod +x ~/.local/bin/fsbpyr
+gh attestation verify ~/.local/bin/fsbpyr --repo devitops-com/fsbpyr   # optional
 ```
+
+### Building from source
+
+A source checkout needs only `make`, `curl` and, on systems other than Debian trixie,
+[podman](https://podman.io) (install it with your system's package manager). `make help` lists
+all targets.
+
+```
+make bootstrap   # once: from source to an installed fsbpyr
+make build       # dist/fsbpyr, built by the installed fsbpyr
+make install     # dist/fsbpyr, its man page and completions under ~/.local
+```
+
+**`make bootstrap`** takes a checkout to an installed fsbpyr. On **Debian trixie** it runs on
+the host:
+
+1. installs the missing OS packages with `sudo apt-get` (`clang-22 lld-22 git make curl
+   ca-certificates`; trixie ships clang and lld 22 since 13.7; they link the launcher);
+2. installs [uv](https://docs.astral.sh/uv/) from astral.sh into `~/.local/bin` if it is not
+   on `PATH`; uv installs the Python pinned in `.python-version` (3.14.8) and the locked
+   dependencies;
+3. builds the runtime (`fsbpyr runtime build`: the pinned CPython from python-build-standalone
+   and a glibc 2.28 sysroot are downloaded, the launcher linked, the standard library
+   compiled; a minute or two, cached in `~/.cache/fsbpyr`);
+4. builds fsbpyr in three stages: fsbpyr run from source builds `dist/stage1/fsbpyr`, that
+   executable builds `dist/stage2/fsbpyr`, and that one builds `dist/stage3/fsbpyr`. Each
+   stage must pass `fsbpyr inspect --verify` (its digest is recomputed over the whole file),
+   and stages 2 and 3 must be byte-identical: builds are reproducible, so a difference means
+   fsbpyr does not build itself faithfully, and bootstrap stops there;
+5. copies stage 3 to `dist/fsbpyr` and runs `make install`.
+
+On **any other Linux x86-64** steps 1 to 4 run in a Debian trixie podman image
+(`Containerfile`: the same OS packages and uv from astral.sh), on the checkout mounted into it,
+and `make install` runs on the host. uv is installed on the host too, for `make build`. The
+container is IPv4-only: on podman's default network, TLS handshakes from Python with GitHub's
+download host time out. A podman volume, `fsbpyr-cache`, keeps uv's cache and the runtime
+between runs. `FSBPYR_BOOTSTRAP=podman make bootstrap` uses the container on trixie too.
+
+**`make build`** builds the checkout with the installed fsbpyr (`~/.local/bin/fsbpyr`, else
+`fsbpyr` on `PATH`) into `dist/fsbpyr`, and runs the result once as a smoke test. The installed
+executable carries its own runtime, so this needs no compiler, only uv. With no fsbpyr
+installed it runs `make bootstrap` first. The new executable's `--version` names the `vX.Y.Z`
+tag on HEAD (`untagged-<commit>` otherwise).
+
+**`make install`** installs `dist/fsbpyr` (running `make build` first if it is missing), with
+the man page and shell completions it prints:
+
+| File | Installed as |
+|---|---|
+| the executable | `~/.local/bin/fsbpyr` |
+| man page | `~/.local/share/man/man1/fsbpyr.1` (`man fsbpyr` finds it when `~/.local/bin` is on `PATH`) |
+| bash completion | `~/.local/share/bash-completion/completions/fsbpyr` (loaded by bash-completion) |
+| zsh completion | `~/.local/share/zsh/site-functions/_fsbpyr` (add the directory to `fpath` before `compinit`) |
+| fish completion | `~/.local/share/fish/vendor_completions.d/fsbpyr.fish` |
+
+`PREFIX=/usr/local` (as root) installs under another prefix, for all three targets;
+`BINDIR`, `MANDIR`, `BASH_COMPLETION_DIR`, `ZSH_COMPLETION_DIR`, `FISH_COMPLETION_DIR` and
+`DESTDIR` override single locations. `make uninstall` removes the same files.
 
 `fsbpyr runtime list` shows the runtimes in the cache. Running fsbpyr from a checkout or a wheel
 (rather than as its own executable) always needs such a runtime, and a new fsbpyr version may

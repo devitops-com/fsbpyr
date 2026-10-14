@@ -54,6 +54,7 @@ venv.bak/
 **/*.rs.bk
 debug/
 release/
+!tools/release/
 
 # General/OS
 .DS_Store
