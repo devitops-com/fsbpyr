@@ -81,6 +81,29 @@ the man page and shell completions it prints:
 (rather than as its own executable) always needs such a runtime, and a new fsbpyr version may
 need a new one: the build then says `no runtime for Python 3.14; run fsbpyr runtime build`.
 
+### Verifying a release
+
+Each release's `fsbpyr` is built by GitHub Actions from its `vX.Y.Z` tag and attested there.
+It also reproduces itself: run against the sources of its own tag, the downloaded executable
+builds a file that is byte for byte the one it was downloaded as.
+
+```
+curl -fLo fsbpyr https://github.com/devitops-com/fsbpyr/releases/download/v0.18.2/fsbpyr
+chmod +x fsbpyr
+gh attestation verify fsbpyr --repo devitops-com/fsbpyr   # built by this repository's workflow
+git clone --branch v0.18.2 https://github.com/devitops-com/fsbpyr.git src
+(cd src && ../fsbpyr build . -o ../rebuilt)               # needs uv, as any build does
+cmp fsbpyr rebuilt && echo identical
+```
+
+Only that pairing gives the same bytes: the official executable of a release, building a clean
+checkout of that release's tag. An executable records the version of the fsbpyr that built it
+(`fsbpyr inspect` shows it as "built with"), so the same sources built by any other fsbpyr give
+a different file. That includes `make bootstrap` and `make build`, and executables built from
+an untagged commit or another release, even when the launcher and the payload are otherwise the
+same. Such a build works the same; only the bytes differ. Releases before 0.18.2 do not
+reproduce themselves: their launchers were not linked reproducibly.
+
 ## Building an app
 
 ```
