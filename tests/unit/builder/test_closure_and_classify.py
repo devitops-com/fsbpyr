@@ -620,6 +620,35 @@ def test_pth_code_lines_warn_unless_known_to_be_redundant(site: Path) -> None:
     assert "not run" in pth_warnings[0]
 
 
+# --- modules the runtime provides ------------------------------------------------------------
+
+
+def test_a_dependency_module_the_runtime_shadows_is_kept_as_a_file(site: Path) -> None:
+    _dist(site, "gnureadline", "8.2.13", {"readline.py": b"from gnureadline import *\n",
+                                          "override_readline.py": b""})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["gnureadline"]], extension_suffixes=SUFFIXES,
+                       include_source=True, runtime_modules=frozenset({"readline"}),
+                       project="hello-app")  # fmt: skip
+
+    names = {m.name for m in content.modules}
+    assert "readline" not in names and "override_readline" in names
+    assert {f.path: f.kind for f in content.files}["readline.py"] is FileKind.RESOURCE
+    assert any(w.startswith("gnureadline: readline is shadowed") for w in content.warnings)
+
+
+def test_a_project_module_the_runtime_shadows_stays_to_fail_the_build(site: Path) -> None:
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["hello-app"]], extension_suffixes=SUFFIXES,
+                       include_source=True, runtime_modules=frozenset({"hello_app"}),
+                       project="hello-app")  # fmt: skip
+
+    assert "hello_app" in {m.name for m in content.modules}
+    assert not [w for w in content.warnings if "shadowed" in w]
+
+
 # --- build hints -----------------------------------------------------------------------------
 
 READS_DATA = b"import os\nDATA = open(os.path.join(os.path.dirname(__file__), 'd.txt')).read()\n"

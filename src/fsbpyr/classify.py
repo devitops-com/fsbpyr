@@ -153,7 +153,11 @@ class _Collector:
         level: int = ZSTD_LEVEL,
         xz_natives: bool = False,
         spill: Spill | None = None,
+        runtime_modules: frozenset[str] = frozenset(),
+        project: str | None = None,
     ) -> None:
+        self.runtime_modules = runtime_modules  # found before the payload's (assemble)
+        self.project = project  # the project's distribution: its clashes fail the build
         self.level = level  # zstd level of every blob
         self.xz_natives = xz_natives  # native files as xz instead (D33)
         self.spill = spill  # where compressed bytes go instead of memory (D38)
@@ -328,6 +332,12 @@ class _Collector:
 
     def _prevails(self, name: str, rank: tuple[int, bool, int], dist: str) -> bool:
         """Record ``name``'s rank if it beats the module already registered under that name."""
+        if name in self.runtime_modules and dist != self.project:
+            # never imported, as in a venv, where the stdlib comes before site-packages
+            # (gnureadline's readline.py, for Pythons without a readline module)
+            self.warnings.append(f"{dist}: {name} is shadowed by the runtime's {name}; "
+                                 "packaged as a file, not as a module")  # fmt: skip
+            return False
         existing = self.modules.get(name)
         if existing is not None:
             compiled = min(self.ranks[name][2], rank[2]) < len(self.suffixes)
@@ -546,11 +556,15 @@ def classify(  # noqa: PLR0913  the build options, keyword-only
     level: int = ZSTD_LEVEL,
     xz_natives: bool = False,
     spill: Spill | None = None,
+    runtime_modules: frozenset[str] = frozenset(),
+    project: str | None = None,
 ) -> Content:
     """With ``spill``, no file's bytes stay in memory: they are compressed into it, the
-    largest a piece at a time from their files (D38); the files must outlive the build."""
+    largest a piece at a time from their files (D38); the files must outlive the build.
+    A module in ``runtime_modules`` is kept as a file, unless ``project`` installs it."""
     collector = _Collector(extension_suffixes, include_source, hints=hints, level=level,
-                           xz_natives=xz_natives, spill=spill)  # fmt: skip
+                           xz_natives=xz_natives, spill=spill, runtime_modules=runtime_modules,
+                           project=project)  # fmt: skip
     collector.read_pth_files(dists)
     collector.compiler = Compiler(collector.module_jobs(dists), level=level,
                                   include_source=include_source)  # fmt: skip

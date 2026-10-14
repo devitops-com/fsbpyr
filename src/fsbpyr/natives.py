@@ -2,7 +2,8 @@
 
 Every ``DT_NEEDED`` entry of every shared object in the payload must resolve either to another
 payload file, through the object's RUNPATH (or RPATH) with ``$ORIGIN`` expanded, or to a system
-library that manylinux wheels may rely on. Because the native cache mirrors the site-packages
+library that manylinux wheels may rely on. An object without a RUNPATH also searches the RPATHs
+of the objects that loaded it, as ld.so does. Because the native cache mirrors the site-packages
 layout (D9), the auditwheel-style ``$ORIGIN`` paths keep working unchanged at run time.
 
 Libraries an object opens by name at run time (``dlopen("libx_shared.so")``, onnxruntime's
@@ -131,19 +132,26 @@ def _opened_by_name(
     return [library for library in candidates if posixpath.basename(library).encode() in named]
 
 
-def _direct_dependencies(
+def _direct_dependencies(  # noqa: PLR0913  the object, the payload, and inherited keyword-only
     path: str,
     data: Native,
     payload: set[str],
     libraries: dict[str, list[str]],
     allowed: frozenset[str],
-) -> list[tuple[str, bool]]:
-    """Bundled objects ``path`` loads, each with whether it is opened by name (not NEEDED)."""
+    *,
+    inherited: tuple[str, ...],
+) -> tuple[list[tuple[str, bool]], tuple[str, ...]]:
+    """Bundled objects ``path`` loads, each with whether it is opened by name (not NEEDED), and
+    the RPATH directories they inherit. ``inherited`` are those of the objects that loaded
+    ``path``: ld.so searches them after its own RPATH unless it has a RUNPATH, and passes them
+    on either way (gnureadline's bundled libncurses, without RPATH, finds libtinfo so)."""
     try:
         info = dynamic_info(data)
     except ElfError as exc:
         raise NativeError(f"{path}: {exc}") from exc
-    directories = _search_path(path, info.rpath, info.runpath)
+    own = _search_path(path, info.rpath, info.runpath)
+    directories = own if info.runpath else list(dict.fromkeys([*own, *inherited]))
+    passed_on = inherited if info.runpath else tuple(directories)
     dependencies = [(lib, True) for lib in _opened_by_name(path, data, libraries, directories)]
     for needed in info.needed:
         if _LIBPYTHON.match(needed):
@@ -162,7 +170,7 @@ def _direct_dependencies(
                 f"{path} needs {needed}, which is neither bundled nor a standard system library; "
                 f"bundle it (auditwheel repair) or pass --allow-system-lib {needed}"
             )
-    return dependencies
+    return dependencies, passed_on
 
 
 def closures(
@@ -183,27 +191,33 @@ def closures(
         with opened(natives[path]) as data:
             if not is_extension_module(path, data):
                 libraries.setdefault(posixpath.dirname(path) or ".", []).append(path)
-    direct: dict[str, list[tuple[str, bool]]] = {}
+    # (object, RPATHs it inherits) -> (its dependencies, the RPATHs they inherit)
+    direct: dict[tuple[str, tuple[str, ...]], tuple[list[tuple[str, bool]], tuple[str, ...]]] = {}
     left_out: dict[str, str] = {}
 
-    def dependencies(path: str) -> list[tuple[str, bool]]:  # only reachable objects are checked
-        if path not in direct:
+    def dependencies(
+        path: str, inherited: tuple[str, ...]
+    ) -> list[tuple[str, bool, tuple[str, ...]]]:  # only reachable objects are checked
+        if (path, inherited) not in direct:
             with opened(natives[path]) as data:
-                direct[path] = _direct_dependencies(path, data, payload, libraries, allowed)
-        return direct[path]
+                direct[path, inherited] = _direct_dependencies(
+                    path, data, payload, libraries, allowed, inherited=inherited
+                )
+        found, passed_on = direct[path, inherited]
+        return [(library, by_name, passed_on) for library, by_name in found]
 
     result = {}
     for extension in sorted(extensions):
         seen: dict[str, bool] = {}  # object -> expanded through NEEDED edges only (strictly)
-        pending = list(dependencies(extension))
+        pending = dependencies(extension, ())
         while pending:
-            dependency, by_name = pending.pop()
+            dependency, by_name, inherited = pending.pop()
             if dependency == extension or (by_name and dependency in left_out):
                 continue
             if dependency in seen and (by_name or seen[dependency]):
                 continue  # a NEEDED visit re-expands what a by-name visit tolerated
             try:
-                following = dependencies(dependency)
+                following = dependencies(dependency, inherited)
             except NativeError as exc:
                 if not by_name:
                     raise
@@ -212,7 +226,8 @@ def closures(
                 )
                 continue
             seen[dependency] = not by_name
-            pending.extend((library, by_name or named) for library, named in following)
+            pending.extend((library, by_name or named, passed_on)
+                           for library, named, passed_on in following)  # fmt: skip
         result[extension] = tuple(sorted(seen))
     for message in left_out.values():
         warn(message)

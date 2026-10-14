@@ -9,7 +9,7 @@ from pathlib import Path
 
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
-from .assemble import App, build_executable
+from .assemble import App, build_executable, runtime_module_names
 from .classify import classify
 from .closure import SiteIndex, resolve_entry
 from .config import BuildConfig
@@ -142,6 +142,8 @@ def build(
                 level=level,
                 xz_natives=config.best_compression,
                 spill=spill,
+                runtime_modules=runtime_module_names(runtime),
+                project=dist.name,
             )
             warnings += walk.warnings
             if walk.unreachable:
