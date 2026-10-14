@@ -15,6 +15,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with that uv, even from identical sources.
 - **Releases also carry `fsbpyr.xz`**, the same executable compressed with xz (about 14 MB
   instead of 29 MB), attested like the executable itself.
+- **`--best-compression` warns when it has nothing to compress.** It compresses native files
+  only (extension modules and shared libraries), so a pure-Python app gains nothing from it;
+  such a build now says so, and the option's help names what it compresses.
 
 ## [0.18.2] - 2026-10-14
 

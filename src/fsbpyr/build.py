@@ -16,7 +16,8 @@ from .closure import InstalledDist, SiteIndex, resolve_entry
 from .config import BuildConfig
 from .elf import ElfError, glibc_requirement, is_elf
 from .natives import opened
-from .payload.spec import XZ_PRESET
+from .payload.format import NATIVE_KINDS
+from .payload.spec import XZ_PRESET, File
 from .payload.spill import Spill
 from .project import LockSource, Project
 from .runtime import pins
@@ -167,6 +168,15 @@ def uv_mismatch(*, builder: str | None, current: str) -> list[str]:
             f"differ from one built with uv {builder}, even from identical sources"]  # fmt: skip
 
 
+def best_compression_unused(*, best_compression: bool, files: Iterable[File]) -> list[str]:
+    """A warning when --best-compression (or best-compression = true) has nothing to do: it
+    compresses native files only (D33), and a pure-Python app has none."""
+    if not best_compression or any(file.kind in NATIVE_KINDS for file in files):
+        return []
+    return ["best-compression has nothing to compress: no extension modules or shared "
+            "libraries were packaged, and it compresses nothing else"]  # fmt: skip
+
+
 def check_output(output: Path) -> None:
     if output.is_dir():
         raise BuildError(f"output path {output} is a directory; pass -o with a file name")
@@ -255,6 +265,8 @@ def build(
                     f"{', '.join(walk.unreachable)} (they come from the lock or requirements file)"
                 )
             warnings += content.warnings
+            warnings += best_compression_unused(best_compression=config.best_compression,
+                                                files=content.files)  # fmt: skip
             glibc, glibc_warnings = glibc_report(runtime.stub, content.glibc,
                                                  baseline=baseline.baseline)  # fmt: skip
             warnings += glibc_warnings

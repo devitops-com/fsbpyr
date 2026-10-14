@@ -9,6 +9,7 @@ import pytest
 
 from fsbpyr.build import (
     BuildError,
+    best_compression_unused,
     build,
     builder_uv,
     built_here_above,
@@ -20,6 +21,8 @@ from fsbpyr.build import (
 from fsbpyr.cli import main
 from fsbpyr.closure import SiteIndex
 from fsbpyr.config import BuildConfig
+from fsbpyr.payload.format import FileKind
+from fsbpyr.payload.spec import Blob, File
 from fsbpyr.runtime import pins
 from fsbpyr.staging import StagingError, StagingPlan
 
@@ -178,3 +181,27 @@ def test_an_executable_knows_the_uv_it_was_built_with(monkeypatch: pytest.Monkey
 
 def test_fsbpyr_run_from_source_knows_no_builder_uv() -> None:
     assert builder_uv() is None
+
+
+def _file(kind: FileKind) -> File:
+    return File(f"pkg/{kind.name.lower()}", kind, Blob.zstd(b"x"))
+
+
+def test_best_compression_with_no_native_files_is_a_warning() -> None:
+    """It compresses native files only: a pure-Python app gains nothing from it."""
+    files = [_file(FileKind.RESOURCE), _file(FileKind.SOURCE), _file(FileKind.METADATA)]
+
+    [warning] = best_compression_unused(best_compression=True, files=files)
+
+    assert warning.startswith("best-compression has nothing to compress")
+
+
+@pytest.mark.parametrize(("best", "kind"), [(True, FileKind.NATIVE_EXT),
+                                            (True, FileKind.NATIVE_LIB),
+                                            (False, FileKind.RESOURCE)])  # fmt: skip
+def test_best_compression_of_native_files_or_none_asked_is_no_warning(
+    best: bool, kind: FileKind
+) -> None:
+    files = [_file(FileKind.RESOURCE), _file(kind)]
+
+    assert best_compression_unused(best_compression=best, files=files) == []
