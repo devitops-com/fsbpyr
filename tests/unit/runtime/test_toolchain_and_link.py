@@ -260,13 +260,59 @@ def test_sanitized_stub_command_checks_memory_and_undefined_behaviour(tmp_path: 
     assert not {"-flto=full", "-s", "-D_FORTIFY_SOURCE=2", "-O2"} & set(cmd)
 
 
+def test_stub_command_maps_the_cache_paths_out_of_the_launcher(tmp_path: Path) -> None:
+    """Where the cache lives (~/.cache of whoever builds) must not reach the launcher's bytes."""
+    dist = _fake_dist(tmp_path)
+    inputs = link_inputs(dist, set())
+    toolchain = Toolchain(clang=Path("/x/clang-22"), lld=Path("/x/ld.lld-22"), major=22,
+                          sysroot=Path("/s/sysroot"))  # fmt: skip
+
+    cmd = stub_command(dist, inputs, toolchain, [Path("main.c")], Path("stub"))
+
+    assert f"-ffile-prefix-map={dist.root}=/fsbpyr/python" in cmd
+    assert "-ffile-prefix-map=/s/sysroot=/fsbpyr/sysroot" in cmd
+    assert "-I." in cmd
+
+
+def test_the_link_runs_in_its_directory_with_relative_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The temporary directory's random name must not reach the launcher (it did, through
+    LTO): clang runs inside it on relative paths, and the result is copied to ``out``."""
+    dist = _fake_dist(tmp_path)
+    toolchain = Toolchain(clang=Path("/x/clang-22"), lld=Path("/x/ld.lld-22"), major=22)
+    monkeypatch.setattr(ar, "members", lambda path: [])
+    seen: dict[str, object] = {}
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        work = Path(str(kwargs["cwd"]))
+        seen.update(command=command, cwd=work, sources=(work / "main.c").exists())
+        (work / command[command.index("-o") + 1]).write_bytes(b"linked")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    stub.build_stub(dist, toolchain, tmp_path / "stub")
+
+    command = seen["command"]
+    assert isinstance(command, list)
+    assert seen["sources"]
+    assert not [arg for arg in command if str(seen["cwd"]) in arg]
+    assert "main.c" in command
+    assert (tmp_path / "stub").read_bytes() == b"linked"
+
+
 def _link_printing(stderr: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[str, ...]:
     """build_stub with a linker that succeeds and prints ``stderr``."""
     dist = _fake_dist(tmp_path)
     toolchain = Toolchain(clang=Path("/x/clang-22"), lld=Path("/x/ld.lld-22"), major=22)
     monkeypatch.setattr(ar, "members", lambda path: [])
-    monkeypatch.setattr(subprocess, "run", lambda command, **kwargs: (
-        subprocess.CompletedProcess(command, 0, "", stderr)))  # fmt: skip
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        (Path(str(kwargs["cwd"])) / command[command.index("-o") + 1]).write_bytes(b"linked")
+        return subprocess.CompletedProcess(command, 0, "", stderr)
+
+    monkeypatch.setattr(subprocess, "run", run)
     return stub.build_stub(dist, toolchain, tmp_path / "stub")
 
 

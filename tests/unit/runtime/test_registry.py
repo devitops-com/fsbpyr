@@ -217,8 +217,8 @@ def test_runtimes_of_an_older_layout_are_refused(tmp_path: Path) -> None:
     _runtime().save(tmp_path / "rt")
     meta_path = tmp_path / "rt" / "runtime.json"
     meta = json.loads(meta_path.read_text())
-    assert meta["layout"] == registry.LAYOUT_VERSION == 6
-    meta_path.write_text(json.dumps({**meta, "layout": 5}))
+    assert meta["layout"] == registry.LAYOUT_VERSION == 7
+    meta_path.write_text(json.dumps({**meta, "layout": 6}))
 
     with pytest.raises(RuntimeCacheError, match="old layout"):
         Runtime.load(tmp_path / "rt")
