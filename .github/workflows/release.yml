@@ -32,6 +32,10 @@ jobs:
     timeout-minutes: 45
     env:
       PREFIX: ${{ github.workspace }}/../prefix
+      # The container runs as root, but GitHub mounts its HOME (/github/home) owned by the
+      # runner's user: fsbpyr refuses a cache whose way from / another user owns. uv, its
+      # Pythons and fsbpyr's caches go under root's own home instead.
+      HOME: /root
     steps:
       # git before the checkout: without it actions/checkout downloads a tarball, with no tags.
       # make runs `make bootstrap`, which installs the rest.
