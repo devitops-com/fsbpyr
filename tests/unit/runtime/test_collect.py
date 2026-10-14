@@ -211,6 +211,7 @@ def test_a_held_item_is_touched_once_a_day_old_and_a_gone_one_is_no_hold(root: P
     assert not hold.hold(root / "pbs" / "gone")
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
 def test_an_item_that_cannot_be_held_is_used_unheld(root: Path) -> None:
     """A cache we may not write (no lock can be made): the command goes on."""
     item = _item(root, "pbs", OLD_PBS, days=0, lock=False)
