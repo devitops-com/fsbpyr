@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-14
+
 ### Added
 - **Executables record the uv that built them.** uv builds the project's wheel (its built-in
   backend stamps uv's version into the wheel's metadata) and installs every distribution, so
