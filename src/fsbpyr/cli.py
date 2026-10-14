@@ -93,9 +93,10 @@ def cli() -> None:
               help="zstd level 3 instead of 9: a faster build, up to ~8% larger for large apps "
                    "(the standard library's files of 64 KiB and more stay level 9)")  # fmt: skip
 @click.option("--best-compression/--no-best-compression", default=None,
-              help="native libraries as xz -6 instead of zstd 9: about 6.5% smaller for "
-                   "aiagent, a slower build, and a slower first run, which decodes them into "
-                   "the cache; not with `--fast-compression`")  # fmt: skip
+              help="native files (extension modules and shared libraries, nothing else) as xz "
+                   "-6 instead of zstd 9: about 6.5% smaller for aiagent, no change for "
+                   "pure-Python apps, a slower build, and a slower first run, which decodes "
+                   "them into the cache; not with `--fast-compression`")  # fmt: skip
 @click.option("--hints/--no-hints", default=None,
               help="also list packages that may read files next to `__file__` "
                    "(a guess)")  # fmt: skip

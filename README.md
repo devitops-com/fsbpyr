@@ -148,7 +148,7 @@ offline, the host's build is packaged and the build warns which glibc it needs.
 | `--offline / --no-offline` | no network access during the build |
 | `--source / --no-source` | keep the `.py` sources (default) or leave them out: smaller, but tracebacks show no source lines and `inspect.getsource()` fails |
 | `--fast-compression / --no-fast-compression` | zstd level 3 instead of 9: a faster build, up to ~8% larger for large apps (the standard library's files of 64 KiB and more stay level 9) |
-| `--best-compression / --no-best-compression` | native libraries as xz -6 instead of zstd 9: about 6.5% smaller for aiagent, a slower build, and a slower first run, which decodes them into the cache; not with `--fast-compression` |
+| `--best-compression / --no-best-compression` | native files (extension modules and shared libraries, nothing else) as xz -6 instead of zstd 9: about 6.5% smaller for aiagent, no change for pure-Python apps, a slower build, and a slower first run, which decodes them into the cache; not with `--fast-compression` |
 | `--hints / --no-hints` | also list packages that may read files next to `__file__` (a guess) |
 | `--interpreter-reexec / --no-interpreter-reexec` | let the app's own children started as `sys.executable -m MODULE` or `-c CODE` run as Python |
 | `--smoke / --no-smoke` | run the new executable once as a smoke test (default) or skip it |
