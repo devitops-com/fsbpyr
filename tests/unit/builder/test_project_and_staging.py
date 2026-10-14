@@ -8,10 +8,12 @@ from fsbpyr.config import BuildConfig, ConfigError, load_config
 from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL
 from fsbpyr.project import LockSource, Project, ProjectError
 from fsbpyr.staging import (
+    WHEEL,
     StagingError,
     StagingOptions,
     StagingPlan,
     find_uv,
+    rebuild,
     run_plan,
     staging_plan,
 )
@@ -420,6 +422,33 @@ def test_run_plan_builds_and_installs_in_the_project_directory(tmp_path: Path) -
 
     assert built == work / "wheel" / wheel
     assert (project_dir / "installed.txt").read_text().split() == [str(project_dir), f"{built}[x]"]
+
+
+def test_rebuild_forgets_the_cached_builds_then_repeats_the_installs(tmp_path: Path) -> None:
+    """uv reuses a wheel it built before whatever the flags (--refresh-package only revalidates
+    the index), so the cached builds of the named packages go first."""
+    calls = tmp_path / "calls.txt"
+    logged = ["sh", "-c", 'echo "$FLAGS $*" >> "$CALLS"', "sh"]
+    plan = StagingPlan(
+        site=tmp_path / "stage",
+        build=["false"],  # the wheel is built already
+        install=[
+            ["false", "venv", "stage"],
+            [*logged, "-r", "lock"],
+            [*logged, "--no-deps", WHEEL],
+        ],
+        wheel_dir=tmp_path / "wheel",
+        env={"CALLS": str(calls)},
+        forget=[*logged, "cache", "clean"],
+    )
+
+    rebuild(plan, tmp_path, tmp_path / "app.whl", ["posix-ipc"], {"FLAGS": "sysroot"})
+
+    assert calls.read_text().splitlines() == [
+        "sysroot cache clean posix-ipc",
+        "sysroot -r lock --reinstall-package posix-ipc",
+        f"sysroot --no-deps {tmp_path / 'app.whl'} --reinstall-package posix-ipc",
+    ]
 
 
 def test_run_plan_needs_exactly_one_wheel(tmp_path: Path) -> None:

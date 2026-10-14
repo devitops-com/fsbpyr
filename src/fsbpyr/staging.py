@@ -55,6 +55,7 @@ class StagingPlan:
     install: list[list[str]]  # may reference WHEEL
     wheel_dir: Path
     env: dict[str, str] = field(default_factory=dict)
+    forget: list[str] = field(default_factory=list)  # + names: drops uv's cached builds of them
 
 
 def find_uv() -> Path:
@@ -113,6 +114,7 @@ def _uv_sync_plan(project: Project, uv: Path, work: Path, options: StagingOption
         install=[sync, wheel],
         wheel_dir=work / "wheel",
         env={"UV_PROJECT_ENVIRONMENT": str(stage)},
+        forget=[str(uv), "cache", "clean"],
     )
 
 
@@ -136,14 +138,15 @@ def staging_plan(
     env = {"UV_VENV_SEED": "0"}  # a seeded venv would ship pip, depending on the environment
     if source is LockSource.UNLOCKED:
         extras = f"[{','.join(options.extras)}]" if options.extras else ""
-        return StagingPlan(site, build, [venv, [*base, WHEEL + extras]], wheel_dir, env)
+        return StagingPlan(site, build, [venv, [*base, WHEEL + extras]], wheel_dir, env,
+                           [str(uv), "cache", "clean"])  # fmt: skip
     if source is LockSource.PYLOCK:
         lock, hashes = project.directory / LockSource.PYLOCK.value, []
     else:
         lock = project.requirements_path(options.requirements)
         hashes = ["--require-hashes"] if "--hash=" in lock.read_text() else []
     install = [venv, [*base, *hashes, "-r", str(lock)], [*base, "--no-deps", WHEEL]]
-    return StagingPlan(site, build, install, wheel_dir, env)
+    return StagingPlan(site, build, install, wheel_dir, env, [str(uv), "cache", "clean"])
 
 
 def _run(command: list[str], cwd: Path, env: dict[str, str]) -> None:
@@ -153,6 +156,24 @@ def _run(command: list[str], cwd: Path, env: dict[str, str]) -> None:
     if result.returncode != 0:
         output = (result.stderr or result.stdout)[-_ERROR_TAIL:]
         raise StagingError(f"{' '.join(command[:4])} ... failed:\n{output}")
+
+
+def rebuild(
+    plan: StagingPlan, project_dir: Path, wheel: Path, names: list[str], env: dict[str, str]
+) -> None:
+    """Install ``names`` again, built anew from their sdists with ``env`` added: the plan's
+    installs repeated, the environment not created again. uv reuses a wheel it built before,
+    whatever the flags (``--refresh-package`` only revalidates the index), so its cached builds
+    of ``names`` go first; the new builds take their place. uv builds before it installs, so a
+    failed build leaves the staged site as it was."""
+    if plan.forget:
+        _run([*plan.forget, *names], project_dir, {**plan.env, **env})
+    again = [arg for name in names for arg in ("--reinstall-package", name)]
+    for command in plan.install:
+        if command[1:2] == ["venv"]:
+            continue
+        _run([part.replace(WHEEL, str(wheel)) for part in command] + again, project_dir,
+             {**plan.env, **env})  # fmt: skip
 
 
 def run_plan(plan: StagingPlan, project_dir: Path) -> Path:

@@ -11,6 +11,7 @@ import posixpath
 import shutil
 import tarfile
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 
 from . import ar
@@ -19,6 +20,7 @@ from .pbs import PbsError, download
 from .pins import SysrootPin
 
 _DONE = ".fsbpyr-sysroot"  # written last: a sysroot without it is incomplete
+_MULTIARCH = "x86_64-linux-gnu"  # Debian's layout of the pinned packages (x86-64 only)
 
 
 class SysrootError(RuntimeError):
@@ -82,3 +84,19 @@ def fetch_sysroot(pin: SysrootPin, cache: Path) -> Path:
         shutil.rmtree(staging, ignore_errors=True)
     hold(dest)
     return dest
+
+
+def build_flags(root: Path, env: Mapping[str, str]) -> dict[str, str]:
+    """CFLAGS and LDFLAGS that point the build host's C compiler (gcc or clang) at the sysroot
+    ``root``, for extensions built from source; ``env``'s own flags follow. Not CC itself: build
+    probes run it as a bare command (posix_ipc's prober). Not C++: the sysroot has no
+    libstdc++, so a C++ extension fails, and the caller keeps the host's build."""
+    lib = root / "usr" / "lib" / _MULTIARCH
+    gcc = sorted((root / "usr" / "lib" / "gcc" / _MULTIARCH).glob("*"))[-1:]  # crtbeginS.o, libgcc
+    cflags = [f"--sysroot={root}", "-isystem", f"{root / 'usr' / 'include' / _MULTIARCH}"]
+    ldflags = [f"--sysroot={root}", f"-B{lib}", *(f"-B{d}" for d in gcc), f"-L{lib}",
+               f"-L{root / 'lib' / _MULTIARCH}"]  # fmt: skip
+    return {
+        "CFLAGS": " ".join([*cflags, env.get("CFLAGS", "")]).strip(),
+        "LDFLAGS": " ".join([*ldflags, env.get("LDFLAGS", "")]).strip(),
+    }

@@ -3,23 +3,34 @@
 import os
 import subprocess
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from .assemble import App, build_executable, runtime_module_names
-from .classify import classify
-from .closure import SiteIndex, resolve_entry
+from .classify import _record_path, classify
+from .closure import InstalledDist, SiteIndex, resolve_entry
 from .config import BuildConfig
-from .elf import ElfError, glibc_requirement
+from .elf import ElfError, glibc_requirement, is_elf
+from .natives import opened
 from .payload.spec import XZ_PRESET
 from .payload.spill import Spill
 from .project import LockSource, Project
 from .runtime import pins
-from .runtime.registry import Runtime, select_runtime
-from .staging import StagingOptions, find_uv, run_plan, staging_plan
+from .runtime.pbs import PbsError
+from .runtime.registry import Runtime, cache_root, select_runtime
+from .runtime.sysroot import SysrootError, build_flags, fetch_sysroot
+from .staging import (
+    StagingError,
+    StagingOptions,
+    StagingPlan,
+    find_uv,
+    rebuild,
+    run_plan,
+    staging_plan,
+)
 from .vcs import git_state, own_version
 
 TARGET_PYTHON = "3.14"
@@ -72,6 +83,67 @@ def glibc_report(
     return (_version(max(needs)) if needs else None), warnings
 
 
+def _glibc_needs(dist: InstalledDist) -> Iterable[tuple[int, int]]:
+    for rel in map(_record_path, dist.record):
+        path = dist.site / rel
+        if ".so" not in path.name or not path.is_file():
+            continue
+        with opened(path) as data:
+            if not is_elf(data[:4]):
+                continue
+            try:
+                need = glibc_requirement(data)
+            except ElfError:
+                continue
+        if need is not None:
+            yield need
+
+
+def built_here_above(dists: Iterable[InstalledDist], baseline: tuple[int, int]) -> list[str]:
+    """Dependencies built from their sdists on the build host (wheel tags ``linux_*``) whose
+    native files need a newer glibc than ``baseline``: they were compiled against the host's
+    glibc. A wheel from the index got its glibc from its tag (``--python-platform``)."""
+    found = []
+    for dist in dists:
+        wheel = dist.site / dist.dist_info / "WHEEL"
+        lines = wheel.read_text(errors="replace").splitlines() if wheel.is_file() else []
+        tags = [line.partition(":")[2].strip() for line in lines if line.startswith("Tag:")]
+        if not tags or not all(tag.rpartition("-")[2].startswith("linux_") for tag in tags):
+            continue
+        if any(need > baseline for need in _glibc_needs(dist)):
+            found.append(dist.name)
+    return sorted(found)
+
+
+def rebuild_on_baseline(  # noqa: PLR0913  the staging, what to rebuild, and offline keyword-only
+    plan: StagingPlan,
+    project_dir: Path,
+    wheel: Path,
+    names: list[str],
+    baseline: pins.SysrootPin,
+    *,
+    offline: bool,
+) -> list[str]:
+    """Build ``names`` again from their sdists against the glibc baseline's sysroot (D25), with
+    the build host's compiler; the warnings, if they keep the host's builds. Not offline: the
+    rebuild drops uv's cached builds and downloads the sdists again."""
+    listed, glibc = ", ".join(names), baseline.glibc
+    if offline:
+        return [f"{listed}: not rebuilt against the glibc {glibc} sysroot: the build is offline"]
+    cache = cache_root()
+    try:
+        root = fetch_sysroot(baseline, cache)
+    except (SysrootError, PbsError) as exc:
+        return [f"{listed}: not rebuilt against the glibc {glibc} sysroot: {exc}"]
+    try:
+        rebuild(plan, project_dir, wheel, names, build_flags(root, os.environ))
+    except StagingError as exc:
+        reason = next((line for line in reversed(str(exc).splitlines()) if line.strip()), "")
+        return [f"{listed}: building from source against the glibc {glibc} sysroot failed, the "
+                f"build host's builds are packaged: {reason.strip()}"]  # fmt: skip
+    return []
+
+
 def check_output(output: Path) -> None:
     if output.is_dir():
         raise BuildError(f"output path {output} is a directory; pass -o with a file name")
@@ -122,6 +194,13 @@ def build(
         wheel = run_plan(plan, project.directory)
         index = SiteIndex.scan(plan.site)
         index.check_no_editable()
+        if stale := built_here_above(index.dists.values(), baseline.baseline):
+            log(f"rebuilding {', '.join(stale)} against the glibc {baseline.glibc} sysroot")
+            failed = rebuild_on_baseline(plan, project.directory, wheel, stale, baseline,
+                                         offline=config.offline)  # fmt: skip
+            warnings += failed
+            if not failed:
+                index = SiteIndex.scan(plan.site)
         name = canonicalize_name(parse_wheel_filename(wheel.name)[0])
         dist = index.project(name=name, directory=project.directory)
         walk = index.walk(dist, extras=config.extras, python_version=runtime.python_version)
