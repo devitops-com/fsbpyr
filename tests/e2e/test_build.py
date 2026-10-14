@@ -132,6 +132,16 @@ def test_stdlib_frames_are_level_9_and_fast_builds_record_level_3(
     assert json.loads(capsys.readouterr().out)["build_info"]["zstd_level"] == ZSTD_FAST_LEVEL
 
 
+def test_best_compression_of_a_pure_python_app_is_a_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _fixture("hello", tmp_path)
+
+    assert main(["build", str(project), "--best-compression", "--no-smoke"]) == 0
+
+    assert "fsbpyr: warning: best-compression has nothing to compress" in capsys.readouterr().err
+
+
 def test_builds_without_uv_explain_how_to_install_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
