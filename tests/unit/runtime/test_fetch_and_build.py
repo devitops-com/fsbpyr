@@ -5,9 +5,12 @@ import hashlib
 import io
 import json
 import tarfile
+import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from email.message import Message
 from pathlib import Path
 
 import pytest
@@ -72,6 +75,74 @@ def test_fetch_rejects_tampered_download(tmp_path: Path, monkeypatch: pytest.Mon
     with pytest.raises(pbs.PbsError, match=r"SHA-256"):
         pbs.fetch(pin, tmp_path)
     assert list((tmp_path / "downloads").iterdir()) == []
+
+
+def _flaky(failures: list[BaseException]) -> Callable[..., object]:
+    """urlopen that raises ``failures`` in turn, then serves GOOD."""
+    calls: list[str] = []
+
+    def urlopen(url: str, timeout: float) -> object:
+        calls.append(url)
+        if len(calls) <= len(failures):
+            raise failures[len(calls) - 1]
+        return _serve(GOOD)
+
+    urlopen.calls = calls  # type: ignore[attr-defined]
+    return urlopen
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TimeoutError("_ssl.c:1064: The handshake operation timed out"),
+        urllib.error.URLError(TimeoutError("_ssl.c:1064: The handshake operation timed out")),
+        ConnectionResetError(104, "Connection reset by peer"),
+    ],
+    ids=["timeout", "urlerror", "reset"],
+)
+def test_download_retries_a_network_failure(
+    error: BaseException, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    urlopen = _flaky([error, error])
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    slept: list[float] = []
+    monkeypatch.setattr(time, "sleep", slept.append)
+    target = tmp_path / "downloads" / "x.tar.zst"
+
+    pbs.download("https://example.invalid/x", hashlib.sha256(GOOD).hexdigest(), target)
+
+    assert target.read_bytes() == GOOD
+    assert len(urlopen.calls) == 3  # type: ignore[attr-defined]
+    assert len(slept) == 2
+    assert [p.name for p in target.parent.iterdir()] == ["x.tar.zst"]  # no .part left
+
+
+def test_download_gives_up_after_its_attempts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    urlopen = _flaky([TimeoutError("timed out")] * 10)
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    target = tmp_path / "downloads" / "x.tar.zst"
+
+    with pytest.raises(TimeoutError):
+        pbs.download("https://example.invalid/x", hashlib.sha256(GOOD).hexdigest(), target)
+    assert len(urlopen.calls) == pbs.DOWNLOAD_ATTEMPTS  # type: ignore[attr-defined]
+    assert list(target.parent.iterdir()) == []
+
+
+def test_download_does_not_retry_an_http_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 404 stays a 404: only the network is retried."""
+    error = urllib.error.HTTPError("https://example.invalid/x", 404, "Not Found", Message(), None)
+    urlopen = _flaky([error])
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+
+    with pytest.raises(urllib.error.HTTPError):
+        pbs.download("https://example.invalid/x", "0" * 64, tmp_path / "x")
+    assert len(urlopen.calls) == 1  # type: ignore[attr-defined]
 
 
 def test_fetch_rejects_tampered_cached_archive(tmp_path: Path) -> None:

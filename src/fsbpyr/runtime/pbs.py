@@ -4,8 +4,11 @@ import hashlib
 import json
 import re
 import shutil
+import sys
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -133,12 +136,36 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+# Downloads are retried after a network failure (a TLS handshake that times out, a reset
+# connection), never after an HTTP error: each attempt starts over, after these pauses.
+DOWNLOAD_ATTEMPTS = 4
+_RETRY_PAUSES_S = (2.0, 5.0, 10.0)
+
+
 def download(url: str, sha256: str, target: Path) -> None:
     """Download ``url`` to ``target`` (atomically), checking its pinned SHA-256."""
     if not url.startswith("https://"):
         raise PbsError(f"refusing to download {url}: only https URLs are pinned")
     target.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=target.parent, delete=False, suffix=".part") as out:
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            partial = _download_once(url, target.parent)
+            break
+        except OSError as exc:  # URLError, TimeoutError and ConnectionError are OSErrors
+            if attempt == DOWNLOAD_ATTEMPTS or isinstance(exc, urllib.error.HTTPError):
+                raise
+            pause = _RETRY_PAUSES_S[attempt - 1]
+            print(f"fsbpyr: {url}: {exc}; retrying in {pause:.0f} s", file=sys.stderr)
+            time.sleep(pause)
+    if sha256_of(partial) != sha256:
+        partial.unlink()
+        raise PbsError(f"SHA-256 mismatch for {url}")
+    partial.replace(target)
+
+
+def _download_once(url: str, directory: Path) -> Path:
+    """``url`` into a new ``.part`` file in ``directory``; nothing is left behind on failure."""
+    with tempfile.NamedTemporaryFile(dir=directory, delete=False, suffix=".part") as out:
         partial = Path(out.name)
         try:
             with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310 pinned https
@@ -146,10 +173,7 @@ def download(url: str, sha256: str, target: Path) -> None:
         except BaseException:
             partial.unlink(missing_ok=True)
             raise
-    if sha256_of(partial) != sha256:
-        partial.unlink()
-        raise PbsError(f"SHA-256 mismatch for {url}")
-    partial.replace(target)
+    return partial
 
 
 def fetch(pin: PbsPin, cache: Path) -> PbsDist:
