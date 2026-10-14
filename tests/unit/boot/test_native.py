@@ -178,6 +178,7 @@ def _loader(native: types.ModuleType, spec: importlib.machinery.ModuleSpec) -> E
     return loader
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
 def test_an_unreadable_cached_file_is_replaced(
     boot: types.ModuleType, native: types.ModuleType
 ) -> None:
@@ -277,6 +278,7 @@ def test_import_errors_raised_by_the_module_itself_do_not_trigger_a_rehash(
     assert synced == [_files(spec)]
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
 def test_unwritable_cache_is_reported_with_a_hint(
     boot: types.ModuleType, native: types.ModuleType, tmp_path: Path
 ) -> None:

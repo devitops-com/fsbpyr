@@ -2,9 +2,10 @@ name: Release
 
 # One build definition for both uses:
 #   - pull requests: prove the release build works (`make bootstrap` on Debian trixie, then the
-#     installed fsbpyr builds itself with `make build`, then a smoke test) before any tag exists;
-#   - a pushed version tag (tools/release/release.sh pushes it): build, then attest and
-#     publish the GitHub release.
+#     installed fsbpyr builds itself with `make build`, then a smoke test) and run the static
+#     checks and the core of the test suite (`make test-ci`), before any tag exists;
+#   - a pushed version tag (tools/release/release.sh pushes it): the same, then attest and
+#     publish the GitHub release. Nothing is released unless the tests pass.
 # GitHub artifact attestations can only be made inside GitHub Actions, so releases are built
 # here and not on the maintainer's machine.
 
@@ -29,7 +30,7 @@ jobs:
     # Debian trixie, as `make bootstrap` expects: it installs clang/lld 22 and the rest from
     # Debian's packages (as root here, so without sudo) and uv from astral.sh.
     container: docker.io/library/debian:trixie
-    timeout-minutes: 45
+    timeout-minutes: 75
     env:
       PREFIX: ${{ github.workspace }}/../prefix
       # The container runs as root, but GitHub mounts its HOME (/github/home) owned by the
@@ -97,6 +98,14 @@ jobs:
                    share/zsh/site-functions/_fsbpyr share/fish/vendor_completions.d/fsbpyr.fish; do
             test -s "$PREFIX/$f" || { echo "::error::make install left $f empty or missing"; exit 1; }
           done
+
+      # Static checks and the core of the suite, on the environment `make bootstrap` left (uv,
+      # Python, the runtime). The rest of the suite runs locally (`make test`).
+      - name: make check
+        run: make check
+
+      - name: make test-ci
+        run: make test-ci
 
       # The same executable, about half the download. One thread: the same input gives the same
       # .xz with the same xz (multithreaded xz splits the stream by thread count).
