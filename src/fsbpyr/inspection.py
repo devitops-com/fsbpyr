@@ -136,6 +136,19 @@ def _built_with(info: dict[str, object]) -> str:
     return str(version)
 
 
+def _compression(report: Report) -> str:
+    """The zstd level of the content (recorded since 0.4.0, D29) and, if there are native
+    files, theirs (since 0.8.0, D33; before, zstd at the same level)."""
+    level = report.info.get("zstd_level")
+    if level is None:
+        return UNKNOWN
+    content = f"zstd {level}"
+    if not (report.shared_libraries or report.extension_modules):
+        return content
+    natives = report.info.get("native_compression", "zstd")
+    return f"{content}, native files {content if natives == 'zstd' else natives}"
+
+
 def _tops(names: list[str]) -> list[str]:
     return sorted({name.partition(".")[0] for name in names})
 
@@ -223,6 +236,7 @@ def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
         f"python     {_shown(report.info.get('python', UNKNOWN))}{glibc_text}",
         f"uv         {_shown(report.info.get('uv', UNKNOWN))}",
         f"size       {report.size / 1e6:.1f} MB, {_plural(len(report.dists), 'distribution')}",
+        f"compressed {_shown(_compression(report))}",
         f"digest     {report.digest}{'' if report.covers_file else ' (payload only)'}"
         + (" verified" if report.verified else ""),
     ]

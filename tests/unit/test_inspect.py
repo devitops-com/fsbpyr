@@ -80,18 +80,43 @@ def test_inspect_shows_the_app_and_the_fsbpyr_it_was_built_with(
         ("fsbpyr_version", "0.1.1-6d7ca726"),
         ("glibc", "2.28"),
         ("uv", "0.13.1"),
+        ("zstd_level", 9),
+        ("native_compression", "xz -6"),
     )
 
     lines = _inspect(executable, capsys)
 
     size = executable.stat().st_size / 1e6
-    assert lines[:5] == [
+    assert lines[:6] == [
         "app        aiagent 0.8.1 (0.8.1-4f9771de)",
         "built with fsbpyr 0.1.1-6d7ca726",
         "python     3.14.8, glibc >= 2.28",
         "uv         0.13.1",
         f"size       {size:.1f} MB, 3 distributions",
+        "compressed zstd 9, native files xz -6",
     ]
+
+
+@pytest.mark.parametrize(
+    ("dists", "build_info", "shown"),
+    [
+        (3, (("zstd_level", 9), ("native_compression", "zstd")), "zstd 9, native files zstd 9"),
+        (3, (("zstd_level", 3),), "zstd 3, native files zstd 3"),  # 0.4.0 to 0.7: as the rest
+        (1, (("zstd_level", 9), ("native_compression", "xz -6")), "zstd 9"),  # no native files
+        (3, (), "unknown"),  # before 0.4.0
+        (1, (("zstd_level", "9\x1b[2J"),), "'zstd 9\\x1b[2J'"),  # no terminal escapes
+    ],
+)
+def test_inspect_shows_how_the_content_is_compressed(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    dists: int,
+    build_info: tuple[tuple[str, object], ...],
+    shown: str,
+) -> None:
+    lines = _inspect(_executable(tmp_path, *build_info, dists=dists), capsys)
+
+    assert lines[5] == f"compressed {shown}"
 
 
 def test_builds_by_an_fsbpyr_without_git_show_its_release(

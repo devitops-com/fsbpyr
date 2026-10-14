@@ -18,6 +18,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`--best-compression` warns when it has nothing to compress.** It compresses native files
   only (extension modules and shared libraries), so a pure-Python app gains nothing from it;
   such a build now says so, and the option's help names what it compresses.
+- **`fsbpyr inspect` shows how the content is compressed.** A `compressed` line below the
+  size gives the zstd level and, if there are native files, theirs: `zstd 9, native files
+  xz -6` after `--best-compression`. Both were already in `--json`'s build_info; executables
+  older than 0.4.0 recorded neither and show `unknown`.
 
 ## [0.18.2] - 2026-10-14
 

@@ -217,11 +217,12 @@ Keep sources for builds you debug.
 fsbpyr inspect BINARY [--json] [--verify] [--all-modules]
 ```
 
-Shows the app and its version, the fsbpyr that built it (`fsbpyr --version` prints the same
-form: `0.4.0-1a2b3c4d`), Python and glibc, the uv that built it, the file's
-digest, the bundled shared libraries and extension modules, and the top-level modules of each
-distribution, in as many columns as the terminal fits. `--all-modules` lists every module,
-`--json` prints everything as JSON, and `--verify` recomputes the digest.
+Shows the app and its version, the fsbpyr that built it (`fsbpyr --version` prints the same form:
+`0.4.0-1a2b3c4d`), Python and glibc, the uv that built it, how its content is compressed (the
+zstd level and, with native files, `xz -6` after `--best-compression`), the file's digest, the
+bundled shared libraries and extension modules, and the top-level modules of each distribution,
+in as many columns as the terminal fits. `--all-modules` lists every module, `--json` prints
+everything as JSON, and `--verify` recomputes the digest.
 
 ## Shell completion and the man page
 
