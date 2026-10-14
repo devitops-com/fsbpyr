@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-10-14
+
 ### Fixed
 - **The launcher links reproducibly, so executables do too.** The runtime build copied the
   launcher's sources into a randomly named temporary directory, and that name reached the
