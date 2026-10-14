@@ -10,12 +10,27 @@ startup stays close to plain CPython.
 
 fsbpyr builds itself into a single executable, and that executable is the easiest way to run
 it: it carries its own runtime (CPython 3.14 and the launcher), so building apps with it needs
-no compiler. From a source checkout:
+no compiler. Each [release](https://github.com/devitops-com/fsbpyr/releases) carries it,
+built and attested by GitHub Actions:
 
 ```
-uv run fsbpyr runtime build      # once: needs clang and lld 22 or newer, and network access
-uv run fsbpyr build . -o ~/.local/bin/fsbpyr
+curl -fLo ~/.local/bin/fsbpyr https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr
+chmod +x ~/.local/bin/fsbpyr
+gh attestation verify ~/.local/bin/fsbpyr --repo devitops-com/fsbpyr   # optional
 ```
+
+From a source checkout:
+
+```
+make bootstrap   # once: the locked environment and the runtime; needs clang and lld 22 or
+                 # newer, and network access
+make build       # dist/fsbpyr
+make install     # ~/.local/bin/fsbpyr, its man page and bash, zsh and fish completions
+```
+
+`make install PREFIX=/usr/local` installs elsewhere. zsh finds the completion once
+`~/.local/share/zsh/site-functions` is in `$fpath` before `compinit`. `make help` lists the other
+targets; `make release` cuts a release (see `CHANGELOG.md`).
 
 `fsbpyr runtime list` shows the runtimes in the cache. Running fsbpyr from a checkout or a wheel
 (rather than as its own executable) always needs such a runtime, and a new fsbpyr version may
