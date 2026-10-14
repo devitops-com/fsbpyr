@@ -104,6 +104,12 @@ an untagged commit or another release, even when the launcher and the payload ar
 same. Such a build works the same; only the bytes differ. Releases before 0.18.2 do not
 reproduce themselves: their launchers were not linked reproducibly.
 
+uv must be the same too: it builds the project's wheel, stamping its own version into the
+wheel's metadata, and installs every distribution, so another uv can give other bytes from
+identical sources. An executable records the uv that built it (`fsbpyr inspect` shows it as
+"uv"; 0.18.2 and older do not record it), and a build with any other uv warns. `uv self update
+<version>` switches a uv installed from astral.sh to that version.
+
 ## Building an app
 
 ```
@@ -203,10 +209,10 @@ fsbpyr inspect BINARY [--json] [--verify] [--all-modules]
 ```
 
 Shows the app and its version, the fsbpyr that built it (`fsbpyr --version` prints the same
-form: `0.4.0-1a2b3c4d`), Python and glibc, the file's digest, the bundled shared libraries and
-extension modules, and the top-level modules of each distribution, in as many columns as the
-terminal fits. `--all-modules` lists every module, `--json` prints everything as JSON, and
-`--verify` recomputes the digest.
+form: `0.4.0-1a2b3c4d`), Python and glibc, the uv that built it, the file's
+digest, the bundled shared libraries and extension modules, and the top-level modules of each
+distribution, in as many columns as the terminal fits. `--all-modules` lists every module,
+`--json` prints everything as JSON, and `--verify` recomputes the digest.
 
 ## Shell completion and the man page
 

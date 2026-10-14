@@ -16,6 +16,7 @@ from fsbpyr.staging import (
     rebuild,
     run_plan,
     staging_plan,
+    uv_version,
 )
 
 
@@ -351,6 +352,25 @@ def test_uv_is_found_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("shutil.which", lambda name: f"/opt/{name}/bin/{name}")
 
     assert find_uv() == Path("/opt/uv/bin/uv")
+
+
+def _fake_uv(tmp_path: Path, body: str) -> Path:
+    uv = tmp_path / "uv"
+    uv.write_text(f"#!/bin/sh\n{body}\n")
+    uv.chmod(0o755)
+    return uv
+
+
+def test_uv_reports_its_version(tmp_path: Path) -> None:
+    uv = _fake_uv(tmp_path, 'echo "uv 0.13.1 (x86_64-unknown-linux-gnu)"')
+
+    assert uv_version(uv) == "0.13.1"
+
+
+@pytest.mark.parametrize("body", ["exit 1", "echo nonsense"])
+def test_a_uv_that_cannot_tell_its_version_stops_the_build(tmp_path: Path, body: str) -> None:
+    with pytest.raises(StagingError, match="version"):
+        uv_version(_fake_uv(tmp_path, body))
 
 
 WORKSPACE_LOCK = """\

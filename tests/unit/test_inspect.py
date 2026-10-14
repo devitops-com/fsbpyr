@@ -79,15 +79,17 @@ def test_inspect_shows_the_app_and_the_fsbpyr_it_was_built_with(
         ("git", {"commit": COMMIT, "tag": "v0.8.1"}),
         ("fsbpyr_version", "0.1.1-6d7ca726"),
         ("glibc", "2.28"),
+        ("uv", "0.13.1"),
     )
 
     lines = _inspect(executable, capsys)
 
     size = executable.stat().st_size / 1e6
-    assert lines[:4] == [
+    assert lines[:5] == [
         "app        aiagent 0.8.1 (0.8.1-4f9771de)",
         "built with fsbpyr 0.1.1-6d7ca726",
         "python     3.14.8, glibc >= 2.28",
+        "uv         0.13.1",
         f"size       {size:.1f} MB, 3 distributions",
     ]
 
@@ -101,7 +103,7 @@ def test_builds_by_an_fsbpyr_without_git_show_its_release(
     lines = _inspect(executable, capsys)
 
     assert lines[1] == f"built with fsbpyr {fsbpyr.__version__}"
-    assert lines[3].endswith(" 1 distribution")
+    assert lines[4].endswith(" 1 distribution")
 
 
 def test_inspect_shows_what_older_builds_recorded(
@@ -114,10 +116,11 @@ def test_inspect_shows_what_older_builds_recorded(
 
     lines = _inspect(executable, capsys)
 
-    assert lines[:3] == [
+    assert lines[:4] == [
         "app        aiagent (untagged-4f9771de)",
         "built with fsbpyr 0.1.0",
         "python     3.14.8",
+        "uv         unknown",
     ]
 
 
@@ -168,6 +171,7 @@ def test_json_describes_everything(tmp_path: Path, capsys: pytest.CaptureFixture
     executable = _executable(
         tmp_path, ("project", {"name": "aiagent", "version": "0.8.1"}),
         ("git", {"commit": COMMIT, "tag": "v0.8.1"}), ("fsbpyr_version", "0.3.0-1a2b3c4d"),
+        ("uv", "0.13.1"),
     )  # fmt: skip
 
     assert main(["inspect", "--json", "--verify", str(executable)]) == 0
@@ -176,6 +180,7 @@ def test_json_describes_everything(tmp_path: Path, capsys: pytest.CaptureFixture
     assert report["app"] == {"name": "aiagent", "version": "0.8.1", "revision": "0.8.1-4f9771de"}
     assert report["built_with"] == "0.3.0-1a2b3c4d"
     assert report["python"] == "3.14.8" and report["verified"] is True
+    assert report["uv"] == "0.13.1"
     assert report["size"] == executable.stat().st_size
     assert report["distributions"][2] == {"name": "pyyaml", "version": "6.0.2"}
     assert report["shared_libraries"] == [LIB, PLAIN] and report["extension_modules"] == [EXT]
