@@ -12,16 +12,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it as the release's `fsbpyr` asset, with this changelog's section as the notes
   (`gh attestation verify fsbpyr --repo devitops-com/fsbpyr` checks it). `make release`
   (`VERSION=X.Y.Z` to bump) promotes `[Unreleased]`, commits, tags and pushes.
-- **A Makefile.** `make bootstrap` sets up the locked environment and the runtime,
-  `make build` builds `dist/fsbpyr`, and `make install` installs it with its man page and
-  its bash, zsh and fish completions under `~/.local` (`PREFIX=` for elsewhere);
-  `make uninstall` removes them.
+- **A Makefile: `make bootstrap`, `make build`, `make install`.** `make bootstrap` takes a
+  checkout to an installed fsbpyr: on Debian trixie it installs clang/lld 22 and the other
+  OS packages with sudo and uv from astral.sh, then builds the runtime and fsbpyr from
+  source; on any other Linux x86-64 the build runs in a Debian trixie podman container
+  (`Containerfile`, IPv4-only). `make build` builds `dist/fsbpyr` with the installed fsbpyr
+  (bootstrapping first if there is none), and `make install` installs it with its man page
+  and bash, zsh and fish completions under `~/.local` (`PREFIX=` for elsewhere).
+- **Python 3.14.8 pinned in `.python-version`**, the same CPython the runtime is built from.
 - **`fsbpyr man` ends with examples.** The page gains an EXAMPLES section: a command line
   and what it does for every command (`build`, `inspect`, `runtime build`, `cache gc`,
   `completion`, `man`). A test runs each example through fsbpyr's real commands, so an
   example that names a removed option or command fails the suite. The section is set
   left-aligned and without hyphenation, so groff no longer splits `fsbpyr` ("fs-bpyr") in a
   command line or stretches the long ones.
+
+### Fixed
+- **`fsbpyr runtime build` retries a download that fails on the network.** The pinned
+  CPython archive and the sysroot's packages are tried up to four times, after 2, 5 and
+  10 s, when a TLS handshake times out or a connection is reset; an HTTP error such as a
+  404 still fails at once.
 
 ## [0.18.0] - 2026-10-13
 

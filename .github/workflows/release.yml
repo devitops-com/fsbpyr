@@ -1,8 +1,8 @@
 name: Release
 
 # One build definition for both uses:
-#   - pull requests: prove the release build works (fsbpyr builds itself, then a smoke test of
-#     the executable and of `make install`) before any tag exists;
+#   - pull requests: prove the release build works (`make bootstrap` on Debian trixie, then the
+#     installed fsbpyr builds itself with `make build`, then a smoke test) before any tag exists;
 #   - a pushed version tag (tools/release/release.sh pushes it): build, then attest and
 #     publish the GitHub release.
 # GitHub artifact attestations can only be made inside GitHub Actions, so releases are built
@@ -25,62 +25,57 @@ permissions:
 jobs:
   build:
     name: build + smoke test
-    # The LLVM apt repository below is per Ubuntu release: pinned, not ubuntu-latest.
     runs-on: ubuntu-24.04
+    # Debian trixie, as `make bootstrap` expects: it installs clang/lld 22 and the rest from
+    # Debian's packages (as root here, so without sudo) and uv from astral.sh.
+    container: docker.io/library/debian:trixie
     timeout-minutes: 45
+    env:
+      PREFIX: ${{ github.workspace }}/../prefix
     steps:
+      # git before the checkout: without it actions/checkout downloads a tarball, with no tags.
+      - name: Install git
+        run: |
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends ca-certificates git
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false  # no later step needs the token in .git/config
           fetch-depth: 0  # the tags: the executable's --version names the vX.Y.Z tag on HEAD
 
+      # The checkout belongs to another uid than the container's root: fsbpyr's git calls
+      # (the commit and tag it records) would otherwise be refused.
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       # Before a build is spent on it: the tag must name the version all three files declare.
       - name: Check the tag against the version
         if: github.ref_type == 'tag'
         run: |
-          version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          version="$(awk '/^\[/ { s = ($0 == "[project]") } s && /^version *=/ { print; exit }' pyproject.toml | cut -d'"' -f2)"
           module="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/fsbpyr/__init__.py)"
-          lock="$(python3 -c 'import tomllib; print(*[p["version"] for p in tomllib.load(open("uv.lock", "rb"))["package"] if p["name"] == "fsbpyr"])')"
-          for v in "$module" "$lock"; do
-            [ "$v" = "$version" ] || { echo "::error::versions disagree: pyproject.toml $version, __init__.py $module, uv.lock $lock"; exit 1; }
-          done
+          lock="$(awk '/^\[\[package\]\]/ { s = 0 } /^name = "fsbpyr"$/ { s = 1 } s && /^version *=/ { print; exit }' uv.lock | cut -d'"' -f2)"
+          if [ "$module" != "$version" ] || [ "$lock" != "$version" ]; then
+            echo "::error::versions disagree: pyproject.toml $version, __init__.py $module, uv.lock $lock"
+            exit 1
+          fi
           if [ "$GITHUB_REF_NAME" != "v$version" ]; then
             echo "::error::tag $GITHUB_REF_NAME does not match version $version"
             exit 1
           fi
 
-      # uv fetches the Python of .python-version and the locked dependencies; fsbpyr then
-      # fetches the pinned python-build-standalone and glibc sysroot itself. No cache: the
-      # release is built from the lock, never from files another run cached.
-      - name: Set up uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          version: "0.12.17"
-          enable-cache: false
-
-      # `fsbpyr runtime build` links the launcher against python-build-standalone's LLVM 22
-      # bitcode: clang and lld 22 from apt.llvm.org (the runner has older ones).
-      - name: Install clang and lld 22
-        run: |
-          codename="$(lsb_release -cs)"
-          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
-          echo "deb http://apt.llvm.org/$codename/ llvm-toolchain-$codename-22 main" \
-            | sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends clang-22 lld-22
-          clang-22 --version
-
-      - name: Bootstrap (locked environment + runtime)
+      # OS packages, uv, the Python of .python-version, the runtime, fsbpyr from source and
+      # `make install` under $PREFIX. No cache: the release is built from the lock, never from
+      # files another run cached.
+      - name: make bootstrap
         run: make bootstrap
 
-      # The build's own smoke test runs the new executable once.
-      - name: Build dist/fsbpyr
+      # The installed fsbpyr builds itself again: what `make build` does once fsbpyr exists.
+      - name: make build
         run: make build
 
       - name: Smoke test
-        env:
-          PREFIX: ${{ runner.temp }}/prefix
         run: |
           dist/fsbpyr --version
           dist/fsbpyr inspect --verify dist/fsbpyr
@@ -90,7 +85,6 @@ jobs:
               *) echo "::error::--version does not name $GITHUB_REF_NAME"; exit 1 ;;
             esac
           fi
-          make install PREFIX="$PREFIX"
           "$PREFIX/bin/fsbpyr" --version
           for f in share/man/man1/fsbpyr.1 share/bash-completion/completions/fsbpyr \
                    share/zsh/site-functions/_fsbpyr share/fish/vendor_completions.d/fsbpyr.fish; do

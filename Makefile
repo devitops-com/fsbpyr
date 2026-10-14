@@ -10,12 +10,11 @@ BASH_COMPLETION_DIR ?= $(PREFIX)/share/bash-completion/completions
 ZSH_COMPLETION_DIR  ?= $(PREFIX)/share/zsh/site-functions
 FISH_COMPLETION_DIR ?= $(PREFIX)/share/fish/vendor_completions.d
 
+# uv from astral.sh lands in ~/.local/bin, which a fresh login may not have on PATH yet.
+export PATH := $(HOME)/.local/bin:$(PATH)
+
 UV  := uv
 BIN := dist/fsbpyr
-# The man page and the completions come from the built executable (one source, D40).
-DOCS := dist/share/fsbpyr.1 dist/share/fsbpyr.bash dist/share/_fsbpyr dist/share/fsbpyr.fish
-# What the executable is built from: rebuilt when any of it changes.
-SOURCES := $(shell git ls-files src pyproject.toml uv.lock 2>/dev/null)
 
 .PHONY: help bootstrap build install uninstall test check release clean
 
@@ -25,40 +24,38 @@ help: ## Show this help
 
 # --- Setup ---
 
-# The locked environment (with the dev group), then the runtime that `fsbpyr build` links
-# executables against: it needs clang and lld 22 or newer (apt.llvm.org) and network access,
-# and is cached, so a second run only checks it is there.
-bootstrap: ## Set up .venv from uv.lock and build the Python runtime (needs clang/lld >= 22)
-	$(UV) sync --locked
-	$(UV) run --locked fsbpyr runtime build
+# Debian trixie: OS packages (clang/lld 22 and the rest) with sudo, uv from astral.sh, the
+# runtime, fsbpyr built from source, `make install`. Anywhere else the build runs in a Debian
+# trixie podman container (podman is yours to install) and the install on this host. See
+# tools/bootstrap.sh.
+bootstrap: ## From source to an installed fsbpyr: packages, uv, runtime, build, install
+	@bash tools/bootstrap.sh
 
 # --- Build ---
 
-build: $(BIN) ## Build fsbpyr as a single executable -> dist/fsbpyr
-
-# fsbpyr builds itself. Its --version names the vX.Y.Z tag on HEAD, else `untagged`.
-$(BIN): $(SOURCES)
-	$(UV) run --locked fsbpyr build . -o $@
-
-dist/share/fsbpyr.1: $(BIN)
-	@mkdir -p $(@D)
-	$(BIN) man > $@.tmp && mv $@.tmp $@
-
-dist/share/fsbpyr.bash: $(BIN)
-	@mkdir -p $(@D)
-	$(BIN) completion bash > $@.tmp && mv $@.tmp $@
-
-dist/share/_fsbpyr: $(BIN)
-	@mkdir -p $(@D)
-	$(BIN) completion zsh > $@.tmp && mv $@.tmp $@
-
-dist/share/fsbpyr.fish: $(BIN)
-	@mkdir -p $(@D)
-	$(BIN) completion fish > $@.tmp && mv $@.tmp $@
+# The installed fsbpyr builds the checkout: it carries its own runtime, so no compiler is
+# needed, only uv (installed or updated from astral.sh). Without one, `make bootstrap`
+# installs it first. Its --version names the vX.Y.Z tag on HEAD, else `untagged`.
+build: ## Build dist/fsbpyr with the installed fsbpyr (bootstrap first if there is none)
+	@bash tools/bootstrap.sh --uv
+	@fsbpyr="$$(command -v $(BINDIR)/fsbpyr || command -v fsbpyr || true)"; \
+	if [ -z "$$fsbpyr" ]; then \
+		echo "==> No fsbpyr installed: make bootstrap"; \
+		$(MAKE) --no-print-directory bootstrap && fsbpyr="$(BINDIR)/fsbpyr"; \
+	fi; \
+	echo "$$fsbpyr build . -o $(BIN)"; \
+	"$$fsbpyr" build . -o $(BIN)
 
 # --- Install ---
 
-install: $(BIN) $(DOCS) ## Install fsbpyr, its man page and completions under PREFIX (default ~/.local)
+# The man page and the completions come from the executable being installed (one source, D40).
+install: ## Install dist/fsbpyr, its man page and completions under PREFIX (default ~/.local)
+	@[ -x $(BIN) ] || $(MAKE) --no-print-directory build
+	@mkdir -p dist/share
+	$(BIN) man > dist/share/fsbpyr.1
+	$(BIN) completion bash > dist/share/fsbpyr.bash
+	$(BIN) completion zsh > dist/share/_fsbpyr
+	$(BIN) completion fish > dist/share/fsbpyr.fish
 	install -Dm755 $(BIN) $(DESTDIR)$(BINDIR)/fsbpyr
 	install -Dm644 dist/share/fsbpyr.1 $(DESTDIR)$(MANDIR)/man1/fsbpyr.1
 	install -Dm644 dist/share/fsbpyr.bash $(DESTDIR)$(BASH_COMPLETION_DIR)/fsbpyr
