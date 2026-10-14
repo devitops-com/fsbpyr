@@ -152,6 +152,7 @@ def as_json(report: Report, *, all_modules: bool = False) -> str:
         "app": {"name": name, "version": version, "revision": revision},
         "built_with": _built_with(report.info),
         "python": report.info.get("python"),
+        "uv": report.info.get("uv"),
         "glibc": report.info.get("glibc"),
         "digest": report.digest,
         "digest_covers": "file" if report.covers_file else "payload",
@@ -220,6 +221,7 @@ def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
         f"app        {app_line}",
         f"built with fsbpyr {_shown(_built_with(report.info))}",
         f"python     {_shown(report.info.get('python', UNKNOWN))}{glibc_text}",
+        f"uv         {_shown(report.info.get('uv', UNKNOWN))}",
         f"size       {report.size / 1e6:.1f} MB, {_plural(len(report.dists), 'distribution')}",
         f"digest     {report.digest}{'' if report.covers_file else ' (payload only)'}"
         + (" verified" if report.verified else ""),

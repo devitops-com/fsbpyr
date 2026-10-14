@@ -1,5 +1,8 @@
 """Smoke test and entry-point checks of the build orchestrator."""
 
+import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -7,10 +10,12 @@ import pytest
 from fsbpyr.build import (
     BuildError,
     build,
+    builder_uv,
     built_here_above,
     glibc_report,
     rebuild_on_baseline,
     smoke_test,
+    uv_mismatch,
 )
 from fsbpyr.cli import main
 from fsbpyr.closure import SiteIndex
@@ -151,3 +156,25 @@ def test_an_offline_build_rebuilds_nothing(tmp_path: Path, monkeypatch: pytest.M
     assert _rebuild(tmp_path, offline=True) == [
         "cxx-ext: not rebuilt against the glibc 2.28 sysroot: the build is offline"
     ]
+
+
+def test_a_uv_other_than_the_one_that_built_fsbpyr_is_a_warning() -> None:
+    [warning] = uv_mismatch(builder="0.13.1", current="0.14.0")
+
+    assert "uv 0.14.0" in warning and "uv 0.13.1" in warning and "identical" in warning
+
+
+@pytest.mark.parametrize("builder", ["0.13.1", None])  # None: from source, or an older build
+def test_the_same_uv_or_an_unknown_one_is_no_warning(builder: str | None) -> None:
+    assert uv_mismatch(builder=builder, current="0.13.1") == []
+
+
+def test_an_executable_knows_the_uv_it_was_built_with(monkeypatch: pytest.MonkeyPatch) -> None:
+    info = {"build_info": json.dumps({"uv": "0.13.1"})}
+    monkeypatch.setitem(sys.modules, "_fsbpyr", types.SimpleNamespace(info=lambda: info))
+
+    assert builder_uv() == "0.13.1"
+
+
+def test_fsbpyr_run_from_source_knows_no_builder_uv() -> None:
+    assert builder_uv() is None

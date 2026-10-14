@@ -1,5 +1,6 @@
 """``fsbpyr build``: project -> staging install -> classify -> executable (plan §3.6)."""
 
+import json
 import os
 import subprocess
 import tempfile
@@ -30,6 +31,7 @@ from .staging import (
     rebuild,
     run_plan,
     staging_plan,
+    uv_version,
 )
 from .vcs import git_state, own_version
 
@@ -144,6 +146,27 @@ def rebuild_on_baseline(  # noqa: PLR0913  the staging, what to rebuild, and off
     return []
 
 
+def builder_uv() -> str | None:
+    """The uv version the build of this fsbpyr executable recorded; None from source, or for
+    an executable built before uv versions were recorded."""
+    try:
+        import _fsbpyr  # noqa: PLC0415  # only in executables
+    except ImportError:
+        return None
+    version = json.loads(_fsbpyr.info()["build_info"]).get("uv")
+    return version if isinstance(version, str) else None
+
+
+def uv_mismatch(*, builder: str | None, current: str) -> list[str]:
+    """A warning when uv is not the one this fsbpyr was built with: uv builds the project's
+    wheel (its uv_build stamps uv's version into the wheel's metadata) and installs every
+    distribution, so another uv can give other bytes from identical sources."""
+    if builder is None or builder == current:
+        return []
+    return [f"uv {current} is not uv {builder}, which built this fsbpyr: the executable can "
+            f"differ from one built with uv {builder}, even from identical sources"]  # fmt: skip
+
+
 def check_output(output: Path) -> None:
     if output.is_dir():
         raise BuildError(f"output path {output} is a directory; pass -o with a file name")
@@ -175,9 +198,10 @@ def build(
 ) -> BuildResult:
     project = Project.load(directory)
     uv = find_uv()  # before anything slow: a build cannot go far without it (D26)
+    uv_used = uv_version(uv)
     runtime = select_runtime(TARGET_PYTHON)
     project.check_python(runtime.python_version)
-    warnings: list[str] = []
+    warnings = uv_mismatch(builder=builder_uv(), current=uv_used)
     if pin := project.python_version_mismatch(TARGET_PYTHON):
         warnings.append(f".python-version pins {pin}; building for Python {runtime.python_version}")
     source = project.lock_source(config.requirements)
@@ -244,6 +268,7 @@ def build(
                 build_info=(
                     ("project", {"name": dist.name, "version": dist.version}),
                     ("fsbpyr_version", own_version()),  # with the commit (fsbpyr inspect)
+                    ("uv", uv_used),  # builds the wheel, installs everything
                     ("lock", source.value),
                     ("dists", sorted(f"{d.name}=={d.version}" for d in content.dists)),
                     ("glibc", glibc),

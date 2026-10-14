@@ -14,6 +14,7 @@ requirements files resolve as the user expects.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import tomllib
@@ -26,6 +27,8 @@ from .project import LockSource, Project
 
 WHEEL = "{wheel}"  # placeholder in install commands, replaced by the built wheel's path
 _ERROR_TAIL = 3000
+_VERSION_TIMEOUT = 30
+_UV_VERSION = re.compile(r"uv (\S+)")
 _UV_REQUIRED = (
     "fsbpyr needs uv to build (it installs the project and picks wheels that run on the glibc "
     "baseline); install it from https://docs.astral.sh/uv/getting-started/installation/, e.g. "
@@ -63,6 +66,21 @@ def find_uv() -> Path:
     if uv is None:
         raise StagingError(_UV_REQUIRED)
     return Path(uv)
+
+
+def uv_version(uv: Path) -> str:
+    """uv's version, "0.13.1": it builds the project's wheel and installs everything, so the
+    executable's bytes can depend on it (recorded in build_info, shown by fsbpyr inspect)."""
+    try:
+        result = subprocess.run([uv, "--version"], capture_output=True, text=True,
+                                timeout=_VERSION_TIMEOUT, check=False)  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise StagingError(f"cannot run {uv} --version: {exc}") from exc
+    match = _UV_VERSION.match(result.stdout)
+    if result.returncode != 0 or match is None:
+        output = (result.stdout + result.stderr).strip()[-_ERROR_TAIL:]
+        raise StagingError(f"{uv} --version did not report a version: {output}")
+    return match.group(1)
 
 
 def local_packages(lock: Path, exclude: str | None) -> list[str]:
