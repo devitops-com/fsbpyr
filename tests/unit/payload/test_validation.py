@@ -41,7 +41,7 @@ def test_encode_rejects_unsafe_file_paths(path: str) -> None:
         encode_payload(make_spec(files=files, modules=(), dists=()))
 
 
-@pytest.mark.parametrize("name", ["", ".a", "a.", "a..b", "a/b", "a\0b", "a b", "1a"])
+@pytest.mark.parametrize("name", ["", ".a", "a.", "a..b", "a/b", "a\0b", "a b"])
 def test_encode_rejects_invalid_module_names(name: str) -> None:
     modules = (Module(name, "x.py", ModuleKind.MODULE, code=Blob.code(b"c")),)
 
@@ -150,6 +150,14 @@ def test_dist_names_must_be_canonical() -> None:
 def test_hyphenated_stdlib_module_names_are_allowed() -> None:
     # sysconfig imports _sysconfigdata_<abiflags>_<platform>_<multiarch> with import_module
     name = "_sysconfigdata__linux_x86_64-linux-gnu"
+    modules = (Module(name, f"{name}.py", ModuleKind.MODULE, code=Blob.code(b"c")),)
+
+    assert Payload(encode_payload(make_spec(modules=modules, files=(), dists=()))).find_module(name)
+
+
+def test_module_names_starting_with_a_digit_are_allowed() -> None:
+    # mypyc's shared module, which the extensions it compiled import by name
+    name = "81d243bd2c585b0f4821__mypyc"
     modules = (Module(name, f"{name}.py", ModuleKind.MODULE, code=Blob.code(b"c")),)
 
     assert Payload(encode_payload(make_spec(modules=modules, files=(), dists=()))).find_module(name)

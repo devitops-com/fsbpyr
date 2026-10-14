@@ -273,8 +273,9 @@ this short list to build CPython's frozen-module table, so it never scans the MO
   zstd, `size` ≤ 1 MiB) and lies inside its content (`stored_size + size` ≤ the block's
   `size`); codec 2 is invalid in version 1.
 - FILES paths, module paths and `dist_info` paths obey the path rules above. Module names are
-  dotted names whose parts are Python identifiers once `-` is read as `_`: CPython imports file
-  stems such as `_sysconfigdata__linux_x86_64-linux-gnu` through `importlib.import_module`.
+  dotted names whose parts are Python identifiers once `-` is read as `_` and a leading digit is
+  allowed: CPython imports file stems such as `_sysconfigdata__linux_x86_64-linux-gnu` and
+  mypyc's `81d243bd2c585b0f4821__mypyc` through `importlib.import_module`.
   Dist names are canonical.
 - The module kind invariants (including checksummed code: a zstd frame, zstd frames in pieces, or inside a block), the
   STARTUP rule (the STARTUP section lists exactly the flagged modules) and the closure rules

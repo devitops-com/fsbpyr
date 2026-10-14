@@ -330,6 +330,25 @@ def test_hyphenated_module_files_are_modules(site: Path) -> None:
     assert {f.path: f.kind for f in content.files}["tables/my-dir/x.py"] is FileKind.RESOURCE
 
 
+def test_module_files_starting_with_a_digit_are_modules(site: Path) -> None:
+    shared = "81d243bd2c585b0f4821__mypyc"  # charset-normalizer's cd and md import it by name
+    _dist(site, "mypycd", "1.0", {f"{shared}{SUFFIXES[0]}": make_elf(soname=f"PyInit_{shared}"),
+                                  "mypycd/__init__.py": b"", "mypycd/0001_initial.py": b"",
+                                  "mypycd/1dir/__init__.py": b"",
+                                  "mypycd/1dir/x.py": b""})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["mypycd"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    modules = {m.name: m.kind for m in content.modules}
+    assert modules[shared] is ModuleKind.EXTENSION  # import_module() reaches it
+    assert modules["mypycd.0001_initial"] is ModuleKind.MODULE  # Django's and alembic's revisions
+    assert not any("1dir" in name for name in modules)  # such directories stay data
+    kinds = {f.path: f.kind for f in content.files}
+    assert kinds[f"{shared}{SUFFIXES[0]}"] is FileKind.NATIVE_EXT
+    assert kinds["mypycd/1dir/x.py"] is FileKind.RESOURCE
+
+
 def test_so_detection_matches_shared_objects_only(site: Path) -> None:
     _dist(site, "notes", "1.0", {"notes/__init__.py": b"", "notes/readme.so.txt": b"text",
                                  "notes.libs/libz.so.1.2.13": b"\x7fELF"})  # fmt: skip
