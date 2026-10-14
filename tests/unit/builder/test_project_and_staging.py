@@ -90,6 +90,13 @@ def test_explicit_requirements_file_must_exist(tmp_path: Path) -> None:
         project.lock_source("missing.txt")
 
 
+def test_project_names_its_extras(tmp_path: Path) -> None:
+    extras = '\n[project.optional-dependencies]\nfancy = ["rich"]\nfast = []\n'
+
+    assert Project.load(_project(tmp_path, PYPROJECT)).extras == ()
+    assert Project.load(_project(tmp_path, PYPROJECT + extras)).extras == ("fancy", "fast")
+
+
 def test_setup_py_projects_are_accepted(tmp_path: Path) -> None:
     (tmp_path / "setup.py").write_text("from setuptools import setup\nsetup(name='legacy')\n")
 

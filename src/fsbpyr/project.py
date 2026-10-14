@@ -30,6 +30,7 @@ class Project:
     name: str | None  # canonical; None for setup.py-only projects (found after installing)
     requires_python: str | None = None
     scripts: dict[str, str] = field(default_factory=dict)
+    extras: tuple[str, ...] = ()  # names in [project.optional-dependencies]
     tool: dict[str, Any] = field(default_factory=dict)  # the [tool.fsbpyr] table
 
     @classmethod
@@ -52,6 +53,7 @@ class Project:
             name=canonicalize_name(name) if isinstance(name, str) else None,
             requires_python=table.get("requires-python"),
             scripts=dict(table.get("scripts", {})),
+            extras=tuple(table.get("optional-dependencies", {})),
             tool=dict(data.get("tool", {}).get("fsbpyr", {})),
         )
 
