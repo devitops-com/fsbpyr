@@ -34,10 +34,11 @@ jobs:
       PREFIX: ${{ github.workspace }}/../prefix
     steps:
       # git before the checkout: without it actions/checkout downloads a tarball, with no tags.
-      - name: Install git
+      # make runs `make bootstrap`, which installs the rest.
+      - name: Install git and make
         run: |
           apt-get update -q
-          apt-get install -y -q --no-install-recommends ca-certificates git
+          apt-get install -y -q --no-install-recommends ca-certificates git make
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
