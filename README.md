@@ -19,6 +19,15 @@ chmod +x ~/.local/bin/fsbpyr
 gh attestation verify ~/.local/bin/fsbpyr --repo devitops-com/fsbpyr   # optional
 ```
 
+The same executable also comes as `fsbpyr.xz`, half the download (about 14 MB instead of 29 MB),
+attested as well:
+
+```
+curl -fL https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr.xz \
+  | xz -d > ~/.local/bin/fsbpyr
+chmod +x ~/.local/bin/fsbpyr
+```
+
 ### Building from source
 
 A source checkout needs only `make`, `curl` and, on systems other than Debian trixie,

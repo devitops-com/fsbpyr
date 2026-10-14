@@ -13,6 +13,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `fsbpyr inspect` shows it below Python (`uv` in `--json`). An fsbpyr executable building
   with a uv other than the one that built it warns that the result can differ from one built
   with that uv, even from identical sources.
+- **Releases also carry `fsbpyr.xz`**, the same executable compressed with xz (about 14 MB
+  instead of 29 MB), attested like the executable itself.
 
 ## [0.18.2] - 2026-10-14
 
