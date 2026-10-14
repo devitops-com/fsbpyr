@@ -35,7 +35,7 @@ make install     # dist/fsbpyr, its man page and completions under ~/.local
 the host:
 
 1. installs the missing OS packages with `sudo apt-get` (`clang-22 lld-22 git make curl
-   ca-certificates`; trixie ships clang and lld 22, which link the launcher);
+   ca-certificates`; trixie ships clang and lld 22 since 13.7; they link the launcher);
 2. installs [uv](https://docs.astral.sh/uv/) from astral.sh into `~/.local/bin` if it is not
    on `PATH`; uv installs the Python pinned in `.python-version` (3.14.8) and the locked
    dependencies;

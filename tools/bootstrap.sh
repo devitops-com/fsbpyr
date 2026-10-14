@@ -61,6 +61,14 @@ os_packages() {
     fi
     say "Installing OS packages: ${missing[*]}"
     as_root apt-get update -q
+    # clang/lld 22 came with Debian 13.7. A package index older than that (an update that
+    # fetched the Release file but not the index lists itself as "Hit" from then on) has
+    # neither: say so instead of apt's "Unable to locate package".
+    for p in "${missing[@]}"; do
+        apt-cache show "$p" >/dev/null 2>&1 || die "apt does not know $p. Debian 13.7 and newer ships it; if this is trixie, the package index is probably stale. Refresh it and run make bootstrap again:
+    sudo rm /var/lib/apt/lists/deb.debian.org_debian_dists_trixie*
+    sudo apt-get update"
+    done
     as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
         "${missing[@]}"
 }

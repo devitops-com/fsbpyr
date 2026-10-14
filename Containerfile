@@ -4,7 +4,7 @@
 # between runs.
 FROM docker.io/library/debian:trixie
 
-# Everything but uv and Python from Debian's own packages (trixie ships clang and lld 22).
+# Everything but uv and Python from Debian's own packages (trixie ships clang and lld 22 since 13.7).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl git make clang-22 lld-22 \
     && rm -rf /var/lib/apt/lists/*
