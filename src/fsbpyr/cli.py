@@ -78,6 +78,9 @@ def _add_build(commands: argparse._SubParsersAction[argparse.ArgumentParser]) ->
                        help="also list packages that may read files next to __file__")  # fmt: skip
     build.add_argument("--no-smoke", dest="smoke", action="store_false", default=None,
                        help="skip running the executable once in selftest mode")  # fmt: skip
+    build.add_argument("--interpreter-reexec", action="store_true", default=None,
+                       help="run '-m MODULE' and '-c CODE' as Python when the app itself "
+                            "starts them through sys.executable")  # fmt: skip
 
 
 def _build(args: argparse.Namespace) -> int:
@@ -109,6 +112,7 @@ def _build(args: argparse.Namespace) -> int:
             hints=args.hints,
             fast_compression=args.fast_compression,
             best_compression=args.best_compression,
+            interpreter_reexec=args.interpreter_reexec,
         )
         result = build(args.project, config, log=lambda message: print(f"fsbpyr: {message}"))
     except errors as exc:

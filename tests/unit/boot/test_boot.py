@@ -288,6 +288,28 @@ def test_run_selftest_installs_import_machinery(
 
 
 @pytest.mark.usefixtures("isolated_sys")
+@pytest.mark.parametrize("allowed", [True, False], ids=["interpreter-reexec", "default"])
+def test_code_from_the_app_itself_runs_instead_of_it_only_when_built_so(
+    boot: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    allowed: bool,
+) -> None:
+    reexec = importlib.import_module("_fsbpyr_rt.reexec")
+    monkeypatch.setattr(reexec, "_parent_runs_this_executable", lambda: True)  # as in a child
+    monkeypatch.setitem(boot.INFO, "build_info", json.dumps({"interpreter_reexec": allowed}))
+    monkeypatch.setitem(posix.environ, b"FSBPYR_SELFTEST", b"1")
+    monkeypatch.setitem(sys.modules, "__main__", types.ModuleType("__main__"))
+    code = "import pkg.cli; print('child', pkg.cli.main())"  # from the payload
+    monkeypatch.setattr(sys, "argv", [boot.ROOT, "-B", "-c", code])
+
+    boot.run()
+
+    expected = "child cli\n" if allowed else "fsbpyr selftest ok: demo\n"
+    assert capsys.readouterr().out == expected
+
+
+@pytest.mark.usefixtures("isolated_sys")
 def test_multiprocessing_children_run_instead_of_the_app(
     boot: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

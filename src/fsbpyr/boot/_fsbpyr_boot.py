@@ -326,6 +326,18 @@ def _multiprocessing_child() -> bool:
     return handled
 
 
+def _interpreter_child() -> bool:
+    """With interpreter-reexec (D23), the app re-executed through ``sys.executable`` with
+    ``-m MODULE`` or ``-c CODE`` runs that instead."""
+    argv = sys.argv
+    if "-m" not in argv[1:-1] and "-c" not in argv[1:-1]:
+        return False  # the common case costs two scans of argv
+    from _fsbpyr_rt.reexec import run_child  # type: ignore[import-not-found]  # noqa: PLC0415
+
+    handled: bool = run_child(argv, INFO["build_info"])
+    return handled
+
+
 def run() -> None:
     sys.path_hooks.insert(0, path_hook)
     sys.path[:] = [ROOT]
@@ -343,7 +355,7 @@ def run() -> None:
         from _fsbpyr_rt.trace import report  # type: ignore[import-not-found]  # noqa: PLC0415
 
         atexit.register(report)
-    if _multiprocessing_child():
+    if _multiprocessing_child() or _interpreter_child():
         return
     collection = posix.environ.get(b"FSBPYR_GC")  # D38: any other value runs the app
     if collection in (b"1", b"background"):

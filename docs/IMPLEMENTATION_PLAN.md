@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.14, 2026-10-09. Phases 0–7, 6b (except D23) and 6c are complete (Phase 7 reduced by D37); uv is required (D26); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.15, 2026-10-13. Phases 0–7, 6b and 6c are complete (Phase 7 reduced by D37); uv is required (D26); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -711,7 +711,7 @@ criteria are automated tests unless noted. Sizes are S, M or L.
     of the cache (fixed); the generation id now covers file modes, and `-X opt` flags are
     skipped when locating `-c`
 
-### Phase 6b — Compatibility follow-ups (M) — **DONE 2026-10-07, except interpreter re-exec (D23)**
+### Phase 6b — Compatibility follow-ups (M) — **DONE 2026-10-07; interpreter re-exec (D23) 2026-10-13**
 
 Closes the open issues that no later phase covered (review of open issues, 2026-10-07).
 
@@ -798,6 +798,21 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
     less noise, the CA fallback re-checking `SSL_CERT_*` at use and never raising, robust
     `.pth` reading, self-hosting reading `/proc/self/exe`, and a stricter `(deleted)` rule
   - **open: interpreter re-exec (D23)** was not implemented in this phase
+- **D23 done (0.16.0, 2026-10-13):** `interpreter-reexec = true` / `--interpreter-reexec` records
+  `interpreter_reexec` in the build info. The boot module looks at it only when argv holds
+  `-m` or `-c` (two scans of argv otherwise, as for multiprocessing); `_fsbpyr_rt.reexec`
+  takes `-m MODULE` or `-c CODE` after interpreter flags (`-X` and `-W` take a value), and
+  runs it when the parent runs this executable (D22's check): `-m` through
+  `runpy._run_module_as_main` with `sys.argv` as CPython leaves it, `-c` in `__main__`.
+  Any other caller gets the app, with these arguments. Asked for by tsim's shell, which runs
+  its helpers as `sys.executable -m tsim....`
+  - tests: `test_reexec.py` (command lines, the opt-in, the parent check, `-m` and `-c` as
+    CPython runs them), the boot run with and without the option, and in `test_compat.py`
+    the `mp` fixture starting `-m mp.helper` and `-c` children with and without the option
+    and the same `-m` refused from the test process
+  - the e2e tests were not run on the host that built this (no clang 22 for a runtime of
+    their own; they never use the user's cache): the same scenarios ran by hand against the
+    `mp` fixture built with the cached runtime, multiprocessing included
 
 ### Phase 6c — Portable glibc baseline (M) — moved from Phase 9 (D25) — **DONE 2026-10-07**
 

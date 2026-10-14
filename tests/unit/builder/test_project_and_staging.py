@@ -202,6 +202,19 @@ def test_fs_packages_must_be_package_names(tmp_path: Path, value: str) -> None:
         load_config(project)
 
 
+def test_interpreter_reexec_is_off_unless_the_project_or_the_command_line_asks(
+    tmp_path: Path,
+) -> None:
+    default = load_config(Project.load(_project(tmp_path, PYPROJECT)))
+    flagged = load_config(Project.load(_project(tmp_path, PYPROJECT)), interpreter_reexec=True)
+    configured = load_config(
+        Project.load(_project(tmp_path, PYPROJECT + "interpreter-reexec = true\n"))
+    )
+
+    assert (default.interpreter_reexec, flagged.interpreter_reexec) == (False, True)
+    assert configured.interpreter_reexec is True
+
+
 # --- staging ---------------------------------------------------------------------------------
 
 UV = Path("/u/uv")

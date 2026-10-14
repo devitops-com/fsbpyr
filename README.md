@@ -45,6 +45,7 @@ from. The output defaults to `dist/<console-script-name>`.
 | `--fast-compression` | zstd level 3 instead of 9: a faster build, up to ~8% larger for large apps (the standard library's files of 64 KiB and more stay level 9) |
 | `--best-compression` | native libraries as xz -6 instead of zstd 9: about 6.5% smaller for aiagent, a slower build, and a slower first run, which decodes them into the cache (see below); not with `--fast-compression` |
 | `--hints` | also list packages that may read files next to `__file__` (a guess) |
+| `--interpreter-reexec` | let the app's own children started as `sys.executable -m MODULE` or `-c CODE` run as Python; see [Helper interpreters](#helper-interpreters) |
 | `--no-smoke` | skip the smoke test that runs the new executable once |
 
 The same settings can live in the project's `pyproject.toml`; command-line options win (a
@@ -63,6 +64,7 @@ fast-compression = true      # same as --fast-compression
 best-compression = true      # same as --best-compression (not both)
 fs-packages = ["mypkg.templates"]
 allow-system-libs = ["libGL.so.1"]
+interpreter-reexec = true    # same as --interpreter-reexec
 ```
 
 ## Leaving out sources
@@ -165,6 +167,18 @@ no user inside, and only above a directory anyone may add to, such as `/tmp`.) E
 | `FSBPYR_CACHE_DIR` | cache directory |
 | `FSBPYR_GC=1` | collect the app's cache instead of running the app (see below); `0`: never collect it in the background |
 | `FSBPYR_TRACE=1` | print what the run loaded and extracted, and how long the integrity check took, as JSON on stderr |
+
+### Helper interpreters
+
+In an executable, `sys.executable` is the app. multiprocessing works with every start method:
+the app recognizes the children it re-executes. Other code that starts a helper interpreter
+that way, `subprocess.run([sys.executable, "-m", "pkg.tool", ...])` or `-c CODE`, gets the
+app instead, unless it was built with `--interpreter-reexec`. Then such a child runs the
+module (from the executable) or the code as Python would, interpreter flags such as `-u` or
+`-B` accepted and ignored. Only a child of the app itself does: the same command line from a
+shell, a script or sudo runs the app, with these arguments, so a sudo rule for the app never
+hands out an interpreter. The option is off by default because an app that starts itself with
+options of its own named `-m` or `-c` would run Python instead.
 
 ### The cache cleans itself
 
