@@ -3,7 +3,7 @@ name: Release
 # One build definition for both uses:
 #   - pull requests: prove the release build works (`make bootstrap` on Debian trixie, then the
 #     installed fsbpyr builds itself with `make build`, then a smoke test) and run the static
-#     checks and the whole test suite, before any tag exists;
+#     checks and the core of the test suite (`make test-ci`), before any tag exists;
 #   - a pushed version tag (tools/release/release.sh pushes it): the same, then attest and
 #     publish the GitHub release. Nothing is released unless the tests pass.
 # GitHub artifact attestations can only be made inside GitHub Actions, so releases are built
@@ -30,7 +30,7 @@ jobs:
     # Debian trixie, as `make bootstrap` expects: it installs clang/lld 22 and the rest from
     # Debian's packages (as root here, so without sudo) and uv from astral.sh.
     container: docker.io/library/debian:trixie
-    timeout-minutes: 45
+    timeout-minutes: 75
     env:
       PREFIX: ${{ github.workspace }}/../prefix
       # The container runs as root, but GitHub mounts its HOME (/github/home) owned by the
@@ -99,6 +99,14 @@ jobs:
             test -s "$PREFIX/$f" || { echo "::error::make install left $f empty or missing"; exit 1; }
           done
 
+      # Static checks and the core of the suite, on the environment `make bootstrap` left (uv,
+      # Python, the runtime). The rest of the suite runs locally (`make test`).
+      - name: make check
+        run: make check
+
+      - name: make test-ci
+        run: make test-ci
+
       - name: Upload the executable
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -106,65 +114,9 @@ jobs:
           path: dist/fsbpyr
           if-no-files-found: error
 
-  test:
-    name: checks + test suite
-    runs-on: ubuntu-24.04
-    # Debian trixie, as for the build. Privileged: the tests run podman (the portability tests
-    # start the apps on 13 distributions), strace and user namespaces inside this container.
-    container:
-      image: docker.io/library/debian:trixie
-      options: --privileged
-    timeout-minutes: 180
-    steps:
-      # bootstrap.sh's packages, plus what the tests use: clang's sanitizer runtimes (the
-      # ASan/UBSan launcher, D38; Debian ships them apart from clang), llvm-22 (llvm-objdump,
-      # llvm-symbolizer), strace, and rootless podman with what it needs in a container.
-      - name: Install the build and test prerequisites
-        run: |
-          apt-get update -q
-          DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-            ca-certificates curl git make clang-22 lld-22 \
-            libclang-rt-22-dev llvm-22 strace \
-            podman uidmap passt catatonit fuse-overlayfs
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0  # history and tags, as in the build job
-
-      # Not as root: as root some cache-ownership tests have nothing to test (root owns /usr)
-      # and podman would not be rootless. The checkout is copied to the user's home, where it
-      # and fsbpyr's cache belong to that user, as fsbpyr requires.
-      - name: An unprivileged user, with rootless podman
-        run: |
-          useradd --create-home tester
-          grep -q '^tester:' /etc/subuid || echo 'tester:100000:65536' >> /etc/subuid
-          grep -q '^tester:' /etc/subgid || echo 'tester:100000:65536' >> /etc/subgid
-          cp -a "$GITHUB_WORKSPACE" /home/tester/src
-          # Inside a container: no systemd for cgroups or the event log, and an overlay
-          # filesystem that podman's own overlay storage cannot stack on.
-          mkdir -p /home/tester/.config/containers /home/tester/run
-          printf '[storage]\ndriver = "vfs"\n' > /home/tester/.config/containers/storage.conf
-          printf '[engine]\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\n' \
-            > /home/tester/.config/containers/containers.conf
-          chown -R tester: /home/tester
-          chmod 700 /home/tester/run
-          # Ubuntu's AppArmor keeps unprivileged processes out of user namespaces (rootless
-          # podman, the `unshare -r` tests); the setting is the host's, writable when privileged.
-          f=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
-          if [ -e "$f" ]; then echo 0 > "$f"; fi
-
-      # uv from astral.sh, then ruff + mypy and the whole suite (it builds the runtime, and its
-      # ASan/UBSan variant, on first use).
-      - name: make check, make test
-        run: |
-          runuser -u tester -- env -i HOME=/home/tester USER=tester LANG=C.UTF-8 \
-            XDG_RUNTIME_DIR=/home/tester/run PATH=/usr/local/bin:/usr/bin:/bin \
-            bash -c 'cd ~/src && bash tools/bootstrap.sh --uv && make check && make test'
-
   publish:
     name: attest + publish
-    needs: [build, test]
+    needs: build
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 10

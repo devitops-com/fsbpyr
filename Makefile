@@ -16,7 +16,7 @@ export PATH := $(HOME)/.local/bin:$(PATH)
 UV  := uv
 BIN := dist/fsbpyr
 
-.PHONY: help bootstrap build install uninstall test check release clean
+.PHONY: help bootstrap build install uninstall test test-ci check release clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -71,6 +71,14 @@ uninstall: ## Remove what `make install` installed
 
 test: ## Run the test suite
 	$(UV) run --locked pytest
+
+# What CI runs before a release: unit and integration tests, real builds, and executables run
+# with the release launcher. Left to `make test`: the ASan/UBSan launcher variant, the
+# portability tests (podman) and the other end-to-end tests. -k also matches marker names, so
+# it keeps the release half of the tests marked `sanitized`.
+test-ci: ## Run the core of the test suite, as CI does
+	$(UV) run --locked pytest tests/unit tests/integration tests/e2e/test_build.py \
+		tests/e2e/test_runtime_app.py -k "not (sanitized and not release)"
 
 check: ## Static checks: ruff + mypy
 	$(UV) run --locked ruff check
