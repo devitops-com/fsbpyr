@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **`docs/format.md` gives the format version as 6**, the version executables have carried
+  since 0.15.0; its trailer and header tables still said 5.
+
 ## [0.19.0] - 2026-10-14
 
 ### Added
