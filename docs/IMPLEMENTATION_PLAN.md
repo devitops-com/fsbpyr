@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.17, 2026-10-18 (fsbpyr 0.19.0). Phases 0–8, 6b and 6c are complete (Phase 7 reduced by D37; Phase 8 in six steps, 8a–8f) and Phase 10, the MVP's last, is done; Phase 9, more platforms and Python versions, and signed releases come after the MVP (owner decision 2026-10-18); uv is required (D26); the CLI runs on click, which also gives the completions and the man page (D40); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.17, 2026-10-18 (fsbpyr 0.19.0). Phases 0–8, 6b and 6c are complete (Phase 7 reduced by D37; Phase 8 in six steps, 8a–8f) and Phase 10, the MVP's last, is done; Phase 9 (self-update first, then more platforms and Python versions) and signed releases come after the MVP (owner decision 2026-10-18); uv is required (D26); the CLI runs on click, which also gives the completions and the man page (D40); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -1431,8 +1431,25 @@ write, a truncated binary.
   three runs; not run before 0.13.0, run again before 0.14.0); GC and security tests as listed
   under 8d and 8e
 
-### Phase 9 — More Python versions and portability (L, after the MVP; owner decision 2026-10-18)
+### Phase 9 — Self-update, more Python versions and portability (L, after the MVP; owner decision 2026-10-18)
 
+- **Self-update first** (S; owner decision 2026-10-18, low-hanging fruit). An explicit command,
+  never part of another (plain `fsbpyr` stays help only), asks GitHub for the latest release
+  and, when its `vX.Y.Z` is newer than its own version, downloads the release's `fsbpyr` into
+  the directory of the running executable under a temporary name, sets its execute bit and runs
+  `inspect --verify` on it; when that exits 0 (it exits 1 for a damaged or truncated file,
+  checked with 0.19.0), the file is renamed to the executable's name: one `rename(2)` in one
+  directory, atomic, and a running fsbpyr keeps its old inode. To settle in the design:
+  - who verifies: the running fsbpyr (`inspect --verify NEW`, in-process, before any byte of
+    the new file runs) rather than the new file checking itself;
+  - the command's name (`fsbpyr self update`, as PyApp has it, or `fsbpyr update`);
+  - `fsbpyr.xz` halves the download (stdlib `lzma`);
+  - the target is the running executable's real path (it may be renamed or reached through a
+    symlink), with its mode kept; a directory fsbpyr cannot write is an error saying how to
+    update instead; an untagged build updates only when forced;
+  - the man page and completions `make install` placed stay as they were: print a hint;
+  - `--verify` detects damage, not tampering (D31): authenticity rests on HTTPS from GitHub
+    until signed releases.
 - Runtimes for 3.12/3.13 (vendored zstd decompressor where PBS has no `libzstd.a`) and a
   per-runtime **compile-helper binary** (stub + stdlib + compile entry), so builds never depend
   on the venv interpreter.
@@ -1581,7 +1598,7 @@ import timings; this was accepted in the Phase 2 review, since that party could 
 | Python versions in the MVP | 3.14 only | D13. 3.12/3.13 runtimes are deferred to Phase 9 |
 | Project scope | Installable projects (pyproject.toml or setup.py). Loose scripts are out of scope | §3.6 step 4. Entry points come from `console_scripts` or `--entry` |
 | Dependency source | Fresh install from the lock into staging | D5, §3.6 step 3, Phase 4 exit criteria |
-| MVP scope (2026-10-18) | Linux x86-64 and CPython 3.14. More platforms, more Python versions and self-update come after the MVP | Phase 9 after the MVP; Phase 10 is the MVP's last phase |
+| MVP scope (2026-10-18) | Linux x86-64 and CPython 3.14. More platforms, more Python versions and self-update come after the MVP | Phase 9 after the MVP, self-update first; Phase 10 is the MVP's last phase |
 | Signed releases (2026-10-18) | Not MVP | D31's signature checked with an outside key comes after the MVP |
 | `fsbpyr` with no arguments (2026-10-18) | Prints the main help and nothing else: no build, no side effects for a new user | It prints the help as `--help` does, on stdout, and exits 0 (owner decision 2026-10-18; 0.19.0 printed it on stderr with click's usage status 2). Traced with 0.19.0 and an empty `HOME`: two `lstat`s of the cache root, nothing written, no process started |
 | Multi-command executables (2026-10-18) | The app's `main` dispatches on `sys.argv[0]`; symlinks or hard links name the commands. No launcher change | Checked with 0.19.0: the launcher passes `argv` unchanged (`main.c`, `parse_argv = 0`), so a link's name reaches `sys.argv[0]`; `sys.executable` stays the real file |
