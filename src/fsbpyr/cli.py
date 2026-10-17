@@ -54,12 +54,15 @@ def _complete_extra(ctx: click.Context, _: click.Parameter, incomplete: str) -> 
     return _project_values(ctx, "extras", incomplete)
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]},
+@click.group(context_settings={"help_option_names": ["-h", "--help"]}, invoke_without_command=True,
              help="Package Python CLI projects as fast single-file executables.")  # fmt: skip
 @click.option("--version", is_flag=True, expose_value=False, is_eager=True,
               callback=_show_version, help="show the version and exit")  # fmt: skip
-def cli() -> None:
-    pass
+@click.pass_context
+def cli(ctx: click.Context) -> None:
+    if ctx.invoked_subcommand is None:  # plain `fsbpyr`: the help, as --help prints it, and exit 0
+        click.echo(ctx.get_help())
+        ctx.exit()
 
 
 @cli.command(

@@ -1582,7 +1582,7 @@ import timings; this was accepted in the Phase 2 review, since that party could 
 | Dependency source | Fresh install from the lock into staging | D5, §3.6 step 3, Phase 4 exit criteria |
 | MVP scope (2026-10-18) | Linux x86-64 and CPython 3.14. More platforms, more Python versions and self-update come after the MVP | Phase 9 after the MVP; Phase 10 is the MVP's last phase |
 | Signed releases (2026-10-18) | Not MVP | D31's signature checked with an outside key comes after the MVP |
-| `fsbpyr` with no arguments (2026-10-18) | Prints the main help and nothing else: no build, no side effects for a new user | 0.19.0 does so (click's group help; exit status 2, as for any usage error, where `--help` exits 0). Traced with an empty `HOME`: two `lstat`s of the cache root, nothing written, no process started |
+| `fsbpyr` with no arguments (2026-10-18) | Prints the main help and nothing else: no build, no side effects for a new user | It prints the help as `--help` does, on stdout, and exits 0 (owner decision 2026-10-18; 0.19.0 printed it on stderr with click's usage status 2). Traced with 0.19.0 and an empty `HOME`: two `lstat`s of the cache root, nothing written, no process started |
 | Multi-command executables (2026-10-18) | The app's `main` dispatches on `sys.argv[0]`; symlinks or hard links name the commands. No launcher change | Checked with 0.19.0: the launcher passes `argv` unchanged (`main.c`, `parse_argv = 0`), so a link's name reaches `sys.argv[0]`; `sys.executable` stays the real file |
 
 Still open: nothing.
