@@ -1440,7 +1440,7 @@ write, a truncated binary.
   `inspect --verify` on it; when that exits 0 (it exits 1 for a damaged or truncated file,
   checked with 0.19.0), the file is renamed to the executable's name: one `rename(2)` in one
   directory, atomic, and a running fsbpyr keeps its old inode. Settled with the owner
-  (2026-10-18); what is marked "proposed" is still open:
+  (2026-10-18):
   - the command is `fsbpyr self update` (as in uv and rustup; `fsbpyr update` would read as
     updating the project);
   - the running fsbpyr verifies the download (`inspect --verify NEW`, in-process), so no byte
@@ -1452,9 +1452,11 @@ write, a truncated binary.
   - the target is the running executable's real path (it may be renamed or reached through a
     symlink), with its mode kept; a directory fsbpyr cannot write is an error saying how to
     update instead;
-  - releases are always tagged, so the version check compares two `vX.Y.Z`; proposed: a
-    running untagged build (`make build`) counts as older than any release;
-  - the man page and the shell completions are updated too. Proposed: those found where
+  - only released executables update themselves: releases are always tagged, so the version
+    check compares two `vX.Y.Z`; a developer build (`untagged-<commit>`, from `make build` or
+    `make bootstrap`) refuses with an error that gives the `curl` command downloading the
+    latest release from GitHub (README, "Getting fsbpyr");
+  - the man page and the shell completions are updated too: those found where
     `make install` puts them under the executable's prefix (`<prefix>/bin/fsbpyr` gives
     `<prefix>/share/man/man1/fsbpyr.1`, `share/bash-completion/completions/fsbpyr`,
     `share/zsh/site-functions/_fsbpyr`, `share/fish/vendor_completions.d/fsbpyr.fish`) are
