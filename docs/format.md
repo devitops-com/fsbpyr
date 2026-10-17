@@ -22,7 +22,7 @@ All integers are little-endian.
 | Offset | Size | Field |
 |--------|------|-------|
 | 0 | 8 | magic `FSBPYR\0T` |
-| 8 | 4 | `format_version` (= 5) |
+| 8 | 4 | `format_version` (= 6) |
 | 12 | 4 | `flags` (reserved, 0) |
 | 16 | 8 | `payload_offset` (absolute file offset) |
 | 24 | 8 | `payload_size` |
@@ -88,7 +88,7 @@ equal), for two things:
 | Offset | Size | Field |
 |--------|------|-------|
 | 0 | 8 | magic `FSBPYR\0H` |
-| 8 | 4 | `format_version` (= 5) |
+| 8 | 4 | `format_version` (= 6) |
 | 12 | 4 | `header_size` (= 208) |
 | 16 | 4 | `python_hexversion` of the target CPython (`PY_VERSION_HEX`) |
 | 20 | 4 | bytecode magic (`importlib.util.MAGIC_NUMBER`) |

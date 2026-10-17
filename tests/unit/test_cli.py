@@ -58,9 +58,13 @@ def test_other_commands_never_run_git(
     assert main(["runtime", "list"]) == 0
 
 
-def test_main_without_command_shows_usage(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main([]) == 2
-    assert "Usage: fsbpyr" in capsys.readouterr().err
+def test_main_without_command_prints_the_help(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--help"]) == 0
+    help_text = capsys.readouterr().out
+
+    assert main([]) == 0
+    assert capsys.readouterr() == (help_text, "")
+    assert help_text.startswith("Usage: fsbpyr")
 
 
 def test_module_entry_point() -> None:
@@ -154,6 +158,7 @@ def test_help_has_a_short_option(capsys: pytest.CaptureFixture[str]) -> None:
     [
         (["runtime", "list"], 1),
         (["inspect", "missing"], 1),
+        ([], 0),
         (["build", "--help"], 0),
         (["inspect", "--help"], 0),
         (["runtime", "build", "--help"], 0),

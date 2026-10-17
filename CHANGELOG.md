@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Plain `fsbpyr` prints its help and exits 0.** With no command it printed the same help to
+  stderr and exited 2, click's status for a usage error; it now prints it to stdout, as
+  `fsbpyr --help` does, and still does nothing else.
+
+### Fixed
+- **`docs/format.md` gives the format version as 6**, the version executables have carried
+  since 0.15.0; its trailer and header tables still said 5.
+
 ## [0.19.0] - 2026-10-14
 
 ### Added
