@@ -102,7 +102,7 @@ PROJECT defaults to `.`; `build.py`: `dist/<app name>` unless `-o`).
 | D10 | **Generation id** = SHA-256(runtime ABI ‖ platform ‖ sorted (path, sha256) of every extractable artifact), computed at build time and stored in the header | Manifest §7. Releases that change only Python code reuse the existing generation | Per-build generations |
 | D11 | **Integrity:** SHA-256 for extractable artifacts, verified on extraction. zstd frame checksums for blobs kept in memory. Whole-payload SHA-256 in the trailer, checked only by `fsbpyr inspect --verify` or `FSBPYR_VERIFY=1` (superseded by D31: the whole file, on every start) | Meets manifest §11 without hashing on every import | — |
 | D12 | **Sources are kept** by default as separate zstd frames, read only for tracebacks and `inspect`. `--no-source` drops them | Size may grow, startup may not. Gives full tracebacks | — |
-| D13 | **fsbpyr itself** requires Python ≥ 3.14 (≥ 3.11 in Phase 9: one fsbpyr per Python version). Its only runtime dependency is `packaging` (and `click` since 0.18.0, D40). zstd comes from the stdlib `compression.zstd`, TOML from `tomllib` | Small self-hosting surface. fsbpyr is pure Python, so self-hosting does not depend on native-extension support | `zstandard` package (a native dependency) |
+| D13 | **fsbpyr itself** requires Python ≥ 3.14 (≥ 3.12 in Phase 9: one fsbpyr per Python version). Its only runtime dependency is `packaging` (and `click` since 0.18.0, D40). zstd comes from the stdlib `compression.zstd`, TOML from `tomllib` | Small self-hosting surface. fsbpyr is pure Python, so self-hosting does not depend on native-extension support | `zstandard` package (a native dependency) |
 | D14 | **Interpreter config in built apps:** isolated (`PYTHON*` env vars ignored), `site_import=0`, `safe_path=1`, UTF-8 mode, `parse_argv=0`, `executable` = realpath of the binary. Debug knobs only through `FSBPYR_*` env vars | Deterministic startup. The app's argv stays untouched | — |
 | D15 | **Deterministic builds:** sorted entries, fixed blob order, no timestamps, single-threaded zstd with fixed parameters, canonical bytecode (D16); output is byte-identical for a fixed libzstd version, which `build_info` records. Self-hosting fixed point: stage2 == stage3, byte for byte | The classic compiler-bootstrap check for R2/R3 | — |
 | D16 | **Canonical bytecode:** every `marshal.dumps` result is rewritten by `fsbpyr/bytecode.py`. Strings are merged by value (interned if any occurrence was), FLAG_REF is set only for nodes that occur ≥ 2 times or are interned strings, refs are renumbered in pre-order, and set elements are sorted canonically | Raw marshal output depends on refcounts and on process-global interning (S3: 561/561 files differ in batch mode, 4 in a "noisy" build process). Canonical output: 0 differences, round-trip equality, same size and load time | Compiling in a clean worker process (still state-dependent). Accepting non-determinism |
@@ -1467,16 +1467,20 @@ write, a truncated binary.
     signature as well, and self-update gains tampering detection with it.
 - **More Python versions: one fsbpyr per version** (L, second; owner decisions 2026-10-18). A
   project need not run on 3.14 to use fsbpyr. Supported are the CPython versions still
-  maintained, 3.11–3.14 now (3.10 reaches its end of life in October 2026). Each release ships
+  maintained from 3.12 on: 3.12–3.14 now (owner decision 2026-10-18). 3.11 (end of life
+  October 2027) only if projects need it: under the rule below a project allowing 3.12, such as
+  `>=3.10` or `>=3.11`, gets 3.12, so only one excluding 3.12 and later would; its port would
+  add the 14 uses of 3.12's type-parameter syntax in 9 files (checked 2026-10-18), its
+  multiprocessing command lines are 3.12's. Each release ships
   one fsbpyr per version, built with and carrying that version's runtime only (29 MB, as now),
   so the builder and its apps always run on the same Python: modules compile in-process, the
   canonicalizer (D16) handles the running version's marshal format, and every variant builds
-  itself. Rejected: one fsbpyr carrying every runtime (about 75 MB for 3.11–3.14, estimated from
+  itself. Rejected: one fsbpyr carrying every runtime (about 60 MB for 3.12–3.14, estimated from
   15 MB per compressed runtime: a 20.9 MB stub and a 7.3 MB stdlib), with the builder on 3.14
   only, a compile helper per runtime and the app-side tests repeated per runtime inside one
   suite.
   - **The runtime a build uses** follows `requires-python`: with a lower bound, the lowest
-    supported minor version that satisfies it (`>=3.10` gives 3.11); with only an upper bound,
+    supported minor version that satisfies it (`>=3.10` gives 3.12); with only an upper bound,
     the highest below it (`<3.14` gives 3.13); a pinned minor as pinned (`==3.12` gives 3.12);
     always that minor's newest patch release; no supported version is an error naming the
     supported ones (0.19.0 already stops on a `requires-python` excluding 3.14, checked
@@ -1489,18 +1493,21 @@ write, a truncated binary.
     builds work offline. Open: the asset names (`fsbpyr` staying the newest version's,
     `fsbpyr-3.X` the others?) and what a developer build does when it needs another version.
   - **Steps:**
-    1. Spike, as Phase 0 did for 3.14: PBS `pgo+lto-full` for 3.11, 3.12 and 3.13 (LLVM
+    1. Spike, as Phase 0 did for 3.14: PBS `pgo+lto-full` for 3.12 and 3.13 (LLVM
        bitcode objects, `PYTHON.json` link inputs and inittab, the built-in extensions, which
        static libraries are missing, `libzstd.a` at least); the launcher's `PyConfig` fields
        (all expected since 3.11).
-    2. Port fsbpyr's code to 3.11. Checked 2026-10-18: 13 of its 48 source files do not parse
-       on 3.11, 4 on 3.12 and 3.13 (3.14's unparenthesized `except A, B:`, 3.12's `def f[T]`
-       and `type X = ...`); ruff and mypy target 3.11. zstd compression moves into `_fsbpyr`
-       from a vendored libzstd, since the stdlib's `compression.zstd`, used by `assemble.py`
-       and `payload/{writer,spill,spec,reader}.py`, exists only in 3.14; one libzstd for every
-       variant keeps builds reproducible (D15). Per version: the canonicalizer's marshal
-       layout, the stdlib selection and startup modules, and the multiprocessing command lines
-       (D22, with their security tests). D13 becomes Python ≥ 3.11.
+    2. Port fsbpyr's code to 3.12. Checked 2026-10-18: 4 of its 48 source files do not parse
+       on 3.12 and 3.13 (3.14's unparenthesized `except A, B:`), `os.process_cpu_count()` is
+       3.13's; the importlib internals the boot code uses exist in 3.12–3.14, and 3.12 and 3.13
+       share marshal format 4 (3.14: 5); ruff and mypy target 3.12. zstd compression moves
+       into `_fsbpyr` from a vendored libzstd, since the stdlib's `compression.zstd`, used by
+       `assemble.py` and `payload/{writer,spill,spec,reader}.py`, exists only in 3.14; one
+       libzstd for every variant keeps builds reproducible (D15). Per version: the
+       canonicalizer's marshal layout, the stdlib selection and startup modules, and the
+       multiprocessing command lines (D22, with their security tests; 3.12's forkserver
+       command line differs from 3.13's and 3.14's, checked 2026-10-18). D13 becomes Python
+       ≥ 3.12.
     3. Runtimes, CI and releases: `fsbpyr runtime build --python 3.X` for each version; CI
        runs the suite once per version (the development venv through `uv run --python 3.X`,
        then that variant's end-to-end tests and its three-stage bootstrap); each release
@@ -1651,7 +1658,7 @@ import timings; this was accepted in the Phase 2 review, since that party could 
 | Question | Answer | Effect on this plan |
 |----------|--------|---------------------|
 | Toolchain for runtime stubs | Host clang/lld ≥ 22 (apt.llvm.org) | D2, §3.7, S1. A portable glibc baseline through a container link is deferred to Phase 9 (moved to Phase 6c by D25 and done there: a pinned glibc 2.28 sysroot, no container; since 0.18.1 `make bootstrap` takes clang/lld 22 from Debian trixie, or a trixie podman image elsewhere) |
-| Python versions in the MVP | 3.14 only | D13. 3.12/3.13 runtimes are deferred to Phase 9 (2026-10-18: 3.11–3.14 there, one fsbpyr per version) |
+| Python versions in the MVP | 3.14 only | D13. 3.12/3.13 runtimes are deferred to Phase 9 (2026-10-18: 3.12–3.14 there, one fsbpyr per version) |
 | Project scope | Installable projects (pyproject.toml or setup.py). Loose scripts are out of scope | §3.6 step 4. Entry points come from `console_scripts` or `--entry` |
 | Dependency source | Fresh install from the lock into staging | D5, §3.6 step 3, Phase 4 exit criteria |
 | MVP scope (2026-10-18) | Linux x86-64 and CPython 3.14. More platforms, more Python versions and self-update come after the MVP | Phase 9 after the MVP, self-update first; Phase 10 is the MVP's last phase |
