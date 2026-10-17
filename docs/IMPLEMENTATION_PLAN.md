@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.16, 2026-10-13. Phases 0–7, 6b and 6c are complete (Phase 7 reduced by D37); uv is required (D26); the CLI runs on click, which also gives the completions and the man page (D40); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.17, 2026-10-18 (fsbpyr 0.19.0). Phases 0–8, 6b and 6c are complete (Phase 7 reduced by D37; Phase 8 in six steps, 8a–8f) and Phase 10, the MVP's last, is done; Phase 9, more platforms and Python versions, and signed releases come after the MVP (owner decision 2026-10-18); uv is required (D26); the CLI runs on click, which also gives the completions and the man page (D40); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -23,8 +23,9 @@ each one is covered by a Phase 0 spike or a test.
 | M7 | Security and integrity rules | manifest §11 |
 | M8 | Benchmarks and success criteria | manifest §13–14 |
 
-**[assumption] A1:** "single command" means `fsbpyr build [PROJECT_DIR]`, run inside the project
-or pointed at it. Output goes to `dist/<console-script-name>`.
+**[assumption → implemented, Phase 4] A1:** "single command" means `fsbpyr build [PROJECT_DIR]`,
+run inside the project or pointed at it. Output goes to `dist/<console-script-name>` (`cli.py`:
+PROJECT defaults to `.`; `build.py`: `dist/<app name>` unless `-o`).
 
 ---
 
@@ -79,8 +80,9 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
   `uv pip install --target/--python-platform/--python-version/--require-hashes`, and it reads
   `pylock.toml`. pip 25.1.1 provides
   `install --target/--platform/--python-version/--abi/--only-binary/--require-hashes`.
-- **[assumption]** `UV_PROJECT_ENVIRONMENT` redirects `uv sync` to a staging venv. This is
-  documented uv behaviour but has not been tested here; the Phase 4 tests cover it.
+- **[verified, Phase 4]** `UV_PROJECT_ENVIRONMENT` redirects `uv sync` to a staging venv. This is
+  documented uv behaviour; `staging.py` stages every `uv.lock` build through it, self-hosting
+  included.
 
 ---
 
@@ -92,7 +94,7 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D2 | **CPython is statically linked into the launcher** from PBS `pgo+lto-full` (clang/lld ≥ 22, `--target=x86_64-unknown-linux-gnu`, `-flto=full`; only `Py*`/`_Py*` are exported (`--export-dynamic-symbol`, Phase 5) so manylinux wheels resolve the C API from the executable but never bind to the stub's static zlib, OpenSSL or libffi). Link inputs: libpython.a, the HACL objects of modules registered in `config.c`, and the static libraries listed in `PYTHON.json` (S1) | Runtime is directly loadable (manifest Fig. 1). PGO+LTO speed. PBS already handles the static dependencies and the glibc 2.17 baseline | Shared libpython extracted to the cache (extracts the runtime on first run). memfd + dlopen (copies MBs on every start). Building CPython and its dependencies ourselves (large effort) |
 | D3 | A **runtime** is: the *stub* (launcher + static CPython, an ELF) + a precompiled *stdlib payload fragment* + `runtime.json`. It is built once per (Python minor, platform, launcher version) and cached | App builds become concatenation: no compiler and no network needed | Compile per app |
 | D4 | **Every fsbpyr binary carries its own runtime.** When `fsbpyr build` targets the same Python minor, it reuses its own stub bytes and the already-compressed stdlib frames from its own executable (`Runtime.from_self()`) | Makes R2/R3 work without a toolchain. Fast builds | — |
-| D5 | **Inputs come from a fresh staging install driven by the project's lock** (§3.6). uv projects: `uv sync --frozen --no-dev --no-editable` into a throwaway staging venv. pip projects (installed by uv, D26): `uv venv` plus `uv pip install` into a throwaway venv from `pylock.toml`, then a pinned requirements file, then `[project.dependencies]` (unlocked, with a warning), plus the project itself installed `--no-deps`. The developer's venv is never read or modified | Reproducible from the lock. No dev dependencies. The project is installed non-editable, so its package data is correct. uv does all resolving and building (D26) | Reading the developer's venv (not reproducible, editable installs, dev deps). Our own resolver |
+| D5 | **Inputs come from a fresh staging install driven by the project's lock** (§3.6). uv projects: `uv sync --frozen --no-dev --no-editable` (`--locked` since Phase 4) into a throwaway staging venv. pip projects (installed by uv, D26): `uv venv` plus `uv pip install` into a throwaway venv from `pylock.toml`, then a pinned requirements file, then `[project.dependencies]` (unlocked, with a warning), plus the project itself installed `--no-deps`. The developer's venv is never read or modified | Reproducible from the lock. No dev dependencies. The project is installed non-editable, so its package data is correct. uv does all resolving and building (D26) | Reading the developer's venv (not reproducible, editable installs, dev deps). Our own resolver |
 | D6 | Imports hook in through **`sys.path_hooks` + one virtual `sys.path` entry** (as zipimport does), plus a `sys.meta_path` `DistributionFinder` for `importlib.metadata` | `pkgutil.iter_modules`, `importlib.util.find_spec` and PEP 420 namespace packages work through the stock PathFinder | Pure meta-path finder |
 | D7 | **Index lookups happen in C** (built-in module `_fsbpyr`, binary search over sorted tables mapped with mmap). The index is never turned into Python dicts | Startup must not scale with the number of packaged files (M2) | Python dict built at boot (O(N) on every start) |
 | D8 | **Startup-critical modules** (`encodings*`, `linecache`, the boot module) are listed in the STARTUP section. The launcher decompresses them once (checksum-verified zstd frames, one shared context, about 0.08 ms) and hands them to CPython through a `PyImport_FrozenModules` table built at run time | No filesystem access during init. No launcher rebuild when boot code changes. `marshal` never sees corrupt bytes: the Phase 2 review showed raw startup blobs crashed CPython on bit flips | Raw blobs referenced straight from the mmap (zero-copy but unverified). Freezing into the C source |
@@ -100,29 +102,29 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 | D10 | **Generation id** = SHA-256(runtime ABI ‖ platform ‖ sorted (path, sha256) of every extractable artifact), computed at build time and stored in the header | Manifest §7. Releases that change only Python code reuse the existing generation | Per-build generations |
 | D11 | **Integrity:** SHA-256 for extractable artifacts, verified on extraction. zstd frame checksums for blobs kept in memory. Whole-payload SHA-256 in the trailer, checked only by `fsbpyr inspect --verify` or `FSBPYR_VERIFY=1` (superseded by D31: the whole file, on every start) | Meets manifest §11 without hashing on every import | — |
 | D12 | **Sources are kept** by default as separate zstd frames, read only for tracebacks and `inspect`. `--no-source` drops them | Size may grow, startup may not. Gives full tracebacks | — |
-| D13 | **fsbpyr itself** requires Python ≥ 3.14. Its only runtime dependency is `packaging`. zstd comes from the stdlib `compression.zstd`, TOML from `tomllib` | Small self-hosting surface. fsbpyr is pure Python, so self-hosting does not depend on native-extension support | `zstandard` package (a native dependency) |
+| D13 | **fsbpyr itself** requires Python ≥ 3.14. Its only runtime dependency is `packaging` (and `click` since 0.18.0, D40). zstd comes from the stdlib `compression.zstd`, TOML from `tomllib` | Small self-hosting surface. fsbpyr is pure Python, so self-hosting does not depend on native-extension support | `zstandard` package (a native dependency) |
 | D14 | **Interpreter config in built apps:** isolated (`PYTHON*` env vars ignored), `site_import=0`, `safe_path=1`, UTF-8 mode, `parse_argv=0`, `executable` = realpath of the binary. Debug knobs only through `FSBPYR_*` env vars | Deterministic startup. The app's argv stays untouched | — |
 | D15 | **Deterministic builds:** sorted entries, fixed blob order, no timestamps, single-threaded zstd with fixed parameters, canonical bytecode (D16); output is byte-identical for a fixed libzstd version, which `build_info` records. Self-hosting fixed point: stage2 == stage3, byte for byte | The classic compiler-bootstrap check for R2/R3 | — |
 | D16 | **Canonical bytecode:** every `marshal.dumps` result is rewritten by `fsbpyr/bytecode.py`. Strings are merged by value (interned if any occurrence was), FLAG_REF is set only for nodes that occur ≥ 2 times or are interned strings, refs are renumbered in pre-order, and set elements are sorted canonically | Raw marshal output depends on refcounts and on process-global interning (S3: 561/561 files differ in batch mode, 4 in a "noisy" build process). Canonical output: 0 differences, round-trip equality, same size and load time | Compiling in a clean worker process (still state-dependent). Accepting non-determinism |
 | D18 | **Launcher C sources ship as package data** (`src/fsbpyr/launcher/`, with vendored zstd 1.5.7 headers) and are hashed into the runtime id | A self-hosted fsbpyr binary can build runtimes for new Python versions from its own resources; any launcher change yields a new runtime id automatically | Top-level `launcher/` outside the package |
-| D17 | **PIE stub** (owner decision 2026-10-07, after the Phase 2 security review) | ASLR for the launcher and CPython image, the distro baseline. Costs about 0.3 ms per start (S1); measured no-op app 4.95 ms vs 4.84 ms bare CPython, inside the 1.15× budget. Also hardened with RELRO, BIND_NOW, NX stack, `-fstack-protector-strong`, `_FORTIFY_SOURCE=2`. A non-PIE stub may return as an opt-in for the Phase 7 `fast` profile | Non-PIE by default (0.3 ms faster, fixed image addresses) |
+| D17 | **PIE stub** (owner decision 2026-10-07, after the Phase 2 security review) | ASLR for the launcher and CPython image, the distro baseline. Costs about 0.3 ms per start (S1); measured no-op app 4.95 ms vs 4.84 ms bare CPython, inside the 1.15× budget. Also hardened with RELRO, BIND_NOW, NX stack, `-fstack-protector-strong`, `_FORTIFY_SOURCE=2`. A non-PIE stub may return as an opt-in for the Phase 7 `fast` profile (not done: D29 replaced the profiles, D37 ended the tuning; the stub is always PIE) | Non-PIE by default (0.3 ms faster, fixed image addresses) |
 | D19 | **Code blobs are always checksummed zstd frames** (`Blob.code`); every reader requires the frame's content-checksum flag | `marshal.loads` is not safe against corrupt input. Fuzzing 900 bit flips: 67 SIGSEGV + 4 SIGABRT + a hang before, 0 signals after (clean exit 70 or `PayloadError`) | Raw storage of small code objects |
-| D20 | **The cache is private:** cache directories must be owned by the user and are forced to 0700; `runtime.json` records SHA-256 of the stub and the stdlib fragment, verified on load; a concurrently completed runtime wins | Cached stubs are copied into every executable built from them | Trusting any directory named by `FSBPYR_CACHE_DIR` / `XDG_CACHE_HOME` |
+| D20 | **The cache is private:** cache directories must be owned by the user and are forced to 0700; `runtime.json` records SHA-256 of the stub and the stdlib fragment (the tree digest since D32), verified on load; a concurrently completed runtime wins | Cached stubs are copied into every executable built from them | Trusting any directory named by `FSBPYR_CACHE_DIR` / `XDG_CACHE_HOME` |
 | D21 | **`sys.frozen` is not set** | It is PyInstaller's flag: code that sees it reaches for `sys._MEIPASS` or other PyInstaller layouts. multiprocessing would use it only to shorten the spawn command line, which D22 handles anyway | `sys.frozen = True` for compatibility with PyInstaller-aware code |
 | D22 | **multiprocessing children are recognized and authenticated, never executed:** the three command lines CPython re-executes `sys.executable` with (spawn `-c ... --multiprocessing-fork`, forkserver `-c ... main(...)`, resource tracker `-c ... main(fd)`) are matched exactly and their arguments decoded with `ast.literal_eval`. The known function is called only if the parent process runs this same executable (same inode of `/proc/<ppid>/exe`), every fd argument is ≥ 3, and nothing an fsbpyr parent never sends is asked for (a forkserver `main_path`; its `sys_path` is dropped) | Every start method works, and an app that may run with untrusted arguments (a sudo rule) does not become a Python interpreter. Recognition alone was not enough: the security review ran code through `spawn_main(pipe_handle=0)` unpickling stdin and through forkserver's `sys_path`/`main_path` | `exec` of any `-c` command that starts with the right prefix (PyInstaller's approach) |
 | D23 | **Interpreter re-exec is opt-in and authenticated** (owner decision 2026-10-07): with `interpreter-reexec = true`, `<exe> [flags] -m MODULE ...` and `-c CODE ...` run as CPython would, but only when the parent process runs this same executable (the D22 check); otherwise the app runs as usual | Tools that start helper interpreters through `sys.executable` work. Off by default, because an app's own CLI may use `-c`/`-m`; callers from a shell or sudo never get an interpreter | Always on; keeping it a non-goal |
-| D24 | **A runtime hint for `__file__`-relative data** (owner decision 2026-10-07): an `open` audit hook turns failures on paths inside the executable into an error that names the package and `fs-packages`. It ships only if measured overhead is below 1%; build-time warnings ship regardless | Field failures become self-explanatory | Build-time warnings only |
+| D24 | **A runtime hint for `__file__`-relative data** (owner decision 2026-10-07): an `open` audit hook turns failures on paths inside the executable into an error that names the package and `fs-packages`. It ships only if measured overhead is below 1%; build-time warnings ship regardless (Phase 6b: the hook cost +1.5%, so the hint was dropped; the warnings shipped) | Field failures become self-explanatory | Build-time warnings only |
 | D25 | **The portable glibc baseline moves from Phase 9 to Phase 6c** (owner decision 2026-10-07) | glibc 2.38 excludes Debian 12, Ubuntu 22.04 and RHEL 8/9; benchmarks (Phase 7) should measure the stub that ships | Leaving it in Phase 9 |
 | D26 | **uv is required on the build host** (owner decision 2026-10-07): it installs every project, including pip projects (requirements.txt, unlocked); a build without uv on PATH fails with installation instructions. The pip fallback and `--interpreter` are gone | Only uv selects wheels for the runtime's glibc baseline (`--python-platform`); measured: a pip build of `heavy` picked cryptography's manylinux_2_34 wheel and failed on Debian 10 and Rocky 8 | Bundling uv inside fsbpyr, or pinning and downloading one (owner decision 2026-10-14: users update uv without updating fsbpyr; uv's version reaches the executable through the wheel metadata its build backend writes, so builds record it in build_info, `fsbpyr inspect` shows it, and an fsbpyr executable building with a uv other than the one that built it warns that the bytes can differ); a wheels-only pip path; keeping pip with a warning |
-| D27 | **Resources reached as paths are extracted on demand** (owner decision 2026-10-07): `importlib.resources.as_file` on a payload resource yields its copy in the app cache and never deletes it; `os.fspath()`/`str()` of a payload Traversable extract the file or directory and return that path. The copies live in `<cache>/resources/<resources id>/site/<path>`, keyed by every payload file (`build_info["resources"]`), not in the generation's tree, which releases share (D10): a release never sees another release's files. Each path is extracted once per process. The payload root is refused; an unusable cache raises from `as_file`/`os.fspath` (naming `FSBPYR_CACHE_DIR`) and makes `str()` warn and keep the virtual path. Extracted copies stay on disk until cache GC (Phase 8), like native files. Unlike the stdlib's temporary copy they are read-only (files 0400, directories 0700), shared by the app's processes, and under `--no-source` hold no `.py` sources; `str(files(pkg))` names the cache while `pkg.__file__` stays inside the executable | Code written for installed packages keeps `as_file` paths after the block (aiagent's skill discovery) or hands `str(files(pkg) / dir)` to `os` functions; with this, such code needs no configuration. Only what is asked for is extracted, with the same safe publishing as native files | Temporary copies (stdlib default: the path dies with the block); requiring `fs-packages` for every such package; one tree shared with natives (stale or removed files of other releases would show) |
-| D28 | **Versions come from git tags** (owner decision 2026-10-07): releases are tagged `vX.Y.Z`, starting with v0.1.0 (a GitHub release system comes later). A fix to an existing feature bumps the patch level (0.1.1, 0.1.2, ...), a new feature the minor version (0.2.0, 0.3.0, ...), a major rewrite the major version; `[project] version` follows the tag. `fsbpyr build` records HEAD's commit and the highest `vX.Y.Z` tag pointing at it in build_info (`git`) for every project in HEAD's tree; `fsbpyr --version` prints `X.Y.Z-<8 hex>` for a tagged commit and `untagged-<8 hex>` otherwise, and `untagged-unknown` when nothing was recorded (no git, an sdist, a project copied into some other repository, a wheel installed outside a checkout). A source checkout asks git directly; a git failure such as "dubious ownership" is a build warning. Since v0.2.0 the build also records the project's name and version and the full version of the fsbpyr that built it, and `fsbpyr inspect BINARY` shows them: app name, version and commit; `built with fsbpyr X.Y.Z-<hash>`; Python and glibc; size and distribution count. Since v0.3.0 it also lists the bundled shared libraries and native extension modules (a plain `*.so` is told apart by `PyInit_<name>`, searched streaming, so a hostile file cannot make it allocate its declared size) and the top-level module names per distribution plus those of the standard library and fsbpyr (`--all-modules`: every module), each list in as many columns as the terminal fits; `--json` prints the same as JSON (`modules` per distribution, `runtime_modules`, `all_modules`), `--verify` checks the payload SHA-256 (D11), which detects damage, not deliberate tampering (the digest sits in the same file). Uncommitted changes are not marked | The executable has no git, and the project wheel is built from an sdist without `.git`, so the commit must be captured by the build. git stays optional: without it a build only lacks the commit | A VCS build-backend plugin (hatch-vcs, setuptools-scm): a second backend and PEP 440 versions (`0.1.1.dev3+g6457a95`) instead of the requested format |
+| D27 | **Resources reached as paths are extracted on demand** (owner decision 2026-10-07): `importlib.resources.as_file` on a payload resource yields its copy in the app cache and never deletes it; `os.fspath()`/`str()` of a payload Traversable extract the file or directory and return that path. The copies live in `<cache>/resources/<resources id>/site/<path>`, keyed by every payload file (`build_info["resources"]`), not in the generation's tree, which releases share (D10): a release never sees another release's files. Each path is extracted once per process. The payload root is refused; an unusable cache raises from `as_file`/`os.fspath` (naming `FSBPYR_CACHE_DIR`) and makes `str()` warn and keep the virtual path. Extracted copies stay on disk until cache GC (Phase 8d, 0.13.0), like native files. Unlike the stdlib's temporary copy they are read-only (files 0400, directories 0700), shared by the app's processes, and under `--no-source` hold no `.py` sources; `str(files(pkg))` names the cache while `pkg.__file__` stays inside the executable | Code written for installed packages keeps `as_file` paths after the block (aiagent's skill discovery) or hands `str(files(pkg) / dir)` to `os` functions; with this, such code needs no configuration. Only what is asked for is extracted, with the same safe publishing as native files | Temporary copies (stdlib default: the path dies with the block); requiring `fs-packages` for every such package; one tree shared with natives (stale or removed files of other releases would show) |
+| D28 | **Versions come from git tags** (owner decision 2026-10-07): releases are tagged `vX.Y.Z`, starting with v0.1.0 (a GitHub release system comes later; since 0.18.1 a pushed tag makes `.github/workflows/release.yml` build, attest and publish the release, `fsbpyr.xz` as well since 0.19.0). A fix to an existing feature bumps the patch level (0.1.1, 0.1.2, ...), a new feature the minor version (0.2.0, 0.3.0, ...), a major rewrite the major version; `[project] version` follows the tag. `fsbpyr build` records HEAD's commit and the highest `vX.Y.Z` tag pointing at it in build_info (`git`) for every project in HEAD's tree; `fsbpyr --version` prints `X.Y.Z-<8 hex>` for a tagged commit and `untagged-<8 hex>` otherwise, and `untagged-unknown` when nothing was recorded (no git, an sdist, a project copied into some other repository, a wheel installed outside a checkout). A source checkout asks git directly; a git failure such as "dubious ownership" is a build warning. Since v0.2.0 the build also records the project's name and version and the full version of the fsbpyr that built it, and `fsbpyr inspect BINARY` shows them: app name, version and commit; `built with fsbpyr X.Y.Z-<hash>`; Python and glibc; size and distribution count. Since v0.3.0 it also lists the bundled shared libraries and native extension modules (a plain `*.so` is told apart by `PyInit_<name>`, searched streaming, so a hostile file cannot make it allocate its declared size) and the top-level module names per distribution plus those of the standard library and fsbpyr (`--all-modules`: every module), each list in as many columns as the terminal fits; `--json` prints the same as JSON (`modules` per distribution, `runtime_modules`, `all_modules`), `--verify` checks the payload SHA-256 (D11; the whole-file digest since 0.6.0, D31), which detects damage, not deliberate tampering (the digest sits in the same file). Uncommitted changes are not marked | The executable has no git, and the project wheel is built from an sdist without `.git`, so the commit must be captured by the build. git stays optional: without it a build only lacks the commit | A VCS build-backend plugin (hatch-vcs, setuptools-scm): a second backend and PEP 440 versions (`0.1.1.dev3+g6457a95`) instead of the requested format |
 | D29 | **zstd level 9 by default; `--fast-compression` keeps level 3** (owner decision 2026-10-08; replaces the `fast`/`balanced`/`compact` profiles). Applies to every blob, the runtime's stdlib frames included (LAYOUT_VERSION 4); `--fast-compression` and `build_info["zstd_level"]` concern the app's content and, since D30, every block (small stdlib files and boot modules included); the stdlib frames left outside blocks are always level 9 | Measured on aiagent's 405 MB of content, per-file: level 3 144.6 MB in 1 s, 9 134.4 MB in 4 s, 19 126.3 MB in 62 s, 22 126.1 MB in 77 s; decompression speed does not depend on the level. The whole aiagent build goes from 14.4 s (`--fast-compression`) to 18.0 s and from 167.1 MB to 157.4 MB (0.3.0, level 3 everywhere: 167.7 MB) | Levels 19/22 (15–20× the build time for 6% more); profiles. A two-stage stub (a small loader that unpacks the 20.9 MB launcher + CPython, 6.9 MB compressed) was evaluated and rejected: unpacking costs about 23 ms per start (hello starts in 5.7 ms) or, if cached, needs a writable exec-capable cache for every app and makes a user-writable file run on every start |
 | D30 | **Small blobs are packed into shared zstd blocks** (format v2; owner decision 2026-10-08): every non-empty blob under 64 KiB except natives, keyed by content (raw or zstd, it is one member), in one stream per placement class; 64 KiB blocks for code, 256 KiB for resources, metadata and sources; readers keep the last 32 decompressed blocks. A member record (codec 2) names its block and its position | Measured on aiagent: 157.4 → 149.6 MB (−7.8 MB, −5%) for +5 ms on 130–170 ms import-heavy starts (+3–4%); hello unchanged. Variants measured: 32/256 KiB −6.4 MB +3 ms, 32/64 KiB −4.6 MB +2 ms, code unblocked −4.1 MB +2.5 ms. With 8 cached blocks, imports alternating between packages decompressed 36.5 MB instead of 16 MB. The runtime's stdlib fragment stays unblocked (apps pack it into their own blocks), and the resources id hashes content, not its representation | A zstd dictionary (−6.3 MB on small blobs, but a launcher change for less gain); profile-guided ordering of code by import order (not tried: a second build pass, and reproducibility would depend on a stable import order); 256 KiB code blocks (−10.2 MB, +17 ms) |
-| D31 | **Every executable checks its whole file before it starts** (owner decision 2026-10-08; format v3; replaces D11's "whole-payload SHA-256 checked only on demand"). The trailer ends with a SHA-256 over the SHA-256 of each 1 MiB piece of everything before it; the launcher checks it before reading anything else, on min(8, usable cores) threads (one per 4 pieces) with the static OpenSSL's low-level SHA-256 (not the one-shot `SHA256()`, which since OpenSSL 3 sets up EVP and may read `openssl.cnf`), and exits 70 on a mismatch. Files extracted to the cache are hashed by every process, once, before it first uses them (`FSBPYR_VERIFY` is gone); a changed one is reported on stderr and restored. `fsbpyr build` checks its own file again before copying the runtime out of it. Detects damage and any change that leaves the digest alone; a change that also rewrites the digest or removes the check needs a signature checked with an outside key (owner decision: with the release system, later). The startup budget (§3.3) now excludes the check | Measured in the launcher, file in the page cache (Core Ultra 9 285): 28 MB 2.0 ms (one core 6.9 ms, no SHA-NI 7.1 ms), 148 MB 8.9 ms (38 ms, 30 ms); through EVP the 28 MB check took 3.4 ms. The no-op app goes from 6.0 to 8.1 ms against 5.1–5.4 ms bare CPython; without the check it is at 1.11–1.17×. mmap beats pread (21 MB: 2.2 vs 3.1 ms); the piece size hardly matters (64 KiB to 1 MiB); 8 threads cost more than 5–6 on files under ~40 MB. Standard tools reproduce the digest (`split --filter`, `openssl dgst`, `sha256sum`) | Plain SHA-256 on one thread (31 ms per 150 MB with SHA-NI, 180 ms without); BLAKE3 (4.6 ms per 150 MB on 8 threads, but vendored C with hand-written threading and a native package for inspect); caching a verified state by inode and ctime (misses damage on disk, which changes neither); signing now (later, with releases) |
+| D31 | **Every executable checks its whole file before it starts** (owner decision 2026-10-08; format v3; replaces D11's "whole-payload SHA-256 checked only on demand"). The trailer ends with a SHA-256 over the SHA-256 of each 1 MiB piece of everything before it; the launcher checks it before reading anything else, on min(8, usable cores) threads (one per 4 pieces) with the static OpenSSL's low-level SHA-256 (not the one-shot `SHA256()`, which since OpenSSL 3 sets up EVP and may read `openssl.cnf`), and exits 70 on a mismatch. Files extracted to the cache are hashed by every process, once, before it first uses them (`FSBPYR_VERIFY` is gone); a changed one is reported on stderr and restored. `fsbpyr build` checks its own file again before copying the runtime out of it. Detects damage and any change that leaves the digest alone; a change that also rewrites the digest or removes the check needs a signature checked with an outside key (owner decision: with the release system, later; not MVP, owner decision 2026-10-18). The startup budget (§3.3) now excludes the check | Measured in the launcher, file in the page cache (Core Ultra 9 285): 28 MB 2.0 ms (one core 6.9 ms, no SHA-NI 7.1 ms), 148 MB 8.9 ms (38 ms, 30 ms); through EVP the 28 MB check took 3.4 ms. The no-op app goes from 6.0 to 8.1 ms against 5.1–5.4 ms bare CPython; without the check it is at 1.11–1.17×. mmap beats pread (21 MB: 2.2 vs 3.1 ms); the piece size hardly matters (64 KiB to 1 MiB); 8 threads cost more than 5–6 on files under ~40 MB. Standard tools reproduce the digest (`split --filter`, `openssl dgst`, `sha256sum`) | Plain SHA-256 on one thread (31 ms per 150 MB with SHA-NI, 180 ms without); BLAKE3 (4.6 ms per 150 MB on 8 threads, but vendored C with hand-written threading and a native package for inspect); caching a verified state by inode and ctime (misses damage on disk, which changes neither); signing now (later, with releases) |
 | D32 | **Files extracted to the cache carry the executable's digest construction** (owner decision 2026-10-09; format v4): DIGESTS holds the SHA-256 over the SHA-256 of each 1 MiB piece, so the per-process cache check runs on the same threads as the executable's. One routine per language: `fsb_tree_digest(s)` in the launcher (the executable check, and `_fsbpyr.tree_digests` for the cache) and `tree_digest` in `format.py` (builder, reader, the runtime cache's records: LAYOUT_VERSION 5); the `_fsbpyr` contract test holds them equal around piece boundaries. Plain SHA-256 stays only where an outside value is compared (downloads) and for identity hashes (runtime and generation ids). The calling thread spins on non-blocking joins (`pthread_tryjoin_np`) for up to 2 ms before it sleeps in a join: on a hybrid CPU a thread woken by the last helper may land on an efficiency core and stay there while every core is busy; the bound keeps a stopped helper from making it burn a core. `_fsbpyr.file_digest(fd, size)` hashes a duplicate of the descriptor and only a regular file of the expected size; its `fcntl` binds to `fcntl64@GLIBC_2.28`, so pure-Python apps now report glibc ≥ 2.28 (the D25 baseline) where they reported 2.25 | Cache check against a size-only build, median of 61 runs (Core Ultra 9 285, P-cores / all 24 cores): numpy (38 MB of natives) +5 / +4–5 ms, onnx (69 MB) +8–9 / +14–18 ms (`docs/performance.md`); one thread (as 0.6.0): +18 / +18 and +26–30 / +25–26 ms. The routine alone hashes onnx's 69 MB in 5.1 ms; the rest is a fresh process mapping each library twice. With joins instead of spinning, numpy took +38 ms on all cores (its OpenBLAS starts one spinning thread per core right after the check) | Hashing different files in parallel (the largest file still sets the time: numpy 10 → 6 ms); joining the helper threads (above) |
 | D33 | **`--best-compression`: native files as xz -6 with the x86 filter** (owner decisions 2026-10-08/09; format v5; zstd 9 stays the default; not with `--fast-compression`, and a compression flag on the command line replaces the other one from the project). A library of up to 4 MiB is one xz stream (codec 3); a larger one is a blob of pieces (codec 4) naming consecutive xz blobs of 4 MiB of content each, decoded in parallel — the reverse of D30 blocks. The build compresses all pieces on min(8, cores) threads, largest first. The launcher decodes xz with the statically linked liblzma (single-call `lzma_stream_buffer_decode`, exactly one stream of the recorded size, 64 MiB decoder memory, no check of its own: the integrity digest covers the file) in `_fsbpyr.read` without the GIL; the pieces of one library on `fsb_parallel`, the routine that also hashes the integrity digest. The runtime extracts files one by one, as with zstd, so memory stays at one library. `build_info["native_compression"]` records it | aiagent 149.7 → 140.0 MB (−6.5%), build 18.5 → 21.1 s; first run (empty cache) against zstd: numpy +71 ms, onnx (numpy included) +76 ms, cryptography +25 ms, aiagent `version` +45 ms; later runs unchanged. One stream per library instead: 139.0 MB but first runs +130 / +313 / +66 / +49 ms and builds of 24.4 s (`docs/performance.md`) | One stream per library, with libraries decoded on Python threads (memory up to workers + 2 libraries; the largest library still on one thread); native multi-block .xz (Python cannot write it; liblzma's multithreaded decoder brings its own thread pool, without the spin-wait fix); zstd (no parallel decoding of one frame in libzstd); xz -9 (37.8 against 38.0 MB of aiagent natives, slower) |
 | D34 | **torch is a built-in fs-package; cached files are written without fsync and checked in batches** (owner decisions 2026-10-09). torch 2.14 runs `bin/torch_shm_manager` and loads `lib/libtorch_global_deps.so` by paths next to its `__file__` as it is imported; it found them because `str(distribution("torch").locate_file("torch"))` made the resources tree extract the whole package, a second copy of its libraries included. As a built-in fs-package its tree is extracted once into the native cache, next to its libraries. Every process still hashes every cached file once before it first uses it (D31), now up to 256 mapped files per parallel pass (`_fsbpyr.tree_digests` on `fsb_tree_digests`, the leaves of all files in one `fsb_parallel`); an fsync per file bought nothing, since a file a crash left incomplete fails its check and is restored | A CPU-only torch app (torch 2.14.1, 12,151 files, cache on XFS): first run 42.5 s → 1.34 s, cache 1.2 GB → 709 MB, later runs 895 → 620 ms (venv about 465-500 ms; the checks took about 120 ms one file at a time, about 60 ms in batches). Without the fsync alone: 2.3 s | `locate_file` returning a directory's path inside the executable (torch then fails: its `torch_shm_manager` is not on disk); checking only code each run and data when written (owner: every file, in parallel) |
-| D35 | **The cache sync runs in the launcher** (owner decision 2026-10-09): `_fsbpyr.sync(root, chain, files, checked, resources)` (`cache.c`) checks every record first (an extractable kind, a path the payload reader would accept, a blob and a digest), then, without the GIL, opens and creates the directories below the root one component at a time (never through a symlink, ours, forced to 0700, only those along the current path kept open), checks each cached file (opened `O_NOFOLLOW\|O_NONBLOCK`, then a regular file of ours of the payload's size by `fstat`; up to 64 KiB read into a 16 MiB buffer, larger ones mapped; up to 1024 files per parallel pass), and restores a missing or different file (decoded, its digest checked, written under a temporary name, `fchmod`, renamed into place). Changed files are reported on stderr once it returns, in file order. `_fsbpyr.files_below` gives an fs-package's files as the one run of the sorted table they form. Python keeps where the cache is, the record of what this process checked (a bytearray per cache, one byte per file) and the messages. A sync decodes with a zstd context and a 4-block cache of its own (`fsb_decoder`; NULL names the process's, used with the GIL held), so nothing is shared and nothing locked: a lock held by a sync while another thread forks would stay held in the child (security review; a first lock-based version hung 39 of 40 forked children in a C test). A sync with nothing to check touches nothing; a restored file is always readable by its owner; running out of descriptors fails the sync instead of counting as a changed file, and a mapping that finds no address space left (`ulimit -v`) has the pass's files checked and unmapped first, then is tried again (follow-up review: 6 libraries of 64 MiB under a limit leaving 160 MiB failed before); a SIGINT is handled once the sync returns. `module.c` refuses to build for a free-threaded CPython (`read` shares the process's decoder under the GIL); an e2e test forks 40 times while a thread syncs, and a lock put back around decoding hangs the first child. The tests' stand-in mirrors `cache.c` in Python and the contract compares both: damaged, missing, replaced and unreadable files, symlinked, foreign and shared directories, corrupt records, descriptor limits, more files than a pass holds, syncs on threads while others read. `_fsbpyr.tree_digests` is gone (the cache check was its only user); the contract checks the launcher's digests at the leaf boundaries through `sync` instead. Blobs over 1 GiB are refused, as `_fsbpyr.read` refuses them (`FSB_MAX_MEMORY_BLOB`; a build never bundles one) | torch app (12,151 cached files), later runs: torch's import 615 → 538 ms (venv 470), the whole run 1363 → 1279 ms (venv 1208); first runs 1967 → 1908 ms. The check of the 12,151 files: 80 ms with every file mapped (256 per pass), 53.5 ms as released (the 12 native libraries, 476 MB: 16 ms; the 12,139 other files, 235 MB: 65 → 38 ms). Standalone on those 12,139 files: all mapped 58 ms (55 ms with 1024 per pass); read up to 64 KiB 34 ms (1024 per pass, no `fstatat`; 36 ms with 256, 38 ms with an `fstatat` before each open); read up to 1 MiB 46 ms; one helper thread per 4 MiB of data instead of per 4 leaves, all mapped: 70 ms (`docs/performance.md`) | The walk in Python with one C call per file (the per-file Python calls were the cost); module code (`_code`) in C: of its 85 ms under cProfile for torch's 904 modules, 73 ms are `marshal.loads` and `_fsbpyr.read`, which are C already |
+| D35 | **The cache sync runs in the launcher** (owner decision 2026-10-09): `_fsbpyr.sync(root, chain, files, checked, resources)` (`cache.c`) checks every record first (an extractable kind, a path the payload reader would accept, a blob and a digest), then, without the GIL, opens and creates the directories below the root one component at a time (never through a symlink, ours, forced to 0700, only those along the current path kept open), checks each cached file (opened `O_NOFOLLOW\|O_NONBLOCK`, then a regular file of ours of the payload's size by `fstat`; up to 64 KiB read into a 16 MiB buffer, larger ones mapped; up to 1024 files per parallel pass), and restores a missing or different file (decoded, its digest checked, written under a temporary name, `fchmod`, renamed into place). Changed files are reported on stderr once it returns, in file order. `_fsbpyr.files_below` gives an fs-package's files as the one run of the sorted table they form. Python keeps where the cache is, the record of what this process checked (a bytearray per cache, one byte per file) and the messages. A sync decodes with a zstd context and a 4-block cache of its own (`fsb_decoder`; NULL names the process's, used with the GIL held), so nothing is shared and nothing locked: a lock held by a sync while another thread forks would stay held in the child (security review; a first lock-based version hung 39 of 40 forked children in a C test). A sync with nothing to check touches nothing; a restored file is always readable by its owner; running out of descriptors fails the sync instead of counting as a changed file, and a mapping that finds no address space left (`ulimit -v`) has the pass's files checked and unmapped first, then is tried again (follow-up review: 6 libraries of 64 MiB under a limit leaving 160 MiB failed before); a SIGINT is handled once the sync returns. `module.c` refuses to build for a free-threaded CPython (`read` shares the process's decoder under the GIL); an e2e test forks 40 times while a thread syncs, and a lock put back around decoding hangs the first child. The tests' stand-in mirrors `cache.c` in Python and the contract compares both: damaged, missing, replaced and unreadable files, symlinked, foreign and shared directories, corrupt records, descriptor limits, more files than a pass holds, syncs on threads while others read. `_fsbpyr.tree_digests` is gone (the cache check was its only user); the contract checks the launcher's digests at the leaf boundaries through `sync` instead. Blobs over 1 GiB are refused, as `_fsbpyr.read` refuses them (`FSB_MAX_MEMORY_BLOB`; a build never bundles one; cap removed in 8b, 0.11.0, D38) | torch app (12,151 cached files), later runs: torch's import 615 → 538 ms (venv 470), the whole run 1363 → 1279 ms (venv 1208); first runs 1967 → 1908 ms. The check of the 12,151 files: 80 ms with every file mapped (256 per pass), 53.5 ms as released (the 12 native libraries, 476 MB: 16 ms; the 12,139 other files, 235 MB: 65 → 38 ms). Standalone on those 12,139 files: all mapped 58 ms (55 ms with 1024 per pass); read up to 64 KiB 34 ms (1024 per pass, no `fstatat`; 36 ms with 256, 38 ms with an `fstatat` before each open); read up to 1 MiB 46 ms; one helper thread per 4 MiB of data instead of per 4 leaves, all mapped: 70 ms (`docs/performance.md`) | The walk in Python with one C call per file (the per-file Python calls were the cost); module code (`_code`) in C: of its 85 ms under cProfile for torch's 904 modules, 73 ms are `marshal.loads` and `_fsbpyr.read`, which are C already |
 | D36 | **Checks read files, never map them; restored files are written in pieces of 1 MiB** (owner decision 2026-10-09; 0.9.1). The executable's check and the cache check hash a file through its descriptor: each of up to 8 threads reads its 1 MiB leaves through a 64 KiB buffer of its own (`fsb_parallel` passes the worker's number), so a file's size never counts in the process's resident memory, as it did while the file was mapped; a leaf that cannot be read whole gets a digest that cannot match, so a file that shrinks while it is hashed fails its check instead of ending the process with SIGBUS. The cache check holds at most 64 files over 64 KiB open per pass; out of descriptors or memory while it holds some (opening a file or its directories), the pass is checked first and the step tried once more (this replaces D35's address-space retry: nothing is mapped; the security review found the directories missing at first). A read error in the executable's own check says it cannot read the file, not that it was modified; a cached file that cannot be read is restored like a changed one. A restored file is written in pieces of at most 1 MiB: written whole, torch's 438 MB libtorch_cpu.so stayed in XFS's page cache as 2 MiB folios, which the dynamic loader maps whole | torch app (zstd 9, later runs, 21 runs of each interleaved; Core Ultra 9 285, Linux 6.12, cache on XFS): peak RSS 577 → 349 MB (venv 314); by phase 226 → 14 MB once the executable is checked, 576 → 241 MB during the import (the cache check), 450 → 348 MB in the training loop, where libtorch_cpu.so holds 60 MB instead of 156 MB, as in the venv; whole run 1067 → 1071 ms, import 467 → 473 ms. The executable's check: the no-op app's 27.6 MB 1.82 → 1.93 ms (201 runs), the torch app's 233 MB 14.8 → 13.9 ms. Whole 1 MiB leaves read into a buffer per thread cost the no-op start more and left glibc 8 MB more heap (code review): 64 KiB pieces instead. The library written in 4 MiB pieces stayed at 156 MB; in 1 MiB, 256 KiB or 64 KiB pieces it took 60 MB. The executable's own pages, 42 MB against `python3.14`'s 11 MB, remain (`docs/performance.md`) | Capping the bytes mapped per pass (the peak stays at the largest file, 438 MB here); dropping a written file from the page cache (`posix_fadvise` leaves dirty pages, and the next run would read it from disk) |
 | D37 | **No more millisecond tuning; comparisons with other tools come last** (owner decision 2026-10-09). Phase 7 ends with what it has: the compression work (D29, D30, D33), the checks and the cache in the launcher (D31, D32, D35, D36), and `docs/performance.md` as the report (every release's measurements, how they were taken, where to look when a start gets slower). Regressions are caught by exact counts, not timings: the e2e tests read `FSBPYR_TRACE` (modules loaded per distribution, files extracted) and the contract the cache sync's outcomes; the one timing test stays the startup budget (1.2× bare CPython, the integrity check apart). Dropped: the benchmark harness, the 10% timing gate, the §8 speed targets, grouped frames for tiny modules, and an opt-in fast exit (it saves the libraries' teardown, about 215 ms for torch, but leaves unflushed files, killed threads and unrun finalizers behind). Comparisons with other tools (PyInstaller, a Rust and a Go CLI) move to Phase 10: there is no point in comparing unfinished work | The results are solid; a few milliseconds here or there are not worth the work, and a timing gate mostly catches noise | The §8 harness, targets and CI gate as planned |
 | D38 | **Phase 8 scope** (owner decisions 2026-10-09). (1) No size limits of ours: files and executables of 1 TB and more build and run if the file system and OS allow them; the only structural limit is the format's 32-bit indices (about 4.29 billion files, modules or blobs: the OS fails first). (2) fsbpyr's own work never needs more than 1 GB of resident memory, whatever the input size, when building and when running: data is streamed in bounded pieces; what an app asks for itself (`read()`, `read_bytes()`) is the app's. (3) Cache GC: at most once a day, or when the cache's file system has less than 10% free (then at most once an hour); generations and resource trees unused for 7 days are removed (under disk pressure every one not in use); never what a running process uses (locks); never anything we did not create (a marker names our cache roots; `FSBPYR_CACHE_DIR` may be a user's own directory); explicit runs: `fsbpyr cache gc` (the tool's cache and every app cache it finds) and `FSBPYR_GC=1 app` (that app's cache, then exit). (4) Every item gets explicit tests in the normal test run; principle: normal cases fast, edge and extreme cases correct, never a crash | User does not want to deal with stale cache objects; a removed object is recreated when needed; 1 TB inputs must work | `rm -rf` of the whole cache; a GC run on every start; 64-bit indices (format v6) |
@@ -134,6 +136,11 @@ or pointed at it. Output goes to `dist/<console-script-name>`.
 ## 3. Architecture
 
 ### 3.1 Components
+
+Status (v0.19.0): the C module is `launcher/module.c` (lookups named `find_module`,
+`find_file`, ...; `sync` and `files_below` since D35), next to `payload.c`, `integrity.c` (D31),
+`parallel.c`, `cache.c` (D35), `due.c` (8d) and `way.c` (8e); the pure-Python stand-in is
+`tests/support/standin.py` (Phase 3), not `boot/_fsbpyr_py.py`.
 
 | Component | Language | Runs where | Responsibility |
 |-----------|----------|------------|----------------|
@@ -149,6 +156,12 @@ runtime, and embeds them as STARTUP entries. Self-hosting therefore exercises th
 too.
 
 ### 3.2 Executable layout (format v1)
+
+Status (v0.19.0): format v6 since 0.15.0 (v2 blocks, 0.5.0; v3 whole-file digest, 0.6.0; v4
+cache digests, 0.7.0; v5 xz, 0.8.0; v6 zstd pieces, 0.15.0); `docs/format.md` is authoritative.
+Changed below: the trailer's last 32 bytes are the integrity digest of everything before them
+(D31), not `payload_sha256`; blob codecs are 0–5 (none, zstd, block, xz, xz pieces, zstd
+pieces); a STARTUP section lists the startup modules (Phase 2).
 
 ```
 0                                     payload_offset (4 KiB aligned)                          EOF
@@ -183,12 +196,19 @@ too.
 
 ### 3.3 Startup sequence (built app)
 
+Status (v0.19.0; `launcher/main.c` and `_fsbpyr_boot.run`): step 1 checks the whole file
+against the trailer's digest before believing any byte (D31, `integrity.c`); between steps 2
+and 3 the launcher starts a background cache collection when one is due (`due.c`, 8d); step 5
+also installs `python`'s signal handlers (0.11.0); step 7 also runs `-m`/`-c` children under
+D23 (0.16.0) and the collection for `FSBPYR_GC` (8d) instead of the app.
+
 1. `open("/proc/self/exe")` and `pread` the trailer. Validate magic, version and bounds.
    `mmap` the payload with `PROT_READ, MAP_PRIVATE`.
 2. Validate every header and table offset/count against the mapping size. Compare the bytecode
    magic in the header with the value the stub was compiled with (passed as `-D` at stub build
    time). A mismatch is a hard error with a clear message.
-3. Build a `struct _frozen[]` from the STARTUP modules, pointing into the mmap. Set
+3. Build a `struct _frozen[]` from the STARTUP modules, pointing into the mmap (decompressed and
+   checksum-verified instead, D8). Set
    `PyImport_FrozenModules`.
 4. `PyImport_AppendInittab("_fsbpyr", PyInit__fsbpyr)`.
 5. Configure the interpreter:
@@ -227,7 +247,8 @@ timings, release by release: `docs/performance.md`.
   - It returns a `ModuleSpec` with `FsbpyrLoader` and `origin="<exe>/pkg/mod.py"`. Packages
     also get `submodule_search_locations=["<exe>/pkg"]`.
   - For NAMESPACE it returns a spec with `loader=None` plus the portion path, and the stock
-    PathFinder assembles the namespace.
+    PathFinder assembles the namespace (since Phase 3 a payload meta finder ahead of PathFinder
+    serves them with a `NamespaceLoader` subclass, so `importlib.resources` works on them).
 - `FsbpyrLoader` implements `InspectLoader` and `ResourceLoader`:
   - `get_code` → `marshal.loads(_fsbpyr.read(code_blob))`
   - `get_source` reads the lazy source frame
@@ -236,7 +257,8 @@ timings, release by release: `docs/performance.md`.
   - `get_resource_reader` → a `Traversable` over `files` (`iterdir` is a prefix scan)
 - The path finder implements `iter_modules(prefix)`, so `pkgutil.iter_modules` and
   `walk_packages` work (plugin discovery).
-- `co_filename` is the site-relative path (`pkg/mod.py`). Tracebacks get source through
+- `co_filename` is the site-relative path (`pkg/mod.py`; made the absolute virtual path at load by
+  `_imp._fix_co_filename`, Phase 3). Tracebacks get source through
   `__loader__.get_source` (linecache lazycache).
 - `importlib.metadata`: `FsbpyrDistributionFinder.find_distributions(context)` binary-searches
   `dists` for name lookups. It enumerates every dist only when the caller asks for all of them
@@ -246,6 +268,13 @@ timings, release by release: `docs/performance.md`.
   lazily on first use.
 
 ### 3.5 Native extensions and the cache
+
+Status (v0.19.0): the materialization below runs in the launcher (`_fsbpyr.sync`, `cache.c`,
+D35); every process hashes each cached file once with the tree digest (D31, D32) instead of
+step 2's size check; no fsync (D34); no self-heal retry after a failed `dlopen` (gone in 0.6.0);
+new files are written unnamed and linked into place (`O_TMPFILE`, 0.15.0); the root's way from
+`/` is checked (8e, 0.14.0); GC as built in 8d. `docs/format.md` (Integrity) describes the cache
+check.
 
 ```
 import native_mod → modules lookup (EXTENSION) → closure (bundled libs only) → cache check
@@ -295,8 +324,12 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
      initialization), re-hash the cached closure. Replace mismatches and retry once.
 - **Garbage collection (Phase 8):** `.last-used` is touched at most once a day. Generations
   unused for more than 30 days are removed opportunistically under a non-blocking `flock`.
+  (Built in 8d, 0.13.0, as D38 says instead: each tree's `.lock`, held shared by its users,
+  dates its last use; 7 days, not 30.)
 - **FS_REQUIRED packages** (`fs-packages` / `--fs-package`, plus the built-in rule for
-  `certifi`): when the package is first imported, every file below its directory (data files
+  `certifi`; now also babel, botocore, litellm, matplotlib and torch:
+  `classify.BUILTIN_FS_PACKAGES`): when the package is first imported, every file below its
+  directory (data files
   and, unless `--no-source`, its `.py` sources) is materialized into `<gen>/site/<pkg>/` with
   the steps above, owner-readable and executable only if the wheel's file was. The package's
   modules get `__file__`/`__path__` there, the path hook also claims that directory, and
@@ -311,12 +344,13 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
    otherwise the cache, otherwise fail with an error that suggests
    `fsbpyr runtime build --python X.Y`.
 3. **Staging install.** Install into `build/fsbpyr/staging/<key>/`. `<key>` hashes the lock
-   file and the extras, so an unchanged lock reuses the staging directory. The
+   file and the extras, so an unchanged lock reuses the staging directory (since Phase 4 a fresh
+   temporary directory per build instead, `build.py`; the uv cache keeps it fast). The
    lock source is chosen in this order:
 
    | Lock source | Command |
    |-------------|---------|
-   | `uv.lock` | `UV_PROJECT_ENVIRONMENT=<staging> uv sync --frozen --no-dev --no-editable --python 3.14 [--extra X…]`. Honours `[tool.uv.sources]`, indexes and workspaces. The project is installed non-editable |
+   | `uv.lock` | `UV_PROJECT_ENVIRONMENT=<staging> uv sync --frozen` (`--locked` since Phase 4) `--no-dev --no-editable --python 3.14 [--extra X…]`. Honours `[tool.uv.sources]`, indexes and workspaces. The project is installed non-editable |
    | `pylock.toml` (PEP 751) | `uv venv <staging> --python 3.14`, `uv pip install --python <staging>/bin/python -r pylock.toml`, then the project with `--no-deps` |
    | pinned requirements (`--requirements FILE`, default `requirements.txt`) | the same venv, `uv pip install ... -r FILE` (`--require-hashes` when hashes are present), then the project with `--no-deps` |
    | none | install the project with dependencies resolved fresh from `[project.dependencies]`. Prints the warning **"unlocked build — not reproducible"** |
@@ -337,7 +371,8 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
 5. **Collect and validate.** Index every `*.dist-info` in the staging site directory. Walk the
    project's Requires-Dist (plus extras) with the runtime's marker environment as a consistency
    check. A missing dist is an error. Installed dists that are not reachable produce a warning
-   and are still packaged, because the lock decided they belong. `.pth` files produce warnings.
+   and are still packaged, because the lock decided they belong. `.pth` files produce warnings
+   (since Phase 6b their path lines are honoured; code lines warn).
 6. **Classify** each dist's RECORD into files. Skip paths outside site-packages,
    `__pycache__/` and `*.pyc`. Files not listed in any RECORD (venv scaffolding such as
    `_virtualenv.py`) are not packaged. Every directory with an identifier name and no
@@ -347,7 +382,8 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
    (mypyc's `81d243bd2c585b0f4821__mypyc`), since `importlib.import_module` reaches it; an
    extension's never contains a hyphen (CPython calls `PyInit_<stem>`), and package
    directories must be identifiers.
-7. **Compile** in-process when the runtime is self; otherwise use the runtime's compile helper
+7. **Compile** in-process (on up to 8 worker processes since 0.15.0, `compiler.py`, D39) when the
+   runtime is self; otherwise use the runtime's compile helper
    (Phase 9). Every result is canonicalized (D16). A `SyntaxError` keeps the file as a resource
    and prints a warning.
 8. **Natives.** Run the ELF analysis, compute closures, check the allowlist and compute the
@@ -360,6 +396,11 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
 
 ### 3.7 Runtime build (`fsbpyr runtime build --python 3.14`)
 
+Status (v0.19.0): the stub links against the pinned glibc 2.28 sysroot (6c, `runtime/sysroot.py`)
+as PIE (D17), with `-Wvla`, `-Wframe-larger-than=8192` and an ASan/UBSan variant (8a); the link
+is reproducible (`-ffile-prefix-map`, 0.18.2, `LAYOUT_VERSION` 7); downloads retry network
+failures (0.18.1); the stdlib compiles on up to 8 workers (0.15.0).
+
 1. Download the pinned PBS full archive (URL and SHA-256 pinned in `fsbpyr/runtime/pins.py`),
    verify it, and extract it into `~/.cache/fsbpyr/downloads/`.
 2. Parse `PYTHON.json` and require a clang/lld whose major version is at least the bitcode
@@ -371,12 +412,14 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
    - `-Wl,--export-dynamic-symbol=Py*` and `=_Py*` (Phase 5; was `--export-dynamic`)
    - `-lpthread -ldl -lutil -lm -lrt`
 
-   Spike S1 measures PIE vs non-PIE startup.
+   Spike S1 measures PIE vs non-PIE startup (done: PIE, D17).
 4. **Stdlib.** Take `lib/python3.14/` minus `test/`, `idlelib/`, `tkinter/`, `turtledemo/`,
    `ensurepip/`, `__pycache__/`, `site-packages/` and `config-*/`. Compile it with the PBS
    interpreter from the archive. Determine the STARTUP set by running that interpreter with
    `-X importtime -I -S -X utf8 -c pass`, plus the boot module.
-5. **Output** goes to `~/.cache/fsbpyr/runtimes/cp314-x86_64-linux-gnu-<launcher_sha8>/` as
+5. **Output** goes to `~/.cache/fsbpyr/runtimes/cp314-x86_64-linux-gnu-<launcher_sha8>/` (now
+   `cp314-x86_64-unknown-linux-gnu-<12 hex>`, hashing the launcher, the PBS and sysroot pins
+   and `LAYOUT_VERSION`: `registry.runtime_id`) as
    `{stub, stdlib.fsbp, runtime.json}`. `runtime.json` records:
    - Python version and bytecode magic
    - ABI tag and extension suffixes
@@ -387,6 +430,12 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
 ---
 
 ## 4. Repository layout
+
+Status (v0.19.0): also in the tree: `build.py` (§3.6), `scan.py` (6b hints), `vcs.py` (D28),
+`payload/spec.py`, `payload/spill.py` (8c), `runtime/{sysroot,toolchain,ar,hold,collect}.py`,
+`launcher/{integrity,parallel,cache,due,way}.c`, `boot/_fsbpyr_rt/gc.py` (8d), `tests/fuzz/`,
+`tests/probes/` (8a), and at the top `Makefile`, `tools/bootstrap.sh`, `Containerfile`,
+`tools/release/`, `.github/workflows/release.yml` (0.18.1), `CHANGELOG.md`, `.python-version`.
 
 ```
 pyproject.toml              name=fsbpyr, requires-python>=3.14, deps=[click, packaging],
@@ -407,7 +456,7 @@ src/fsbpyr/
   staging.py                fresh install into staging (uv sync / uv venv + uv pip install)
   closure.py                staging dist index, Requires-Dist consistency walk, markers (packaging)
   classify.py               RECORD → typed entries
-  compile.py                bytecode compile (in-process / compile helper)
+  compiler.py               bytecode compile, up to 8 worker processes (D39; planned: compile.py)
   bytecode.py               canonical marshal rewriter (D16), marshal v5 / CPython 3.14
   elf.py                    ELF64 dynamic-section parser
   natives.py                closures, allowlist, generation id
@@ -422,12 +471,12 @@ src/fsbpyr/
   runtime/pins.py           pinned PBS URLs + SHA-256
   boot/                     code embedded into every built app (stdlib-only)
     _fsbpyr_boot.py         STARTUP: path hook, loader, dist finder, entry dispatch
-    _fsbpyr_rt/             lazily loaded: resources, metadata (cache, compat later)
+    _fsbpyr_rt/             lazily loaded: resources, metadata, native, mp, fixups, reexec, gc, trace
   inspection.py             fsbpyr inspect (v0.2.0; not inspect.py, which would shadow the stdlib)
 tests/
   unit/ integration/ e2e/
   support/                  pure-Python _fsbpyr stand-in, contract battery, demo app, probe
-  fixtures/projects/        hello, clicky, heavy, resources, nspkg, mp
+  fixtures/projects/        hello, clicky, heavy, compat, datafiles, mp
 docs/
   python_cli_runtime_manifest.pdf
   IMPLEMENTATION_PLAN.md    (this file)
@@ -439,6 +488,13 @@ docs/
 ---
 
 ## 5. Bootstrap and self-hosting procedure
+
+Status (v0.19.0): since 0.18.1 `make bootstrap` (`tools/bootstrap.sh`) runs these stages: on
+Debian trixie on the host (clang/lld 22 from Debian, uv from astral.sh), elsewhere in a Debian
+trixie podman container (`Containerfile`). Stage 0 is `uv run --locked` on the Python of
+`.python-version` (3.14.8); the stages land in `dist/stage1..3/`, each must pass
+`inspect --verify`, stages 2 and 3 must be identical, and stage 3 becomes `dist/fsbpyr`. CI runs
+it on every pull request and tag (`.github/workflows/release.yml`).
 
 ```bash
 # Stage 0: plain Python in a standard venv (R3)
@@ -456,7 +512,8 @@ cmp build/stage2/fsbpyr build/stage3/fsbpyr    # fixed point: must be identical
   compiled in-process by the same CPython version. stage1 == stage2 is a goal; stage2 == stage3
   is a **hard gate**.
 - fsbpyr is itself a uv project (`uv.lock`), so every self-build stages through
-  `uv sync --frozen --no-dev --no-editable`. From stage 1 on, the only external tool is uv,
+  `uv sync --frozen --no-dev --no-editable` (`--locked` since Phase 4). From stage 1 on, the
+  only external tool is uv,
   which needs network access or a warm uv cache. Clang is needed only to build a new runtime
   (new Python minor or launcher change), and fsbpyr's Python code drives that step.
 
@@ -550,8 +607,9 @@ criteria are automated tests unless noted. Sizes are S, M or L.
     `is_dir`, Traversable equality and `__fspath__`, `Distribution._path`
   - known gaps, deferred to Phase 6:
     - `inspect.getsource` on CPython-frozen stdlib modules (`os`, `codecs`) raises OSError
+      (closed in Phase 6b)
     - `__file__` paths do not exist on disk, so `open(dirname(__file__)/x)` fails;
-      FS_REQUIRED packages address this
+      FS_REQUIRED packages address this (closed in Phase 6)
 
 ### Phase 4 — `fsbpyr build` for pure-Python projects, then self-hosting (L) — **DONE 2026-10-07**
 
@@ -633,7 +691,7 @@ criteria are automated tests unless noted. Sizes are S, M or L.
     - closures may also list NATIVE_EXT records (an extension may link against another
       extension's shared object); NATIVE_EXT/NATIVE_LIB blobs must carry a digest
     - blobs are decompressed in memory (`_fsbpyr.read`, at most 1 GiB) and written out, not
-      streamed; `_fsbpyr.stream` is left for Phase 8
+      streamed; `_fsbpyr.stream` is left for Phase 8 (done in 8b, 0.11.0)
     - the loader is `_fsbpyr_rt.native.PayloadExtensionLoader`, imported only when an
       extension is; the extension's `__file__` is its cache path
     - only shared objects an extension can reach are dependency-checked; others (for example
@@ -655,9 +713,11 @@ criteria are automated tests unless noted. Sizes are S, M or L.
       of those dists loaded"
     - a failed `dlopen` from a `noexec` cache gets a hint to set `FSBPYR_CACHE_DIR`
     - native files over 1 GiB fail the build: without streaming they cannot be extracted
+      (no cap since 8b, 0.11.0, and 8c, 0.12.0)
     - shared objects with importable names (`pkg/libfoo.so`) are extension modules, as in
       CPython; libraries an app loads with ctypes need FS_REQUIRED (Phase 6)
-    - temp files of killed processes stay until generation GC (Phase 8)
+    - temp files of killed processes stay until generation GC (Phase 8; 8d, 0.13.0, removes
+      them; since 0.15.0 new files are written unnamed, `O_TMPFILE`)
   - reviews (code and security; no CRITICAL or HIGH findings) led to: `$ORIGIN` expanded
     only as a whole token and correctly for top-level extensions (`_x.so` with
     `$ORIGIN/x.libs` was wrongly rejected); `DT_NEEDED` entries containing `/` rejected;
@@ -675,7 +735,8 @@ criteria are automated tests unless noted. Sizes are S, M or L.
 - Multiprocessing re-exec patterns: spawn `--multiprocessing-fork`, forkserver and
   resource_tracker `-c` commands. Python 3.14 defaults to forkserver on Linux.
 - Decide on `sys.frozen`.
-- CA bundle fallback if PBS OpenSSL default paths miss the system store **[assumption — to test]**.
+- CA bundle fallback if PBS OpenSSL default paths miss the system store **[assumption — tested in
+  Phase 6: they do not on Debian, Ubuntu or RHEL; the Nix layout's fallback is Phase 6b]**.
 - `.pth` warnings.
 - **Exit:** a compatibility matrix is green: click, typer, rich, httpx, requests + certifi,
   pydantic, jinja2, pyyaml, numpy, cryptography, orjson, zoneinfo/tzdata, sqlalchemy, and
@@ -693,7 +754,8 @@ criteria are automated tests unless noted. Sizes are S, M or L.
   - CA bundle: no fallback needed. PBS's OpenSSL looks in `/etc/ssl` (`cert.pem`, `certs/`):
     Debian and Ubuntu verify through the hashed `/etc/ssl/certs` (real HTTPS request on
     Debian 13), and RHEL 9 links `/etc/ssl/cert.pem` to its bundle (layout checked in a Rocky
-    9 container; the binary itself needs glibc 2.38 there, a Phase 9 item)
+    9 container; the binary itself needs glibc 2.38 there, a Phase 9 item, moved to Phase 6c
+    by D25 and done there)
   - `.pth` files are skipped with a warning (since Phase 4)
   - implementation notes that deviate from the text above:
     - FS_REQUIRED packages get every file extracted, `.py` sources included, so `__file__`
@@ -705,7 +767,8 @@ criteria are automated tests unless noted. Sizes are S, M or L.
     - `--fs-package` overrides `fs-packages`, like every other option
     - known gaps, planned in Phase 6b: `inspect.getsource` on CPython-frozen stdlib modules
       (`os`, `codecs`) raises OSError; re-executing `sys.executable` for anything but
-      multiprocessing (`-m`, `-c`) is not supported (opt-in support, D23)
+      multiprocessing (`-m`, `-c`) is not supported (opt-in support, D23; both closed in
+      Phase 6b: `getsource` 2026-10-07, D23 in 0.16.0)
   - reviews: the security review found that recognizing the three command lines did not
     stop code execution through the functions they name (CRITICAL, reproduced against the
     `mp` binary: a pickle on stdin, a planted module through forkserver's `sys_path`, a file
@@ -737,14 +800,16 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
 - **Post-import fixups.** A small table in the boot loader, consulted after a payload module
   executes, for the two items below.
 - **CA store fallback** for distros whose `/etc/ssl` holds neither `cert.pem` nor a hashed
-  `certs/` directory **[assumption — NixOS; to test in a container]**: when `ssl` is first
+  `certs/` directory **[assumption — NixOS; verified in Phase 6b with the Nix CA layout in a
+  `debian:trixie` container]**: when `ssl` is first
   imported, default contexts also load the first existing well-known system bundle. No
   environment variable is set, so child processes are unaffected.
 - **Multiprocessing children start from the parent's own binary** (`/proc/self/exe`, set when
   `multiprocessing.spawn` is imported): after an in-place upgrade parent and children never mix
   code versions, and the D22 check keeps passing.
 - **`FSBPYR_VERIFY=1`** also re-hashes cached files (natives and FS_REQUIRED files) on use and
-  repairs mismatches; without it a cache hit stays a size check.
+  repairs mismatches; without it a cache hit stays a size check (superseded by D31, 0.6.0:
+  every process hashes cached files; `FSBPYR_VERIFY` is gone).
 - **Interpreter re-exec (D23):** `interpreter-reexec = true` / `--interpreter-reexec`. `-m`
   runs a payload module as `__main__` with `runpy`, `-c` runs the given code; interpreter flags
   before them are accepted and ignored, as for multiprocessing.
@@ -801,7 +866,8 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
     compiled packages below `.pth` directories, hint names that `fs-packages` accepts and
     less noise, the CA fallback re-checking `SSL_CERT_*` at use and never raising, robust
     `.pth` reading, self-hosting reading `/proc/self/exe`, and a stricter `(deleted)` rule
-  - **open: interpreter re-exec (D23)** was not implemented in this phase
+  - **open: interpreter re-exec (D23)** was not implemented in this phase (done in 0.16.0,
+    below)
 - **D23 done (0.16.0, 2026-10-13):** `interpreter-reexec = true` / `--interpreter-reexec` records
   `interpreter_reexec` in the build info. The boot module looks at it only when argv holds
   `-m` or `-c` (two scans of argv otherwise, as for multiprocessing); `_fsbpyr_rt.reexec`
@@ -839,7 +905,8 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
     symlinks (`libpthread.so -> /lib/...`) first resolved to the build host's glibc 2.41,
     whose `libpthread` is an empty stub: they are rewritten relative to the sysroot. glibc
     2.17 was not pursued: it would need RPM unpacking for RHEL 7, which is past end of life
-  - the stub now needs **glibc 2.25** (GLIBC_2.38 before); the runtime id includes the
+  - the stub now needs **glibc 2.25** (GLIBC_2.38 before; 2.28 since 0.7.0, D32); the runtime
+    id includes the
     sysroot pin; linking takes about 100 s instead of about 50 s
   - uv chose cryptography's manylinux_2_34 wheel on this host, so `heavy` needed glibc 2.34.
     Every uv install now passes `--python-platform x86_64-manylinux_2_28` (from the runtime's
@@ -904,7 +971,7 @@ Closes the open issues that no later phase covered (review of open issues, 2026-
   release's measurements; the count-based tests and the startup budget pass; fast exit is
   evaluated and dropped. **DONE 2026-10-09.**
 
-### Phase 8 — Hardening (L; D38) — **8a DONE 2026-10-09 (0.10.0), 8b DONE 2026-10-09 (0.11.0), 8c DONE 2026-10-09 (0.12.0), 8d DONE 2026-10-10 (0.13.0), 8e DONE 2026-10-10 (0.14.0)**
+### Phase 8 — Hardening (L; D38) — **8a DONE 2026-10-09 (0.10.0), 8b DONE 2026-10-09 (0.11.0), 8c DONE 2026-10-09 (0.12.0), 8d DONE 2026-10-10 (0.13.0), 8e DONE 2026-10-10 (0.14.0), 8f DONE 2026-10-10 (0.15.0)**
 
 Principle (owner): normal cases fast, edge and extreme cases correct, never a crash. Every
 item below gets explicit tests in the normal test run. Steps, each released on its own:
@@ -948,7 +1015,7 @@ item below gets explicit tests in the normal test run. Steps, each released on i
     executables, and `/tmp` is often a RAM disk
   - left for 8b, where the cases flip: directory paths over 4 KiB and over 2048 levels below
     the cache root are refused; the 1 GiB cap stays, so an xz stream claiming more is refused
-    before it is decoded
+    before it is decoded (flipped in 8b, 0.11.0)
 
 **8b — Streaming at run time, no limits of ours** (D38):
 - Extraction streams: stored bytes are read a window at a time (the window released after use),
@@ -959,7 +1026,7 @@ item below gets explicit tests in the normal test run. Steps, each released on i
 - The cache sync takes files in chunks (`files_below` gives a range), remembers checked files
   in a bitmap, and needs no per-file memory beyond a chunk; directory paths and depth have no
   limit of ours (only the OS's), and a deep path does not hold a descriptor per directory level
-  (today it does: 1,000 levels need 1,000 descriptors, past a common soft limit of 1,024).
+  (until 0.11.0 it did: 1,000 levels needed 1,000 descriptors, past a common soft limit of 1,024).
 - Resources opened as files (`importlib.resources` `open()`) stream; `read_bytes()` returns
   what the app asked for.
 - **Done (0.11.0):**
@@ -992,7 +1059,7 @@ item below gets explicit tests in the normal test run. Steps, each released on i
     1082 ms, peak RSS 349 → 346 MB (the check's 16 MiB buffer is mapped now: from malloc, the
     three 4096-file jobs of torch's fs-package left it in the heap, 364 MB); startup 7.94 →
     8.03 ms (Python's own signal setup)
-  - left for 8c: the builder still holds content in memory
+  - left for 8c: the builder still holds content in memory (done in 8c, 0.12.0)
 
 **8c — Streaming when building** (D38): blob contents come from files, not memory; compression
 (zstd with the size pledged, xz in pieces), digests and ELF scanning stream; the writer lays
@@ -1363,7 +1430,7 @@ write, a truncated binary.
   three runs; not run before 0.13.0, run again before 0.14.0); GC and security tests as listed
   under 8d and 8e
 
-### Phase 9 — More Python versions and portability (L, later)
+### Phase 9 — More Python versions and portability (L, after the MVP; owner decision 2026-10-18)
 
 - Runtimes for 3.12/3.13 (vendored zstd decompressor where PBS has no `libzstd.a`) and a
   per-runtime **compile-helper binary** (stub + stdlib + compile entry), so builds never depend
@@ -1372,18 +1439,37 @@ write, a truncated binary.
 - Then Linux aarch64, macOS (payload in a Mach-O segment so codesign works) and Windows
   (PE resource or overlay, explicit DLL search directories).
 
-### Phase 10 — Comparisons with other tools (M, last; D37)
+### Phase 10 — Comparisons with other tools (M, last; D37) — **DONE 2026-10-18**
 
 Once the work is finished, compare the same apps built and run other ways: bare
-`python3.14 -I -S -c pass`, the app from its venv, PyInstaller onefile, a Rust CLI
-(`rg --version`) and a Go CLI. Size, build time, first run, later runs, peak memory and the
+`python3.14 -I -S -c pass`, the app from its venv, PyInstaller onefile, `pex --scie eager` and
+PyApp with Python and the dependencies embedded (both added by owner decision 2026-10-18: the
+maintained tools closest to fsbpyr), a Rust CLI (`rg --version`) and a Go CLI (`gh --version`).
+Size, build time, first run, later runs, peak memory and the
 cache on disk, measured as in `docs/performance.md` (medians of interleaved runs, warm page
 cache, and cold where it matters). **Exit:** the comparison is committed in
 `docs/performance.md`.
 
+- **Done (2026-10-18, 0.19.0):** `docs/performance.md`, "Other tools": `hello`, `heavy` and
+  aiagent, 8 commands. fsbpyr, pex and PyApp matched the venv's output with no extra options;
+  PyInstaller needed `--collect-data heavy` and `--copy-metadata aiagent`; PyApp's
+  `PYAPP_EXEC_SPEC` drops the entry function's exit status. Later runs: fsbpyr 1.03–1.21× the
+  venv (the integrity and cache checks), pex and PyApp at the venv, PyInstaller onefile
+  4.6–18× (it unpacks 35–179 MB on every start). First runs: fsbpyr 13–153 ms, PyApp
+  0.28–1.17 s, pex 1.4–3.2 s. Disk after all runs: fsbpyr 96.5 MB, pex 814 MB, PyApp 1.52 GB.
+  Not measured: a cold page cache (needs root), PyApp's default mode (it
+  installs the dependencies from an index on the first run).
+
 ---
 
 ## 7. Test strategy
+
+Status (v0.19.0): markers are `slow` and `sanitized` (no `network` marker); only `clicky`
+commits all three lock sources, the other fixtures `uv.lock`; C probes are in `tests/probes/`,
+the fuzzer in `tests/fuzz/` (8a); CI (`.github/workflows/release.yml`) runs `make check` and
+`make test-ci` (unit, integration, `test_build.py`, `test_runtime_app.py`) on every pull request
+and tag since 0.19.0, the rest locally (`make test`); tests that need the kernel to refuse
+access skip as root.
 
 - **Unit (pytest):**
   - format and writer/reader
@@ -1397,7 +1483,7 @@ cache, and cold where it matters). **Exit:** the comparison is committed in
 - **Integration:**
   - `runtime build` (marked `slow`; needs clang ≥ 22)
   - project wheel acquisition through uv (D26)
-  - boot contract suite against `_fsbpyr_py`
+  - boot contract suite against the stand-in (`tests/support/standin.py`; planned as `_fsbpyr_py`)
 - **E2E:**
   - fixture projects under `tests/fixtures/projects/` carry committed `uv.lock`,
     `pylock.toml` and `requirements.txt` files; staging installs are marked `network` on
@@ -1405,8 +1491,11 @@ cache, and cold where it matters). **Exit:** the comparison is committed in
   - binaries are built and executed, and their output, exit codes and `FSBPYR_TRACE`
     counters are asserted
 - **Coverage:** ≥ 80% overall on `src/fsbpyr`, ≥ 90% on `payload/` and `elf.py`. Boot code
-  is covered in-process through `_fsbpyr_py`.
-- **C:** E2E with an ASan/UBSan stub variant, libFuzzer for parsers, and `-Wall -Wextra -Werror`.
+  is covered in-process through the stand-in.
+- **C:** E2E with an ASan/UBSan stub variant, libFuzzer for parsers, and `-Wall -Wextra -Werror`
+  (built: 8a, 0.10.0; no blanket `-Werror`: `fsbpyr runtime build` shows every warning and fails
+  on a frame over the limit, 0.15.0, and `tests/e2e/test_launcher_build.py` compiles with
+  `-Werror=vla -Werror=frame-larger-than`).
 
 ## 8. Benchmarks (manifest §13)
 
@@ -1420,10 +1509,12 @@ Reduced by D37 (owner decision 2026-10-09): no harness, timing gate or speed tar
 - **Regression guards:** exact counts from `FSBPYR_TRACE` in the e2e tests (modules loaded per
   distribution, files extracted), the cache sync's outcomes in the contract, and one timing
   test: everything but the integrity check within 1.2× bare CPython.
-- **Comparisons with other tools** (PyInstaller onefile, a Rust and a Go CLI): Phase 10, once
-  the work is finished.
+- **Comparisons with other tools** (PyInstaller onefile, `pex --scie eager`, PyApp, a Rust and a
+  Go CLI): Phase 10, done 2026-10-18 (`docs/performance.md`, "Other tools").
 
 ## 9. CLI and config (v1)
+
+Status (v0.19.0): the synopsis and the table below match `cli.py` and `config.py`.
 
 ```
 fsbpyr build [PROJECT_DIR] [--entry NAME | module | module:func] [-o OUT]
@@ -1457,8 +1548,8 @@ interpreter-reexec = false    # Phase 6b, D23
 ```
 
 Environment variables honored by built apps (never `PYTHON*`):
-`FSBPYR_CACHE_DIR`, `FSBPYR_TRACE`, `FSBPYR_IMPORTTIME`, `FSBPYR_SELFTEST` (`FSBPYR_VERIFY`
-until D31).
+`FSBPYR_CACHE_DIR`, `FSBPYR_TRACE`, `FSBPYR_IMPORTTIME`, `FSBPYR_SELFTEST`, `FSBPYR_GC` (8d,
+0.13.0) (`FSBPYR_VERIFY` until D31).
 Whoever controls the environment can make an app import-only (`FSBPYR_SELFTEST`) or print
 import timings; this was accepted in the Phase 2 review, since that party could equally set
 `LD_PRELOAD`.
@@ -1467,30 +1558,31 @@ import timings; this was accepted in the Phase 2 review, since that party could 
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| No clang/lld ≥ 22 on the build host | Cannot build runtimes | apt.llvm.org packages; podman image with LLVM 22; fallback: build a PBS non-LTO variant with PBS's own build scripts |
-| Host-linked stub binds to host glibc symbols (S1: needs GLIBC_2.38) | Binaries need a recent glibc | Phase 6c (D25): link against an old glibc sysroot; report the effective glibc requirement at build time |
-| `marshal` output not deterministic (confirmed in S3) | Fixed-point gate fails | D16 canonicalizer; required round-trip and determinism tests |
-| Canonicalizer tied to marshal v5 / 3.14 code layout | Breaks on new Python versions | Version check at build time; Phase 9 adds layouts for other versions |
-| Packages that assume real files (`__file__` + `open`, `pkg_resources`) | Runtime failures | `get_data` mapping, FS_REQUIRED materialization, compatibility matrix |
-| Re-exec of `sys.executable` (multiprocessing, subprocess `-m`) | Child runs the app instead of Python | Multiprocessing command lines are recognized and authenticated (D22); `-m`/`-c` are opt-in and authenticated (D23, Phase 6b) |
-| Cache directory on a `noexec` mount | `dlopen` fails | Detect `ST_NOEXEC`, clear error, `FSBPYR_CACHE_DIR` |
-| Static PIE relocation cost | Startup | Measure PIE vs non-PIE in S1 |
-| Wheels not compliant with manylinux (local builds linking host libs) | Missing libs on targets | Fail the build with a named library; `--allow-system-lib` |
-| Staging install needs network or a warm cache | Builds fail offline | Staging is reused per lock hash; `--offline` passthrough; clear error naming the missing package |
-| pip projects without any lock | Builds not reproducible | Loud warning; the build-info JSON records "unlocked" plus the resolved versions; `fsbpyr inspect` shows it |
-| sdist-only dependencies | Build backends needed at staging time | Delegated to uv, as in any normal install; the error output is passed through verbatim |
-| Memory safety bugs in `_fsbpyr` | Security | Bounds checks, fuzzing, sanitizers (Phase 8) |
+| No clang/lld ≥ 22 on the build host | Cannot build runtimes | apt.llvm.org packages; podman image with LLVM 22; fallback: build a PBS non-LTO variant with PBS's own build scripts. **Status (0.18.1):** Debian 13.7+ ships clang/lld 22, which `make bootstrap` installs on trixie; elsewhere it builds in a trixie podman image (`Containerfile`); executables carry their runtime, so only a new runtime needs clang (D4); the fallback was not needed |
+| Host-linked stub binds to host glibc symbols (S1: needs GLIBC_2.38) | Binaries need a recent glibc | Phase 6c (D25): link against an old glibc sysroot; report the effective glibc requirement at build time. **Done** (Phase 6c, 2026-10-07): executables need at most glibc 2.28 and ran on 13 distributions; since 0.17.0 sdists built above 2.28 are rebuilt against the sysroot |
+| `marshal` output not deterministic (confirmed in S3) | Fixed-point gate fails | D16 canonicalizer; required round-trip and determinism tests. **Done** (Phase 1); stage2 == stage3 since Phase 4, checked by every `make bootstrap` (0.18.1); the same bytes on 1 or 8 cores (0.15.0) |
+| Canonicalizer tied to marshal v5 / 3.14 code layout | Breaks on new Python versions | Version check at build time; Phase 9 adds layouts for other versions. The check is in (`bytecode.SUPPORTED_PYTHON`); other layouts wait for Phase 9 |
+| Packages that assume real files (`__file__` + `open`, `pkg_resources`) | Runtime failures | `get_data` mapping, FS_REQUIRED materialization, compatibility matrix. **Done** (Phases 3, 6, 6b): six built-in fs-packages, on-demand extraction of paths (D27), `tests/e2e/test_compat.py` |
+| Re-exec of `sys.executable` (multiprocessing, subprocess `-m`) | Child runs the app instead of Python | Multiprocessing command lines are recognized and authenticated (D22); `-m`/`-c` are opt-in and authenticated (D23, Phase 6b). **Done**: D22 in Phase 6, D23 in 0.16.0 |
+| Cache directory on a `noexec` mount | `dlopen` fails | Detect `ST_NOEXEC`, clear error, `FSBPYR_CACHE_DIR`. **Done** (Phase 5): a failed `dlopen` from a `noexec` cache names the mount and `FSBPYR_CACHE_DIR` (`_fsbpyr_rt/native.py`) |
+| Static PIE relocation cost | Startup | Measure PIE vs non-PIE in S1. **Done**: about 0.3 ms per start (S1); PIE by default (D17) |
+| Wheels not compliant with manylinux (local builds linking host libs) | Missing libs on targets | Fail the build with a named library; `--allow-system-lib`. **Done** (Phase 5, `natives.py`) |
+| Staging install needs network or a warm cache | Builds fail offline | Staging is reused per lock hash; `--offline` passthrough; clear error naming the missing package. **Status:** staging is a fresh directory per build and uv's cache is what is reused (Phase 4); `--offline` is passed to uv (`staging.py`) |
+| pip projects without any lock | Builds not reproducible | Loud warning; the build-info JSON records "unlocked" plus the resolved versions; `fsbpyr inspect` shows it. **Done**: build_info's `lock` and `dists` (Phase 4, `build.py`), shown by `inspect --json` (0.3.0); the text report does not show them |
+| sdist-only dependencies | Build backends needed at staging time | Delegated to uv, as in any normal install; the error output is passed through verbatim. Since 0.17.0 one built above the glibc baseline is rebuilt against the sysroot |
+| Memory safety bugs in `_fsbpyr` | Security | Bounds checks, fuzzing, sanitizers (Phase 8). **Done** (8a, 0.10.0): edge-case tables, an ASan/UBSan runtime, libFuzzer (`tests/fuzz/`) |
 
-## 11. Resolved questions (owner, 2026-10-06)
+## 11. Resolved questions (owner, 2026-10-06 and 2026-10-18)
 
 | Question | Answer | Effect on this plan |
 |----------|--------|---------------------|
-| Toolchain for runtime stubs | Host clang/lld ≥ 22 (apt.llvm.org) | D2, §3.7, S1. A portable glibc baseline through a container link is deferred to Phase 9 |
+| Toolchain for runtime stubs | Host clang/lld ≥ 22 (apt.llvm.org) | D2, §3.7, S1. A portable glibc baseline through a container link is deferred to Phase 9 (moved to Phase 6c by D25 and done there: a pinned glibc 2.28 sysroot, no container; since 0.18.1 `make bootstrap` takes clang/lld 22 from Debian trixie, or a trixie podman image elsewhere) |
 | Python versions in the MVP | 3.14 only | D13. 3.12/3.13 runtimes are deferred to Phase 9 |
 | Project scope | Installable projects (pyproject.toml or setup.py). Loose scripts are out of scope | §3.6 step 4. Entry points come from `console_scripts` or `--entry` |
 | Dependency source | Fresh install from the lock into staging | D5, §3.6 step 3, Phase 4 exit criteria |
+| MVP scope (2026-10-18) | Linux x86-64 and CPython 3.14. More platforms, more Python versions and self-update come after the MVP | Phase 9 after the MVP; Phase 10 is the MVP's last phase |
+| Signed releases (2026-10-18) | Not MVP | D31's signature checked with an outside key comes after the MVP |
+| `fsbpyr` with no arguments (2026-10-18) | Prints the main help and nothing else: no build, no side effects for a new user | 0.19.0 does so (click's group help; exit status 2, as for any usage error, where `--help` exits 0). Traced with an empty `HOME`: two `lstat`s of the cache root, nothing written, no process started |
+| Multi-command executables (2026-10-18) | The app's `main` dispatches on `sys.argv[0]`; symlinks or hard links name the commands. No launcher change | Checked with 0.19.0: the launcher passes `argv` unchanged (`main.c`, `parse_argv = 0`), so a link's name reaches `sys.argv[0]`; `sys.executable` stays the real file |
 
-Still open (no decision needed before Phase 0):
-
-- Whether `fsbpyr` with no arguments inside a project directory should mean `fsbpyr build`
-  (A1 currently assumes an explicit `build` subcommand).
+Still open: nothing.

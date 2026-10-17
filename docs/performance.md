@@ -446,6 +446,120 @@ and the link prints nothing now.
 - **All 24 cores can be slower than the 8 performance cores.** Work of 8 threads spread over
   all 24 lands partly on efficiency cores: 120,000 files took 0.65 s on all, 0.56 s on CPUs 0–7.
 
+## Other tools (Phase 10, 0.19.0)
+
+The same three apps built four ways and run next to their venv: `hello` (prints its arguments),
+`heavy` (one native dependency per command) and aiagent (83 distributions). Every tool ran
+CPython 3.14.8 from python-build-standalone 20261003: fsbpyr 0.19.0-c3850b07; PyInstaller
+6.22.3 (hooks-contrib 2026.8) in onefile mode, from the app's venv on uv's CPython; pex 2.103.4
+with `--scie eager --venv` (scie-jump 1.13.0); PyApp 0.30.0 with an embedded Python that has
+the app and its locked dependencies installed (`PYAPP_DISTRIBUTION_PATH`, zstd -9,
+`PYAPP_FULL_ISOLATION`, `PYAPP_SKIP_INSTALL`), so that like the others it needs no network at
+run time. uv 0.13.1, cargo 1.95.0. Baselines: `rg --version` (ripgrep 14.1.1, Rust) and
+`gh --version` (gh 2.101.0, Go).
+
+Measured as above, with these differences: each tool ran with a `HOME` and `TMPDIR` of its own
+(`PATH=/usr/bin:/bin`); later runs are medians of 31 interleaved rounds after 3 warm-up runs of
+each variant; first runs are medians of 11 interleaved rounds, the tool's `HOME` emptied before
+each run; peak RSS is `ru_maxrss` from `wait4`, the largest process of the run (PyInstaller's
+onefile parent or its child), not their sum. All 24 cores, warm page cache; a cold page cache
+needs root and was not measured. Bare CPython: 5.2–5.4 ms in a check of 101 rounds; in the main
+run, where it always ran right after aiagent's `--help`, it took 10.3 ms.
+
+### What it took to get the venv's output
+
+fsbpyr, pex and PyApp printed what the venv printed for all 8 commands with no options beyond
+the build itself. PyInstaller needed two: `--collect-data heavy` (`heavy onnx` failed with
+`FileNotFoundError` for `relu_matmul.onnx`, read through `importlib.resources`) and
+`--copy-metadata aiagent` (`aiagent version` printed `0.0.0+unknown`). PyApp's
+`PYAPP_EXEC_SPEC` runs `import m;m.f()`, so the function's return value is dropped: `hello 7`
+exits 0 where the venv and fsbpyr exit 7.
+
+### Size and build
+
+Builds with warm caches (the second of two; the first pex build also downloaded the Python
+distribution). PyApp's time includes preparing its embedded Python (unpacking it, installing
+the app with uv, compressing it) and a `cargo build` per app.
+
+| App | | fsbpyr | PyInstaller onefile | pex `--scie eager` | PyApp |
+|---|---|---|---|---|---|
+| hello | size | 27.7 MB | 13.2 MB | 78.2 MB | 61.9 MB |
+| | build | 0.37 s | 5.84 s | 0.76 s | 8.89 s |
+| heavy | size | 77.1 MB | 51.0 MB | 127.0 MB | 102.6 MB |
+| | build | 1.72 s | 15.44 s | 5.82 s | 9.35 s |
+| aiagent | size | 150.2 MB | 101.6 MB | 184.9 MB | 148.5 MB |
+| | build | 5.93 s | 38.24 s | 14.95 s | 10.07 s |
+
+### Later runs
+
+Caches filled, page cache warm. Bare CPython 5.2–5.4 ms, `rg --version` 1.0 ms,
+`gh --version` 35.5 ms (46.5 MB).
+
+| Run | venv | fsbpyr | PyInstaller onefile | pex `--scie eager` | PyApp |
+|---|---|---|---|---|---|
+| `hello` | 7.9 ms | 8.1 ms | 132.3 ms | 10.1 ms | 7.8 ms |
+| `heavy json` | 25.5 ms | 30.8 ms | 461.7 ms | 32.1 ms | 25.5 ms |
+| `heavy crypto` | 35.6 ms | 41.7 ms | 464.7 ms | 40.0 ms | 32.3 ms |
+| `heavy model` | 70.4 ms | 75.1 ms | 497.1 ms | 73.9 ms | 67.6 ms |
+| `heavy np` | 56.5 ms | 62.3 ms | 486.4 ms | 57.3 ms | 54.8 ms |
+| `heavy onnx` | 96.8 ms | 112.0 ms | 521.1 ms | 98.9 ms | 95.9 ms |
+| `aiagent version` | 122.5 ms | 132.7 ms | 671.2 ms | 124.4 ms | 120.9 ms |
+| `aiagent --help` | 156.6 ms | 166.9 ms | 713.4 ms | 159.3 ms | 155.9 ms |
+
+Peak RSS of the same runs:
+
+| Run | venv | fsbpyr | PyInstaller onefile | pex `--scie eager` | PyApp |
+|---|---|---|---|---|---|
+| `hello` | 13.4 MB | 13.8 MB | 18.9 MB | 13.4 MB | 13.4 MB |
+| `heavy json` | 15.8 MB | 23.1 MB | 34.0 MB | 16.3 MB | 15.6 MB |
+| `heavy crypto` | 25.0 MB | 31.4 MB | 41.7 MB | 25.4 MB | 24.9 MB |
+| `heavy model` | 27.5 MB | 36.2 MB | 42.2 MB | 28.0 MB | 27.7 MB |
+| `heavy np` | 31.4 MB | 38.7 MB | 45.9 MB | 31.2 MB | 31.0 MB |
+| `heavy onnx` | 60.8 MB | 67.6 MB | 74.1 MB | 61.2 MB | 61.0 MB |
+| `aiagent version` | 40.2 MB | 54.5 MB | 52.1 MB | 40.3 MB | 40.1 MB |
+| `aiagent --help` | 47.0 MB | 62.6 MB | 58.5 MB | 47.3 MB | 47.0 MB |
+
+### First runs
+
+Each tool's `HOME` emptied before every run; what the run left on disk in brackets.
+
+| Run | fsbpyr | PyInstaller onefile | pex `--scie eager` | PyApp |
+|---|---|---|---|---|
+| `hello` | 13.1 ms (0) | 129.2 ms (0) | 1,389.6 ms (265.5 MB) | 278.6 ms (311.3 MB) |
+| `heavy np` | 87.8 ms (38.3 MB) | 486.8 ms (0) | 1,970.4 ms (462.5 MB) | 616.7 ms (501.4 MB) |
+| `heavy onnx` | 153.4 ms (69.0 MB) | 515.8 ms (0) | 2,001.9 ms (462.7 MB) | 673.8 ms (502.0 MB) |
+| `aiagent version` | 138.5 ms (7.4 MB) | 669.2 ms (0) | 3,185.8 ms (676.5 MB) | 1,171.9 ms (702.2 MB) |
+
+Peak RSS of a first run: fsbpyr 13.9 to 88.8 MB, PyInstaller 18.9 to 74.0 MB, pex 35.7 to
+63.4 MB, PyApp 65.3 to 150.8 MB. After all later runs of all three apps the caches held 96.5 MB
+(fsbpyr), 814.4 MB (pex) and 1,519.8 MB (PyApp: each app's unpacked Python plus its cached
+archive). PyInstaller keeps nothing, but every start writes a new `_MEIxxxxxx` directory and
+removes it at exit: 35.0 MB in 2 files for `hello` (`libpython3.14.so.1.0` and
+`base_library.zip`), 130.4 MB in 71 files for `heavy`, 178.6 MB in 2,115 files for aiagent
+(the archive's table of contents; `strace` showed the same two files for `hello`).
+
+### What the numbers say
+
+- **Later runs:** pex and PyApp run from the directories their first run unpacked, without
+  checks, and match the venv (pex +1 to +7 ms for its bootstrap). fsbpyr is 1.03 to 1.21× the
+  venv: +0.2 ms (`hello`) to +15 ms (`heavy onnx`), which is the integrity check (1.75 ms for
+  `hello`, 3.5 ms for `heavy`, 7.4 ms for aiagent, `FSBPYR_TRACE`) and the cache check of the
+  natives a run loads (see "The cache check"). PyInstaller onefile is 4.6 to 18× the venv: each
+  start unpacks 35 to 179 MB.
+- **First runs:** fsbpyr's are 5 ms (`hello`) to 41 ms (`heavy onnx`) above its later runs,
+  since it extracts only the natives a run imports. PyApp unpacks the whole Python and every
+  dependency first (0.28 to 1.17 s), pex unpacks the interpreter and builds a venv (1.4 to
+  3.2 s).
+- **Disk:** fsbpyr keeps only extracted natives (0 to 69 MB per app here), pex and PyApp a
+  full unpacked environment per app (265 to 702 MB).
+- **Memory:** fsbpyr's later runs use 0.4 to 15.6 MB more than the venv (its own mapped pages;
+  see D36); pex and PyApp match the venv, PyInstaller uses 5 to 18 MB more.
+- **Size and build:** PyInstaller's files are the smallest (only what its import analysis finds)
+  and its builds of `heavy` and aiagent the slowest; fsbpyr builds fastest; pex's files are the
+  largest.
+- **Next to compiled CLIs:** fsbpyr's `hello` (8.1 ms) is slower than ripgrep's
+  `--version` (1.0 ms) and faster than gh's (35.5 ms).
+
 ## Where to look when a start gets slower
 
 1. `FSBPYR_TRACE=1 app ...`: `integrity_ns` (the whole-file check), `decompressed_bytes` and
