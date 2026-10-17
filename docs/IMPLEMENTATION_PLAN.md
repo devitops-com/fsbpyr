@@ -1436,9 +1436,10 @@ write, a truncated binary.
 
 - **Self-update first** (S; owner decision 2026-10-18, low-hanging fruit). An explicit command,
   never part of another (plain `fsbpyr` stays help only), asks GitHub for the latest release
-  and, when its `vX.Y.Z` is newer than its own version, downloads the release's `fsbpyr` into
-  the directory of the running executable under a temporary name, sets its execute bit and runs
-  `inspect --verify` on it; when that exits 0 (it exits 1 for a damaged or truncated file,
+  and, when its `vX.Y.Z` is newer than its own version, downloads its own asset of the release
+  (`fsbpyr`, or `fsbpyr-3.X` once there are variants, see below) into the directory of the
+  running executable under a temporary name, sets its execute bit and runs `inspect --verify`
+  on it; when that exits 0 (it exits 1 for a damaged or truncated file,
   checked with 0.19.0), the file is renamed to the executable's name: one `rename(2)` in one
   directory, atomic, and a running fsbpyr keeps its old inode. Settled with the owner
   (2026-10-18):
@@ -1484,14 +1485,26 @@ write, a truncated binary.
     the highest below it (`<3.14` gives 3.13); a pinned minor as pinned (`==3.12` gives 3.12);
     always that minor's newest patch release; no supported version is an error naming the
     supported ones (0.19.0 already stops on a `requires-python` excluding 3.14, checked
-    2026-10-18). Open: whether a `.python-version` pin inside the range wins over this (today
-    it only warns).
+    2026-10-18). Settled with the owner (2026-10-18): the version comes from, strongest
+    first, `--python X.Y` on the command line, then `python = "X.Y"` in `[tool.fsbpyr]` (both
+    an error when unsupported or outside `requires-python`), then a `.python-version` pin when
+    it names a supported version inside the range (the Python the project is tested with; a pin
+    outside the range is an error, an unsupported one a warning before the rule applies), then
+    the rule above. The tests force a version through `--python`.
   - **Dispatch:** `fsbpyr build` picks the version; when it is not its own, it fetches the
     matching variant of its own release the way self-update fetches (the `.xz`, unpacked with
     `lzma`, `inspect --verify`), keeps it in its cache and runs it with the same arguments, so
     users install one fsbpyr and download only the variants their projects need; once cached,
-    builds work offline. Open: the asset names (`fsbpyr` staying the newest version's,
-    `fsbpyr-3.X` the others?) and what a developer build does when it needs another version.
+    builds work offline. Settled with the owner (2026-10-18):
+    - assets: `fsbpyr` and `fsbpyr.xz` stay the newest version's (3.14 now), so the README's
+      `curl` and self-update keep their names; the others are `fsbpyr-3.12` and `fsbpyr-3.13`,
+      each with its `.xz`. A variant updates itself to the same variant of a newer release, so
+      an executable records which asset it was released as; when 3.15 becomes the newest,
+      `fsbpyr` moves to 3.15 and `fsbpyr-3.14` appears;
+    - a developer build (`untagged-<commit>`) that needs another version stops with an error
+      saying how to build that variant locally (`make build` with a Python version, to add);
+      it never fetches a released variant, which would mix released code into a development
+      build.
   - **Steps:**
     1. Spike, as Phase 0 did for 3.14: PBS `pgo+lto-full` for 3.12 and 3.13 (LLVM
        bitcode objects, `PYTHON.json` link inputs and inittab, the built-in extensions, which
