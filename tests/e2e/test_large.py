@@ -1,8 +1,9 @@
 """Past every 32-bit size, within 1 GB of resident memory throughout (D38, Phase 8c exit): a
 package with a 5 GiB file (sparse, of zeros) builds, compressed as a build compresses it or
 stored raw (a 5 GiB executable, sparse as well), checks itself, streams the file and extracts it,
-and `fsbpyr inspect --verify` reads it, none of them taking more than a fraction of a GB. Before
-each release the same runs with 1 TB (docs/IMPLEMENTATION_PLAN.md, Phase 8)."""
+and `fsbpyr inspect --verify` reads it, none of them taking more than a fraction of a GB. On
+demand, the same runs with 1 TB: FSBPYR_LARGE_SIZE=1099511627776 (docs/IMPLEMENTATION_PLAN.md,
+Phase 8c)."""
 
 import json
 import os

@@ -1066,8 +1066,9 @@ item below gets explicit tests in the normal test run. Steps, each released on i
 out the tables, streams the blob data after them and hashes the result in a second pass; zero
 runs become holes. The reader, `inspect --verify` and the runtime's stdlib copy stream as well.
 A 1 TB executable (a 1 TB file of zeros stored raw, so the file is sparse) builds, checks
-itself, extracts and loads within 1 GB of RSS: run before each release; the normal test run does
-the same with 5 GiB (past every 32-bit size).
+itself, extracts and loads within 1 GB of RSS: run before each release (on demand only since
+2026-10-18, owner decision: `FSBPYR_LARGE_SIZE=1099511627776`, 22–35 min); the normal test run
+does the same with 5 GiB (past every 32-bit size).
 - **Done (0.12.0):**
   - blobs hold their bytes in memory or as an Extent (a range of a file: a staged file's own
     bytes, or the build's spill); an Extent's identity is the tree digest of its bytes, and the
