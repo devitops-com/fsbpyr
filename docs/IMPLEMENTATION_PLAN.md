@@ -1439,17 +1439,29 @@ write, a truncated binary.
   the directory of the running executable under a temporary name, sets its execute bit and runs
   `inspect --verify` on it; when that exits 0 (it exits 1 for a damaged or truncated file,
   checked with 0.19.0), the file is renamed to the executable's name: one `rename(2)` in one
-  directory, atomic, and a running fsbpyr keeps its old inode. To settle in the design:
-  - who verifies: the running fsbpyr (`inspect --verify NEW`, in-process, before any byte of
-    the new file runs) rather than the new file checking itself;
-  - the command's name (`fsbpyr self update`, as PyApp has it, or `fsbpyr update`);
-  - `fsbpyr.xz` halves the download (stdlib `lzma`);
+  directory, atomic, and a running fsbpyr keeps its old inode. Settled with the owner
+  (2026-10-18); what is marked "proposed" is still open:
+  - the command is `fsbpyr self update` (as in uv and rustup; `fsbpyr update` would read as
+    updating the project);
+  - the running fsbpyr verifies the download (`inspect --verify NEW`, in-process), so no byte
+    of the new file runs before it passes;
+  - it downloads `fsbpyr.xz` (half the size) and unpacks it in-process with the stdlib `lzma`,
+    which every fsbpyr runtime carries: no `xz` on the host, no command of its own (checked
+    2026-10-18: an fsbpyr 0.19.0 app unpacked a release-style `xz --x86 --lzma2=preset=9e`
+    file of 14.0 MB in 0.18 s, 50 MB peak RSS, byte for byte);
   - the target is the running executable's real path (it may be renamed or reached through a
     symlink), with its mode kept; a directory fsbpyr cannot write is an error saying how to
-    update instead; an untagged build updates only when forced;
-  - the man page and completions `make install` placed stay as they were: print a hint;
-  - `--verify` detects damage, not tampering (D31): authenticity rests on HTTPS from GitHub
-    until signed releases.
+    update instead;
+  - releases are always tagged, so the version check compares two `vX.Y.Z`; proposed: a
+    running untagged build (`make build`) counts as older than any release;
+  - the man page and the shell completions are updated too. Proposed: those found where
+    `make install` puts them under the executable's prefix (`<prefix>/bin/fsbpyr` gives
+    `<prefix>/share/man/man1/fsbpyr.1`, `share/bash-completion/completions/fsbpyr`,
+    `share/zsh/site-functions/_fsbpyr`, `share/fish/vendor_completions.d/fsbpyr.fish`) are
+    written again by the new executable (`man`, `completion SHELL`), each under a temporary
+    name and renamed into place after the executable; ones installed elsewhere get a hint;
+  - signing changes nothing here: once releases are signed (D31), `inspect --verify` checks the
+    signature as well, and self-update gains tampering detection with it.
 - Runtimes for 3.12/3.13 (vendored zstd decompressor where PBS has no `libzstd.a`) and a
   per-runtime **compile-helper binary** (stub + stdlib + compile entry), so builds never depend
   on the venv interpreter.
