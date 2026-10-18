@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-18
+
 ### Changed
 - **Plain `fsbpyr` prints its help and exits 0.** With no command it printed the same help to
   stderr and exited 2, click's status for a usage error; it now prints it to stdout, as
