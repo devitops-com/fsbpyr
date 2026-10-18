@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.17, 2026-10-18 (fsbpyr 0.19.0). Phases 0–8, 6b and 6c are complete (Phase 7 reduced by D37; Phase 8 in six steps, 8a–8f) and Phase 10, the MVP's last, is done; Phase 9 (self-update first, then more Python versions with one fsbpyr per version, then more platforms) and signed releases come after the MVP (owner decision 2026-10-18); uv is required (D26); the CLI runs on click, which also gives the completions and the man page (D40); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.18, 2026-10-18 (fsbpyr 0.20.0). Phases 0–8, 6b and 6c are complete (Phase 7 reduced by D37; Phase 8 in six steps, 8a–8f) and Phase 10, the MVP's last, is done; Phase 9 (self-update first, then more Python versions with one fsbpyr per version, then Linux aarch64 and musl and macOS on Apple Silicon; no Windows) and signed releases come after the MVP (owner decision 2026-10-18); uv is required (D26); the CLI runs on click, which also gives the completions and the man page (D40); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -1530,8 +1530,22 @@ write, a truncated binary.
     stages and builds and runs the fixture apps; a project whose `requires-python` excludes
     3.14 builds through the 3.14 fsbpyr's dispatch.
 - (The portable glibc baseline moved to Phase 6c, D25.)
-- Then Linux aarch64, macOS (payload in a Mach-O segment so codesign works) and Windows
-  (PE resource or overlay, explicit DLL search directories).
+- **More platforms** (third; owner decisions 2026-10-18): Linux on aarch64 as well as x86-64,
+  each with glibc (the 2.28 baseline, D25) and with musl; macOS on Apple Silicon only (arm64;
+  the payload in a Mach-O segment so `codesign` works). No Windows: dropped entirely. Per
+  target, to settle in a spike first:
+  - a PBS runtime that D2's static link works with (for musl: whether PBS's builds can load
+    extension modules, which needs a dynamically linked launcher), and a sysroot (aarch64
+    glibc 2.28; musl);
+  - the launcher's Linux-only calls (`/proc/self/exe`, `O_TMPFILE`, `flock`, `getauxval`,
+    `ioprio`, `pthread_tryjoin_np`) on macOS;
+  - the native analysis, ELF only today (`elf.py`, `natives.py`): Mach-O on macOS; musllinux
+    wheels and musl's loader rules on musl;
+  - CI runners (Linux arm64, macOS arm64), and a reproduction check per target.
+
+  With one fsbpyr per Python version a release carries 3 versions × 5 targets = 15
+  executables, each with its `.xz` and attestation. Open: the asset names across targets
+  (`fsbpyr` is Linux x86-64 glibc today) and how the README's `curl` picks one.
 
 ### Phase 10 — Comparisons with other tools (M, last; D37) — **DONE 2026-10-18**
 
@@ -1677,6 +1691,7 @@ import timings; this was accepted in the Phase 2 review, since that party could 
 | MVP scope (2026-10-18) | Linux x86-64 and CPython 3.14. More platforms, more Python versions and self-update come after the MVP | Phase 9 after the MVP, self-update first; Phase 10 is the MVP's last phase |
 | Signed releases (2026-10-18) | Not MVP | D31's signature checked with an outside key comes after the MVP |
 | `fsbpyr` with no arguments (2026-10-18) | Prints the main help and nothing else: no build, no side effects for a new user | It prints the help as `--help` does, on stdout, and exits 0 (owner decision 2026-10-18; 0.19.0 printed it on stderr with click's usage status 2). Traced with 0.19.0 and an empty `HOME`: two `lstat`s of the cache root, nothing written, no process started |
+| Platforms after the MVP (2026-10-18) | Linux x86-64 and aarch64, each with glibc and musl; macOS on Apple Silicon only; no Windows | Phase 9, third |
 | Multi-command executables (2026-10-18) | The app's `main` dispatches on `sys.argv[0]`; symlinks or hard links name the commands. No launcher change | Checked with 0.19.0: the launcher passes `argv` unchanged (`main.c`, `parse_argv = 0`), so a link's name reaches `sys.argv[0]`; `sys.executable` stays the real file |
 
-Still open: nothing.
+Still open: Phase 9's asset names across platforms, and how the README's `curl` picks one.
