@@ -2,9 +2,10 @@
 
 Fast single-binary Python CLI runtime: `fsbpyr build` turns a Python project (uv or pip) into one
 executable that carries CPython 3.14, the project and its locked dependencies. The executable
-needs nothing on the target machine but Linux x86-64 with glibc 2.28 or newer: no Python, no
-virtual environment, no installation step. Modules are imported straight from the file, so
-startup stays close to plain CPython.
+needs nothing on the target machine but Linux x86-64 with glibc 2.28 or newer (the baseline
+every build targets and the tests run on; `fsbpyr inspect` shows the glibc an executable
+actually needs, which can be older): no Python, no virtual environment, no installation step.
+Modules are imported straight from the file, so startup stays close to plain CPython.
 
 ## Getting fsbpyr
 
@@ -223,6 +224,13 @@ zstd level and, with native files, `xz -6` after `--best-compression`), the file
 bundled shared libraries and extension modules, and the top-level modules of each distribution,
 in as many columns as the terminal fits. `--all-modules` lists every module, `--json` prints
 everything as JSON, and `--verify` recomputes the digest.
+
+The glibc shown (`glibc >= X.Y`) is the newest glibc symbol version the launcher and the
+bundled native files use, so the oldest glibc this executable starts on. It can be older
+than the 2.28 baseline: the launcher itself needs 2.25 (`getentropy`), so an app without
+native files shows `glibc >= 2.25`, fsbpyr's own executable included. Native files from
+wheels or from the glibc 2.28 sysroot need at most 2.28; one built against the host's glibc
+can need more, and the build warns about it. Only 2.28 and newer is tested.
 
 ## Shell completion and the man page
 
