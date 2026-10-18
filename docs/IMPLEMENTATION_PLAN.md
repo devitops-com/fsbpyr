@@ -1544,8 +1544,42 @@ write, a truncated binary.
   - CI runners (Linux arm64, macOS arm64), and a reproduction check per target.
 
   With one fsbpyr per Python version a release carries 3 versions × 5 targets = 15
-  executables, each with its `.xz` and attestation. Open: the asset names across targets
-  (`fsbpyr` is Linux x86-64 glibc today) and how the README's `curl` picks one.
+  executables, each with its `.xz` and attestation. Settled with the owner (2026-10-18):
+  - **asset names** carry the target, in uv's and PBS's triples: for the newest Python
+    `fsbpyr-x86_64-linux-gnu`, `fsbpyr-aarch64-linux-gnu`, `fsbpyr-x86_64-linux-musl`,
+    `fsbpyr-aarch64-linux-musl` and `fsbpyr-aarch64-macos`; for the others the version too
+    (`fsbpyr-3.12-aarch64-linux-musl`); each with its `.xz`. `fsbpyr` and `fsbpyr.xz` stay,
+    copies of `fsbpyr-x86_64-linux-gnu`, so the links in use keep working;
+  - **an installer, `install.sh`, modelled on uv's** (`curl -LsSf
+    https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh | sh`, or a
+    tag's own `releases/download/vX.Y.Z/install.sh` for that version), built and attested by
+    the release workflow with each release. From uv's installer (cargo-dist's, read
+    2026-10-18) and aiagent's bootstrap:
+    - POSIX `sh` (dash, busybox); the release's version and every asset's SHA-256 written
+      into it when it is built, so a download is checked before it is used, as uv's does;
+    - it detects the target (`uname -s`, `uname -m`, musl when `ldd --version` says so, as
+      uv's), checks the glibc the release records (`inspect`: `glibc >= X.Y`) against the
+      host's, and stops naming the targets a release has when it has none for this host;
+    - downloads with `curl` (HTTPS only, `--proto '=https' --tlsv1.2`) or else `wget`, the
+      `.xz` when `xz` is there, the uncompressed asset otherwise; then runs
+      `inspect --verify` on the new file before installing it;
+    - `FSBPYR_VERIFY=1` also checks the GitHub attestation with `gh attestation verify` and
+      stops when it fails or `gh` is missing (fail closed, as aiagent's `AIAGENT_VERIFY`);
+    - installs into the first of `$FSBPYR_INSTALL_DIR`, `$XDG_BIN_HOME`,
+      `$XDG_DATA_HOME/../bin` and `$HOME/.local/bin` (uv's order), under a temporary name
+      and renamed into place; the man page and the completions go where `make install` puts
+      them under that directory's prefix, written by the new executable;
+    - when the directory is not on `PATH`, writes an `env` script next to the executable
+      (`env.fish` for fish) and sources it from `.profile`, `.bashrc`, `.zshrc` and fish's
+      `conf.d`, the scheme uv shares with rustup (an `env` already there, uv's included, is
+      reused); `--no-modify-path` or `FSBPYR_NO_MODIFY_PATH=1` leaves the shell files alone;
+      in GitHub Actions it appends the directory to `$GITHUB_PATH`;
+    - options as uv's: `-h/--help`, `-q/--quiet`, `-v/--verbose`, `--no-modify-path`
+      (passed as `curl ... | sh -s -- --no-modify-path`); messages as uv's (`downloading
+      fsbpyr X.Y.Z <target>`, `installing to <dir>`, `everything's installed!`);
+    - the README's "Getting fsbpyr" leads with it; the plain `curl` of an asset stays as
+      the manual way. The installer is not tied to the new targets: it can ship for today's
+      single one first.
 
 ### Phase 10 — Comparisons with other tools (M, last; D37) — **DONE 2026-10-18**
 
@@ -1694,4 +1728,4 @@ import timings; this was accepted in the Phase 2 review, since that party could 
 | Platforms after the MVP (2026-10-18) | Linux x86-64 and aarch64, each with glibc and musl; macOS on Apple Silicon only; no Windows | Phase 9, third |
 | Multi-command executables (2026-10-18) | The app's `main` dispatches on `sys.argv[0]`; symlinks or hard links name the commands. No launcher change | Checked with 0.19.0: the launcher passes `argv` unchanged (`main.c`, `parse_argv = 0`), so a link's name reaches `sys.argv[0]`; `sys.executable` stays the real file |
 
-Still open: Phase 9's asset names across platforms, and how the README's `curl` picks one.
+Still open: nothing.
