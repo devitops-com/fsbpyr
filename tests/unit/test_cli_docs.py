@@ -276,8 +276,14 @@ def test_readme_quickstart_runs_command_lines_fsbpyr_accepts(
 def test_readme_release_verification_names_no_version() -> None:
     """It checks the latest release: a named one goes stale or is withdrawn, as 0.18.2 was."""
     readme = (ROOT / "README.md").read_text()
-    section = re.split(r"\n#{1,3} ", readme.partition("\n### Verifying a release\n")[2])[0]
-    blocks = re.findall(r"^```\n(.*?)^```$", section, re.MULTILINE | re.DOTALL)
+    section = readme.partition("\n### Verifying a release\n")[2]
+    blocks = []
+    # Blocks and headings in order: a block is matched whole, so a shell comment in it is no
+    # heading; the first heading outside one ends the section.
+    for match in re.finditer(r"^```\w*\n(.*?)^```$|^#{1,3} ", section, re.MULTILINE | re.DOTALL):
+        if match[1] is None:
+            break
+        blocks.append(match[1])
 
     assert blocks
     assert re.findall(r"v\d+\.\d+\.\d+", "".join(blocks)) == []

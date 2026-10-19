@@ -481,6 +481,7 @@ def test_release_reports_a_failed_workflow_run_with_its_recovery(
     assert f"gh run rerun {RUN_ID} --failed" in result.stderr
     assert f"this version is burned: fix it on main and release {following}" in result.stderr
     assert f"make release VERSION={following}" in result.stderr
+    assert f"the [{VERSION}] section of CHANGELOG.md back into [Unreleased]" in result.stderr
     assert "refs/tags" not in result.stderr
     assert "git tag" not in result.stderr
 

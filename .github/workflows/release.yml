@@ -186,9 +186,10 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: bash tools/release/release-notes.sh "${TAG#v}" > "$RUNNER_TEMP/notes.md"
 
-      # Verify with (or fsbpyr.xz): gh attestation verify fsbpyr --repo devitops-com/fsbpyr
-      #   --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml
+      # Verify with: gh attestation verify fsbpyr --repo devitops-com/fsbpyr \
+      #   --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml \
       #   --source-ref "refs/tags/$tag"
+      # (or fsbpyr.xz)
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -196,7 +197,8 @@ jobs:
             dist/fsbpyr
             dist/fsbpyr.xz
 
-      # `sha256sum -c SHA256SUMS` checks a download against the digests the attestation signs.
+      # `sha256sum -c --ignore-missing SHA256SUMS` checks a download against the digests the
+      # attestation signs.
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -428,14 +428,19 @@ A rebuild checks the bytes themselves, at two levels:
   stub, CPython and the standard library: an fsbpyr executable builds with the runtime it
   carries, copying them from itself ([D4](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)), so a
   changed stub would pass this check.
-- **(b) The runtime.** Only an independent rebuild from source proves the stub, CPython and the
-  standard library. CI's release is `make build`'s output, so on a clean checkout of the tag
-  `make bootstrap` and `make build` give the released bytes, with the release's uv and clang
-  (`readelf -p .comment fsbpyr` names the Debian clang that built the launcher). Both targets
-  update uv to the newest, though, so run `fsbpyr build` directly: in the checkout above, the
-  runtime is built from source (the launcher is linked with clang and lld 22, which `make
-  bootstrap` installs on Debian trixie), fsbpyr from source builds `stage1`, and `stage1`
-  builds the file to compare. (b) is not yet checked in CI.
+- **(b) The runtime.** Only an independent rebuild checks the stub, CPython and the standard
+  library. It compiles the launcher from the tag's sources and links it with clang and lld 22
+  (which `make bootstrap` installs on Debian trixie); CPython, which the launcher links in, and
+  the standard library, which is compiled to bytecode, come from the python-build-standalone
+  archive that the tag pins by SHA-256. So (b) proves the stub, and that CPython and the
+  standard library are that pinned build; it does not compile CPython. CI's release is
+  `make build`'s output, so on a clean checkout of the tag `make bootstrap` and `make build`
+  give the released bytes, with the release's uv and clang (`readelf -p .comment fsbpyr` names
+  the Debian clang that built the launcher). Both targets update uv to the newest, though, so
+  run fsbpyr from source directly in the checkout above: it builds the runtime, then `stage1`,
+  and `stage1` builds the file to compare. A runtime already in the cache under the same id is
+  reused, not built again; an empty cache (`XDG_CACHE_HOME` set to a new directory) builds it
+  afresh. (b) is not yet checked in CI.
 
 ```
 cd src
