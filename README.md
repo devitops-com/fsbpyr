@@ -7,6 +7,18 @@ every build targets and the tests run on; `fsbpyr inspect` shows the glibc an ex
 actually needs, which can be older): no Python, no virtual environment, no installation step.
 Modules are imported straight from the file, so startup stays close to plain CPython.
 
+## Supported targets
+
+- **Python:** apps run CPython 3.14.8, the version every executable embeds, so a project's
+  `requires-python` must admit 3.14.
+- **Platform:** Linux x86-64 with glibc only. On a musl system such as Alpine the glibc loader
+  the executable names does not exist, and the shell reports the executable as "not found"
+  although the file is there.
+- **Interpreter build:** CPython with the GIL only; the launcher refuses to build for a
+  free-threaded CPython ([D35](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)).
+- **Planned** in [Phase 9](docs/IMPLEMENTATION_PLAN.md), after the MVP: Python 3.12 and 3.13
+  (one fsbpyr per Python version), then Linux aarch64, musl and macOS arm64.
+
 ## Getting fsbpyr
 
 fsbpyr builds itself into a single executable, and that executable is the easiest way to run

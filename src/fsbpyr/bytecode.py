@@ -280,6 +280,6 @@ def canonicalize(data: bytes) -> bytes:
 
 def dumps(code: CodeType) -> bytes:
     """``marshal.dumps`` followed by ``canonicalize``; only for the supported CPython version."""
-    if sys.version_info[:2] != SUPPORTED_PYTHON:  # pragma: no cover - requires-python pins 3.14
+    if sys.version_info[:2] != SUPPORTED_PYTHON:  # pragma: no cover - the CLI stops other Pythons
         raise BytecodeError(f"canonical bytecode supports CPython {SUPPORTED_PYTHON} only")
     return canonicalize(marshal.dumps(code))
