@@ -42,6 +42,10 @@ branch = true
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
+# fail_under is compared with the total rounded to this many decimals (at 0, 92.5% passes 93)
+precision = 2
+# make test-ci's total minus 1, and never below IMPLEMENTATION_PLAN.md §7's 80
+fail_under = 92.75
 
 [tool.ruff]
 line-length = 100

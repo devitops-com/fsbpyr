@@ -150,6 +150,7 @@ deploy/*-ca-key.pem
 # fsbpyr spike build outputs
 spikes/.out/
 .coverage
+coverage.xml
 
 # fsbpyr test fixtures carry their own lock and requirements files
 !tests/fixtures/projects/**/requirements.txt

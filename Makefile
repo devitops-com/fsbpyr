@@ -76,11 +76,12 @@ test: ## Run the test suite
 # with the release launcher, and a real executable's boot imports and cache-sync contract
 # (D37). Left to `make test`: the ASan/UBSan launcher variant, the portability tests (podman)
 # and the other end-to-end tests. -k also matches marker names, so it keeps the release half of
-# the tests marked `sanitized`.
+# the tests marked `sanitized`. Branch coverage below pyproject.toml's fail_under fails the run;
+# coverage.xml is the report CI keeps.
 test-ci: ## Run the core of the test suite, as CI does
 	$(UV) run --locked pytest tests/unit tests/integration tests/e2e/test_build.py \
 		tests/e2e/test_runtime_app.py tests/e2e/test_imports.py \
-		-k "not (sanitized and not release)"
+		-k "not (sanitized and not release)" --cov --cov-report=term --cov-report=xml
 
 check: ## Static checks: ruff + mypy
 	$(UV) run --locked ruff check
