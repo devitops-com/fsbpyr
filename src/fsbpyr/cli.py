@@ -93,11 +93,13 @@ def cli(ctx: click.Context) -> None:
               help="keep the `.py` sources (default) or leave them out: smaller, but tracebacks "
                    "show no source lines and `inspect.getsource()` fails")  # fmt: skip
 @click.option("--fast-compression/--no-fast-compression", default=None,
-              help="zstd level 3 instead of 9: a faster build, up to ~8% larger for large apps "
-                   "(the standard library's files of 64 KiB and more stay level 9)")  # fmt: skip
+              help="zstd level 3 instead of 9 (the standard library's files of 64 KiB and more "
+                   "stay level 9): a faster build, up to ~9% larger for large apps (measured "
+                   "with 0.14.0 and 0.15.0, docs/performance.md)")  # fmt: skip
 @click.option("--best-compression/--no-best-compression", default=None,
               help="native files (extension modules and shared libraries, nothing else) as xz "
-                   "-6 instead of zstd 9: about 6.5% smaller for aiagent, no change for "
+                   "-6 instead of zstd 9: about 11% smaller for an app with numpy and "
+                   "onnxruntime (measured with 0.20.0, docs/performance.md), no change for "
                    "pure-Python apps, a slower build, and a slower first run, which decodes "
                    "them into the cache; not with `--fast-compression`")  # fmt: skip
 @click.option("--hints/--no-hints", default=None,
@@ -308,9 +310,9 @@ EXAMPLES = (
     ("fsbpyr build --source",
      "Keep the sources, for a build to debug, of a project whose `pyproject.toml` sets "
      "`include-source = false`."),
-    ("fsbpyr build --fs-package mypkg.templates --allow-system-lib libGL.so.1",
+    ("fsbpyr build --fs-package mypkg.templates --allow-system-lib libcuda.so.1",
      "Put the files of `mypkg.templates` on disk for code that opens them by path, and let "
-     "native code load `libGL.so.1` from the host."),
+     "native code load the GPU driver's `libcuda.so.1` from the host."),
     ("fsbpyr inspect --verify ~/.local/bin/mytool",
      "Show what an executable was built from, and recompute its digest."),
     ("fsbpyr inspect --json --all-modules dist/mytool",

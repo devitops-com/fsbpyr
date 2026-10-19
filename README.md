@@ -4,7 +4,8 @@ Fast single-binary Python CLI runtime: `fsbpyr build` turns a Python project (uv
 executable that carries CPython 3.14, the project and its locked dependencies. The executable
 needs nothing on the target machine but Linux x86-64 with glibc 2.28 or newer (the baseline
 every build targets and the tests run on; `fsbpyr inspect` shows the glibc an executable
-actually needs, which can be older): no Python, no virtual environment, no installation step.
+actually needs, which can be older), plus the system libraries its native dependencies link
+(often libstdc++ and libgcc_s): no Python, no virtual environment, no installation step.
 Modules are imported straight from the file, so startup stays close to plain CPython.
 
 ## Quickstart
@@ -93,8 +94,8 @@ offline, the host's build is packaged and the build warns which glibc it needs.
 | `--allow-system-lib SONAME` | let native code use this library from the host (repeat) |
 | `--offline / --no-offline` | no network access during the build |
 | `--source / --no-source` | keep the `.py` sources (default) or leave them out: smaller, but tracebacks show no source lines and `inspect.getsource()` fails |
-| `--fast-compression / --no-fast-compression` | zstd level 3 instead of 9: a faster build, up to ~8% larger for large apps (the standard library's files of 64 KiB and more stay level 9) |
-| `--best-compression / --no-best-compression` | native files (extension modules and shared libraries, nothing else) as xz -6 instead of zstd 9: about 6.5% smaller for aiagent, no change for pure-Python apps, a slower build, and a slower first run, which decodes them into the cache; not with `--fast-compression` |
+| `--fast-compression / --no-fast-compression` | zstd level 3 instead of 9 (the standard library's files of 64 KiB and more stay level 9): a faster build, up to ~9% larger for large apps (measured with 0.14.0 and 0.15.0, docs/performance.md) |
+| `--best-compression / --no-best-compression` | native files (extension modules and shared libraries, nothing else) as xz -6 instead of zstd 9: about 11% smaller for an app with numpy and onnxruntime (measured with 0.20.0, docs/performance.md), no change for pure-Python apps, a slower build, and a slower first run, which decodes them into the cache; not with `--fast-compression` |
 | `--hints / --no-hints` | also list packages that may read files next to `__file__` (a guess) |
 | `--interpreter-reexec / --no-interpreter-reexec` | let the app's own children started as `sys.executable -m MODULE` or `-c CODE` run as Python |
 | `--smoke / --no-smoke` | run the new executable once as a smoke test (default) or skip it |
@@ -102,7 +103,10 @@ offline, the host's build is packaged and the build warns which glibc it needs.
 `fsbpyr build -h` shows the same list. [Leaving out sources](#leaving-out-sources) explains
 `--no-source`, [At run time](#at-run-time) `--fs-package` and the cache that
 `--best-compression` decodes into, and [Helper interpreters](#helper-interpreters)
-`--interpreter-reexec`.
+`--interpreter-reexec`. The sizes are measured: `--fast-compression`'s on a torch app
+([docs/performance.md](docs/performance.md#the-same-app-with-0140-and-0150-d39)),
+`--best-compression`'s on the [`heavy`](tests/fixtures/projects/heavy) test app
+([docs/performance.md](docs/performance.md#build-options-0200)).
 
 The same settings can live in the project's `pyproject.toml`; command-line options win, both
 ways for on/off settings (`--source` keeps the sources of a project that sets
@@ -119,7 +123,7 @@ include-source = false       # same as --no-source
 fast-compression = true      # same as --fast-compression
 # best-compression = true    # same as --best-compression (not both)
 fs-packages = ["mypkg.templates"]
-allow-system-libs = ["libGL.so.1"]
+allow-system-libs = ["libcuda.so.1"]
 interpreter-reexec = true    # same as --interpreter-reexec
 ```
 
@@ -129,8 +133,11 @@ By default an executable holds every module twice: as compiled bytecode, which i
 as its `.py` source, which is only read when something asks for it. `--no-source` (or
 `include-source = false`) leaves the sources out of the app and its dependencies.
 
-**What you gain.** Size. For aiagent (79 distributions) the executable shrinks from 157.4 MB to
-140.0 MB. Startup does not change (measured): sources are never read on the normal path.
+**What you gain.** Size. For the [`heavy`](tests/fixtures/projects/heavy) test app (15
+distributions, most of their size native libraries) the executable shrinks from 77.1 MB to
+73.7 MB, measured with 0.20.0 ([docs/performance.md](docs/performance.md#build-options-0200));
+an app with more Python code saves more. Startup does not change (measured): sources are never
+read on the normal path.
 
 **What changes.** Everything that needs the text of a module:
 
@@ -205,11 +212,12 @@ fsbpyr: cannot start /usr/local/bin/app: integrity check failed: the file was mo
 
 The check hashes the file with SHA-256 on up to 8 threads, never more than the cores it may
 use. On a Core Ultra 9 285 with the file in the page cache it takes 2.0 ms for a 28 MB app and
-8.9 ms for 148 MB (one core: 6.9 and 38 ms; without SHA instructions: 7.1 and 30 ms). The first
-start after a reboot also reads the whole file from disk. `FSBPYR_TRACE=1` reports the time as
-`integrity_ns`. Files extracted to the cache are hashed again by every process, once, before it
-first uses them, with the same digest and the same multithreaded routine; a changed one is
-reported and restored.
+8.9 ms for 148 MB (one core: 6.9 and 38 ms; without SHA instructions: 7.1 and 30 ms;
+[docs/performance.md](docs/performance.md#the-integrity-check), measured at 0.6.0 and 0.7.0,
+not re-measured). The first start after a reboot also reads the whole file from disk.
+`FSBPYR_TRACE=1` reports the time as `integrity_ns`. Files extracted to the cache are hashed
+again by every process, once, before it first uses them, with the same digest and the same
+multithreaded routine; a changed one is reported and restored.
 
 The digest can be published and checked with `fsbpyr inspect --verify BINARY` (plain `inspect`
 shows the stored value) or with standard tools:
@@ -228,19 +236,21 @@ came from needs a signature checked with a key from outside it; signed releases 
 ## At run time
 
 Pure-Python apps run straight from the executable. Native extensions, and the packages listed
-in `fs-packages` (plus a few known ones such as certifi, botocore, litellm and torch), are extracted
-on first use into `${XDG_CACHE_HOME:-~/.cache}/<app>`, or `$FSBPYR_CACHE_DIR` when set; resources
-an app asks for as a path are extracted there too. With `--best-compression` that first use
-takes longer, since xz decodes more slowly than zstd: the launcher decodes each library in
-pieces of 4 MiB on up to 8 threads (numpy's first import: about +70 ms; onnxruntime's together
-with numpy's: about +80 ms); later runs are as fast as with zstd. Since what is extracted there
-is loaded as code, the cache directory must be yours, and it and every directory leading to it
-owned by root or by you and writable by no other user (not by others, nor by a group other
-than your primary one) unless sticky, as `/tmp` is; symlinks are followed, and must be root's
-or yours. No other user can then replace or redirect any part of it. A cache that fails this
-is refused, and the error names the directory at fault. (In a user namespace, a sandbox,
-directories whose owner is outside it show as nobody's; they count as root's where nobody is
-no user inside, and only above a directory anyone may add to, such as `/tmp`.) Environment variables the executable reads:
+in `fs-packages` (plus the known ones: babel, botocore, certifi, litellm, matplotlib and
+torch), are extracted on first use into `${XDG_CACHE_HOME:-~/.cache}/<app>`, or
+`$FSBPYR_CACHE_DIR` when set; resources an app asks for as a path are extracted there too.
+With `--best-compression` that first use takes longer, since xz decodes more slowly than zstd:
+the launcher decodes each library in pieces of 4 MiB on up to 8 threads (numpy's first import:
+about +70 ms; onnxruntime's together with numpy's: about +80 ms; measured at 0.8.0, not
+re-measured: [docs/performance.md](docs/performance.md#--best-compression-080)); later runs
+are as fast as with zstd. Since what is extracted there is loaded as code, the cache directory
+must be yours, and it and every directory leading to it owned by root or by you and writable
+by no other user (not by others, nor by a group other than your primary one) unless sticky, as
+`/tmp` is; symlinks are followed, and must be root's or yours. No other user can then replace
+or redirect any part of it. A cache that fails this is refused, and the error names the
+directory at fault. (In a user namespace, a sandbox, directories whose owner is outside it
+show as nobody's; they count as root's where nobody is no user inside, and only above a
+directory anyone may add to, such as `/tmp`.) Environment variables the executable reads:
 
 | Variable | |
 |---|---|
@@ -308,8 +318,8 @@ chmod +x ~/.local/bin/fsbpyr
 gh attestation verify ~/.local/bin/fsbpyr --repo devitops-com/fsbpyr   # optional
 ```
 
-The same executable also comes as `fsbpyr.xz`, half the download (about 14 MB instead of 29 MB),
-attested as well:
+The same executable also comes as `fsbpyr.xz`, half the download (14.0 MB instead of 28.9 MB
+for 0.20.0), attested as well:
 
 ```
 mkdir -p ~/.local/bin
