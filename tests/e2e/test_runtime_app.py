@@ -103,6 +103,29 @@ def test_system_exit_and_sigint_keep_cpython_semantics(build_app: BuildApp) -> N
     assert _run(app, "k").returncode == -signal.SIGINT
 
 
+_SITE_BUILTINS = """\
+import sys
+def main():
+    if sys.argv[1] == "exit":
+        exit(3)
+    if sys.argv[1] == "quit":
+        quit()
+    print(callable(help))
+"""
+
+
+@pytest.mark.sanitized
+def test_exit_quit_and_help_are_defined_as_site_defines_them(build_app: BuildApp) -> None:
+    """Built apps never import site (D14), which defines them in a venv."""
+    app = build_app({"bye.py": _SITE_BUILTINS}, "bye:main")
+
+    exited, quitted, helped = _run(app, "exit"), _run(app, "quit"), _run(app, "help")
+
+    assert (exited.returncode, exited.stderr) == (3, "")
+    assert (quitted.returncode, quitted.stderr) == (0, "")
+    assert (helped.returncode, helped.stdout) == (0, "True\n"), helped.stderr
+
+
 _SIGNALS = """\
 import signal
 NAMES = ("SIGINT", "SIGPIPE", "SIGXFSZ")

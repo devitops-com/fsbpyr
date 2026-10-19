@@ -14,6 +14,7 @@ def square(x: int) -> int:
 HELPERS = (
     ["-u", "-B", "-m", "mp.helper", "a"],
     ["-c", "import sys; print('code', sys.argv)", "b"],
+    ["-c", "exit(4)"],  # site's builtins, which built apps define without site (D14)
 )
 
 
