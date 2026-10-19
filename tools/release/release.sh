@@ -23,7 +23,7 @@
 #
 # Guards (all must pass before anything mutates): the three versions agree, X.Y.Z
 # well-formed and not lower, on `main`, clean working tree (untracked files and
-# assume-unchanged / skip-worktree entries included), local == origin/main, a
+# assume-unchanged / skip-worktree entries included), local == hub/main, a
 # successful release.yml run for HEAD's push to main, neither the tag nor the GitHub
 # release exists yet, and a non-empty [Unreleased] section.
 #
@@ -146,19 +146,19 @@ HIDDEN="$(git ls-files -v | grep -E '^([a-z]|S) ' || true)"
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
     echo "ERROR: tag $TAG already exists locally" >&2; exit 1
 fi
-if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
-    echo "ERROR: tag $TAG already exists on origin" >&2; exit 1
+if git ls-remote --exit-code --tags hub "$TAG" >/dev/null 2>&1; then
+    echo "ERROR: tag $TAG already exists on hub" >&2; exit 1
 fi
 if gh release view "$TAG" >/dev/null 2>&1; then
     echo "ERROR: a GitHub release for $TAG already exists" >&2; exit 1
 fi
 
-echo "==> Fetching origin/$BRANCH"
-git fetch --quiet origin "$BRANCH"
+echo "==> Fetching hub/$BRANCH"
+git fetch --quiet hub "$BRANCH"
 LOCAL_HEAD="$(git rev-parse HEAD)"
-REMOTE_HEAD="$(git rev-parse "origin/$BRANCH")"
+REMOTE_HEAD="$(git rev-parse FETCH_HEAD)"
 [ "$LOCAL_HEAD" = "$REMOTE_HEAD" ] \
-    || { echo "ERROR: local $BRANCH differs from origin/$BRANCH; push or pull first" >&2; exit 1; }
+    || { echo "ERROR: local $BRANCH differs from hub/$BRANCH; push or pull first" >&2; exit 1; }
 
 # The workflow runs on every push to $BRANCH: tag only a commit whose run passed, so that a
 # failure shows on $BRANCH before any tag exists.
@@ -263,17 +263,17 @@ fi
 echo "==> Committed and tagged $TAG"
 
 # --- 6. Push commit + tag together -------------------------------------------
-# --atomic: origin takes both or neither, so main never carries a release commit
+# --atomic: hub takes both or neither, so main never carries a release commit
 # without its tag (and the release workflow never runs for a tag main does not have).
-echo "==> Pushing $BRANCH and $TAG to origin"
-if ! git push --atomic origin "$BRANCH" "$TAG"; then
+echo "==> Pushing $BRANCH and $TAG to hub"
+if ! git push --atomic hub "$BRANCH" "$TAG"; then
     cat >&2 <<EOF
 ERROR: push failed. The release commit and tag $TAG exist locally, but nothing
        was pushed. Choose one:
        (a) Abort and undo everything local, then start over:
              git tag -d $TAG && git reset --hard HEAD~1
        (b) Fix the remote state and push again; the tag starts the release workflow:
-             git push --atomic origin $BRANCH $TAG
+             git push --atomic hub $BRANCH $TAG
 EOF
     exit 1
 fi
