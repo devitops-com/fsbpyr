@@ -19,9 +19,10 @@ low-severity remainder. Three more items sit below a cut line until demand appea
 versions, platforms, self-update and the installer belong to Phase 9 of
 docs/IMPLEMENTATION_PLAN.md, signed releases (D31) come after the MVP on their own, and the
 comparison with other tools is done (Phase 10); this plan schedules none of them. Stage 0 comes
-before Phase 9, and Stages 1-2 run alongside it (owner, 2026-10-19). §5 records that decision
-and lists 12 open ones. eval.md's hook API, hidden-import discovery, module pruning and dashboard
-service are rejected as inapplicable to this design or as over-engineering.
+before Phase 9, and Stages 1-2 run alongside it (owner, 2026-10-19); Stage 0 was done the same
+day. §5 records the four decisions taken (#2, #3, #12 and #13) and lists 9 open ones. eval.md's
+hook API, hidden-import discovery, module pruning and dashboard service are rejected as
+inapplicable to this design or as over-engineering.
 
 **How this was made.** Separate agents assessed fsbpyr independently in 8 areas (dependencies,
 reproducibility, native libraries, tests, performance, developer experience, security,
@@ -355,6 +356,9 @@ Facts this review verified that Phase 9's spikes can use (none of them is schedu
 
 ## 3.0 Stage 0 — weeks 1-3: fix what users and verifiers hit today
 
+Done on 2026-10-19: all 13 items are merged into main (120afc2 to a47bdd8), and the repository
+settings of §5 #2 are switched on.
+
 ### CI-8 Run CI on every push to main, and tag only a green commit
 - Why: release.yml runs only for `v*` tags and pull requests (release.yml:12-15). The owner merges locally and pushes main; the last PR, #13, was merged on 2026-10-14. So a change is first tested by its release's tag run. f5fa03a (src/fsbpyr/cli.py, merged in 2bb6cdb) reached CI only in v0.20.0's tag run 39081258610, and no run happened between that run and v0.19.0's (38636574900). Under REL-1's burned-version rule, each failure there costs a version. eval:203.
 - Change:
@@ -408,7 +412,7 @@ Facts this review verified that Phase 9's spikes can use (none of them is schedu
   - `gh api repos/devitops-com/fsbpyr/immutable-releases --jq .enabled` prints true.
   - CHANGELOG.md lists the six untagged versions and the two withdrawn releases.
   - The next release lists a `SHA256SUMS` asset.
-- Effort: S. Depends on: CI-8 (better done first: it keeps burned versions rare). Owner decision: OWNER DECISION NEEDED (no D-number): the repository settings, the burned-version rule and the never-tagged versions (§5 #2). D4, D28 and D31 are unchanged.
+- Effort: S. Depends on: CI-8 (better done first: it keeps burned versions rare). Owner decision: decided (owner, 2026-10-19; no D-number): the repository settings, the burned-version rule and the never-tagged versions (§5 #2). D4, D28 and D31 are unchanged.
 
 ### REL-2 Freeze the release artifact before the tests run, and compare it with stage 3
 - Why: release.yml compresses and uploads the executable (:112-124) only after `make check` and `make test-ci` (:104-108). Those steps run dev dependencies with write access to dist/, and nothing compares dist/fsbpyr with dist/stage3/fsbpyr. Gap: repro/release-ci-check-gaps (low). eval:450.
@@ -529,7 +533,7 @@ Facts this review verified that Phase 9's spikes can use (none of them is schedu
 - Done when:
   - In a CPython 3.15 venv, `pip install .` is refused; after `uv pip install .`, `fsbpyr build` exits 1 with the new message and stages nothing. A unit test checks the message with a patched `sys.version_info`.
   - The README section exists, and a docs test checks that it names the pinned CPython version from runtime/pins.py.
-- Effort: S. Depends on: none. Owner decision: OWNER DECISION NEEDED (D13): the cap `<3.15`, which becomes `>=3.12,<3.15` when Phase 9's port to 3.12 (step 2 of its Python-version part) lowers D13 to 3.12 (IMPLEMENTATION_PLAN.md:1522-1523), and rises to the next minor whenever `fsbpyr` moves to a newer Python (:1502-1503) (§5 #12).
+- Effort: S. Depends on: none. Owner decision: decided (owner, 2026-10-19; D13): the cap `<3.15`, which becomes `>=3.12,<3.15` when Phase 9's port to 3.12 (step 2 of its Python-version part) lowers D13 to 3.12 (IMPLEMENTATION_PLAN.md:1522-1523), and rises to the next minor whenever `fsbpyr` moves to a newer Python (:1502-1503) (§5 #12).
 
 ### SEC-1 Publish a security policy and the embedded-runtime CVE response
 - Why: the public repository has no SECURITY.md, and private vulnerability reporting is off. Nothing tells users that a CPython or OpenSSL fix means rebuilding their executables, although every app embeds the PBS runtime statically (D2, D4). Gaps: security/no-vulnerability-disclosure-process, repro/no-security-policy-or-cve-response, maturity/governance-files-missing (medium); maturity/runtime-security-update-policy (high; its policy part); dx/no-community-docs (low). eval:203.
@@ -549,7 +553,7 @@ Facts this review verified that Phase 9's spikes can use (none of them is schedu
   - `gh repo view devitops-com/fsbpyr --json isSecurityPolicyEnabled` shows true.
   - `gh api repos/devitops-com/fsbpyr/private-vulnerability-reporting --jq .enabled` prints true.
   - The Dependabot update jobs for github-actions and uv appear under the repository's Insights → Dependency graph → Dependabot.
-- Effort: S. Depends on: none. Owner decision: OWNER DECISION NEEDED (no D-number): the response windows and the acknowledgement time (§5 #3); private reporting is part of the repository settings (§5 #2).
+- Effort: S. Depends on: none. Owner decision: decided (owner, 2026-10-19; no D-number): the response windows and the acknowledgement time (§5 #3); private reporting is part of the repository settings (§5 #2).
 
 ### SEC-2 Move the runtime to PBS 20261009 now, and watch upstream daily
 - Why: the runtime every app embeds is pinned by hand to 3.14.8+20261003 (pins.py:28-37), two PBS releases behind, and nothing watches upstream. Release 20261009 updates libffi (3.4.8 to 3.8.0) and expat (2.8.5 to 2.9.0); whether these carry CVE fixes is unverified. It is also the last release whose bitcode today's clang 22 can link: PYTHON.json says llvm-bitcode 22.1.3 for 20261009 and 23.1.3 for 20261013. Gaps: security/embedded-runtime-cve-latency (high), maturity/runtime-security-update-policy (high; its automation part). Not in eval.md.
@@ -1310,9 +1314,13 @@ waits.
    - The six versions without a tag, 0.15.2-0.18.0: (i) a CHANGELOG note only, or (ii)
      annotated tags at their release commits (d489698, 7c11a1c, 80a1f1b, 86b2645, 299355e,
      21ac25d; none contains release.yml, so nothing would be published).
-   - **Recommend all settings, main (a), burned versions, and (i).**
-3. **Security response windows (SEC-1).** **Recommend 7-day acknowledgement of reports; fixes
-   within 7 days for high and critical issues and 30 days otherwise, as targets.** SECURITY.md
+   - **Decided (owner, 2026-10-19): all settings, main (a), burned versions, and (i).** The
+     settings were switched on the same day: immutable releases, the `release tags` ruleset
+     (`refs/tags/v*`: updates and deletion blocked), the `main` ruleset (deletion and force
+     pushes blocked, no bypass) and private vulnerability reporting.
+3. **Security response windows (SEC-1).** **Decided (owner, 2026-10-19): 7-day acknowledgement
+   of reports; fixes within 7 days for high and critical issues and 30 days otherwise, as
+   targets.** SECURITY.md
    says that, until SEC-4's opt-in clang-23 toolchain is merged, a fix needing a PBS release
    after 20261009 first waits for it.
 4. **D24 (RT-2).**
@@ -1368,7 +1376,7 @@ waits.
 12. **D13 (SCOPE-1).** Cap fsbpyr's own requires-python at `<3.15` now. pip then refuses
     3.15; uv installs anyway, so fsbpyr also stops early with a clear error on any Python but
     3.14. Phase 9's port to 3.12 widens it to `>=3.12,<3.15`, and the cap rises whenever `fsbpyr`
-    moves to a newer Python. **Recommend it.**
+    moves to a newer Python. **Decided (owner, 2026-10-19).**
 13. **Where Stages 0-2 sit relative to Phase 9 (no D-number). Decided (owner, 2026-10-19):
     (a).**
     - (a) Stage 0 before Phase 9 starts; Stages 1-2 alongside Phase 9, with CI-3, CI-6 and
