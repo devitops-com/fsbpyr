@@ -167,8 +167,8 @@ def make_release_repo(
     git(repo.parent, "init", "-q", "-b", "main", str(repo), env=env)
     git(repo, "add", ".", env=env)
     git(repo, "commit", "-q", "-m", "initial", env=env)
-    git(repo, "remote", "add", "origin", str(origin), env=env)
-    git(repo, "push", "-q", "origin", "main", env=env)
+    git(repo, "remote", "add", "hub", str(origin), env=env)
+    git(repo, "push", "-q", "hub", "main", env=env)
     return repo
 
 
@@ -308,7 +308,7 @@ def test_release_refuses_when_main_is_not_in_sync_with_origin(
     result = run_release(repo, release_env)
 
     assert result.returncode == 1
-    assert "local main differs from origin/main" in result.stderr
+    assert "local main differs from hub/main" in result.stderr
     assert git(repo, "tag", "--list", env=release_env) == ""
     assert_nothing_built_or_published(tmp_path)
 
@@ -343,7 +343,7 @@ def test_release_refuses_a_version_that_is_already_tagged_or_released(
     if where in ("local", "origin"):
         git(repo, "tag", TAG, env=release_env)
     if where == "origin":
-        git(repo, "push", "-q", "origin", TAG, env=release_env)
+        git(repo, "push", "-q", "hub", TAG, env=release_env)
         git(repo, "tag", "-d", TAG, env=release_env)
     env = release_env | ({"FAKE_GH_RELEASE_EXISTS": "1"} if where == "github" else {})
 
@@ -351,7 +351,7 @@ def test_release_refuses_a_version_that_is_already_tagged_or_released(
 
     expected = {
         "local": f"tag {TAG} already exists locally",
-        "origin": f"tag {TAG} already exists on origin",
+        "origin": f"tag {TAG} already exists on hub",
         "github": f"a GitHub release for {TAG} already exists",
     }[where]
     assert result.returncode == 1
@@ -506,7 +506,7 @@ def test_release_pushes_commit_and_tag_atomically(
     assert git(origin, "tag", "--list", env=release_env) == ""
     assert git(repo, "log", "-1", "--format=%s", env=release_env) == f"chore: release {TAG}"
     assert f"git tag -d {TAG} && git reset --hard HEAD~1" in result.stderr
-    assert f"git push --atomic origin main {TAG}" in result.stderr
+    assert f"git push --atomic hub main {TAG}" in result.stderr
     assert "gh release create" not in result.stderr
     assert_nothing_built_or_published(tmp_path)
     assert not tag_run_calls(tmp_path)
@@ -583,7 +583,7 @@ def test_release_refuses_a_new_version_that_is_already_tagged_or_released(
     if where in ("local", "origin"):
         git(repo, "tag", tag, env=release_env)
     if where == "origin":
-        git(repo, "push", "-q", "origin", tag, env=release_env)
+        git(repo, "push", "-q", "hub", tag, env=release_env)
         git(repo, "tag", "-d", tag, env=release_env)
     env = release_env | ({"FAKE_GH_RELEASE_EXISTS": "1"} if where == "github" else {})
 
@@ -591,7 +591,7 @@ def test_release_refuses_a_new_version_that_is_already_tagged_or_released(
 
     expected = {
         "local": f"tag {tag} already exists locally",
-        "origin": f"tag {tag} already exists on origin",
+        "origin": f"tag {tag} already exists on hub",
         "github": f"a GitHub release for {tag} already exists",
     }[where]
     assert result.returncode == 1
@@ -629,7 +629,7 @@ def test_release_refuses_versions_that_disagree(
     repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY, version=CURRENT)
     (repo / name).write_text(version_files("1.9.1")[name])
     git(repo, "commit", "-q", "-am", "drift", env=release_env)
-    git(repo, "push", "-q", "origin", "main", env=release_env)
+    git(repo, "push", "-q", "hub", "main", env=release_env)
 
     result = run_release(repo, release_env, "1.9.3")
 
