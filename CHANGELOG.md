@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **A security policy, `SECURITY.md`.** Vulnerabilities are reported privately, as GitHub
+  security advisories, and acknowledged within 7 days; only the latest release is supported.
+  Every executable carries its own CPython and the libraries linked into it (OpenSSL, SQLite,
+  expat, zlib, libffi, liblzma and others), so a security fix in them reaches an app only when
+  the app is rebuilt. When python-build-standalone fixes such an issue, an fsbpyr patch
+  release follows, with targets of 7 days for high or critical issues and 30 days otherwise;
+  its `### Security` entry here names the components and the old and new runtime ids, and
+  says to rebuild your executables.
+
 ## [0.20.0] - 2026-10-18
 
 ### Changed

@@ -1,0 +1,16 @@
+# Weekly update pull requests for what reaches a release:
+#   - github-actions: the actions release.yml pins by commit;
+#   - uv: uv.lock, whose click and packaging fsbpyr's own executable embeds.
+# The trixie image (release.yml, Containerfile) is left out until it is pinned by digest (REP-1
+# in docs/improvement-plan.md).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
