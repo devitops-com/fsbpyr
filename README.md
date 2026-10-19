@@ -406,21 +406,28 @@ builds the project's wheel, stamping its own version into the wheel's metadata, 
 every distribution, so another uv can give other bytes from identical sources (a build with
 any other uv warns). An executable records its uv (`fsbpyr inspect` shows it as "uv", `--json`
 as `.uv`; 0.18.2 and older do not record it), and `uv self update <version>` switches a uv
-installed from astral.sh to that version:
+installed from astral.sh to that version.
+
+The attestation comes first, before anything runs the file. It shows that this repository's
+release workflow built the file from the latest release's tag:
 
 ```
-curl -fLo fsbpyr https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr
-chmod +x fsbpyr
-tag="v$(./fsbpyr --version | cut -d- -f1)"
+tag="$(gh release view --repo devitops-com/fsbpyr --json tagName --jq .tagName)"
+curl -fLo fsbpyr "https://github.com/devitops-com/fsbpyr/releases/download/$tag/fsbpyr"
 gh attestation verify fsbpyr --repo devitops-com/fsbpyr \
   --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml --source-ref "refs/tags/$tag"
+```
+
+If it fails, stop there. Otherwise rebuild the file from that tag, with the uv it records:
+
+```
+chmod +x fsbpyr
 uv self update "$(./fsbpyr inspect fsbpyr | awk '$1 == "uv" { print $2; exit }')"
 git clone --branch "$tag" https://github.com/devitops-com/fsbpyr.git src
 (cd src && ../fsbpyr build . -o ../rebuilt)
 cmp fsbpyr rebuilt && echo identical
 ```
 
-The attestation shows that this repository's release workflow built the file from that tag.
 A rebuild checks the bytes themselves, at two levels:
 
 - **(a) The payload.** The executable rebuilds itself from its own tag byte for byte, so

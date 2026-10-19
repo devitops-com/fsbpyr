@@ -88,18 +88,19 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   on Debian trixie), with a warning. The project's wheel is now built again with the
   sysroot's flags, and that wheel is packaged.
 - **The README's release check works again, and checks more.** It downloaded v0.18.2, whose
-  release was withdrawn (HTTP 404); it now takes the latest release, reads the tag from the
-  executable, and sets uv to the version the release records. `gh attestation verify` now
-  requires the signing workflow, `release.yml` (`--signer-workflow`), and in the release check
-  also the release's tag (`--source-ref`); "Getting fsbpyr" calls the check recommended
-  instead of optional. The README now says what the self-rebuild proves: fsbpyr's code and
-  dependencies, not the launcher, CPython and the standard library, which an executable copies
-  from itself. A second rebuild, given too, checks those: it links the launcher from the tag's
-  sources against the CPython the tag pins, python-build-standalone's build (CPython is not
-  compiled again), and takes the standard library from the same archive. It no longer says
-  that `make bootstrap` and `make build` cannot give a release's bytes: with the release's uv
-  and clang they do. The Integrity section names the attestation as what shows a release's
-  origin until signed releases, planned after the MVP.
+  release was withdrawn (HTTP 404); it now asks GitHub for the latest release's tag, checks
+  the attestation before anything runs the downloaded file, and sets uv to the version the
+  release records. `gh attestation verify` now requires the signing workflow, `release.yml`
+  (`--signer-workflow`), and in the release check also the release's tag (`--source-ref`);
+  "Getting fsbpyr" calls the check recommended instead of optional. The README now says what
+  the self-rebuild proves: fsbpyr's code and dependencies, not the launcher, CPython and the
+  standard library, which an executable copies from itself. A second rebuild, given too,
+  checks those: it links the launcher from the tag's sources against the CPython the tag pins,
+  python-build-standalone's build (CPython is not compiled again), and takes the standard
+  library from the same archive. It no longer says that `make bootstrap` and `make build`
+  cannot give a release's bytes: with the release's uv and clang they do. The Integrity section
+  names the attestation as what shows a release's origin until signed releases, planned after
+  the MVP.
 
 ## [0.20.0] - 2026-10-18
 
