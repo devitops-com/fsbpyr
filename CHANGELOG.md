@@ -47,8 +47,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   that needs a code fix, `make release` said to delete the pushed tag and push it again at the
   fix; it now says to fix main and release the next patch version, with the burned version's
   section of this changelog merged back into [Unreleased], so that the next release's notes
-  carry its changes too (`gh run rerun` still retries a transient failure). A pushed tag never
-  moves, and every release from 0.19.0 on stays published as it is.
+  carry its changes too, and the burned version named in the note at the top (`gh run rerun`
+  still retries a transient failure). A pushed tag never moves, and every release from 0.19.0
+  on stays published as it is.
 
 ### Fixed
 - **`exit()`, `quit()` and `help` work in built apps.** Python's `site` module defines them,

@@ -320,7 +320,8 @@ ERROR: the release workflow (run $run_id) failed: $TAG is pushed but not publish
        Needs a code fix:  this version is burned: fix it on $BRANCH and release $next
                           (make release VERSION=$next); $TAG stays as it is. Merge
                           the [$VERSION] section of $CHANGELOG back into [Unreleased],
-                          with the fix's entry, so $next's notes carry its changes
+                          with the fix's entry, so $next's notes carry its changes,
+                          and note at the top of $CHANGELOG that $TAG has no release
 EOF
     exit 1
 fi
