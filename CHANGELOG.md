@@ -28,6 +28,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stays 3.14.8; libffi goes from 3.4.8 to 3.8.0 and expat from 2.8.5 to 2.9.0 (the release
   notes name no CVE). Executables use a new runtime, which `fsbpyr runtime build` builds once.
   20261009 is the newest release whose objects clang 22 links: later ones are LLVM 23 bitcode.
+  A daily workflow now opens an issue when a newer release is out.
 
 ### Fixed
 - **`exit()`, `quit()` and `help` work in built apps.** Python's `site` module defines them,
