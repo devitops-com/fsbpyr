@@ -335,8 +335,11 @@ chmod +x ~/.local/bin/fsbpyr
 
 ### Building from source
 
-A source checkout needs only `make`, `curl` and, on systems other than Debian trixie,
-[podman](https://podman.io) (install it with your system's package manager). `make help` lists
+A source checkout needs `make` and [uv](https://docs.astral.sh/uv/). On Debian trixie it also
+needs the Python pinned in `.python-version` (`uv python install 3.14.8`) and clang and lld 22
+(`sudo apt-get install clang-22 lld-22`; trixie ships them since 13.7); on other systems,
+[podman](https://podman.io) instead (install it with your system's package manager). The
+targets install none of these: when one is missing, they name it and stop. `make help` lists
 all targets.
 
 ```
@@ -348,14 +351,14 @@ make install     # dist/fsbpyr, its man page and completions under ~/.local
 **`make bootstrap`** takes a checkout to an installed fsbpyr. On **Debian trixie** it runs on
 the host:
 
-1. installs the missing OS packages with `sudo apt-get` (`clang-22 lld-22 git make curl
-   ca-certificates`; trixie ships clang and lld 22 since 13.7; they link the launcher);
-2. installs [uv](https://docs.astral.sh/uv/) from astral.sh into `~/.local/bin` if it is not
-   on `PATH`; uv installs the Python pinned in `.python-version` (3.14.8) and the locked
-   dependencies;
+1. checks for uv and the Python pinned in `.python-version` (3.14.8), which uv may not
+   download here (`UV_PYTHON_DOWNLOADS=never`), and stops naming what to install if either is
+   missing;
+2. installs the locked dependencies into the checkout's `.venv`;
 3. builds the runtime (`fsbpyr runtime build`: the pinned CPython from python-build-standalone
-   and a glibc 2.28 sysroot are downloaded, the launcher linked, the standard library
-   compiled; a minute or two, cached in `~/.cache/fsbpyr`);
+   and a glibc 2.28 sysroot are downloaded, the launcher linked with clang and lld 22, the
+   standard library compiled; a minute or two, cached in `~/.cache/fsbpyr`). Without clang and
+   lld 22 it stops and says so;
 4. builds fsbpyr in three stages: fsbpyr run from source builds `dist/stage1/fsbpyr`, that
    executable builds `dist/stage2/fsbpyr`, and that one builds `dist/stage3/fsbpyr`. Each
    stage must pass `fsbpyr inspect --verify` (its digest is recomputed over the whole file),
@@ -364,17 +367,17 @@ the host:
 5. copies stage 3 to `dist/fsbpyr` and runs `make install`.
 
 On **any other Linux x86-64** steps 1 to 4 run in a Debian trixie podman image
-(`Containerfile`: the same OS packages and uv from astral.sh), on the checkout mounted into it,
-and `make install` runs on the host. uv is installed on the host too, for `make build`. The
+(`Containerfile`: clang and lld 22 from Debian and uv from astral.sh, which installs the
+pinned Python there), on the checkout mounted into it, and `make install` runs on the host. The
 container is IPv4-only: on podman's default network, TLS handshakes from Python with GitHub's
-download host time out. A podman volume, `fsbpyr-cache`, keeps uv's cache and the runtime
-between runs. `FSBPYR_BOOTSTRAP=podman make bootstrap` uses the container on trixie too.
+download host time out. A podman volume, `fsbpyr-cache`, keeps uv's cache, its Python and the
+runtime between runs. `FSBPYR_BOOTSTRAP=podman make bootstrap` uses the container on trixie too.
 
 **`make build`** builds the checkout with the installed fsbpyr (`~/.local/bin/fsbpyr`, else
 `fsbpyr` on `PATH`) into `dist/fsbpyr`, and runs the result once as a smoke test. The installed
 executable carries its own runtime, so this needs no compiler, only uv. With no fsbpyr
-installed it runs `make bootstrap` first. The new executable's `--version` names the `vX.Y.Z`
-tag on HEAD (`untagged-<commit>` otherwise).
+installed it stops and says to run `make bootstrap`. The new executable's `--version` names
+the `vX.Y.Z` tag on HEAD (`untagged-<commit>` otherwise).
 
 **`make install`** installs `dist/fsbpyr` (running `make build` first if it is missing), with
 the man page and shell completions it prints:
@@ -405,8 +408,8 @@ The check needs curl, git, gh and uv, and uv must be the one that built the rele
 builds the project's wheel, stamping its own version into the wheel's metadata, and installs
 every distribution, so another uv can give other bytes from identical sources (a build with
 any other uv warns). An executable records its uv (`fsbpyr inspect` shows it as "uv", `--json`
-as `.uv`; 0.18.2 and older do not record it), and `uv self update <version>` switches a uv
-installed from astral.sh to that version.
+as `.uv`; 0.18.2 and older do not record it). The rebuild below compares it with yours: if they
+differ, install that uv version and start the rebuild again.
 
 The attestation comes first, before anything runs the file. It shows that this repository's
 release workflow built the file from the latest release's tag:
@@ -422,7 +425,8 @@ If it fails, stop there. Otherwise rebuild the file from that tag, with the uv i
 
 ```
 chmod +x fsbpyr
-uv self update "$(./fsbpyr inspect fsbpyr | awk '$1 == "uv" { print $2; exit }')"
+want="$(./fsbpyr inspect fsbpyr | awk '$1 == "uv" { print $2; exit }')"
+[ "$(uv --version | cut -d' ' -f2)" = "$want" ] || echo "install uv $want first: this uv differs"
 git clone --branch "$tag" https://github.com/devitops-com/fsbpyr.git src
 (cd src && ../fsbpyr build . -o ../rebuilt)
 cmp fsbpyr rebuilt && echo identical
@@ -437,14 +441,14 @@ A rebuild checks the bytes themselves, at two levels:
   changed stub would pass this check.
 - **(b) The runtime.** Only an independent rebuild checks the stub, CPython and the standard
   library. It compiles the launcher from the tag's sources and links it with clang and lld 22
-  (which `make bootstrap` installs on Debian trixie); CPython, which the launcher links in, and
+  (on Debian trixie, `sudo apt-get install clang-22 lld-22`); CPython, which the launcher links in, and
   the standard library, which is compiled to bytecode, come from the python-build-standalone
   archive that the tag pins by SHA-256. So (b) proves the stub, and that CPython and the
   standard library are that pinned build; it does not compile CPython. CI's release is
   `make build`'s output, so on a clean checkout of the tag `make bootstrap` and `make build`
   give the released bytes, with the release's uv and clang (`readelf -p .comment fsbpyr` names
-  the Debian clang that built the launcher). Both targets update uv to the newest, though, so
-  run fsbpyr from source directly in the checkout above: it builds the runtime, then `stage1`,
+  the Debian clang that built the launcher). `make bootstrap` also installs the result, though,
+  so run fsbpyr from source directly in the checkout above: it builds the runtime, then `stage1`,
   and `stage1` builds the file to compare. A runtime already in the cache under the same id is
   reused, not built again; an empty cache (`XDG_CACHE_HOME` set to a new directory) builds it
   afresh. (b) is not yet checked in CI.

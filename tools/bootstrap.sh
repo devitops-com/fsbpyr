@@ -3,16 +3,19 @@
 # bootstrap.sh — from a source checkout to an installed fsbpyr (make bootstrap).
 #
 #     bash tools/bootstrap.sh               the whole bootstrap, on this host
-#     bash tools/bootstrap.sh --from-source only steps 2-3 (what the podman container runs)
-#     bash tools/bootstrap.sh --uv          only uv (what `make build` needs on the host)
+#     bash tools/bootstrap.sh --from-source only steps 1-3 (what the podman container runs)
+#     bash tools/bootstrap.sh --uv          only the check for uv (what `make build` needs)
 #
-# 1. Prerequisites. On Debian trixie: the OS packages (clang and lld 22, git, make, curl),
-#    with sudo unless run as root, and uv from astral.sh (installed, or updated to the
-#    newest). Anywhere else the same happens inside a Debian trixie podman image
-#    (Containerfile); podman itself is the user's to install; uv is installed on the host
-#    too, for `make build`.
-# 2. The locked environment on the Python pinned in .python-version, then the runtime
-#    (`fsbpyr runtime build`, which links with clang/lld 22).
+# Nothing here installs or updates a tool on the host: a missing one is named, and installing
+# it is the user's.
+#
+# 1. Prerequisites: uv on PATH and the Python pinned in .python-version, which uv finds but
+#    never downloads; clang and lld 22, which `fsbpyr runtime build` looks for and names if
+#    they are missing. This runs on the host on Debian trixie; anywhere else steps 1-3 run
+#    inside a Debian trixie podman image (Containerfile) that has them all, and podman itself
+#    is the user's to install.
+# 2. The locked environment in the checkout's .venv, then the runtime (`fsbpyr runtime build`,
+#    which links with clang/lld 22).
 # 3. Three stages: fsbpyr from source builds dist/stage1/fsbpyr, which builds
 #    dist/stage2/fsbpyr, which builds dist/stage3/fsbpyr. `inspect --verify` must confirm each
 #    one's digest, and stages 2 and 3 must be identical; stage 3 becomes dist/fsbpyr.
@@ -22,16 +25,17 @@
 # Environment: FSBPYR_BOOTSTRAP=podman builds in the container on Debian trixie too.
 # PREFIX etc. pass through to `make install`. FSBPYR_BOOTSTRAP_IMAGE names the
 # podman image (default fsbpyr-build); FSBPYR_BOOTSTRAP_VOLUME the volume that keeps uv's
-# cache and the runtime between container runs (default fsbpyr-cache).
+# cache, its Python and the runtime between container runs (default fsbpyr-cache).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-PACKAGES=(ca-certificates curl git make clang-22 lld-22)
-UV_INSTALLER="https://astral.sh/uv/install.sh"
 IMAGE="${FSBPYR_BOOTSTRAP_IMAGE:-fsbpyr-build}"
 VOLUME="${FSBPYR_BOOTSTRAP_VOLUME:-fsbpyr-cache}"
+
+# uv must not install a Python on its own: the one .python-version pins is the user's to install.
+export UV_PYTHON_DOWNLOADS=never
 
 say() { echo "==> $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -42,53 +46,16 @@ is_trixie() {
     (. /etc/os-release && [ "${ID:-}" = debian ] && [ "${VERSION_CODENAME:-}" = trixie ])
 }
 
-as_root() {
-    if [ "$(id -u)" -eq 0 ]; then
-        "$@"
-    else
-        command -v sudo >/dev/null || die "installing OS packages needs root or sudo"
-        sudo "$@"
-    fi
+need_uv() {
+    command -v uv >/dev/null \
+        || die "uv is not on PATH; install it (https://docs.astral.sh/uv/getting-started/installation/) and run this again"
 }
 
-os_packages() {
-    local missing=() p
-    for p in "${PACKAGES[@]}"; do
-        dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok installed' \
-            || missing+=("$p")
-    done
-    if [ "${#missing[@]}" -eq 0 ]; then
-        say "OS packages present: ${PACKAGES[*]}"
-        return
-    fi
-    say "Installing OS packages: ${missing[*]}"
-    as_root apt-get update -q
-    # clang/lld 22 came with Debian 13.7. A package index older than that (an update that
-    # fetched the Release file but not the index lists itself as "Hit" from then on) has
-    # neither: say so instead of apt's "Unable to locate package".
-    for p in "${missing[@]}"; do
-        apt-cache show "$p" >/dev/null 2>&1 || die "apt does not know $p. Debian 13.7 and newer ships it; if this is trixie, the package index is probably stale. Refresh it and run make bootstrap again:
-    sudo rm /var/lib/apt/lists/deb.debian.org_debian_dists_trixie*
-    sudo apt-get update"
-    done
-    as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-        "${missing[@]}"
-}
-
-uv_present() {
-    # astral.sh's installer puts uv in ~/.local/bin, which may not be on PATH yet.
-    export PATH="$HOME/.local/bin:$PATH"
-    if command -v uv >/dev/null; then
-        # The newest uv knows the newest CPython patch releases (.python-version pins one).
-        # `self update` works for uv installed from astral.sh; another uv is kept as it is.
-        uv self update -q 2>/dev/null \
-            || echo "WARNING: cannot update $(command -v uv) (not installed from astral.sh?)" >&2
-        say "uv present: $(uv --version)"
-        return
-    fi
-    say "Installing uv from $UV_INSTALLER"
-    curl -LsSf "$UV_INSTALLER" | env UV_NO_MODIFY_PATH=1 sh
-    command -v uv >/dev/null || die "uv is not on PATH after installing it"
+need_python() {
+    local version
+    version="$(cat .python-version)"
+    uv python find "$version" >/dev/null 2>&1 \
+        || die "Python $version (.python-version) is not installed; install it (uv python install $version) and run this again"
 }
 
 # verify EXECUTABLE: `inspect --verify` recomputes its digest over the whole file; the report
@@ -102,9 +69,9 @@ verify() {
 }
 
 from_source() {
-    uv_present
+    need_uv
+    need_python
     say "Locked environment on Python $(cat .python-version)"
-    uv python install "$(cat .python-version)"
     uv sync --locked
     say "Runtime (links with clang/lld 22; cached after the first run)"
     uv run --locked fsbpyr runtime build
@@ -136,14 +103,15 @@ in_podman() {
     # ClientHello with a post-quantum key share, larger than one segment) with GitHub's
     # download host time out; on pasta's IPv4-only network they complete.
     podman build -t "$IMAGE" -f Containerfile .
+    # The container is its own environment: uv installs the pinned Python there, on the volume.
     podman run --rm --network pasta:-4 \
         -v "$ROOT":/src:Z -v "$VOLUME":/root/.cache "$IMAGE" \
-        bash tools/bootstrap.sh --from-source
+        bash -c 'uv python install "$(cat .python-version)" && bash tools/bootstrap.sh --from-source'
 }
 
 case "${1:-}" in
     --from-source) from_source; exit 0 ;;
-    --uv) uv_present; exit 0 ;;
+    --uv) need_uv; exit 0 ;;
     "") ;;
     *) echo "usage: bootstrap.sh [--from-source | --uv]" >&2; exit 2 ;;
 esac
@@ -151,10 +119,8 @@ esac
 [ "$(uname -m)" = x86_64 ] || die "fsbpyr builds for Linux x86-64 only (this is $(uname -m))"
 if [ "${FSBPYR_BOOTSTRAP:-}" != podman ] && is_trixie; then
     say "Debian trixie: building on this host"
-    os_packages
     from_source
 else
-    uv_present
     in_podman
 fi
 say "Installing"

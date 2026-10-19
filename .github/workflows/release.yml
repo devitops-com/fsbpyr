@@ -30,8 +30,8 @@ jobs:
   build:
     name: build + smoke test
     runs-on: ubuntu-24.04
-    # Debian trixie, as `make bootstrap` expects: it installs clang/lld 22 and the rest from
-    # Debian's packages (as root here, so without sudo) and uv from astral.sh.
+    # Debian trixie, as `make bootstrap` expects. It installs no tools, so the job does: clang/lld
+    # 22 and the rest from Debian's packages, uv from astral.sh and the Python of .python-version.
     container: docker.io/library/debian:trixie
     timeout-minutes: 75
     env:
@@ -44,13 +44,14 @@ jobs:
       XDG_CACHE_HOME: /root/.cache
     steps:
       # git before the checkout: without it actions/checkout downloads a tarball, with no tags.
-      # make runs `make bootstrap`, which installs the rest; xz compresses the release's copy.
-      # gcc (the tests' `cc`), strace and groff: tests that would skip without them run.
-      - name: Install git, make, xz and the test tools
+      # make runs `make bootstrap`, clang and lld 22 link the launcher, curl fetches uv, and xz
+      # compresses the release's copy. gcc (the tests' `cc`), strace and groff: tests that would
+      # skip without them run.
+      - name: Install git, make, clang, xz and the test tools
         run: |
           apt-get update -q
-          apt-get install -y -q --no-install-recommends ca-certificates git make xz-utils \
-            gcc strace groff-base
+          apt-get install -y -q --no-install-recommends ca-certificates git make curl \
+            clang-22 lld-22 xz-utils gcc strace groff-base
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -78,7 +79,13 @@ jobs:
             exit 1
           fi
 
-      # OS packages, uv, the Python of .python-version, the runtime, fsbpyr in three stages
+      # The newest uv, and the Python that .python-version pins.
+      - name: Install uv and Python
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh
+          uv python install "$(cat .python-version)"
+
+      # The locked environment, the runtime, fsbpyr in three stages
       # (each verified, stages 2 and 3 identical) and `make install` under $PREFIX. No cache: the release is built from the lock, never from
       # files another run cached.
       - name: make bootstrap
@@ -128,8 +135,8 @@ jobs:
             dist/fsbpyr.xz
           if-no-files-found: error
 
-      # Static checks and the core of the suite, on the environment `make bootstrap` left (uv,
-      # Python, the runtime). The rest of the suite runs locally (`make test`).
+      # Static checks and the core of the suite, on the environment `make bootstrap` left (the
+      # .venv, the runtime). The rest of the suite runs locally (`make test`).
       - name: make check
         run: make check
 
@@ -146,7 +153,6 @@ jobs:
       # reads the data make test-ci left in .coverage.
       - name: Coverage of payload/ and elf.py
         run: |
-          export PATH="$HOME/.local/bin:$PATH"  # make bootstrap's uv, as the Makefile finds it
           uv run --locked coverage report --include='src/fsbpyr/payload/*,src/fsbpyr/elf.py' \
             --fail-under=90
 
