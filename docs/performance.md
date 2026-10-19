@@ -128,6 +128,34 @@ decodes on one thread. On `heavy`'s four largest libraries, pieces of 8, 4, 2 an
 +2.2%, +3.6%, +6.4% and +9.9% of xz size and decoded in 220, 125, 87 and 75 ms against 408 ms
 for one stream each (8 threads).
 
+## Build options (0.20.0)
+
+The `hello` and `heavy` test apps built by the released 0.20.0 by default, with `--no-source`
+and with `--best-compression`. `heavy` has 15 distributions; numpy, onnxruntime, cryptography,
+cffi, protobuf, pydantic-core and orjson bring native files.
+
+| App | Default (zstd 9) | `--no-source` | `--best-compression` |
+|---|---|---|---|
+| `hello` | 27.7 MB | 27.7 MB | 27.7 MB |
+| `heavy` | 77.1 MB | 73.7 MB (−4.3%) | 68.9 MB (−10.6%) |
+
+`--no-source` leaves out 3.3 MB of `heavy` and 208 bytes of `hello` (its two modules; the
+standard library keeps its sources). `hello` has no native files, so `--best-compression` does
+not change its size.
+
+Later runs: 3 warm-ups, then 31 runs of each, interleaved; the medians of two such series (ten
+for `heavy model`: the second run of each pair was often the slower, so four of the ten ran
+`--no-source` first). Other builds and tests ran on the machine meanwhile, so compare the
+columns, not other tables:
+
+| Run | Default | `--no-source` |
+|---|---|---|
+| `hello` | 7.5–7.6 ms | 7.5–7.6 ms |
+| `heavy json` | 30.4–30.8 ms | 30.2–30.7 ms |
+| `heavy model` (pydantic) | 75.7–77.9 ms | 75.7–77.7 ms |
+
+Leaving out the sources does not change a start: nothing reads them on the normal path.
+
 ## A PyTorch app (0.8.0, D34)
 
 `torchopt`: CPU-only torch 2.14.1, a 100-step Adam loop; 233 MB with zstd 9; the cache on disk

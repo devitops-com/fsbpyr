@@ -59,6 +59,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   among the app's modules, and the smoke test finds it without running it.
 - **A failed build prints the warnings it collected before the error**, such as "unlocked
   build", ahead of `fsbpyr: error:`; they were dropped.
+- **The README and `fsbpyr build --help` claim only what was measured.** The introduction
+  now says that an executable also needs the system libraries its native dependencies link
+  (often libstdc++ and libgcc_s: numpy and onnxruntime link both). `--fast-compression` makes
+  an executable up to ~9% larger, not ~8%. `--best-compression`'s saving and the `--no-source`
+  sizes, measured on an app outside the repository, are re-measured with 0.20.0 on the `heavy`
+  test app, and `docs/performance.md` has the row. Every measured figure in the help and the
+  README names its release, and the README links its row. The README lists all six built-in
+  fs-packages, and the `--allow-system-lib` examples allow `libcuda.so.1`: their `libGL.so.1`
+  is allowed anyway, so the option changed nothing.
 
 ## [0.20.0] - 2026-10-18
 

@@ -2,11 +2,13 @@
 ``fsbpyr.cli`` (D40). The README's option table is checked against them."""
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
+from itertools import pairwise
 from pathlib import Path
 
 import click
@@ -14,8 +16,10 @@ import pytest
 from click.shell_completion import ShellComplete
 
 from fsbpyr.build import TARGET_PYTHON
+from fsbpyr.classify import BUILTIN_FS_PACKAGES
 from fsbpyr.cli import EXAMPLES, cli, main
-from fsbpyr.config import load_config
+from fsbpyr.config import BuildConfig, load_config
+from fsbpyr.natives import SYSTEM_LIBRARIES
 from fsbpyr.project import Project
 from fsbpyr.runtime import pins
 
@@ -269,11 +273,34 @@ def test_readme_quickstart_runs_command_lines_fsbpyr_accepts(
         assert main(argv) == 0, argv
 
 
-def test_readme_tool_fsbpyr_sample_is_a_table_builds_accept(tmp_path: Path) -> None:
+def _readme_tool_fsbpyr_sample(directory: Path) -> BuildConfig:
     readme = (ROOT / "README.md").read_text()
     sample = readme.partition("```toml\n[tool.fsbpyr]\n")[2].partition("```")[0]
-    (tmp_path / "pyproject.toml").write_text("[tool.fsbpyr]\n" + sample)
+    (directory / "pyproject.toml").write_text("[tool.fsbpyr]\n" + sample)
+    return load_config(Project.load(directory))
 
-    config = load_config(Project.load(tmp_path))
+
+def test_readme_tool_fsbpyr_sample_is_a_table_builds_accept(tmp_path: Path) -> None:
+    config = _readme_tool_fsbpyr_sample(tmp_path)
 
     assert config.entry == "mytool"
+
+
+def test_readme_names_every_built_in_fs_package() -> None:
+    readme = " ".join((ROOT / "README.md").read_text().split())
+    listed = readme.partition("(plus the known ones: ")[2].partition(")")[0]
+
+    assert set(re.split(r", | and ", listed)) == BUILTIN_FS_PACKAGES
+
+
+def test_allow_system_lib_examples_name_libraries_the_build_does_not_allow_anyway(
+    tmp_path: Path,
+) -> None:
+    """Allowing a library manylinux wheels may take from the system changes nothing."""
+    sonames = list(_readme_tool_fsbpyr_sample(tmp_path).allowed_system_libs)
+    for command, _ in EXAMPLES:
+        argv = shlex.split(command.partition(" > ")[0])
+        sonames += [value for option, value in pairwise(argv) if option == "--allow-system-lib"]
+
+    assert sonames
+    assert SYSTEM_LIBRARIES.isdisjoint(sonames), sonames
