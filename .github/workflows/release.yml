@@ -1,9 +1,10 @@
 name: Release
 
 # One build definition for both uses:
-#   - pull requests: prove the release build works (`make bootstrap` on Debian trixie, then the
-#     installed fsbpyr builds itself with `make build`, then a smoke test) and run the static
-#     checks and the core of the test suite (`make test-ci`), before any tag exists;
+#   - pull requests and pushes to main: prove the release build works (`make bootstrap` on
+#     Debian trixie, then the installed fsbpyr builds itself with `make build`, then a smoke
+#     test) and run the static checks and the core of the test suite (`make test-ci`), before
+#     any tag exists; tools/release/release.sh tags only a commit whose main run passed;
 #   - a pushed version tag (tools/release/release.sh pushes it): the same, then attest and
 #     publish the GitHub release. Nothing is released unless the tests pass.
 # GitHub artifact attestations can only be made inside GitHub Actions, so releases are built
@@ -11,11 +12,12 @@ name: Release
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   pull_request:
 
 # A tag is built once: a second run for the same tag waits instead of cancelling the first.
-# Runs for a pull request replace their predecessor.
+# Runs for a pull request or for main replace their predecessor.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}

@@ -51,9 +51,11 @@ RELEASE_SH = ROOT / "tools" / "release" / "release.sh"
 RELEASE_NOTES_SH = ROOT / "tools" / "release" / "release-notes.sh"
 TAG = f"v{VERSION}"
 RUN_ID = "4242"
+MAIN_RUN_ID = "4141"
 REPO_URL = "https://github.com/devitops-com/fsbpyr"
 
-# A gh that is authenticated, logs every call and knows no release. `run list` answers
+# A gh that is authenticated, logs every call and knows no release. `run list --branch main`
+# (HEAD's green run on main) answers $FAKE_GH_MAIN_RUN_ID; any other `run list` answers
 # $FAKE_GH_RUN_ID from its (FAKE_GH_RUN_AFTER + 1)th call on; `run watch` exits FAKE_GH_WATCH_RC.
 # Anything else (such as `release create`) is not expected from release.sh and fails.
 FAKE_GH = """\
@@ -67,6 +69,7 @@ case "$1 $2" in
       *) [ -n "$FAKE_GH_RELEASE_EXISTS" ] || exit 1 ;;
     esac ;;
   "run list")
+    case "$*" in *"--branch main "*) echo "$FAKE_GH_MAIN_RUN_ID"; exit ;; esac
     calls=$(cat "$FAKE_GH_LOG.runs" 2>/dev/null || echo 0)
     echo $((calls + 1)) > "$FAKE_GH_LOG.runs"
     if [ "$calls" -ge "${FAKE_GH_RUN_AFTER:-0}" ]; then echo "$FAKE_GH_RUN_ID"; fi ;;
@@ -98,6 +101,7 @@ def release_env(tmp_path: Path) -> dict[str, str]:
         "TMPDIR": str(tmp_path),
         "FAKE_GH_LOG": str(tmp_path / "gh.log"),
         "FAKE_GH_RUN_ID": RUN_ID,
+        "FAKE_GH_MAIN_RUN_ID": MAIN_RUN_ID,
         "FSBPYR_RELEASE_WATCH_WAIT": "0",
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_AUTHOR_NAME": "Test",
@@ -194,6 +198,11 @@ def gh_calls(tmp_path: Path) -> list[str]:
     return log.read_text().splitlines() if log.exists() else []
 
 
+def tag_run_calls(tmp_path: Path, prefix: str = "run ") -> list[str]:
+    """gh's calls about the tag's workflow run: not the check of main's run before the commit."""
+    return [c for c in gh_calls(tmp_path) if c.startswith(prefix) and "--branch main " not in c]
+
+
 def assert_nothing_built_or_published(tmp_path: Path) -> None:
     assert not [call for call in gh_calls(tmp_path) if call.startswith("release create")]
 
@@ -206,7 +215,7 @@ def assert_nothing_committed_or_pushed(repo: Path, tmp_path: Path, env: dict[str
     assert git(origin, "log", "--format=%s", "main", env=env) == "initial"
     assert git(origin, "tag", "--list", env=env) == ""
     assert_nothing_built_or_published(tmp_path)
-    assert not [call for call in gh_calls(tmp_path) if call.startswith("run ")]
+    assert not tag_run_calls(tmp_path)
 
 
 def assert_released_at_origin(
@@ -304,6 +313,28 @@ def test_release_refuses_when_main_is_not_in_sync_with_origin(
     assert_nothing_built_or_published(tmp_path)
 
 
+def test_release_refuses_a_head_without_a_green_run_on_main(
+    tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    """release.yml runs on every push to main; only a commit whose run passed is tagged, so a
+    failure shows on main before any tag exists. A run in progress, a failed one and none at all
+    are alike: none has succeeded."""
+    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    head = git(repo, "rev-parse", "HEAD", env=release_env)
+
+    result = run_release(repo, release_env | {"FAKE_GH_MAIN_RUN_ID": ""})
+
+    assert result.returncode == 1
+    assert f"main at {head[:7]}" in result.stderr
+    assert "has no successful release.yml run" in result.stderr
+    assert "gh run watch" in result.stderr
+    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
+    (check,) = [call for call in gh_calls(tmp_path) if call.startswith("run list")]
+    for option in ("--workflow release.yml", "--branch main", "--event push", f"--commit {head}"):
+        assert option in check
+    assert "--status success" in check
+
+
 @pytest.mark.parametrize("where", ["local", "origin", "github"])
 def test_release_refuses_a_version_that_is_already_tagged_or_released(
     where: str, tmp_path: Path, release_env: dict[str, str]
@@ -397,7 +428,7 @@ def test_release_commits_tags_and_pushes_without_building_or_publishing(
     assert f"version : {VERSION}\n" in result.stdout
     assert_nothing_built_or_published(tmp_path)
     head = git(repo, "rev-parse", "HEAD", env=release_env)
-    (run_list,) = [call for call in gh_calls(tmp_path) if call.startswith("run list")]
+    (run_list,) = tag_run_calls(tmp_path, "run list")
     for option in ("--workflow release.yml", f"--branch {TAG}", f"--commit {head}", "--event push"):
         assert option in run_list
     assert f"run watch {RUN_ID} --exit-status" in gh_calls(tmp_path)
@@ -414,7 +445,7 @@ def test_release_waits_for_the_workflow_run_to_show_up(
     result = run_release(repo, env)
 
     assert result.returncode == 0, result.stderr
-    assert len([call for call in gh_calls(tmp_path) if call.startswith("run list")]) == 2
+    assert len(tag_run_calls(tmp_path, "run list")) == 2
     assert f"run watch {RUN_ID} --exit-status" in gh_calls(tmp_path)
 
 
@@ -470,7 +501,7 @@ def test_release_pushes_commit_and_tag_atomically(
     assert f"git push --atomic origin main {TAG}" in result.stderr
     assert "gh release create" not in result.stderr
     assert_nothing_built_or_published(tmp_path)
-    assert not [call for call in gh_calls(tmp_path) if call.startswith("run ")]
+    assert not tag_run_calls(tmp_path)
 
 
 # ------------------------------------------------------------ release.sh X.Y.Z: bump and release
@@ -501,7 +532,7 @@ def test_release_bumps_the_version_in_the_one_release_commit(
     assert_version_files(repo, new)
     day = git(repo, "log", "-1", "--format=%cs", env=release_env)
     assert (repo / "CHANGELOG.md").read_text() == promoted_changelog(day, new)
-    (run_list,) = [call for call in gh_calls(tmp_path) if call.startswith("run list")]
+    (run_list,) = tag_run_calls(tmp_path, "run list")
     assert f"--branch {tag}" in run_list
     assert_nothing_built_or_published(tmp_path)
 

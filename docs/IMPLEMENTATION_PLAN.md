@@ -495,7 +495,8 @@ Debian trixie on the host (clang/lld 22 from Debian, uv from astral.sh), elsewhe
 trixie podman container (`Containerfile`). Stage 0 is `uv run --locked` on the Python of
 `.python-version` (3.14.8); the stages land in `dist/stage1..3/`, each must pass
 `inspect --verify`, stages 2 and 3 must be identical, and stage 3 becomes `dist/fsbpyr`. CI runs
-it on every pull request and tag (`.github/workflows/release.yml`).
+it on every pull request and tag, and on every push to main after 0.20.0
+(`.github/workflows/release.yml`).
 
 ```bash
 # Stage 0: plain Python in a standard venv (R3)
@@ -1610,8 +1611,8 @@ Status (v0.19.0): markers are `slow` and `sanitized` (no `network` marker); only
 commits all three lock sources, the other fixtures `uv.lock`; C probes are in `tests/probes/`,
 the fuzzer in `tests/fuzz/` (8a); CI (`.github/workflows/release.yml`) runs `make check` and
 `make test-ci` (unit, integration, `test_build.py`, `test_runtime_app.py`) on every pull request
-and tag since 0.19.0, the rest locally (`make test`); tests that need the kernel to refuse
-access skip as root.
+and tag since 0.19.0 and on every push to main after 0.20.0, the rest locally (`make test`);
+tests that need the kernel to refuse access skip as root.
 
 - **Unit (pytest):**
   - format and writer/reader
