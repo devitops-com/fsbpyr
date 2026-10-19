@@ -16,6 +16,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   its `### Security` entry here names the components and the old and new runtime ids, and
   says to rebuild your executables.
 
+### Changed
+- **fsbpyr runs on CPython 3.14 only, and stops at once on any other Python.** Its
+  `requires-python` is now `>=3.14,<3.15`, so pip refuses to install it on 3.15.
+  `uv pip install` and `uv tool install` ignore that upper bound, so `fsbpyr build` and
+  `fsbpyr runtime build` now check the running Python before anything else and exit 1 with
+  "fsbpyr runs on CPython 3.14 only", where a build failed only after staging the project. The
+  README's new "Supported targets" section says what executables run on: CPython 3.14.8, Linux
+  x86-64 with glibc, and the GIL build only.
+
 ## [0.20.0] - 2026-10-18
 
 ### Changed

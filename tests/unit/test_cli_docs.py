@@ -13,7 +13,9 @@ import click
 import pytest
 from click.shell_completion import ShellComplete
 
+from fsbpyr.build import TARGET_PYTHON
 from fsbpyr.cli import EXAMPLES, cli, main
+from fsbpyr.runtime import pins
 
 ROOT = Path(__file__).parents[2]
 PYPROJECT = """\
@@ -238,3 +240,11 @@ def test_readme_option_table_is_the_build_commands_help() -> None:
     end = lines.index("", start)
 
     assert lines[start:end] == _option_rows(cli.commands["build"])
+
+
+def test_readme_supported_targets_name_the_pinned_cpython() -> None:
+    readme = (ROOT / "README.md").read_text()
+    section = readme.partition("\n## Supported targets\n")[2].partition("\n## ")[0]
+    pin = pins.pin_for(TARGET_PYTHON, "x86_64-unknown-linux-gnu")
+
+    assert f"CPython {pin.version}" in section

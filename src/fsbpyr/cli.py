@@ -125,6 +125,8 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     interpreter_reexec: bool | None,
     smoke: bool | None,
 ) -> int:
+    if _unsupported_python():
+        return 1
     if fast_compression and best_compression:
         raise click.UsageError("--fast-compression and --best-compression exclude each other")
     _collect_when_due()
@@ -202,6 +204,8 @@ def runtime_group() -> None:
 @click.option("--clang", type=click.Path(path_type=Path),
               help="clang to use (default: search PATH)")  # fmt: skip
 def runtime_build(*, python: str, clang: Path | None) -> int:
+    if _unsupported_python():
+        return 1
     _collect_when_due()
     from .runtime import (  # noqa: PLC0415  keep --version fast
         pbs,
@@ -329,6 +333,21 @@ def man() -> int:
 
     print(render(cli, PROG, EXAMPLES), end="")
     return 0
+
+
+def _unsupported_python() -> bool:
+    """True, with the error printed, on any Python but the one fsbpyr's canonical bytecode
+    supports (D13, D16). pip refuses to install fsbpyr there, but `uv pip install` and `uv tool
+    install` ignore the upper bound of its requires-python, and the build would fail only after
+    staging."""
+    from .bytecode import SUPPORTED_PYTHON  # noqa: PLC0415  keep --version fast
+
+    major, minor = SUPPORTED_PYTHON
+    if sys.version_info[:2] == (major, minor):
+        return False
+    print(f"fsbpyr: error: fsbpyr runs on CPython {major}.{minor} only, not "
+          f"{sys.version_info[0]}.{sys.version_info[1]}", file=sys.stderr)  # fmt: skip
+    return True
 
 
 def _collect_when_due() -> None:

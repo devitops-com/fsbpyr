@@ -202,3 +202,20 @@ def test_runtime_build_reports_errors_without_traceback(
     assert capsys.readouterr().err.strip() == (
         "fsbpyr: error: clang >= 22 with ld.lld not found for 3.14"
     )
+
+
+@pytest.mark.parametrize("argv", [["build"], ["runtime", "build"]])
+def test_build_commands_stop_first_on_any_python_but_3_14(
+    argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`uv pip install` and `uv tool install` ignore requires-python's upper bound."""
+    monkeypatch.setattr("fsbpyr.cli._collect_when_due", lambda: pytest.fail("collected"))
+    monkeypatch.setattr("fsbpyr.build.build", lambda *args, **kwargs: pytest.fail("built"))
+    monkeypatch.setattr(registry, "build_runtime", lambda *args, **kwargs: pytest.fail("built"))
+    monkeypatch.setattr(sys, "version_info", (3, 15, 0, "final", 0))
+
+    assert main(argv) == 1
+    assert capsys.readouterr() == (
+        "",
+        "fsbpyr: error: fsbpyr runs on CPython 3.14 only, not 3.15\n",
+    )
