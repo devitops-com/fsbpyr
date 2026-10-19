@@ -863,7 +863,7 @@ settings of §5 #2 are switched on.
     - The README records the timestamp that reproduces v0.19.0 and v0.20.0, one from before u5 reaches trixie.
   - tools/release/uv.version holds the uv version and its release tarball's sha256.
     - With `FSBPYR_UV_VERSION` set (by release CI, and by verifiers: README "Verifying a release" then names it in place of running `fsbpyr build` directly, REL-1), bootstrap.sh installs exactly that uv, fails on a sha256 mismatch, and skips `uv self update`.
-    - Local bootstraps keep "newest", because D26 is about user builds.
+    - Local bootstraps use the user's own uv, because D26 is about user builds. Since 2026-10-19 bootstrap.sh installs no tools (owner: tools never change the user's environment), so release.yml's own steps, not bootstrap.sh, set up the apt snapshot and the pinned uv above.
   - Widen pyproject.toml:15 so that it includes the pinned uv.
   - Record the toolchain:
     - registry.py `_metadata()` stores `clang --version` and `ld.lld --version` for information, not in runtime_id (D3);

@@ -50,6 +50,14 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   carry its changes too, and the burned version named in the note at the top (`gh run rerun`
   still retries a transient failure). A pushed tag never moves, and every release from 0.19.0
   on stays published as it is.
+- **`make bootstrap` and `make build` no longer install or update tools on your machine.**
+  They ran `sudo apt-get install` (clang and lld 22, git, make, curl), installed uv from
+  astral.sh or ran `uv self update`, and installed the Python of `.python-version` with
+  `uv python install`, which also re-pointed uv's minor-version links. Now they name a missing
+  uv, Python or clang/lld 22 and stop, and uv may not download a Python on its own
+  (`UV_PYTHON_DOWNLOADS=never`). `make build` without an installed fsbpyr says to run
+  `make bootstrap` instead of running it. The podman build installs its tools inside the
+  container, as before, and the README's release check no longer runs `uv self update`.
 
 ### Fixed
 - **`exit()`, `quit()` and `help` work in built apps.** Python's `site` module defines them,

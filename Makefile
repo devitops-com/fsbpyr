@@ -10,8 +10,12 @@ BASH_COMPLETION_DIR ?= $(PREFIX)/share/bash-completion/completions
 ZSH_COMPLETION_DIR  ?= $(PREFIX)/share/zsh/site-functions
 FISH_COMPLETION_DIR ?= $(PREFIX)/share/fish/vendor_completions.d
 
-# uv from astral.sh lands in ~/.local/bin, which a fresh login may not have on PATH yet.
+# uv's installer puts uv in ~/.local/bin, which a fresh login may not have on PATH yet.
 export PATH := $(HOME)/.local/bin:$(PATH)
+
+# No target installs or updates a tool: uv must not install a Python on its own either. The one
+# .python-version pins is the user's to install (`uv python install`).
+export UV_PYTHON_DOWNLOADS := never
 
 UV  := uv
 BIN := dist/fsbpyr
@@ -24,24 +28,24 @@ help: ## Show this help
 
 # --- Setup ---
 
-# Debian trixie: OS packages (clang/lld 22 and the rest) with sudo, uv from astral.sh, the
-# runtime, fsbpyr built from source, `make install`. Anywhere else the build runs in a Debian
-# trixie podman container (podman is yours to install) and the install on this host. See
-# tools/bootstrap.sh.
-bootstrap: ## From source to an installed fsbpyr: packages, uv, runtime, build, install
+# Debian trixie: the runtime, fsbpyr built from source, `make install`, with the uv, Python
+# and clang/lld 22 you installed (a missing one is named; nothing is installed for you).
+# Anywhere else the build runs in a Debian trixie podman container (podman is yours to
+# install) and the install on this host. See tools/bootstrap.sh.
+bootstrap: ## From source to an installed fsbpyr: runtime, build, install
 	@bash tools/bootstrap.sh
 
 # --- Build ---
 
 # The installed fsbpyr builds the checkout: it carries its own runtime, so no compiler is
-# needed, only uv (installed or updated from astral.sh). Without one, `make bootstrap`
-# installs it first. Its --version names the vX.Y.Z tag on HEAD, else `untagged`.
-build: ## Build dist/fsbpyr with the installed fsbpyr (bootstrap first if there is none)
+# needed, only uv. Without an installed fsbpyr it stops: `make bootstrap` installs one. Its
+# --version names the vX.Y.Z tag on HEAD, else `untagged`.
+build: ## Build dist/fsbpyr with the installed fsbpyr (make bootstrap installs one)
 	@bash tools/bootstrap.sh --uv
 	@fsbpyr="$$(command -v $(BINDIR)/fsbpyr || command -v fsbpyr || true)"; \
 	if [ -z "$$fsbpyr" ]; then \
-		echo "==> No fsbpyr installed: make bootstrap"; \
-		$(MAKE) --no-print-directory bootstrap && fsbpyr="$(BINDIR)/fsbpyr"; \
+		echo "ERROR: no fsbpyr in $(BINDIR) or on PATH; make bootstrap builds and installs one" >&2; \
+		exit 1; \
 	fi; \
 	echo "$$fsbpyr build . -o $(BIN)"; \
 	"$$fsbpyr" build . -o $(BIN)

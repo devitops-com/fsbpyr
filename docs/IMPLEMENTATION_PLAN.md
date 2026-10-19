@@ -497,7 +497,8 @@ docs/
 ## 5. Bootstrap and self-hosting procedure
 
 Status (v0.19.0): since 0.18.1 `make bootstrap` (`tools/bootstrap.sh`) runs these stages: on
-Debian trixie on the host (clang/lld 22 from Debian, uv from astral.sh), elsewhere in a Debian
+Debian trixie on the host (with the user's clang/lld 22, uv and Python: since 2026-10-19 it
+installs no tools and names a missing one), elsewhere in a Debian
 trixie podman container (`Containerfile`). Stage 0 is `uv run --locked` on the Python of
 `.python-version` (3.14.8); the stages land in `dist/stage1..3/`, each must pass
 `inspect --verify`, stages 2 and 3 must be identical, and stage 3 becomes `dist/fsbpyr`. CI runs
