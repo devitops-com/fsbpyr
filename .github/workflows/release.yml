@@ -45,10 +45,12 @@ jobs:
     steps:
       # git before the checkout: without it actions/checkout downloads a tarball, with no tags.
       # make runs `make bootstrap`, which installs the rest; xz compresses the release's copy.
-      - name: Install git, make and xz
+      # gcc (the tests' `cc`), strace and groff: tests that would skip without them run.
+      - name: Install git, make, xz and the test tools
         run: |
           apt-get update -q
-          apt-get install -y -q --no-install-recommends ca-certificates git make xz-utils
+          apt-get install -y -q --no-install-recommends ca-certificates git make xz-utils \
+            gcc strace groff-base
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -131,7 +133,11 @@ jobs:
       - name: make check
         run: make check
 
+      # pytest alone passes a run however many tests skip: here a skip that tests/conftest.py's
+      # `ci` list does not expect (this container runs the tests as root) fails the step.
       - name: make test-ci
+        env:
+          FSBPYR_TESTS_REQUIRE_ALL: ci
         run: make test-ci
 
   publish:
