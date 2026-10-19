@@ -1,6 +1,7 @@
 """Smoke test and entry-point checks of the build orchestrator."""
 
 import json
+import os
 import re
 import sys
 import tempfile
@@ -26,6 +27,7 @@ from fsbpyr.config import BuildConfig
 from fsbpyr.payload.format import FileKind
 from fsbpyr.payload.spec import Blob, File
 from fsbpyr.runtime import pins
+from fsbpyr.runtime.sysroot import build_flags
 from fsbpyr.staging import StagingError, StagingPlan
 
 from ...support.elf import make_elf
@@ -282,8 +284,8 @@ BASELINE = pins.sysroot_for("x86_64-unknown-linux-gnu")
 
 def _rebuild(tmp_path: Path, *, offline: bool = False) -> list[str]:
     plan = StagingPlan(site=tmp_path, build=[], install=[], wheel_dir=tmp_path)
-    return rebuild_on_baseline(plan, tmp_path, tmp_path / "app.whl", ["cxx-ext"], BASELINE,
-                               offline=offline)  # fmt: skip
+    wheel = tmp_path / "app-1.0-py3-none-any.whl"
+    return rebuild_on_baseline(plan, tmp_path, wheel, ["cxx-ext"], BASELINE, offline=offline)
 
 
 def test_a_failed_rebuild_keeps_the_hosts_build_with_a_warning(
@@ -299,6 +301,38 @@ def test_a_failed_rebuild_keeps_the_hosts_build_with_a_warning(
         "cxx-ext: building from source against the glibc 2.28 sysroot failed, the build host's "
         "builds are packaged: error: command 'g++' failed"
     ]
+
+
+@pytest.mark.parametrize(("names", "rebuilt"), [(["cext", "posix-ipc"], True),
+                                                (["posix-ipc"], False)])  # fmt: skip
+def test_the_projects_own_extension_is_rebuilt_with_the_sysroot_flags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, names: list[str], rebuilt: bool
+) -> None:
+    """The project's wheel is built on the build host too: when it needs more than the baseline,
+    it is built again with the sysroot's flags, and that wheel is installed."""
+    first = tmp_path / "wheel" / "cext-1.0-cp314-cp314-linux_x86_64.whl"
+    again = tmp_path / "wheel-again" / first.name
+    built: list[tuple[Path, dict[str, str]]] = []
+    installed: list[tuple[Path, list[str], dict[str, str]]] = []
+
+    def rebuild_wheel(plan: StagingPlan, project_dir: Path, env: dict[str, str]) -> Path:
+        built.append((project_dir, env))
+        return again
+
+    def rebuild(plan: StagingPlan, project_dir: Path, wheel: Path, names: list[str],
+                env: dict[str, str]) -> None:  # fmt: skip
+        installed.append((wheel, names, env))
+
+    monkeypatch.setattr("fsbpyr.build.fetch_sysroot", lambda pin, cache: tmp_path / "sysroot")
+    monkeypatch.setattr("fsbpyr.build.rebuild_wheel", rebuild_wheel)
+    monkeypatch.setattr("fsbpyr.build.rebuild", rebuild)
+    plan = StagingPlan(site=tmp_path, build=[], install=[], wheel_dir=first.parent)
+
+    assert rebuild_on_baseline(plan, tmp_path, first, names, BASELINE, offline=False) == []
+
+    flags = build_flags(tmp_path / "sysroot", os.environ)
+    assert built == ([(tmp_path, flags)] if rebuilt else [])
+    assert installed == [(again if rebuilt else first, names, flags)]
 
 
 def test_an_offline_build_rebuilds_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

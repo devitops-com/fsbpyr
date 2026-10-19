@@ -68,6 +68,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   README names its release, and the README links its row. The README lists all six built-in
   fs-packages, and the `--allow-system-lib` examples allow `libcuda.so.1`: their `libGL.so.1`
   is allowed anyway, so the option changed nothing.
+- **A project's own C extension is rebuilt against the glibc 2.28 sysroot too.** When the
+  project's extension, built on the build host, needed a newer glibc than 2.28, the build said
+  "rebuilding ... against the glibc 2.28 sysroot" but installed the project's first wheel
+  again: the executable kept the host's build and needed its glibc (2.34 for `pthread_create`
+  on Debian trixie), with a warning. The project's wheel is now built again with the
+  sysroot's flags, and that wheel is packaged.
 
 ## [0.20.0] - 2026-10-18
 

@@ -31,6 +31,7 @@ from .staging import (
     StagingPlan,
     find_uv,
     rebuild,
+    rebuild_wheel,
     run_plan,
     staging_plan,
     uv_version,
@@ -133,8 +134,9 @@ def rebuild_on_baseline(  # noqa: PLR0913  the staging, what to rebuild, and off
     offline: bool,
 ) -> list[str]:
     """Build ``names`` again from their sdists against the glibc baseline's sysroot (D25), with
-    the build host's compiler; the warnings, if they keep the host's builds. Not offline: the
-    rebuild drops uv's cached builds and downloads the sdists again."""
+    the build host's compiler, and the project's own wheel when it is among them; the warnings,
+    if they keep the host's builds. Not offline: the rebuild drops uv's cached builds and
+    downloads the sdists again."""
     listed, glibc = ", ".join(names), baseline.glibc
     if offline:
         return [f"{listed}: not rebuilt against the glibc {glibc} sysroot: the build is offline"]
@@ -143,8 +145,11 @@ def rebuild_on_baseline(  # noqa: PLR0913  the staging, what to rebuild, and off
         root = fetch_sysroot(baseline, cache)
     except (SysrootError, PbsError) as exc:
         return [f"{listed}: not rebuilt against the glibc {glibc} sysroot: {exc}"]
+    flags = build_flags(root, os.environ)
     try:
-        rebuild(plan, project_dir, wheel, names, build_flags(root, os.environ))
+        if canonicalize_name(parse_wheel_filename(wheel.name)[0]) in names:
+            wheel = rebuild_wheel(plan, project_dir, flags)
+        rebuild(plan, project_dir, wheel, names, flags)
     except StagingError as exc:
         reason = next((line for line in reversed(str(exc).splitlines()) if line.strip()), "")
         return [f"{listed}: building from source against the glibc {glibc} sysroot failed, the "
