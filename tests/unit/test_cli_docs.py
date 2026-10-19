@@ -273,6 +273,16 @@ def test_readme_quickstart_runs_command_lines_fsbpyr_accepts(
         assert main(argv) == 0, argv
 
 
+def test_readme_release_verification_names_no_version() -> None:
+    """It checks the latest release: a named one goes stale or is withdrawn, as 0.18.2 was."""
+    readme = (ROOT / "README.md").read_text()
+    section = re.split(r"\n#{1,3} ", readme.partition("\n### Verifying a release\n")[2])[0]
+    blocks = re.findall(r"^```\n(.*?)^```$", section, re.MULTILINE | re.DOTALL)
+
+    assert blocks
+    assert re.findall(r"v\d+\.\d+\.\d+", "".join(blocks)) == []
+
+
 def _readme_tool_fsbpyr_sample(directory: Path) -> BuildConfig:
     readme = (ROOT / "README.md").read_text()
     sample = readme.partition("```toml\n[tool.fsbpyr]\n")[2].partition("```")[0]

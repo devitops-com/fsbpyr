@@ -86,6 +86,17 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   again: the executable kept the host's build and needed its glibc (2.34 for `pthread_create`
   on Debian trixie), with a warning. The project's wheel is now built again with the
   sysroot's flags, and that wheel is packaged.
+- **The README's release check works again, and checks more.** It downloaded v0.18.2, whose
+  release was withdrawn (HTTP 404); it now takes the latest release, reads the tag from the
+  executable, and sets uv to the version the release records. `gh attestation verify` also
+  requires the signing workflow, `release.yml`, and there the release's tag
+  (`--signer-workflow`, `--source-ref`), and "Getting fsbpyr" calls the check recommended
+  instead of optional. The README now says what the self-rebuild proves: fsbpyr's code and
+  dependencies, not the launcher, CPython and the standard library, which an executable copies
+  from itself; a rebuild from source, given too, checks those. It no longer says that
+  `make bootstrap` and `make build` cannot give a release's bytes: with the release's uv and
+  clang they do. The Integrity section names the attestation as what shows a release's origin
+  until signed releases, planned after the MVP.
 
 ## [0.20.0] - 2026-10-18
 
