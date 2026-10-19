@@ -194,10 +194,14 @@ jobs:
             dist/fsbpyr
             dist/fsbpyr.xz
 
+      # `sha256sum -c SHA256SUMS` checks a download against the digests the attestation signs.
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
           NOTES: ${{ runner.temp }}/notes.md
-        run: gh release create "$TAG" --verify-tag --title "fsbpyr $TAG" --notes-file "$NOTES" dist/fsbpyr dist/fsbpyr.xz
+        run: |
+          (cd dist && sha256sum fsbpyr fsbpyr.xz > SHA256SUMS)
+          gh release create "$TAG" --verify-tag --title "fsbpyr $TAG" --notes-file "$NOTES" \
+            dist/fsbpyr dist/fsbpyr.xz dist/SHA256SUMS
