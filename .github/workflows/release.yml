@@ -2,9 +2,10 @@ name: Release
 
 # One build definition for both uses:
 #   - pull requests and pushes to main: prove the release build works (`make bootstrap` on
-#     Debian trixie, then the installed fsbpyr builds itself with `make build`, then a smoke
-#     test) and run the static checks and the core of the test suite (`make test-ci`), before
-#     any tag exists; tools/release/release.sh tags only a commit whose main run passed;
+#     Debian trixie, then the installed fsbpyr builds itself with `make build`, byte for byte
+#     bootstrap's stage 3, then a smoke test) and run the static checks and the core of the
+#     test suite (`make test-ci`), before any tag exists; tools/release/release.sh tags only a
+#     commit whose main run passed;
 #   - a pushed version tag (tools/release/release.sh pushes it): the same, then attest and
 #     publish the GitHub release. Nothing is released unless the tests pass.
 # GitHub artifact attestations can only be made inside GitHub Actions, so releases are built
@@ -85,6 +86,11 @@ jobs:
       - name: make build
         run: make build
 
+      # The installed fsbpyr is stage 3 (stages 2 and 3 were identical), so what it built is
+      # stage 3 again, byte for byte.
+      - name: Compare with stage 3
+        run: cmp dist/stage3/fsbpyr dist/fsbpyr
+
       - name: Smoke test
         run: |
           dist/fsbpyr --version
@@ -101,14 +107,6 @@ jobs:
             test -s "$PREFIX/$f" || { echo "::error::make install left $f empty or missing"; exit 1; }
           done
 
-      # Static checks and the core of the suite, on the environment `make bootstrap` left (uv,
-      # Python, the runtime). The rest of the suite runs locally (`make test`).
-      - name: make check
-        run: make check
-
-      - name: make test-ci
-        run: make test-ci
-
       # The same executable, about half the download. One thread: the same input gives the same
       # .xz with the same xz (multithreaded xz splits the stream by thread count).
       - name: Compress the executable
@@ -116,6 +114,9 @@ jobs:
           xz --x86 --lzma2=preset=9e --threads=1 --keep dist/fsbpyr
           xz --decompress --stdout dist/fsbpyr.xz | cmp - dist/fsbpyr
 
+      # Uploaded before the checks and tests, which run dev dependencies with write access to
+      # dist/: the release is the executable compared above. publish needs this job, so
+      # failing tests still stop the release.
       - name: Upload the executable
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -124,6 +125,14 @@ jobs:
             dist/fsbpyr
             dist/fsbpyr.xz
           if-no-files-found: error
+
+      # Static checks and the core of the suite, on the environment `make bootstrap` left (uv,
+      # Python, the runtime). The rest of the suite runs locally (`make test`).
+      - name: make check
+        run: make check
+
+      - name: make test-ci
+        run: make test-ci
 
   publish:
     name: attest + publish
