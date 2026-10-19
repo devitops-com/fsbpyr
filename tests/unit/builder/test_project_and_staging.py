@@ -14,6 +14,7 @@ from fsbpyr.staging import (
     StagingPlan,
     find_uv,
     rebuild,
+    rebuild_wheel,
     run_plan,
     staging_plan,
     uv_version,
@@ -476,6 +477,23 @@ def test_rebuild_forgets_the_cached_builds_then_repeats_the_installs(tmp_path: P
         "sysroot -r lock --reinstall-package posix-ipc",
         f"sysroot --no-deps {tmp_path / 'app.whl'} --reinstall-package posix-ipc",
     ]
+
+
+def test_rebuild_wheel_builds_the_project_again_into_a_new_directory(tmp_path: Path) -> None:
+    wheel = "demo-1.0-cp314-cp314-linux_x86_64.whl"
+    plan = StagingPlan(
+        site=tmp_path / "stage",
+        build=["sh", "-c", f'echo "$FLAGS" > "$0/{wheel}"', str(tmp_path / "wheel")],
+        install=[],
+        wheel_dir=tmp_path / "wheel",
+        env={"FLAGS": "host"},
+    )
+    first = run_plan(plan, tmp_path)
+
+    again = rebuild_wheel(plan, tmp_path, {"FLAGS": "sysroot"})
+
+    assert again.name == wheel and again.parent.parent == tmp_path and again != first
+    assert (first.read_text(), again.read_text()) == ("host\n", "sysroot\n")
 
 
 def test_run_plan_needs_exactly_one_wheel(tmp_path: Path) -> None:

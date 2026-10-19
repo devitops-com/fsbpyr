@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -176,6 +177,26 @@ def _run(command: list[str], cwd: Path, env: dict[str, str]) -> None:
         raise StagingError(f"{' '.join(command[:4])} ... failed:\n{output}")
 
 
+def _build_wheel(
+    plan: StagingPlan, project_dir: Path, wheel_dir: Path, env: dict[str, str]
+) -> Path:
+    """The plan's build of the project wheel, into ``wheel_dir`` with ``env`` added."""
+    wheel_dir.mkdir(parents=True, exist_ok=True)
+    build = [str(wheel_dir) if part == str(plan.wheel_dir) else part for part in plan.build]
+    _run(build, project_dir, {**plan.env, **env})
+    wheels = sorted(wheel_dir.glob("*.whl"))
+    if len(wheels) != 1:
+        raise StagingError(f"expected one built wheel in {wheel_dir}, found {len(wheels)}")
+    return wheels[0]
+
+
+def rebuild_wheel(plan: StagingPlan, project_dir: Path, env: dict[str, str]) -> Path:
+    """Build the project wheel again with ``env`` added, into a new directory beside the first
+    one's; returns the new wheel."""
+    wheel_dir = tempfile.mkdtemp(prefix=f"{plan.wheel_dir.name}-", dir=plan.wheel_dir.parent)
+    return _build_wheel(plan, project_dir, Path(wheel_dir), env)
+
+
 def rebuild(
     plan: StagingPlan, project_dir: Path, wheel: Path, names: list[str], env: dict[str, str]
 ) -> None:
@@ -196,11 +217,7 @@ def rebuild(
 
 def run_plan(plan: StagingPlan, project_dir: Path) -> Path:
     """Build the project wheel, install dependencies and the wheel; returns the wheel."""
-    plan.wheel_dir.mkdir(parents=True, exist_ok=True)
-    _run(plan.build, project_dir, plan.env)
-    wheels = sorted(plan.wheel_dir.glob("*.whl"))
-    if len(wheels) != 1:
-        raise StagingError(f"expected one built wheel in {plan.wheel_dir}, found {len(wheels)}")
+    wheel = _build_wheel(plan, project_dir, plan.wheel_dir, {})
     for command in plan.install:
-        _run([part.replace(WHEEL, str(wheels[0])) for part in command], project_dir, plan.env)
-    return wheels[0]
+        _run([part.replace(WHEEL, str(wheel)) for part in command], project_dir, plan.env)
+    return wheel
