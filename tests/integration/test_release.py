@@ -467,7 +467,10 @@ def test_release_succeeds_when_no_workflow_run_shows_up(
 def test_release_reports_a_failed_workflow_run_with_its_recovery(
     tmp_path: Path, release_env: dict[str, str]
 ) -> None:
+    """A pushed tag is never moved: its version is burned, and the fix is released as the next."""
     repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    major, minor, patch = VERSION.split(".")
+    following = f"{major}.{minor}.{int(patch) + 1}"
 
     result = run_release(repo, release_env | {"FAKE_GH_WATCH_RC": "1"})
 
@@ -476,7 +479,12 @@ def test_release_reports_a_failed_workflow_run_with_its_recovery(
     assert f"{TAG} is pushed but not published" in result.stderr
     assert f"gh run view {RUN_ID} --log-failed" in result.stderr
     assert f"gh run rerun {RUN_ID} --failed" in result.stderr
-    assert f"git push origin :refs/tags/{TAG}" in result.stderr
+    assert f"this version is burned: fix it on main and release {following}" in result.stderr
+    assert f"make release VERSION={following}" in result.stderr
+    assert f"the [{VERSION}] section of CHANGELOG.md back into [Unreleased]" in result.stderr
+    assert f"the top of CHANGELOG.md that {TAG} has no release" in result.stderr
+    assert "refs/tags" not in result.stderr
+    assert "git tag" not in result.stderr
 
 
 def test_release_pushes_commit_and_tag_atomically(

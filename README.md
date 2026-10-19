@@ -231,7 +231,10 @@ Measured timings, release by release, are in `docs/performance.md`.
 
 What the check cannot stop is someone who can write the file and rewrites the digest too, or
 patches the check out: the code that checks is in the same file. Proving where an executable
-came from needs a signature checked with a key from outside it; signed releases are planned.
+came from needs a signature checked with a key from outside it; signed releases are planned
+after the MVP ([D31](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)). Until then, a release's
+origin is shown by its attestation: `gh attestation verify` checks that this repository's
+release workflow built it from its tag ([Verifying a release](#verifying-a-release)).
 
 ## At run time
 
@@ -315,7 +318,9 @@ built and attested by GitHub Actions:
 mkdir -p ~/.local/bin
 curl -fLo ~/.local/bin/fsbpyr https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr
 chmod +x ~/.local/bin/fsbpyr
-gh attestation verify ~/.local/bin/fsbpyr --repo devitops-com/fsbpyr   # optional
+# recommended: checks that this repository's release workflow built it
+gh attestation verify ~/.local/bin/fsbpyr --repo devitops-com/fsbpyr \
+  --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml
 ```
 
 The same executable also comes as `fsbpyr.xz`, half the download (14.0 MB instead of 28.9 MB
@@ -393,28 +398,67 @@ need a new one: the build then says `no runtime for Python 3.14; run fsbpyr runt
 ### Verifying a release
 
 Each release's `fsbpyr` is built by GitHub Actions from its `vX.Y.Z` tag and attested there.
-It also reproduces itself: run against the sources of its own tag, the downloaded executable
-builds a file that is byte for byte the one it was downloaded as.
+Every release from 0.19.0 on stays published as it is: a version whose release fails is
+burned, and the fix comes as the next version, never in its place.
+
+The check needs curl, git, gh and uv, and uv must be the one that built the release: uv
+builds the project's wheel, stamping its own version into the wheel's metadata, and installs
+every distribution, so another uv can give other bytes from identical sources (a build with
+any other uv warns). An executable records its uv (`fsbpyr inspect` shows it as "uv", `--json`
+as `.uv`; 0.18.2 and older do not record it), and `uv self update <version>` switches a uv
+installed from astral.sh to that version.
+
+The attestation comes first, before anything runs the file. It shows that this repository's
+release workflow built the file from the latest release's tag:
 
 ```
-curl -fLo fsbpyr https://github.com/devitops-com/fsbpyr/releases/download/v0.18.2/fsbpyr
+tag="$(gh release view --repo devitops-com/fsbpyr --json tagName --jq .tagName)"
+curl -fLo fsbpyr "https://github.com/devitops-com/fsbpyr/releases/download/$tag/fsbpyr"
+gh attestation verify fsbpyr --repo devitops-com/fsbpyr \
+  --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml --source-ref "refs/tags/$tag"
+```
+
+If it fails, stop there. Otherwise rebuild the file from that tag, with the uv it records:
+
+```
 chmod +x fsbpyr
-gh attestation verify fsbpyr --repo devitops-com/fsbpyr   # built by this repository's workflow
-git clone --branch v0.18.2 https://github.com/devitops-com/fsbpyr.git src
-(cd src && ../fsbpyr build . -o ../rebuilt)               # needs uv, as any build does
+uv self update "$(./fsbpyr inspect fsbpyr | awk '$1 == "uv" { print $2; exit }')"
+git clone --branch "$tag" https://github.com/devitops-com/fsbpyr.git src
+(cd src && ../fsbpyr build . -o ../rebuilt)
 cmp fsbpyr rebuilt && echo identical
 ```
 
-Only that pairing gives the same bytes: the official executable of a release, building a clean
-checkout of that release's tag. An executable records the version of the fsbpyr that built it
-(`fsbpyr inspect` shows it as "built with"), so the same sources built by any other fsbpyr give
-a different file. That includes `make bootstrap` and `make build`, and executables built from
-an untagged commit or another release, even when the launcher and the payload are otherwise the
-same. Such a build works the same; only the bytes differ. Releases before 0.18.2 do not
-reproduce themselves: their launchers were not linked reproducibly.
+A rebuild checks the bytes themselves, at two levels:
 
-uv must be the same too: it builds the project's wheel, stamping its own version into the
-wheel's metadata, and installs every distribution, so another uv can give other bytes from
-identical sources. An executable records the uv that built it (`fsbpyr inspect` shows it as
-"uv"; 0.18.2 and older do not record it), and a build with any other uv warns. `uv self update
-<version>` switches a uv installed from astral.sh to that version.
+- **(a) The payload.** The executable rebuilds itself from its own tag byte for byte, so
+  fsbpyr's code and its dependencies are what the tag says. This cannot vouch for the launcher
+  stub, CPython and the standard library: an fsbpyr executable builds with the runtime it
+  carries, copying them from itself ([D4](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)), so a
+  changed stub would pass this check.
+- **(b) The runtime.** Only an independent rebuild checks the stub, CPython and the standard
+  library. It compiles the launcher from the tag's sources and links it with clang and lld 22
+  (which `make bootstrap` installs on Debian trixie); CPython, which the launcher links in, and
+  the standard library, which is compiled to bytecode, come from the python-build-standalone
+  archive that the tag pins by SHA-256. So (b) proves the stub, and that CPython and the
+  standard library are that pinned build; it does not compile CPython. CI's release is
+  `make build`'s output, so on a clean checkout of the tag `make bootstrap` and `make build`
+  give the released bytes, with the release's uv and clang (`readelf -p .comment fsbpyr` names
+  the Debian clang that built the launcher). Both targets update uv to the newest, though, so
+  run fsbpyr from source directly in the checkout above: it builds the runtime, then `stage1`,
+  and `stage1` builds the file to compare. A runtime already in the cache under the same id is
+  reused, not built again; an empty cache (`XDG_CACHE_HOME` set to a new directory) builds it
+  afresh. (b) is not yet checked in CI.
+
+```
+cd src
+uv run --locked fsbpyr runtime build
+uv run --locked fsbpyr build . -o ../stage1
+../stage1 build . -o ../from-source
+cd .. && cmp fsbpyr from-source && echo identical
+```
+
+An executable also records the version of the fsbpyr that built it (`fsbpyr inspect` shows it
+as "built with"), so an fsbpyr of another version, or of an untagged commit, gives a different
+file from the same sources, even when the launcher and the payload are otherwise the same. Such
+a build works the same; only the bytes differ. Releases before 0.18.2 do not reproduce
+themselves: their launchers were not linked reproducibly.

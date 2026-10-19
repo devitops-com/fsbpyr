@@ -308,14 +308,20 @@ fi
 
 echo "==> Watching run $run_id (Ctrl-C stops watching, not the release)"
 if ! gh run watch "$run_id" --exit-status; then
+    # A pushed tag is never moved or pushed again: the version is burned, and the fix is
+    # released under the next patch version, whose notes must also carry the burned one's
+    # changes (the release commit has already promoted them out of [Unreleased]).
+    next="X.Y.Z+1"
+    [[ "$VERSION" =~ $XYZ ]] && next="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
     cat >&2 <<EOF
 ERROR: the release workflow (run $run_id) failed: $TAG is pushed but not published.
        See why:           gh run view $run_id --log-failed
        Transient failure: gh run rerun $run_id --failed
-       Needs a code fix:  drop the tag (git push origin :refs/tags/$TAG && git tag -d $TAG),
-                          push the fix to $BRANCH, then tag it again and push the tag:
-                            git tag -a $TAG -m 'fsbpyr $TAG' && git push origin $TAG
-                          (make release would refuse: [Unreleased] is empty now)
+       Needs a code fix:  this version is burned: fix it on $BRANCH and release $next
+                          (make release VERSION=$next); $TAG stays as it is. Merge
+                          the [$VERSION] section of $CHANGELOG back into [Unreleased],
+                          with the fix's entry, so $next's notes carry its changes,
+                          and note at the top of $CHANGELOG that $TAG has no release
 EOF
     exit 1
 fi

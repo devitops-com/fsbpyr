@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+Versions 0.15.2, 0.15.3, 0.16.0, 0.17.0, 0.17.1 and 0.18.0 have no `vX.Y.Z` tag; their release
+commits are on main (d489698, 7c11a1c, 80a1f1b, 86b2645, 299355e and 21ac25d). The GitHub
+releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
+
 ## [Unreleased]
 
 ### Added
@@ -15,6 +19,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   release follows, with targets of 7 days for high or critical issues and 30 days otherwise;
   its `### Security` entry here names the components and the old and new runtime ids, and
   says to rebuild your executables.
+- **Releases carry `SHA256SUMS`**, the SHA-256 of `fsbpyr` and `fsbpyr.xz` as `sha256sum`
+  prints them, the digests the release's attestation signs: `sha256sum -c --ignore-missing
+  SHA256SUMS` checks a download without gh.
 
 ### Changed
 - **fsbpyr runs on CPython 3.14 only, and stops at once on any other Python.** Its
@@ -36,6 +43,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   "Getting fsbpyr", with building from source and verifying a release, is now the last
   section. A test runs the quickstart as on a new account: an empty home, whose `~/.local/bin`
   is not on `PATH`.
+- **A version whose release fails is burned.** When the release workflow failed for a reason
+  that needs a code fix, `make release` said to delete the pushed tag and push it again at the
+  fix; it now says to fix main and release the next patch version, with the burned version's
+  section of this changelog merged back into [Unreleased], so that the next release's notes
+  carry its changes too, and the burned version named in the note at the top (`gh run rerun`
+  still retries a transient failure). A pushed tag never moves, and every release from 0.19.0
+  on stays published as it is.
 
 ### Fixed
 - **`exit()`, `quit()` and `help` work in built apps.** Python's `site` module defines them,
@@ -74,6 +88,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   again: the executable kept the host's build and needed its glibc (2.34 for `pthread_create`
   on Debian trixie), with a warning. The project's wheel is now built again with the
   sysroot's flags, and that wheel is packaged.
+- **The README's release check works again, and checks more.** It downloaded v0.18.2, whose
+  release was withdrawn (HTTP 404); it now asks GitHub for the latest release's tag, checks
+  the attestation before anything runs the downloaded file, and sets uv to the version the
+  release records. `gh attestation verify` now requires the signing workflow, `release.yml`
+  (`--signer-workflow`), and in the release check also the release's tag (`--source-ref`);
+  "Getting fsbpyr" calls the check recommended instead of optional. The README now says what
+  the self-rebuild proves: fsbpyr's code and dependencies, not the launcher, CPython and the
+  standard library, which an executable copies from itself. A second rebuild, given too,
+  checks those: it links the launcher from the tag's sources against the CPython the tag pins,
+  python-build-standalone's build (CPython is not compiled again), and takes the standard
+  library from the same archive. It no longer says that `make bootstrap` and `make build`
+  cannot give a release's bytes: with the release's uv and clang they do. The Integrity section
+  names the attestation as what shows a release's origin until signed releases, planned after
+  the MVP.
 
 ## [0.20.0] - 2026-10-18
 
