@@ -29,10 +29,10 @@ PINS = (
     PbsPin(
         python="3.14",
         version="3.14.8",
-        release="20261003",
+        release="20261009",
         triple="x86_64-unknown-linux-gnu",
         flavor="pgo+lto-full",
-        sha256="43b8c1b02e3daefbbbf4b5714b656ea00a5cae24f55c4589fb87468bcac682ed",
+        sha256="d4d83a2dbb9b7ee12373219113e9aa59ad943b8d381a43837209945bb5596e66",
     ),
 )
 
