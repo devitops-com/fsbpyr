@@ -11,6 +11,8 @@
 # such archive, quotes the notes of every release since the pinned one and compares the LLVM
 # version of both archives' objects (PYTHON.json's object_file_format): from a new LLVM major
 # on, `fsbpyr runtime build` needs clang and lld of that major or newer (pbs.py llvm_major).
+# The issue is meant to stay open until the pin moves (closed earlier, it is opened again on
+# the next run); the commit that moves the pin closes it ("Closes #N").
 #
 # Needs gh, authenticated for a repository whose issues it may write (GH_TOKEN and GH_REPO
 # in the workflow), and tar with zstd. When the archives differ it reads both (about 110 MB

@@ -200,6 +200,9 @@ def test_the_open_issue_is_updated_instead_of_opening_another(tmp_path: Path, pb
 
     assert result.returncode == 0, result.stderr
     (edit,) = issue_calls(tmp_path)
+    (listing,) = [call for call in gh_calls(tmp_path) if call[:2] == ["issue", "list"]]
+    assert option(listing, "--label") == "runtime-update"
+    assert option(listing, "--state") == "open"
     assert edit[:3] == ["issue", "edit", "7"]
     assert "20991231" in option(edit, "--title")
     assert "LLVM" not in option(edit, "--title")  # the same major
