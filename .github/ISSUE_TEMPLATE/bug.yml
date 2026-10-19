@@ -1,0 +1,45 @@
+name: Bug report
+description: fsbpyr, or an executable it built, does not work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        A vulnerability goes to a private report, as
+        [SECURITY.md](https://github.com/devitops-com/fsbpyr/blob/main/SECURITY.md) describes,
+        not here.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: fsbpyr --version
+    validations:
+      required: true
+
+  - type: input
+    id: uv
+    attributes:
+      label: uv --version
+      description: The uv on the host that built the executable.
+
+  - type: textarea
+    id: inspect
+    attributes:
+      label: fsbpyr inspect --json <app>
+      description: For a built executable, the output of `fsbpyr inspect --json` on it.
+      render: json
+
+  - type: textarea
+    id: build
+    attributes:
+      label: Build output
+      description: Everything `fsbpyr build` printed, with the command line.
+      render: text

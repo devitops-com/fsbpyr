@@ -332,6 +332,13 @@ cache of an earlier version: a directory of yours that `FSBPYR_CACHE_DIR` names 
 marked. To have such a directory collected all the same (a volume of its own, with its
 `lost+found`, say), create the marker yourself: `touch "$FSBPYR_CACHE_DIR/.fsbpyr-cache"`.
 
+## Security
+
+Report a vulnerability privately, as [`SECURITY.md`](SECURITY.md) describes. Every executable
+carries its own CPython and the libraries linked into it (OpenSSL, SQLite, zlib and others),
+so a security fix in them reaches an app only when the app is rebuilt with the fsbpyr release
+that carries it; `SECURITY.md` says how soon such a release follows python-build-standalone's.
+
 ## Versions
 
 Releases are tagged `vX.Y.Z`: a fix bumps the patch level, a new feature the minor version, a
