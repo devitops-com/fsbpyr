@@ -1,5 +1,6 @@
 """The boot module and _fsbpyr_rt, run in-process against the pure-Python _fsbpyr stand-in."""
 
+import builtins
 import importlib.machinery
 import importlib.metadata
 import importlib.resources
@@ -257,6 +258,8 @@ def isolated_sys(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(sys, "excepthook", sys.__excepthook__)
     frozen = importlib.machinery.FrozenImporter
     monkeypatch.setattr(frozen, "get_source", frozen.get_source)  # run() extends it
+    for name in ("exit", "quit", "help"):
+        monkeypatch.setattr(builtins, name, getattr(builtins, name))  # run() defines them
     before = set(sys.modules)
     yield
     for name in set(sys.modules) - before:
@@ -285,6 +288,22 @@ def test_run_selftest_installs_import_machinery(
     assert boot.META_FINDER in sys.meta_path
     assert sys.excepthook is boot._excepthook
     assert capsys.readouterr().out == "fsbpyr selftest ok: demo\n"
+
+
+@pytest.mark.usefixtures("isolated_sys")
+def test_run_defines_exit_quit_and_help_as_site_does(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    by_site = {name: getattr(builtins, name) for name in ("exit", "quit", "help")}
+    for name in by_site:  # built apps never import site (D14)
+        delattr(builtins, name)
+    monkeypatch.setitem(posix.environ, b"FSBPYR_SELFTEST", b"1")
+
+    boot.run()
+
+    for name, defined in by_site.items():
+        assert type(getattr(builtins, name)) is type(defined)
+        assert repr(getattr(builtins, name)) == repr(defined)
 
 
 @pytest.mark.usefixtures("isolated_sys")

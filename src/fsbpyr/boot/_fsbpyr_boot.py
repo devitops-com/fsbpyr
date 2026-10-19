@@ -13,6 +13,8 @@ packages and subpackages exactly as it does for a site-packages directory.
 """
 
 import _imp
+import _sitebuiltins
+import builtins
 import marshal
 import posix
 import sys
@@ -315,6 +317,14 @@ def _install_frozen_sources() -> None:
     FrozenImporter.get_source = classmethod(get_source)  # type: ignore[method-assign,assignment]
 
 
+def _install_site_builtins() -> None:
+    """exit(), quit() and help as site defines them; built apps never import site (D14).
+    help imports pydoc only when it is called."""
+    builtins.exit = _sitebuiltins.Quitter("exit", "Ctrl-D (i.e. EOF)")
+    builtins.quit = _sitebuiltins.Quitter("quit", "Ctrl-D (i.e. EOF)")
+    builtins.help = _sitebuiltins._Helper()
+
+
 def _multiprocessing_child() -> bool:
     """multiprocessing re-executes ``sys.executable`` (this app) with ``-c <code>``."""
     argv = sys.argv
@@ -349,6 +359,7 @@ def run() -> None:
     if sys.excepthook is sys.__excepthook__:
         sys.excepthook = _excepthook
     _install_frozen_sources()
+    _install_site_builtins()  # for -c and -m children too
     if posix.environ.get(b"FSBPYR_TRACE"):
         import atexit  # noqa: PLC0415
 

@@ -25,6 +25,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   README's new "Supported targets" section says what executables run on: CPython 3.14.8, Linux
   x86-64 with glibc, and the GIL build only.
 
+### Fixed
+- **`exit()`, `quit()` and `help` work in built apps.** Python's `site` module defines them,
+  and built apps never import it, so each raised NameError there while working in the venv.
+  The executable now defines them itself, as `site` does, also for the `-c` and `-m` children
+  that `--interpreter-reexec` runs; `help` imports pydoc only when it is called.
+
 ## [0.20.0] - 2026-10-18
 
 ### Changed

@@ -137,8 +137,8 @@ def test_argv_is_never_run_as_python_code(mp_tmp: Path, tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("options", "expected"),
-    [(("--interpreter-reexec",), ["0 helper ['a']", "0 code ['-c', 'b']"]),
-     ((), ["1", "1"])],  # the app ran in the children, with their arguments: an error
+    [(("--interpreter-reexec",), ["0 helper ['a']", "0 code ['-c', 'b']", "4"]),
+     ((), ["1", "1", "1"])],  # the app ran in the children, with their arguments: an error
     ids=["interpreter-reexec", "default"],
 )  # fmt: skip
 def test_the_app_starts_helper_interpreters_only_when_built_so(
