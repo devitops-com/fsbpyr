@@ -13,7 +13,7 @@ from pathlib import Path
 from . import __version__, bytecode
 from .payload.format import ModuleFlag, ModuleKind, extractable
 from .payload.spec import ZSTD_LEVEL, Blob, Dist, File, Module, PayloadSpec
-from .payload.writer import write_executable
+from .payload.writer import commit, write_temporary
 from .runtime.registry import BOOT_PACKAGES, Runtime
 
 BOOT_MODULE, RUNTIME_PACKAGE = BOOT_PACKAGES
@@ -108,6 +108,12 @@ class App:
 
 
 def build_executable(runtime: Runtime, app: App, out: Path) -> None:
+    commit(build_temporary(runtime, app, out), out)
+
+
+def build_temporary(runtime: Runtime, app: App, out: Path) -> Path:
+    """The executable, written beside ``out`` (``write_temporary``) for the caller to test and
+    then ``commit``."""
     if runtime.bytecode_magic != importlib.util.MAGIC_NUMBER:
         raise AssemblyError(
             f"bytecode magic of this interpreter ({importlib.util.MAGIC_NUMBER.hex()}) differs "
@@ -140,4 +146,4 @@ def build_executable(runtime: Runtime, app: App, out: Path) -> None:
         dists=app.dists,
         zstd_level=app.zstd_level,
     )
-    write_executable(out, runtime.stub, spec)
+    return write_temporary(out, runtime.stub, spec)

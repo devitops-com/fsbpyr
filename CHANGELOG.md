@@ -48,6 +48,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **The README's `[tool.fsbpyr]` sample is one a build accepts.** It set both
   `fast-compression` and `best-compression`, which a build rejects together; the second is now
   commented out, and `requirements` is marked as for pip projects, overriding `uv.lock`.
+- **A build that fails its smoke test leaves `-o` as it was.** The new executable replaced
+  the output before the smoke test ran, so `fsbpyr build ~/src/mytool -o ~/.local/bin/mytool`
+  could swap a working tool for a broken one. It is now written beside the output as
+  `.<name>.XXXX.tmp` and smoke-tested there; only one that passed replaces the output, and a
+  failed or interrupted build removes it.
+- **An entry naming a package without `__main__` fails the build.** `--entry pkg` runs
+  `pkg.__main__`, as `python -m pkg` does, but the smoke test only imported `pkg`: the build
+  succeeded and the executable failed at every start. The build now requires `pkg.__main__`
+  among the app's modules, and the smoke test finds it without running it.
+- **A failed build prints the warnings it collected before the error**, such as "unlocked
+  build", ahead of `fsbpyr: error:`; they were dropped.
 
 ## [0.20.0] - 2026-10-18
 

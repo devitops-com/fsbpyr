@@ -579,8 +579,15 @@ def assemble(stub: bytes, payload: bytes) -> bytes:
 
 
 def write_executable(path: Path, stub: bytes, spec: PayloadSpec) -> None:
-    """Atomically write the executable of ``spec`` to ``path`` with mode 0755, as ``assemble``
-    lays it out: the payload streamed into the file, the digest then read back from it (D38)."""
+    """Atomically write the executable of ``spec`` to ``path``: ``write_temporary``, then
+    ``commit``."""
+    commit(write_temporary(path, stub, spec), path)
+
+
+def write_temporary(path: Path, stub: bytes, spec: PayloadSpec) -> Path:
+    """Write the executable of ``spec`` with mode 0755 to a new ``.{name}.XXXX.tmp`` beside
+    ``path``, fsynced, as ``assemble`` lays it out: the payload streamed into the file, the
+    digest then read back from it (D38). ``path`` is left alone until ``commit``."""
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w+b") as out:
@@ -599,9 +606,19 @@ def write_executable(path: Path, stub: bytes, spec: PayloadSpec) -> None:
             out.flush()
             os.fchmod(out.fileno(), 0o755)
             os.fsync(out.fileno())
-        os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
+        raise
+    return Path(tmp)
+
+
+def commit(tmp: Path, path: Path) -> None:
+    """Move ``tmp``, written by ``write_temporary``, to ``path`` atomically (``tmp`` is removed
+    if that fails), and persist the rename."""
+    try:
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
         raise
     directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
     try:

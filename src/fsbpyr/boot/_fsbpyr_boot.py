@@ -377,6 +377,14 @@ def run() -> None:
     entrypoint = INFO["entrypoint"]
     if posix.environ.get(b"FSBPYR_SELFTEST"):
         _resolve(entrypoint)  # import the module and look the attribute up, without calling
+        if ":" not in entrypoint and hasattr(sys.modules[entrypoint], "__path__"):
+            from importlib.util import find_spec  # noqa: PLC0415
+
+            if find_spec(f"{entrypoint}.__main__") is None:  # runpy would run it: found, not run
+                raise ModuleNotFoundError(
+                    f"No module named {entrypoint}.__main__; {entrypoint!r} is a package and "
+                    "cannot be directly executed"
+                )
         print(f"fsbpyr selftest ok: {INFO['app_name']}")
         return
     if ":" not in entrypoint:

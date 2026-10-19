@@ -20,7 +20,13 @@ from fsbpyr.payload.format import (
 )
 from fsbpyr.payload.reader import Executable, Payload
 from fsbpyr.payload.spec import Blob, PayloadSpec, stored_bytes
-from fsbpyr.payload.writer import assemble, encode_payload, write_executable
+from fsbpyr.payload.writer import (
+    assemble,
+    commit,
+    encode_payload,
+    write_executable,
+    write_temporary,
+)
 
 from .conftest import GENERATION, MAGIC, PY_HEXVERSION, SO, make_spec
 
@@ -224,6 +230,21 @@ def test_write_executable_replaces_existing_file(tmp_path: Path) -> None:
 
     write_executable(out, b"STUB", make_spec(app_name="new"))
 
+    with Executable.open(out) as exe:
+        assert exe.payload.app_name == "new"
+
+
+def test_a_written_executable_replaces_nothing_until_committed(tmp_path: Path) -> None:
+    out = tmp_path / "demo"
+    out.write_bytes(b"old")
+
+    written = write_temporary(out, b"STUB", make_spec(app_name="new"))
+
+    assert written.parent == tmp_path and written.name.startswith(".demo.")
+    assert written.name.endswith(".tmp") and stat.S_IMODE(written.stat().st_mode) == 0o755
+    assert out.read_bytes() == b"old"
+    commit(written, out)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["demo"]
     with Executable.open(out) as exe:
         assert exe.payload.app_name == "new"
 

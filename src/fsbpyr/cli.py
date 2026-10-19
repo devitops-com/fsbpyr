@@ -160,6 +160,8 @@ def build_command(  # noqa: PLR0913  click passes every option by name
         )
         result = build(project, config, log=lambda message: print(f"fsbpyr: {message}"))
     except errors as exc:
+        for warning in getattr(exc, "__notes__", ()):  # collected before the error
+            print(f"fsbpyr: warning: {warning}", file=sys.stderr)
         print(f"fsbpyr: error: {exc}", file=sys.stderr)
         return 1
     for warning in result.warnings:

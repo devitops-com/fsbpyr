@@ -367,7 +367,9 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
    verified with aiagent, 2026-10-07).
 4. **Entry point.** Read `[console_scripts]` from the project's installed `entry_points.txt`.
    If there is one, use it. If there are several, `--entry` or config is required. `module`
-   and `module:func` are also accepted.
+   and `module:func` are also accepted; a `module` that is a package needs `<pkg>.__main__`
+   among the app's modules, since running the package runs that, as `python -m` does
+   (`_check_entry_module`, once the modules are collected).
 5. **Collect and validate.** Index every `*.dist-info` in the staging site directory. Walk the
    project's Requires-Dist (plus extras) with the runtime's marker environment as a consistency
    check. A missing dist is an error. Installed dists that are not reachable produce a warning
@@ -390,10 +392,14 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
 8. **Natives.** Run the ELF analysis, compute closures, check the allowlist and compute the
    generation id.
 9. **Compress** at the build's zstd level (D29). Stdlib frames from the runtime are reused verbatim.
-10. **Assemble** stub ‖ pad ‖ payload ‖ trailer into a temp file, `chmod 0755`, and atomically
-    rename it to `dist/<name>`.
-11. **Smoke test.** Run `<out>` with `FSBPYR_SELFTEST=1`. Boot checks the tables and imports
-    the entry module without calling it. `--no-smoke` skips this.
+10. **Assemble** stub ‖ pad ‖ payload ‖ trailer into `.<name>.XXXX.tmp` beside the output
+    (`dist/<name>` or `-o`), `chmod 0755`, and fsync it (`writer.py` `write_temporary`).
+11. **Smoke test.** Run that temp file with `FSBPYR_SELFTEST=1`. Boot checks the tables and
+    imports the entry module without calling it; for a `module` entry that is a package it also
+    finds `<pkg>.__main__` (`find_spec`) without running it. Only a temp file that passed, or
+    any with `--no-smoke`, is renamed atomically onto the output (`commit`); a failure or an
+    interrupt removes it and leaves the output as it was (since 2026-10-19; the output used to
+    be replaced first and tested after).
 
 ### 3.7 Runtime build (`fsbpyr runtime build --python 3.14`)
 
