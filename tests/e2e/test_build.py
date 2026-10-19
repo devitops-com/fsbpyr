@@ -426,3 +426,21 @@ def test_smoke_test_resolves_the_entry_attribute(
     assert main(["build", str(project), "--entry", "hello.cli:missing"]) == 1
 
     assert "smoke test" in capsys.readouterr().err
+
+
+def test_a_failed_smoke_test_leaves_the_output_as_it_was(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`fsbpyr build ~/src/mytool -o ~/.local/bin/mytool` never replaces a working tool with
+    a broken one."""
+    project = _fixture("hello", tmp_path)
+    out = tmp_path / "bin" / "hello"
+    out.parent.mkdir()
+    old = b"#!/bin/sh\necho the working tool\n"
+    out.write_bytes(old)
+
+    assert main(["build", str(project), "--entry", "hello.cli:missing", "-o", str(out)]) == 1
+
+    assert f"smoke test of the new {out.resolve()} failed" in capsys.readouterr().err
+    assert out.read_bytes() == old
+    assert sorted(p.name for p in out.parent.iterdir()) == ["hello"]  # no .hello.*.tmp left

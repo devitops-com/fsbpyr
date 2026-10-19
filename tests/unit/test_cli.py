@@ -190,6 +190,25 @@ def test_runtime_list_on_empty_cache(
     assert capsys.readouterr().out == ""
 
 
+def test_a_failed_build_prints_its_warnings_before_the_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+
+    def build(project: Path, config: object, **kwargs: object) -> None:
+        error = OSError("no space left on device")
+        error.add_note("unlocked build: dependencies resolved now, not reproducible")
+        raise error
+
+    monkeypatch.setattr("fsbpyr.build.build", build)
+
+    assert main(["build", str(tmp_path)]) == 1
+    assert capsys.readouterr().err.splitlines() == [
+        "fsbpyr: warning: unlocked build: dependencies resolved now, not reproducible",
+        "fsbpyr: error: no space left on device",
+    ]
+
+
 def test_runtime_build_reports_errors_without_traceback(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

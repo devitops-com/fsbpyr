@@ -10,15 +10,16 @@ from pathlib import Path
 
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
-from .assemble import App, build_executable, runtime_module_names
+from .assemble import App, build_temporary, runtime_module_names
 from .classify import _record_path, classify
 from .closure import InstalledDist, SiteIndex, resolve_entry
 from .config import BuildConfig
 from .elf import ElfError, glibc_requirement, is_elf
 from .natives import opened
-from .payload.format import NATIVE_KINDS
+from .payload.format import NATIVE_KINDS, ModuleKind
 from .payload.spec import XZ_PRESET, File
 from .payload.spill import Spill
+from .payload.writer import commit
 from .project import LockSource, Project
 from .runtime import pins
 from .runtime.pbs import PbsError
@@ -38,6 +39,7 @@ from .vcs import git_state, own_version
 
 TARGET_PYTHON = "3.14"
 _SMOKE_TIMEOUT = 120
+_PACKAGES = (ModuleKind.PACKAGE, ModuleKind.NAMESPACE)
 
 
 class BuildError(RuntimeError):
@@ -55,10 +57,13 @@ class BuildResult:
 
 
 def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
-    module = entrypoint.partition(":")[0]
-    known = {m.name for m in (*app.modules, *runtime.modules)}
-    if module not in known:
+    module, colon, _ = entrypoint.partition(":")
+    kinds = {m.name: m.kind for m in (*app.modules, *runtime.modules)}
+    if module not in kinds:
         raise BuildError(f"entry point module {module!r} is not part of the application")
+    main = f"{module}.__main__"  # what running a package runs, as `python -m` does
+    if not colon and kinds[module] in _PACKAGES and main not in kinds:
+        raise BuildError(f"entry point module {module!r} is a package without {main!r}")
 
 
 def _version(value: tuple[int, int]) -> str:
@@ -182,8 +187,10 @@ def check_output(output: Path) -> None:
         raise BuildError(f"output path {output} is a directory; pass -o with a file name")
 
 
-def smoke_test(executable: Path, app_name: str) -> None:
-    """Run the executable in selftest mode: boot, import the entry module, exit."""
+def smoke_test(executable: Path, app_name: str, output: Path | None = None) -> None:
+    """Run the executable in selftest mode: boot, import the entry module, exit. An error names
+    ``output``, the path the executable is to replace, when it is given."""
+    shown = executable if output is None else f"the new {output}"
     env = {**os.environ, "FSBPYR_SELFTEST": "1"}
     try:
         result = subprocess.run(  # noqa: S603  the executable we just wrote
@@ -195,23 +202,52 @@ def smoke_test(executable: Path, app_name: str) -> None:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise BuildError(f"smoke test of {executable} failed: {exc}") from exc
+        raise BuildError(f"smoke test of {shown} failed: {exc}") from exc
     if result.returncode != 0 or f"fsbpyr selftest ok: {app_name}" not in result.stdout:
         raise BuildError(
-            f"smoke test of {executable} failed (exit {result.returncode}):\n"
-            f"{result.stderr[-3000:]}"
+            f"smoke test of {shown} failed (exit {result.returncode}):\n{result.stderr[-3000:]}"
         )
 
 
 def build(
     directory: Path, config: BuildConfig, *, log: Callable[[str], None] = lambda _: None
 ) -> BuildResult:
+    """Build the executable beside the output; it replaces the output only once it passed the
+    smoke test (--no-smoke skips it). An error carries the warnings collected before it as
+    notes, which cli.py prints."""
+    warnings: list[str] = []
+    written: list[Path] = []  # the new executable beside the output, until it is committed
+    try:
+        result = _build(directory, config, log, warnings, written)
+        if config.smoke:
+            smoke_test(written[0], result.app_name, result.output)
+        commit(written[0], result.output)
+        written.clear()
+        return result
+    except Exception as exc:
+        for warning in warnings:
+            exc.add_note(warning)
+        raise
+    finally:
+        for path in written:  # the build failed or was interrupted
+            path.unlink(missing_ok=True)
+
+
+def _build(
+    directory: Path,
+    config: BuildConfig,
+    log: Callable[[str], None],
+    warnings: list[str],
+    written: list[Path],
+) -> BuildResult:
+    """Everything up to the new executable, written beside the output: ``written`` holds it as
+    soon as it exists."""
     project = Project.load(directory)
     uv = find_uv()  # before anything slow: a build cannot go far without it (D26)
     uv_used = uv_version(uv)
     runtime = select_runtime(TARGET_PYTHON)
     project.check_python(runtime.python_version)
-    warnings = uv_mismatch(builder=builder_uv(), current=uv_used)
+    warnings += uv_mismatch(builder=builder_uv(), current=uv_used)
     if pin := project.python_version_mismatch(TARGET_PYTHON):
         warnings.append(f".python-version pins {pin}; building for Python {runtime.python_version}")
     source = project.lock_source(config.requirements)
@@ -293,7 +329,6 @@ def build(
             )
             _check_entry_module(entrypoint, app, runtime)
             log(f"writing {output}")
-            build_executable(runtime, app, output)
-    if config.smoke:
-        smoke_test(output, app_name)
-    return BuildResult(output, app_name, entrypoint, output.stat().st_size, tuple(warnings), glibc)
+            written.append(build_temporary(runtime, app, output))
+    size = written[0].stat().st_size
+    return BuildResult(output, app_name, entrypoint, size, tuple(warnings), glibc)

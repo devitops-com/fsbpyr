@@ -291,6 +291,24 @@ def test_run_selftest_installs_import_machinery(
 
 
 @pytest.mark.usefixtures("isolated_sys")
+@pytest.mark.parametrize("package", ["pkg", "ns"])
+def test_selftest_of_a_package_entry_requires_its_main(
+    boot: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    package: str,
+) -> None:
+    """Running a package runs its __main__ module, as `python -m pkg` does."""
+    monkeypatch.setitem(boot.INFO, "entrypoint", package)
+    monkeypatch.setitem(posix.environ, b"FSBPYR_SELFTEST", b"1")
+
+    with pytest.raises(ModuleNotFoundError, match=rf"{package}\.__main__"):
+        boot.run()
+
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.usefixtures("isolated_sys")
 def test_run_defines_exit_quit_and_help_as_site_does(
     boot: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:

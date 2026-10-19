@@ -264,6 +264,18 @@ def test_selftest_imports_entry_module_without_calling_it(build_app: BuildApp) -
     assert result.stdout.splitlines() == ["imported", "fsbpyr selftest ok: app"]
 
 
+@pytest.mark.sanitized
+def test_selftest_of_a_package_entry_finds_its_main_without_running_it(
+    build_app: BuildApp,
+) -> None:
+    with_main = build_app({"tool/__init__.py": "", "tool/__main__.py": "print('ran')\n"}, "tool")
+    found = _run(with_main, FSBPYR_SELFTEST="1")
+    without = _run(build_app({"tool/__init__.py": ""}, "tool"), FSBPYR_SELFTEST="1")
+
+    assert (found.returncode, found.stdout) == (0, "fsbpyr selftest ok: app\n")
+    assert without.returncode == 1 and "tool.__main__" in without.stderr
+
+
 STRACE = shutil.which("strace")
 
 
