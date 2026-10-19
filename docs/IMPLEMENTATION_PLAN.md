@@ -1619,7 +1619,10 @@ the fuzzer in `tests/fuzz/` (8a); CI (`.github/workflows/release.yml`) runs `mak
 `make test-ci` (unit, integration, `test_build.py`, `test_runtime_app.py`, and `test_imports.py`
 after 0.20.0) on every pull request and tag since 0.19.0 and on every push to main after 0.20.0,
 the rest locally (`make test`); tests that need the kernel to refuse access skip as root, and
-after 0.20.0 a skip that the `ci` list in `tests/conftest.py` does not expect fails CI.
+after 0.20.0 a skip that the `ci` list in `tests/conftest.py` does not expect fails CI. After
+0.20.0 `make test-ci` also measures branch coverage and fails below `fail_under` in
+`pyproject.toml`; CI fails as well when `payload/` plus `elf.py` fall below 90%, and keeps the
+`coverage.xml` of every run that reached the tests.
 
 - **Unit (pytest):**
   - format and writer/reader

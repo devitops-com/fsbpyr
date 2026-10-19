@@ -14,4 +14,6 @@ once it exists. A bug found once stays tested.
 
 `make check` runs the static checks (ruff and mypy), `make test-ci` the part of the suite that
 CI runs, and `make test` all of it. The end-to-end tests use a cached runtime or build one,
-which needs clang and lld 22 or newer; with neither, they skip.
+which needs clang and lld 22 or newer; with neither, they skip. `make test-ci` also fails when
+branch coverage falls below `fail_under` in `pyproject.toml`. That value comes from a run with
+the end-to-end tests, so a run where they skip can fail on coverage alone.

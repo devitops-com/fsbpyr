@@ -134,11 +134,30 @@ jobs:
         run: make check
 
       # pytest alone passes a run however many tests skip: here a skip that tests/conftest.py's
-      # `ci` list does not expect (this container runs the tests as root) fails the step.
+      # `ci` list does not expect (this container runs the tests as root) fails the step, and so
+      # does a branch coverage below pyproject.toml's fail_under.
       - name: make test-ci
+        id: test-ci
         env:
           FSBPYR_TESTS_REQUIRE_ALL: ci
         run: make test-ci
+
+      # IMPLEMENTATION_PLAN.md §7 sets 90% for payload/ and elf.py, above the 80% overall; this
+      # reads the data make test-ci left in .coverage.
+      - name: Coverage of payload/ and elf.py
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"  # make bootstrap's uv, as the Makefile finds it
+          uv run --locked coverage report --include='src/fsbpyr/payload/*,src/fsbpyr/elf.py' \
+            --fail-under=90
+
+      # Also when a test or a coverage check failed, as long as make test-ci ran.
+      - name: Upload coverage.xml
+        if: ${{ !cancelled() && steps.test-ci.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: error
 
   publish:
     name: attest + publish
