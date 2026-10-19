@@ -1610,9 +1610,10 @@ cache, and cold where it matters). **Exit:** the comparison is committed in
 Status (v0.19.0): markers are `slow` and `sanitized` (no `network` marker); only `clicky`
 commits all three lock sources, the other fixtures `uv.lock`; C probes are in `tests/probes/`,
 the fuzzer in `tests/fuzz/` (8a); CI (`.github/workflows/release.yml`) runs `make check` and
-`make test-ci` (unit, integration, `test_build.py`, `test_runtime_app.py`) on every pull request
-and tag since 0.19.0 and on every push to main after 0.20.0, the rest locally (`make test`);
-tests that need the kernel to refuse access skip as root.
+`make test-ci` (unit, integration, `test_build.py`, `test_runtime_app.py`, and `test_imports.py`
+after 0.20.0) on every pull request and tag since 0.19.0 and on every push to main after 0.20.0,
+the rest locally (`make test`); tests that need the kernel to refuse access skip as root, and
+after 0.20.0 a skip that the `ci` list in `tests/conftest.py` does not expect fails CI.
 
 - **Unit (pytest):**
   - format and writer/reader
