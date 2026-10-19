@@ -7,6 +7,7 @@ Needs the cached runtime and, on the first run, network access for the fixtures'
 import itertools
 import json
 import os
+import shlex
 import shutil
 import subprocess
 from compression import zstd
@@ -17,8 +18,10 @@ import pytest
 from fsbpyr.cli import main
 from fsbpyr.payload.reader import Executable
 from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob, stored_bytes
-from fsbpyr.runtime.registry import Runtime
+from fsbpyr.runtime.registry import Runtime, cache_home
 from fsbpyr.vcs import git_state, own_version, version_string
+
+from ..support.readme import quickstart
 
 pytestmark = pytest.mark.slow
 
@@ -26,6 +29,7 @@ ROOT = Path(__file__).parents[2]
 FIXTURES = ROOT / "tests" / "fixtures" / "projects"
 UV = shutil.which("uv")
 GIT = shutil.which("git")
+RELEASE = "https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr"
 
 
 @pytest.fixture(autouse=True)
@@ -68,6 +72,38 @@ def test_hello_from_uv_lock(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert report["verified"] is True and report["modules"]["hello"] == ["hello"]
     assert report["build_info"]["zstd_level"] == ZSTD_LEVEL
     assert report["shared_libraries"] == [] and "json" in report["runtime_modules"]
+
+
+def test_readme_quickstart_works_on_a_new_account(tmp_path: Path) -> None:
+    """The README's quickstart in a copy of hello, as on a new account: an empty home, whose
+    new ~/.local/bin is not on PATH. A stand-in for curl puts the fsbpyr under test (not yet
+    executable) where the release would go. uv keeps its cache (XDG_CACHE_HOME) and its
+    Pythons; the runtime is in FSBPYR_CACHE_DIR (conftest)."""
+    assert UV is not None
+    project = _fixture("hello", tmp_path)
+    home, tools, fsbpyr = tmp_path / "home", tmp_path / "tools", tmp_path / "fsbpyr"
+    home.mkdir()
+    tools.mkdir()
+    (tools / "uv").symlink_to(UV)
+    under_test = shlex.quote(str(ROOT / ".venv" / "bin" / "fsbpyr"))
+    fsbpyr.write_text(f'#!/bin/sh\nexec {under_test} "$@"\n')
+    (tools / "curl").write_text(
+        f'#!/bin/sh\ntest "$*" = "-fLo $HOME/.local/bin/fsbpyr {RELEASE}" ||\n'
+        '  { echo "curl stand-in: unexpected arguments: $*" >&2; exit 2; }\n'
+        f'cp {shlex.quote(str(fsbpyr))} "$HOME/.local/bin/fsbpyr"\n'
+    )
+    (tools / "curl").chmod(0o755)
+    pythons = subprocess.run([UV, "python", "dir"], capture_output=True, text=True, check=True)
+    path = os.pathsep.join([str(tools), "/usr/bin", "/bin"])
+    env = {**os.environ, "HOME": str(home), "PATH": path, "XDG_CACHE_HOME": str(cache_home()),
+           "UV_PYTHON_INSTALL_DIR": pythons.stdout.strip()}  # fmt: skip
+    assert shutil.which("fsbpyr", path=path) is None
+
+    result = subprocess.run(["/bin/sh", "-ec", quickstart()], cwd=project, env=env,
+                            capture_output=True, text=True, check=False)  # fmt: skip
+
+    assert result.returncode == 0, result.stderr
+    assert "hello []" in result.stdout.splitlines()
 
 
 @pytest.mark.parametrize(

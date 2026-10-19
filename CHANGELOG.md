@@ -30,12 +30,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   needs `fsbpyr runtime build` once. 20261009 is the newest release whose objects clang 22
   links: later ones are LLVM 23 bitcode. A daily workflow now opens an issue when a newer
   release is out.
+- **The README starts with a quickstart and what a build needs.** Right after the introduction
+  it downloads fsbpyr, builds a project, runs the executable and inspects it, then lists what
+  the build host and the project need and the order in which a build picks its lock source.
+  "Getting fsbpyr", with building from source and verifying a release, is now the last
+  section. A test runs the quickstart as on a new account: an empty home, whose `~/.local/bin`
+  is not on `PATH`.
 
 ### Fixed
 - **`exit()`, `quit()` and `help` work in built apps.** Python's `site` module defines them,
   and built apps never import it, so each raised NameError there while working in the venv.
   The executable now defines them itself, as `site` does, also for the `-c` and `-m` children
   that `--interpreter-reexec` runs; `help` imports pydoc only when it is called.
+- **The README's install lines create `~/.local/bin` first.** `curl -fLo ~/.local/bin/fsbpyr`
+  failed on an account without that directory. The quickstart also calls fsbpyr by its path,
+  since a new `~/.local/bin` reaches `PATH` only with the next login.
+- **The README's `[tool.fsbpyr]` sample is one a build accepts.** It set both
+  `fast-compression` and `best-compression`, which a build rejects together; the second is now
+  commented out, and `requirements` is marked as for pip projects, overriding `uv.lock`.
 
 ## [0.20.0] - 2026-10-18
 

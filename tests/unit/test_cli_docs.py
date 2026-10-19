@@ -15,7 +15,11 @@ from click.shell_completion import ShellComplete
 
 from fsbpyr.build import TARGET_PYTHON
 from fsbpyr.cli import EXAMPLES, cli, main
+from fsbpyr.config import load_config
+from fsbpyr.project import Project
 from fsbpyr.runtime import pins
+
+from ..support.readme import quickstart
 
 ROOT = Path(__file__).parents[2]
 PYPROJECT = """\
@@ -248,3 +252,28 @@ def test_readme_supported_targets_name_the_pinned_cpython() -> None:
     pin = pins.pin_for(TARGET_PYTHON, "x86_64-unknown-linux-gnu")
 
     assert f"CPython {pin.version}" in section
+
+
+def test_readme_quickstart_runs_command_lines_fsbpyr_accepts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parsed and checked by the commands themselves, which then do nothing; tests/e2e runs
+    the whole quickstart."""
+    for ctx in _commands(click.Context(cli, info_name="fsbpyr")):
+        monkeypatch.setattr(ctx.command, "callback", lambda **_: 0)
+    lines = [shlex.split(line, comments=True) for line in quickstart().splitlines()]
+    commands = [argv[1:] for argv in lines if argv and Path(argv[0]).name == "fsbpyr"]
+
+    assert [argv[0] for argv in commands] == ["build", "inspect"]
+    for argv in commands:
+        assert main(argv) == 0, argv
+
+
+def test_readme_tool_fsbpyr_sample_is_a_table_builds_accept(tmp_path: Path) -> None:
+    readme = (ROOT / "README.md").read_text()
+    sample = readme.partition("```toml\n[tool.fsbpyr]\n")[2].partition("```")[0]
+    (tmp_path / "pyproject.toml").write_text("[tool.fsbpyr]\n" + sample)
+
+    config = load_config(Project.load(tmp_path))
+
+    assert config.entry == "mytool"

@@ -7,6 +7,52 @@ every build targets and the tests run on; `fsbpyr inspect` shows the glibc an ex
 actually needs, which can be older): no Python, no virtual environment, no installation step.
 Modules are imported straight from the file, so startup stays close to plain CPython.
 
+## Quickstart
+
+<!-- quickstart: tests/e2e/test_build.py runs these sh blocks -->
+```sh
+mkdir -p ~/.local/bin
+curl -fLo ~/.local/bin/fsbpyr https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr
+chmod +x ~/.local/bin/fsbpyr
+```
+
+Then, in a project whose `pyproject.toml` names a console script, such as this one for a
+`main()` in `src/hello/cli.py`:
+
+```toml
+[project]
+name = "hello"
+version = "1.0.0"
+requires-python = ">=3.14"
+
+[project.scripts]
+hello = "hello.cli:main"
+```
+
+```sh
+~/.local/bin/fsbpyr build                 # writes dist/hello
+dist/hello
+~/.local/bin/fsbpyr inspect dist/hello
+```
+<!-- /quickstart -->
+
+These lines call fsbpyr by its path: a new `~/.local/bin` is on `PATH` only from the next
+login (Debian's and Ubuntu's `~/.profile` add it when it exists). The compressed download, the
+attestation check and building fsbpyr from source are in [Getting fsbpyr](#getting-fsbpyr).
+
+## Requirements
+
+- **Build host:** Linux x86-64, with [uv](https://docs.astral.sh/uv/) on `PATH`
+  ([D26](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)): uv installs every project, pip
+  projects too.
+- **Project:** a console script (`[project.scripts]`, or the build backend's own table such as
+  setuptools' `entry_points`), or `--entry` with a script's name, a module or
+  `module:function`; and a `requires-python`, if it sets one, that admits 3.14.
+- **Lock sources,** the first one found: a requirements file that `--requirements` or
+  `requirements` names, `uv.lock` (the project's or its uv workspace's), `pylock.toml`,
+  `requirements.txt`. With none, the build resolves the dependencies itself and warns that it
+  is not reproducible. From `uv.lock`, dependency groups (`dev` among them) are not packaged.
+
 ## Supported targets
 
 - **Python:** apps run CPython 3.14.8, the version every executable embeds, so a project's
@@ -18,119 +64,6 @@ Modules are imported straight from the file, so startup stays close to plain CPy
   free-threaded CPython ([D35](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)).
 - **Planned** in [Phase 9](docs/IMPLEMENTATION_PLAN.md), after the MVP: Python 3.12 and 3.13
   (one fsbpyr per Python version), then Linux aarch64, musl and macOS arm64.
-
-## Getting fsbpyr
-
-fsbpyr builds itself into a single executable, and that executable is the easiest way to run
-it: it carries its own runtime (CPython 3.14 and the launcher), so building apps with it needs
-no compiler. Each [release](https://github.com/devitops-com/fsbpyr/releases) carries it,
-built and attested by GitHub Actions:
-
-```
-curl -fLo ~/.local/bin/fsbpyr https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr
-chmod +x ~/.local/bin/fsbpyr
-gh attestation verify ~/.local/bin/fsbpyr --repo devitops-com/fsbpyr   # optional
-```
-
-The same executable also comes as `fsbpyr.xz`, half the download (about 14 MB instead of 29 MB),
-attested as well:
-
-```
-curl -fL https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr.xz \
-  | xz -d > ~/.local/bin/fsbpyr
-chmod +x ~/.local/bin/fsbpyr
-```
-
-### Building from source
-
-A source checkout needs only `make`, `curl` and, on systems other than Debian trixie,
-[podman](https://podman.io) (install it with your system's package manager). `make help` lists
-all targets.
-
-```
-make bootstrap   # once: from source to an installed fsbpyr
-make build       # dist/fsbpyr, built by the installed fsbpyr
-make install     # dist/fsbpyr, its man page and completions under ~/.local
-```
-
-**`make bootstrap`** takes a checkout to an installed fsbpyr. On **Debian trixie** it runs on
-the host:
-
-1. installs the missing OS packages with `sudo apt-get` (`clang-22 lld-22 git make curl
-   ca-certificates`; trixie ships clang and lld 22 since 13.7; they link the launcher);
-2. installs [uv](https://docs.astral.sh/uv/) from astral.sh into `~/.local/bin` if it is not
-   on `PATH`; uv installs the Python pinned in `.python-version` (3.14.8) and the locked
-   dependencies;
-3. builds the runtime (`fsbpyr runtime build`: the pinned CPython from python-build-standalone
-   and a glibc 2.28 sysroot are downloaded, the launcher linked, the standard library
-   compiled; a minute or two, cached in `~/.cache/fsbpyr`);
-4. builds fsbpyr in three stages: fsbpyr run from source builds `dist/stage1/fsbpyr`, that
-   executable builds `dist/stage2/fsbpyr`, and that one builds `dist/stage3/fsbpyr`. Each
-   stage must pass `fsbpyr inspect --verify` (its digest is recomputed over the whole file),
-   and stages 2 and 3 must be byte-identical: builds are reproducible, so a difference means
-   fsbpyr does not build itself faithfully, and bootstrap stops there;
-5. copies stage 3 to `dist/fsbpyr` and runs `make install`.
-
-On **any other Linux x86-64** steps 1 to 4 run in a Debian trixie podman image
-(`Containerfile`: the same OS packages and uv from astral.sh), on the checkout mounted into it,
-and `make install` runs on the host. uv is installed on the host too, for `make build`. The
-container is IPv4-only: on podman's default network, TLS handshakes from Python with GitHub's
-download host time out. A podman volume, `fsbpyr-cache`, keeps uv's cache and the runtime
-between runs. `FSBPYR_BOOTSTRAP=podman make bootstrap` uses the container on trixie too.
-
-**`make build`** builds the checkout with the installed fsbpyr (`~/.local/bin/fsbpyr`, else
-`fsbpyr` on `PATH`) into `dist/fsbpyr`, and runs the result once as a smoke test. The installed
-executable carries its own runtime, so this needs no compiler, only uv. With no fsbpyr
-installed it runs `make bootstrap` first. The new executable's `--version` names the `vX.Y.Z`
-tag on HEAD (`untagged-<commit>` otherwise).
-
-**`make install`** installs `dist/fsbpyr` (running `make build` first if it is missing), with
-the man page and shell completions it prints:
-
-| File | Installed as |
-|---|---|
-| the executable | `~/.local/bin/fsbpyr` |
-| man page | `~/.local/share/man/man1/fsbpyr.1` (`man fsbpyr` finds it when `~/.local/bin` is on `PATH`) |
-| bash completion | `~/.local/share/bash-completion/completions/fsbpyr` (loaded by bash-completion) |
-| zsh completion | `~/.local/share/zsh/site-functions/_fsbpyr` (add the directory to `fpath` before `compinit`) |
-| fish completion | `~/.local/share/fish/vendor_completions.d/fsbpyr.fish` |
-
-`PREFIX=/usr/local` (as root) installs under another prefix, for all three targets;
-`BINDIR`, `MANDIR`, `BASH_COMPLETION_DIR`, `ZSH_COMPLETION_DIR`, `FISH_COMPLETION_DIR` and
-`DESTDIR` override single locations. `make uninstall` removes the same files.
-
-`fsbpyr runtime list` shows the runtimes in the cache. Running fsbpyr from a checkout or a wheel
-(rather than as its own executable) always needs such a runtime, and a new fsbpyr version may
-need a new one: the build then says `no runtime for Python 3.14; run fsbpyr runtime build`.
-
-### Verifying a release
-
-Each release's `fsbpyr` is built by GitHub Actions from its `vX.Y.Z` tag and attested there.
-It also reproduces itself: run against the sources of its own tag, the downloaded executable
-builds a file that is byte for byte the one it was downloaded as.
-
-```
-curl -fLo fsbpyr https://github.com/devitops-com/fsbpyr/releases/download/v0.18.2/fsbpyr
-chmod +x fsbpyr
-gh attestation verify fsbpyr --repo devitops-com/fsbpyr   # built by this repository's workflow
-git clone --branch v0.18.2 https://github.com/devitops-com/fsbpyr.git src
-(cd src && ../fsbpyr build . -o ../rebuilt)               # needs uv, as any build does
-cmp fsbpyr rebuilt && echo identical
-```
-
-Only that pairing gives the same bytes: the official executable of a release, building a clean
-checkout of that release's tag. An executable records the version of the fsbpyr that built it
-(`fsbpyr inspect` shows it as "built with"), so the same sources built by any other fsbpyr give
-a different file. That includes `make bootstrap` and `make build`, and executables built from
-an untagged commit or another release, even when the launcher and the payload are otherwise the
-same. Such a build works the same; only the bytes differ. Releases before 0.18.2 do not
-reproduce themselves: their launchers were not linked reproducibly.
-
-uv must be the same too: it builds the project's wheel, stamping its own version into the
-wheel's metadata, and installs every distribution, so another uv can give other bytes from
-identical sources. An executable records the uv that built it (`fsbpyr inspect` shows it as
-"uv"; 0.18.2 and older do not record it), and a build with any other uv warns. `uv self update
-<version>` switches a uv installed from astral.sh to that version.
 
 ## Building an app
 
@@ -180,11 +113,11 @@ one set in the project:
 [tool.fsbpyr]
 entry = "mytool"
 output = "dist/mytool"
-requirements = "requirements.txt"
+requirements = "requirements.txt"  # pip projects only; overrides uv.lock
 extras = ["fancy"]
 include-source = false       # same as --no-source
 fast-compression = true      # same as --fast-compression
-best-compression = true      # same as --best-compression (not both)
+# best-compression = true    # same as --best-compression (not both)
 fs-packages = ["mypkg.templates"]
 allow-system-libs = ["libGL.so.1"]
 interpreter-reexec = true    # same as --interpreter-reexec
@@ -360,3 +293,118 @@ rewrite the major version. `fsbpyr --version` prints `X.Y.Z-<commit>` for a tagg
 The design, its decisions and the progress of each phase are in
 [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md); the executable format is in
 [`docs/format.md`](docs/format.md).
+
+## Getting fsbpyr
+
+fsbpyr builds itself into a single executable, and that executable is the easiest way to run
+it: it carries its own runtime (CPython 3.14 and the launcher), so building apps with it needs
+no compiler. Each [release](https://github.com/devitops-com/fsbpyr/releases) carries it,
+built and attested by GitHub Actions:
+
+```
+mkdir -p ~/.local/bin
+curl -fLo ~/.local/bin/fsbpyr https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr
+chmod +x ~/.local/bin/fsbpyr
+gh attestation verify ~/.local/bin/fsbpyr --repo devitops-com/fsbpyr   # optional
+```
+
+The same executable also comes as `fsbpyr.xz`, half the download (about 14 MB instead of 29 MB),
+attested as well:
+
+```
+mkdir -p ~/.local/bin
+curl -fL https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr.xz \
+  | xz -d > ~/.local/bin/fsbpyr
+chmod +x ~/.local/bin/fsbpyr
+```
+
+### Building from source
+
+A source checkout needs only `make`, `curl` and, on systems other than Debian trixie,
+[podman](https://podman.io) (install it with your system's package manager). `make help` lists
+all targets.
+
+```
+make bootstrap   # once: from source to an installed fsbpyr
+make build       # dist/fsbpyr, built by the installed fsbpyr
+make install     # dist/fsbpyr, its man page and completions under ~/.local
+```
+
+**`make bootstrap`** takes a checkout to an installed fsbpyr. On **Debian trixie** it runs on
+the host:
+
+1. installs the missing OS packages with `sudo apt-get` (`clang-22 lld-22 git make curl
+   ca-certificates`; trixie ships clang and lld 22 since 13.7; they link the launcher);
+2. installs [uv](https://docs.astral.sh/uv/) from astral.sh into `~/.local/bin` if it is not
+   on `PATH`; uv installs the Python pinned in `.python-version` (3.14.8) and the locked
+   dependencies;
+3. builds the runtime (`fsbpyr runtime build`: the pinned CPython from python-build-standalone
+   and a glibc 2.28 sysroot are downloaded, the launcher linked, the standard library
+   compiled; a minute or two, cached in `~/.cache/fsbpyr`);
+4. builds fsbpyr in three stages: fsbpyr run from source builds `dist/stage1/fsbpyr`, that
+   executable builds `dist/stage2/fsbpyr`, and that one builds `dist/stage3/fsbpyr`. Each
+   stage must pass `fsbpyr inspect --verify` (its digest is recomputed over the whole file),
+   and stages 2 and 3 must be byte-identical: builds are reproducible, so a difference means
+   fsbpyr does not build itself faithfully, and bootstrap stops there;
+5. copies stage 3 to `dist/fsbpyr` and runs `make install`.
+
+On **any other Linux x86-64** steps 1 to 4 run in a Debian trixie podman image
+(`Containerfile`: the same OS packages and uv from astral.sh), on the checkout mounted into it,
+and `make install` runs on the host. uv is installed on the host too, for `make build`. The
+container is IPv4-only: on podman's default network, TLS handshakes from Python with GitHub's
+download host time out. A podman volume, `fsbpyr-cache`, keeps uv's cache and the runtime
+between runs. `FSBPYR_BOOTSTRAP=podman make bootstrap` uses the container on trixie too.
+
+**`make build`** builds the checkout with the installed fsbpyr (`~/.local/bin/fsbpyr`, else
+`fsbpyr` on `PATH`) into `dist/fsbpyr`, and runs the result once as a smoke test. The installed
+executable carries its own runtime, so this needs no compiler, only uv. With no fsbpyr
+installed it runs `make bootstrap` first. The new executable's `--version` names the `vX.Y.Z`
+tag on HEAD (`untagged-<commit>` otherwise).
+
+**`make install`** installs `dist/fsbpyr` (running `make build` first if it is missing), with
+the man page and shell completions it prints:
+
+| File | Installed as |
+|---|---|
+| the executable | `~/.local/bin/fsbpyr` |
+| man page | `~/.local/share/man/man1/fsbpyr.1` (`man fsbpyr` finds it when `~/.local/bin` is on `PATH`) |
+| bash completion | `~/.local/share/bash-completion/completions/fsbpyr` (loaded by bash-completion) |
+| zsh completion | `~/.local/share/zsh/site-functions/_fsbpyr` (add the directory to `fpath` before `compinit`) |
+| fish completion | `~/.local/share/fish/vendor_completions.d/fsbpyr.fish` |
+
+`PREFIX=/usr/local` (as root) installs under another prefix, for all three targets;
+`BINDIR`, `MANDIR`, `BASH_COMPLETION_DIR`, `ZSH_COMPLETION_DIR`, `FISH_COMPLETION_DIR` and
+`DESTDIR` override single locations. `make uninstall` removes the same files.
+
+`fsbpyr runtime list` shows the runtimes in the cache. Running fsbpyr from a checkout or a wheel
+(rather than as its own executable) always needs such a runtime, and a new fsbpyr version may
+need a new one: the build then says `no runtime for Python 3.14; run fsbpyr runtime build`.
+
+### Verifying a release
+
+Each release's `fsbpyr` is built by GitHub Actions from its `vX.Y.Z` tag and attested there.
+It also reproduces itself: run against the sources of its own tag, the downloaded executable
+builds a file that is byte for byte the one it was downloaded as.
+
+```
+curl -fLo fsbpyr https://github.com/devitops-com/fsbpyr/releases/download/v0.18.2/fsbpyr
+chmod +x fsbpyr
+gh attestation verify fsbpyr --repo devitops-com/fsbpyr   # built by this repository's workflow
+git clone --branch v0.18.2 https://github.com/devitops-com/fsbpyr.git src
+(cd src && ../fsbpyr build . -o ../rebuilt)               # needs uv, as any build does
+cmp fsbpyr rebuilt && echo identical
+```
+
+Only that pairing gives the same bytes: the official executable of a release, building a clean
+checkout of that release's tag. An executable records the version of the fsbpyr that built it
+(`fsbpyr inspect` shows it as "built with"), so the same sources built by any other fsbpyr give
+a different file. That includes `make bootstrap` and `make build`, and executables built from
+an untagged commit or another release, even when the launcher and the payload are otherwise the
+same. Such a build works the same; only the bytes differ. Releases before 0.18.2 do not
+reproduce themselves: their launchers were not linked reproducibly.
+
+uv must be the same too: it builds the project's wheel, stamping its own version into the
+wheel's metadata, and installs every distribution, so another uv can give other bytes from
+identical sources. An executable records the uv that built it (`fsbpyr inspect` shows it as
+"uv"; 0.18.2 and older do not record it), and a build with any other uv warns. `uv self update
+<version>` switches a uv installed from astral.sh to that version.
