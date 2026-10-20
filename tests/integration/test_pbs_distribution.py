@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 
-from fsbpyr.runtime import ar, pbs, stdlib
+from fsbpyr.runtime import ar, notices, pbs, stdlib
 from fsbpyr.runtime.pins import pin_for
 from fsbpyr.runtime.registry import cache_root
 
@@ -84,3 +84,30 @@ def test_link_plan_adds_only_hacl_objects(dist: pbs.PbsDist) -> None:
     assert "_tkinter" not in dist.builtin_modules()
     assert {"_ssl", "_sqlite3", "_zstd", "_ctypes"} <= set(dist.builtin_modules())
     assert {p.name for p in inputs.static_libs} >= {"libssl.a", "libcrypto.a", "libzstd.a"}
+
+
+def test_every_linked_static_library_has_a_licence_text(dist: pbs.PbsDist) -> None:
+    libpython = dist.root / dist.info["build_info"]["core"]["static_lib"]
+    inputs = pbs.link_inputs(dist, set(ar.members(libpython)))
+    found = notices.collect(dist)
+    extensions = dist.info["build_info"]["extensions"]
+    wanted: dict[str, set[str]] = {}  # static library -> the texts PBS lists for it
+    for module in dist.builtin_modules():
+        variant = extensions[module][0]
+        for link in variant["links"]:
+            if link.get("path_static"):
+                wanted.setdefault(link["path_static"], set()).update(
+                    Path(path).name for path in variant.get("license_paths", ())
+                )
+
+    assert {dist.root / lib for lib in wanted} == set(inputs.static_libs)
+    for lib, names in wanted.items():
+        assert names - notices.NOT_LINKED, f"PBS lists no licence text for {lib}"
+        assert (names - notices.NOT_LINKED) <= found.texts.keys(), lib
+    assert b"Apache License" in found.texts["LICENSE.openssl-3.txt"]
+    assert "LICENSE.hacl.txt" in found.texts  # the hash modules' objects are HACL*'s
+
+
+def test_the_texts_pbs_lists_but_does_not_ship_are_known(dist: pbs.PbsDist) -> None:
+    # a newer PBS that ships zstd's or HACL*'s text, or drops zlib-ng's, needs a look at notices.py
+    assert notices.collect(dist).unshipped == {"LICENSE.zstd.txt", "LICENSE.zlib-ng.txt"}

@@ -173,6 +173,11 @@ jobs:
           xz --x86 --lzma2=preset=9e --threads=1 --keep dist/fsbpyr
           xz --decompress --stdout dist/fsbpyr.xz | cmp - dist/fsbpyr
 
+      # The notices the executable carries, as a release asset (REP-4): the runtime's exact, the
+      # dists' best effort. Deterministic, since the executable is.
+      - name: Collect the licence notices
+        run: dist/fsbpyr inspect --licenses dist/fsbpyr > dist/THIRD_PARTY_LICENSES.txt
+
       # Uploaded before the checks and tests, which run dev dependencies with write access to
       # dist/: the release is the executable compared above. publish needs this job, so
       # failing tests still stop the release.
@@ -183,6 +188,7 @@ jobs:
           path: |
             dist/fsbpyr
             dist/fsbpyr.xz
+            dist/THIRD_PARTY_LICENSES.txt
           if-no-files-found: error
 
       # Static checks and the core of the suite, on the environment `make bootstrap` left (the
@@ -412,6 +418,7 @@ jobs:
           subject-path: |
             dist/fsbpyr
             dist/fsbpyr.xz
+            dist/THIRD_PARTY_LICENSES.txt
 
       # `sha256sum -c --ignore-missing SHA256SUMS` checks a download against the digests the
       # attestation signs.
@@ -422,6 +429,6 @@ jobs:
           TAG: ${{ github.ref_name }}
           NOTES: ${{ runner.temp }}/notes.md
         run: |
-          (cd dist && sha256sum fsbpyr fsbpyr.xz > SHA256SUMS)
+          (cd dist && sha256sum fsbpyr fsbpyr.xz THIRD_PARTY_LICENSES.txt > SHA256SUMS)
           gh release create "$TAG" --verify-tag --title "fsbpyr $TAG" --notes-file "$NOTES" \
-            dist/fsbpyr dist/fsbpyr.xz dist/SHA256SUMS
+            dist/fsbpyr dist/fsbpyr.xz dist/THIRD_PARTY_LICENSES.txt dist/SHA256SUMS

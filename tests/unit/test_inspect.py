@@ -570,3 +570,71 @@ def test_files_in_text(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> No
     digest = hashlib.sha256(b"hello").hexdigest()
     assert f"  {digest}           5  resource   aiagent: aiagent/data/x.txt" in out
     assert any(line.startswith(f"  {'-' * 64}") for line in out)  # no digest listed
+
+
+def _with_notices(tmp_path: Path) -> Path:
+    info = "aiagent-0.8.1.dist-info"
+    metadata = b"Name: aiagent\nLicense-File: AUTHORS.txt\nLicense-File: COPYING.extra\n\nbody"
+    contents: dict[str, tuple[str | bytes, FileKind, str | None]] = {
+        "_fsbpyr_licenses/LICENSE.openssl-3.txt": ("Apache License text", FileKind.RESOURCE, None),
+        "_fsbpyr_licenses/LICENSE.fsbpyr.txt": ("MIT License text", FileKind.RESOURCE, None),
+        f"{info}/METADATA": (metadata, FileKind.METADATA, "aiagent"),
+        f"{info}/licenses/LICENSE.txt": ("dist-info licenses/", FileKind.METADATA, "aiagent"),
+        f"{info}/AUTHORS.txt": ("declared by METADATA", FileKind.METADATA, "aiagent"),
+        f"{info}/COPYING.extra": ("dist-info root", FileKind.METADATA, "aiagent"),
+        f"{info}/entry_points.txt": ("not a notice", FileKind.METADATA, "aiagent"),
+        "aiagent/ThirdPartyNotices.txt": ("in the package\x1b[2J", FileKind.RESOURCE, "aiagent"),
+        "aiagent/data/x.txt": ("not a notice", FileKind.RESOURCE, "aiagent"),
+        "other/LICENSE": ("another distribution's", FileKind.RESOURCE, "click"),
+    }
+    files = tuple(File(path, kind, Blob.zstd(text if isinstance(text, bytes) else text.encode()),
+                       dist=dist) for path, (text, kind, dist) in contents.items())  # fmt: skip
+    app = App("aiagent", "aiagent.cli:main", dists=DISTS[:2], modules=MODULES[:1], files=files)
+    out = tmp_path / "noticed"
+    build_executable(FAKE_RUNTIME, app, out)
+    return out
+
+
+def test_licenses_prints_the_runtimes_notices_then_each_distributions(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    executable = _with_notices(tmp_path)
+
+    assert main(["inspect", "--licenses", str(executable)]) == 0
+
+    out = capsys.readouterr().out
+    headers = [line for line in out.splitlines() if line.startswith("====")]
+    info = "aiagent-0.8.1.dist-info"
+    assert headers == [
+        "==== fsbpyr: _fsbpyr_licenses/LICENSE.fsbpyr.txt ====",
+        "==== fsbpyr: _fsbpyr_licenses/LICENSE.openssl-3.txt ====",
+        f"==== aiagent 0.8.1: {info}/AUTHORS.txt ====",
+        f"==== aiagent 0.8.1: {info}/COPYING.extra ====",
+        f"==== aiagent 0.8.1: {info}/licenses/LICENSE.txt ====",
+        "==== aiagent 0.8.1: aiagent/ThirdPartyNotices.txt ====",
+        "==== click 8.2.1: other/LICENSE ====",
+    ]
+    assert "Apache License text" in out
+    assert "not a notice" not in out
+    assert "\x1b" not in out and "in the package\\x1b[2J" in out  # no escape sequence reaches a tty
+
+
+def test_licenses_of_an_executable_without_notices_prints_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["inspect", "--licenses", str(_executable(tmp_path))]) == 0
+
+    assert capsys.readouterr().out.strip() == ""
+
+
+def test_licenses_stands_alone_and_rejects_other_files(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    executable = _executable(tmp_path)
+    assert main(["inspect", "--licenses", "--json", str(executable)]) == 2
+
+    (tmp_path / "plain").write_bytes(b"not an executable")
+    assert main(["inspect", "--licenses", str(tmp_path / "plain")]) == 1
+    assert "not an executable fsbpyr built" in capsys.readouterr().err
+    assert main(["inspect", "--licenses", str(tmp_path / "missing")]) == 1
+    assert "cannot read" in capsys.readouterr().err

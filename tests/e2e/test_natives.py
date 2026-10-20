@@ -55,6 +55,18 @@ def heavy(project: Path) -> Path:
     return _build(project, project.parent / "bin" / "heavy")
 
 
+def test_licenses_include_the_runtimes_and_the_dists_notices(
+    heavy: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """REP-4: onnxruntime ships no dist-info licenses/, only a notices file in its package."""
+    assert main(["inspect", "--licenses", str(heavy)]) == 0
+
+    headers = [h for h in capsys.readouterr().out.splitlines() if h.startswith("==== ")]
+    assert "==== fsbpyr: _fsbpyr_licenses/LICENSE.openssl-3.txt ====" in headers
+    notices = "onnxruntime/ThirdPartyNotices.txt ===="
+    assert any(h.startswith("==== onnxruntime ") and h.endswith(notices) for h in headers)
+
+
 def _start(executable: Path, cache: Path, *args: str) -> subprocess.Popen[str]:
     env = {**os.environ, "FSBPYR_CACHE_DIR": str(cache), "FSBPYR_TRACE": "1"}
     return subprocess.Popen(
