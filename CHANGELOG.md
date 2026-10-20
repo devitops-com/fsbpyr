@@ -16,6 +16,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   prints "smoke-testing <path>". A failed uv step names the step instead of a truncated command.
   `-v/--verbose` also prints each uv command on stderr and lets uv's error output through
   rather than capturing it.
+- **`inspect --verify` prints the file's plain SHA-256** (`sha256` in the text output and in
+  `--json`), the hash GitHub attestations and `sha256sum` use; plain `inspect` does not compute
+  it. The README shows how to attest an app built with fsbpyr and verify it with `gh
+  attestation verify`, with a manually dispatched example workflow, `attest-example.yml`.
 - **A security policy, `SECURITY.md`.** Vulnerabilities are reported privately, as GitHub
   security advisories, and acknowledged within 7 days; only the latest release is supported.
   Every executable carries its own CPython and the libraries linked into it (OpenSSL, SQLite,

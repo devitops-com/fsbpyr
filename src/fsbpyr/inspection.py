@@ -8,6 +8,7 @@ escapes them anyway. Lists are laid out in as many columns as the terminal fits,
 """
 
 import cmd
+import hashlib
 import io
 import json
 import re
@@ -47,6 +48,7 @@ class Report:
     verified: bool = False
     digest: str = ""  # hex: of the whole file (D31), of the payload in older executables
     covers_file: bool = True
+    sha256: str = ""  # hex: plain SHA-256 of the whole file, as attestations name it; --verify only
 
 
 def _shown(value: object) -> str:
@@ -76,6 +78,11 @@ def _is_extension(payload: Payload, file: FileRecord) -> bool:
         return payload.contains(file.blob, init_symbol(file.path))
     except PayloadError:
         return True
+
+
+def _file_sha256(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def read(path: Path, *, verify: bool = False) -> Report:
@@ -108,6 +115,7 @@ def read(path: Path, *, verify: bool = False) -> Report:
                 {name: sorted(names) for name, names in modules.items()}, sorted(runtime),
                 sorted(libraries), sorted(extensions), verified=verify,
                 digest=executable.digest.hex(), covers_file=executable.covers_file,
+                sha256=_file_sha256(path) if verify else "",
             )  # fmt: skip
     except PayloadError as exc:
         raise InspectError(f"{path} is not an executable fsbpyr built ({exc})") from exc
@@ -169,6 +177,7 @@ def as_json(report: Report, *, all_modules: bool = False) -> str:
         "glibc": report.info.get("glibc"),
         "digest": report.digest,
         "digest_covers": "file" if report.covers_file else "payload",
+        "sha256": report.sha256 or None,
         "verified": report.verified or None,
         "distributions": [{"name": n, "version": v} for n, v in report.dists],
         "shared_libraries": report.shared_libraries,
@@ -240,6 +249,8 @@ def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
         f"digest     {report.digest}{'' if report.covers_file else ' (payload only)'}"
         + (" verified" if report.verified else ""),
     ]
+    if report.sha256:
+        lines.append(f"sha256     {report.sha256}")
     lines += [
         f"shared libraries: {len(report.shared_libraries)}",
         *_columns(report.shared_libraries),

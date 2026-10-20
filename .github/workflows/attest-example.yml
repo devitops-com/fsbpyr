@@ -1,0 +1,47 @@
+name: Attest example
+
+# An example for app builders: build an app with fsbpyr and attach a GitHub provenance
+# attestation to it (README, "Attesting and verifying your app"). Manual runs only; it builds
+# tests/fixtures/projects/hello. It has its own write permissions and uses no cache, so
+# nothing it builds can be poisoned by another run; the other workflows stay read-only.
+
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+jobs:
+  attest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write      # sign the attestation (Sigstore, through the job's OIDC token)
+      attestations: write  # store it with the repository
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Get fsbpyr and uv
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The runner user cannot write /usr/local/bin, so uv goes into a user directory on PATH.
+          curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$HOME/.local/bin" UV_NO_MODIFY_PATH=1 sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          gh release download --repo devitops-com/fsbpyr --pattern fsbpyr --dir "$RUNNER_TEMP"
+          chmod +x "$RUNNER_TEMP/fsbpyr"
+          gh attestation verify "$RUNNER_TEMP/fsbpyr" --repo devitops-com/fsbpyr \
+            --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml
+
+      - name: Build the app
+        run: |
+          "$RUNNER_TEMP/fsbpyr" build tests/fixtures/projects/hello -o "$RUNNER_TEMP/hello"
+          "$RUNNER_TEMP/fsbpyr" inspect --verify "$RUNNER_TEMP/hello"
+
+      # The attestation names the file's plain SHA-256, which `fsbpyr inspect --verify` prints.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/hello

@@ -176,7 +176,9 @@ Shows the app and its version, the fsbpyr that built it (`fsbpyr --version` prin
 zstd level and, with native files, `xz -6` after `--best-compression`), the file's digest, the
 bundled shared libraries and extension modules, and the top-level modules of each distribution,
 in as many columns as the terminal fits. `--all-modules` lists every module, `--json` prints
-everything as JSON, and `--verify` recomputes the digest.
+everything as JSON, and `--verify` recomputes the digest and also prints the file's plain
+SHA-256 (`sha256` in the text and in `--json`), the hash a GitHub attestation or `sha256sum`
+names. Without `--verify` it is left out, so plain `inspect` stays fast.
 
 The glibc shown (`glibc >= X.Y`) is the newest glibc symbol version the launcher and the
 bundled native files use, so the oldest glibc this executable starts on. It can be older
@@ -236,6 +238,34 @@ came from needs a signature checked with a key from outside it; signed releases 
 after the MVP ([D31](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)). Until then, a release's
 origin is shown by its attestation: `gh attestation verify` checks that this repository's
 release workflow built it from its tag ([Verifying a release](#verifying-a-release)).
+
+### Attesting and verifying your app
+
+A GitHub attestation records which workflow built a file from which commit. It is provenance
+for your app and complements the outside-key signature planned after the MVP
+([D31](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)), which `inspect --verify` and
+self-update are meant to check; it does not replace it. In a workflow whose job has
+`id-token: write` and `attestations: write`, with fsbpyr and uv installed:
+
+```yaml
+- run: fsbpyr build . -o dist/myapp
+- uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+  with:
+    subject-path: dist/myapp
+```
+
+Whoever downloads the app checks it with
+
+```
+gh attestation verify myapp --repo ORG/REPO \
+  --signer-workflow ORG/REPO/.github/workflows/WORKFLOW.yml
+```
+
+The attestation names the file's plain SHA-256, which `fsbpyr inspect --verify myapp` prints
+as `sha256` (the `digest` line is fsbpyr's own, checked at every start). A complete workflow
+is [.github/workflows/attest-example.yml](.github/workflows/attest-example.yml); it runs on
+manual dispatch only. That the example's attestation is accepted by `gh attestation verify`
+has not been tested yet.
 
 ## At run time
 

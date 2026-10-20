@@ -182,7 +182,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
              help="show what BINARY, an executable built by fsbpyr, was built from")  # fmt: skip
 @click.argument("binary", type=click.Path(path_type=Path))
 @click.option("--json", "as_json", is_flag=True, help="machine-readable output")
-@click.option("--verify", is_flag=True, help="recompute the file's digest")
+@click.option("--verify", is_flag=True, help="recompute the file's digest and print its SHA-256")
 @click.option("--all-modules", is_flag=True, help="list every module, not only top-level names")
 def inspect_command(*, binary: Path, as_json: bool, verify: bool, all_modules: bool) -> int:
     _collect_when_due()
