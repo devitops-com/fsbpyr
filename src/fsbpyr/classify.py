@@ -140,10 +140,22 @@ def _record_path(line: str) -> str:
     return next(csv.reader([line]), [""])[0]
 
 
+def _outside(rel: str) -> bool:
+    """A RECORD entry that is not below site-packages (``../../../share/x``, ``/etc/x``)."""
+    return rel.startswith("/") or ".." in PurePosixPath(rel).parts
+
+
+def _outside_directory(rel: str) -> str:
+    """The first real directory of an entry outside site-packages (``share`` for
+    ``../../../share/x/y``)."""
+    parts = [part for part in PurePosixPath(rel).parts if part not in ("/", "..")]
+    return parts[0] if parts else ""
+
+
 def _packaged(rel: str) -> bool:
     parts = PurePosixPath(rel).parts
     return bool(parts) and not (
-        rel.startswith("/") or ".." in parts or "__pycache__" in parts or rel.endswith(".pyc")
+        _outside(rel) or "__pycache__" in parts or rel.endswith(".pyc")
     )
 
 
@@ -236,15 +248,30 @@ class _Collector:
         self.sites[dist.name] = dist.site
         info = dist.dist_info
         record_lines = []
+        outside: dict[str, int] = {}  # data_files, headers: directory -> files
         for line in dist.record:
             rel = _record_path(line)
             if rel.startswith(f"{info}/") and rel[len(info) + 1 :] in INSTALLER_FILES:
                 continue
             if not _packaged(rel):  # scripts (staging shebangs), bytecode caches (mtimes)
+                if _outside(rel) and _outside_directory(rel) not in ("bin", ""):
+                    directory = _outside_directory(rel)
+                    outside[directory] = outside.get(directory, 0) + 1
+                elif rel.endswith(".pyc") and "__pycache__" not in PurePosixPath(rel).parts:
+                    self.warnings.append(
+                        f"{dist.name}: {rel} is bytecode without source and is not packaged; "
+                        "importing it fails"
+                    )
                 continue
             record_lines.append(line)
             if rel != f"{info}/RECORD":
                 self._add_path(dist, rel)
+        if outside:
+            where = ", ".join(f"{directory}/" for directory in sorted(outside))
+            self.warnings.append(
+                f"{dist.name}: {sum(outside.values())} files under {where} are not packaged; "
+                "sys.prefix lookups will not find them"
+            )
         record = ("\n".join(record_lines) + "\n").encode()
         self._add_file(dist, f"{info}/RECORD", FileKind.METADATA, record)
 
@@ -492,9 +519,22 @@ class _Collector:
             if named:
                 self.warnings.append(
                     f"{dist}: {', '.join(named[:3])}{' ...' if len(named) > 3 else ''} loaded by "
-                    "no extension module but named by its Python code; if it loads them itself "
-                    "(ctypes), add it to fs-packages"
+                    f"no extension module but named by its Python code; {self._remedy(named)}"
                 )
+
+    def _remedy(self, libraries: list[str]) -> str:
+        """What to do if the code loads them itself (ctypes): fs-packages takes only regular
+        packages, so name the one holding them, or say that none does."""
+        tops = {rel.partition("/")[0] for rel in libraries}
+        packages = sorted(
+            top for top in tops if top in self.modules
+            and self.modules[top].kind is ModuleKind.PACKAGE
+        )  # fmt: skip
+        if len(packages) == len(tops):
+            listed = ", ".join(f'"{package}"' for package in packages)
+            return f"if it loads them itself (ctypes), add {listed} to fs-packages"
+        return ("if it loads them itself (ctypes), no fs-packages value covers them "
+                "(they are not inside a regular package)")
 
     def _named_by_python(self, libraries: list[str]) -> list[str]:
         """The libraries some packaged .py file names as a word, as ``ctypes.CDLL(...)`` would

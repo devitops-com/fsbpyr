@@ -22,6 +22,14 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - **Releases carry `SHA256SUMS`**, the SHA-256 of `fsbpyr` and `fsbpyr.xz` as `sha256sum`
   prints them, the digests the release's attestation signs: `sha256sum -c --ignore-missing
   SHA256SUMS` checks a download without gh.
+- **A build warns about what the venv would have and the executable lacks.** Files a wheel
+  installs outside site-packages (`share/`, `include/`, other data_files) are counted in one
+  warning per distribution, "N files under share/ are not packaged; sys.prefix lookups will
+  not find them" (scripts stay silent), and a `.pyc` outside `__pycache__` is reported as
+  bytecode without source. What gets packaged does not change. The warning about native
+  libraries that only the package's Python code loads now names an `fs-packages` value the
+  config accepts (the regular package holding them), or says that none covers them; it named
+  the distribution, which `foo-libs` is not a valid value for.
 
 ### Changed
 - **fsbpyr runs on CPython 3.14 only, and stops at once on any other Python.** Its
