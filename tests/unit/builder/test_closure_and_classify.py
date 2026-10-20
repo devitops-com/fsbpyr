@@ -441,6 +441,25 @@ def test_with_a_spill_no_file_is_held_in_memory(site: Path, tmp_path: Path, xz: 
         assert {m.name for m in spilled.modules} == {m.name for m in plain.modules}
 
 
+@pytest.mark.parametrize("size", [64, 17 << 20], ids=["small", "over-16-MiB"])
+def test_an_executable_data_file_keeps_its_exec_bit(site: Path, tmp_path: Path, size: int) -> None:
+    """RT-3 (D27): a resource that was owner-executable in the wheel is 0o755, streamed or not."""
+    data = b"#!/bin/sh\n" + b"#" * size
+    _dist(site, "tool", "1.0", {"tool/__init__.py": b"", "tool/bin/run": data,
+                                "tool/bin/plain": data})  # fmt: skip
+    (site / "tool/bin/run").chmod(0o744)
+    (site / "tool/bin/plain").chmod(0o640)
+    index = SiteIndex.scan(site)
+
+    with Spill(tmp_path) as spill:
+        content = classify([index.dists["tool"]], extension_suffixes=SUFFIXES,
+                           include_source=True, spill=spill)  # fmt: skip
+
+        files = {f.path: f for f in content.files}
+        assert (files["tool/bin/run"].mode, files["tool/bin/plain"].mode) == (0o755, 0o644)
+        assert files["tool/bin/run"].kind is FileKind.RESOURCE
+
+
 def test_non_elf_shared_object_is_kept_as_data(site: Path) -> None:
     _dist(site, "odd", "1.0", {"odd/__init__.py": b"", "odd/_stub.so": b"INPUT(-lfoo)\n"})
     index = SiteIndex.scan(site)

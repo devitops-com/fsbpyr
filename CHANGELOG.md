@@ -142,6 +142,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - **`build_info["lock"]` and `["dists"]` changed shape** (see the manifest above): `lock` was
   the lock's kind as a string, now an object with `kind`; `dists` was a list of
   `name==version` strings, now a list of objects.
+- **Executable data files stay executable.** A resource that was owner-executable in the wheel
+  (a helper under `bin/`, say) is now packaged with mode 0755 and extracted as 0500 instead of
+  0400, so `files(pkg) / "bin/tool"` runs in the executable as it does in the venv. Extracted
+  files are still never writable. Rebuilt apps get new generation and resource ids once.
 - **The release toolchain is pinned.** Release CI uses `debian:trixie` by digest, the uv named
   by `tools/release/uv.version` (version and the SHA-256 of its release tarball, checked on
   download) instead of the newest one, and, on tag runs, a snapshot of the Debian archive
