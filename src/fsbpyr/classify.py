@@ -272,6 +272,11 @@ class _Collector:
                     )
                 continue
             record_lines.append(line)
+            if rel == "pkg_resources/__init__.py" and dist.name == "setuptools":
+                self.warnings.append(
+                    f"{dist.name}: pkg_resources finds no distributions in executables; "
+                    "use importlib.metadata"
+                )
             if rel != f"{info}/RECORD":
                 self._add_path(dist, rel)
         if outside:

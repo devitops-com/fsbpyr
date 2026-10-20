@@ -215,6 +215,12 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   container, as before, and the README's release check no longer runs `uv self update`.
 
 ### Fixed
+- **`import distutils` works in an executable that packages setuptools, also before setuptools
+  is imported.** Python 3.12+ has no stdlib `distutils`; a venv gets it from setuptools'
+  `distutils-precedence.pth`, which the build treats as redundant. The import now resolves to
+  `setuptools._distutils`, as setuptools' own hook does, and costs nothing unless it would
+  have failed. The build warns when a packaged setuptools still contains `pkg_resources`,
+  which finds no distributions in executables (use `importlib.metadata`).
 - **A `sys.path` entry inside the executable now resolves its modules.** An app that
   runs `sys.path.insert(0, dirname(__file__) + "/_vendor")` found nothing in the executable
   although it works in the venv, and an app that packages setuptools could not

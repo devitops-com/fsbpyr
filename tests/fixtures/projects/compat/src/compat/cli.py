@@ -160,11 +160,18 @@ def _setuptools(_: str | None) -> str:
     return f"setuptools {setuptools.__name__} {'_distutils' in core.__file__}"
 
 
+def _distutils(_: str | None) -> str:
+    import distutils.version  # type: ignore[import-not-found]  # before setuptools (RT-5)
+
+    return f"distutils {'_distutils' in distutils.version.__file__}"
+
+
 CHECKS = {
     "click": _click, "typer": _typer, "rich": _rich, "requests": _requests, "httpx": _httpx,
     "certifi": _certifi, "pydantic": _pydantic, "jinja2": _jinja2, "pyyaml": _yaml,
     "numpy": _numpy, "cryptography": _cryptography, "orjson": _orjson, "zoneinfo": _zoneinfo,
     "sqlalchemy": _sqlalchemy, "paths": _paths, "setuptools": _setuptools,
+    "distutils": _distutils,
     "charset_normalizer": _charset_normalizer,
 }  # fmt: skip
 

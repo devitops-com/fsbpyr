@@ -491,6 +491,23 @@ def test_files_outside_site_packages_warn_once_per_dist_but_scripts_do_not(site:
     assert not [w for w in plain.warnings if "not packaged" in w]  # only ../../../bin/hello
 
 
+def test_setuptools_with_pkg_resources_warns_once(site: Path) -> None:
+    _dist(site, "setuptools", "70.0", {"setuptools/__init__.py": b"",
+                                       "pkg_resources/__init__.py": b"",
+                                       "pkg_resources/extern.py": b""})  # fmt: skip
+    _dist(site, "newtools", "84.0", {"newtools/__init__.py": b""})
+    index = SiteIndex.scan(site)
+
+    old = classify([index.dists["setuptools"]], extension_suffixes=SUFFIXES, include_source=True)
+    new = classify([index.dists["newtools"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    assert [w for w in old.warnings if "pkg_resources" in w] == [
+        "setuptools: pkg_resources finds no distributions in executables; "
+        "use importlib.metadata"
+    ]
+    assert not [w for w in new.warnings if "pkg_resources" in w]
+
+
 def test_a_legacy_pyc_next_to_nothing_warns(site: Path) -> None:
     _dist(site, "old", "1.0", {"old/__init__.py": b"", "legacy.pyc": b"\0", "old/c.pyc": b"\0",
                                "old/__pycache__/c.cpython-314.pyc": b"\0"})  # fmt: skip

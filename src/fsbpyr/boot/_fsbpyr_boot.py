@@ -264,6 +264,27 @@ class PayloadNamespaceLoader(NamespaceLoader):
         return reader
 
 
+class SetuptoolsDistutilsLoader(_LoaderBase):
+    """``distutils`` as setuptools' ``_distutils_hack`` makes it: the module setuptools ships."""
+
+    @staticmethod
+    def create_module(spec: ModuleSpec) -> ModuleType:
+        module: ModuleType = __import__("setuptools._distutils", fromlist=["_"])
+        return module
+
+    @staticmethod
+    def exec_module(module: ModuleType) -> None:
+        pass  # setuptools._distutils is already executed
+
+
+def _distutils_spec(fullname: str) -> ModuleSpec | None:
+    """RT-5: a packaged setuptools stands in for the missing stdlib ``distutils`` (3.12+), even
+    when it is imported before setuptools. Submodules resolve through the shared ``__path__``."""
+    if _fsbpyr.find_module("setuptools._distutils") is None:
+        return None
+    return ModuleSpec(fullname, SetuptoolsDistutilsLoader(), is_package=True)
+
+
 class PayloadMetaFinder:
     """On sys.meta_path ahead of PathFinder: payload namespace packages (CPython's own
     NamespaceReader only understands real directories and zip files) and importlib.metadata."""
@@ -273,7 +294,9 @@ class PayloadMetaFinder:
         fullname: str, path: Iterable[str] | None = None, target: object = None
     ) -> ModuleSpec | None:
         record = _fsbpyr.find_module(fullname)
-        if record is None or record[1] != NAMESPACE:
+        if record is None:
+            return _distutils_spec(fullname) if fullname == "distutils" else None
+        if record[1] != NAMESPACE:
             return None
         parent = next(iter(path), "") if path else ""  # a list, or a parent's _NamespacePath
         location = next((p for p in _FS_PREFIXES if parent.startswith(p)), _PREFIX)
