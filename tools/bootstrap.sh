@@ -112,7 +112,7 @@ in_podman() {
     # IPv4 only. On podman's default network the TLS handshakes of Python's OpenSSL (a
     # ClientHello with a post-quantum key share, larger than one segment) with GitHub's
     # download host time out; on pasta's IPv4-only network they complete.
-    podman build -t "$IMAGE" -f Containerfile .
+    podman build --target build -t "$IMAGE" -f Containerfile .
     # The container is its own environment: uv installs the pinned Python there, on the volume.
     podman run --rm --network pasta:-4 \
         -v "$ROOT":/src:Z -v "$VOLUME":/root/.cache "$IMAGE" \

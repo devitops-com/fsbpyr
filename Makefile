@@ -20,7 +20,7 @@ export UV_PYTHON_DOWNLOADS := never
 UV  := uv
 BIN := dist/fsbpyr
 
-.PHONY: help bootstrap build install uninstall test test-ci check release clean
+.PHONY: help bootstrap build install uninstall test test-ci test-container check release clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -87,6 +87,24 @@ test-ci: ## Run the core of the test suite, as CI does
 		tests/e2e/test_runtime_app.py tests/e2e/test_imports.py \
 		tests/e2e/test_stub_hardening.py \
 		-k "not (sanitized and not release)" --cov --cov-report=term --cov-report=xml
+
+# Everything but the portability tests (`podman run` inside podman), in the Containerfile's
+# `test` stage: Debian trixie as `tester`, with the packages and users tools/test-setup.sh adds.
+# A copy of the checkout is the suite's; FSBPYR_TESTS_REQUIRE_ALL=container fails any skip
+# outside the allowlist in tests/conftest.py. Two volumes keep what a run would fetch again:
+# uv's cache and Pythons, and the runtime's pinned downloads (FSBPYR_TEST_DOWNLOADS). Needs
+# podman, which is yours to install; --network pasta:-4 is bootstrap's, for the same reason.
+# TMPDIR is a tmpfs: a symlink target of 4,000 bytes (test_cache_root.py) fails on the
+# container's overlay file system with "File name too long", and the builds are big.
+test-container: ## Run the whole suite but the portability tests in a Debian trixie container (podman)
+	podman build --target test -t fsbpyr-test -f Containerfile .
+	podman run --rm --network pasta:-4 -v "$(CURDIR)":/checkout:ro,Z \
+		-v fsbpyr-test-cache:/home/tester/.cache -v fsbpyr-test-downloads:/home/tester/downloads \
+		--tmpfs /var/tmp:mode=1777 -e TMPDIR=/var/tmp \
+		-e FSBPYR_TEST_DOWNLOADS=/home/tester/downloads -e FSBPYR_TESTS_REQUIRE_ALL=container \
+		fsbpyr-test bash -c 'tar -C /checkout --exclude=./.venv --exclude=./dist -cf - . | tar -xf - \
+			&& uv python install "$$(cat .python-version)" \
+			&& uv run --locked pytest --ignore=tests/e2e/test_portability.py'
 
 check: ## Static checks: ruff + mypy
 	$(UV) run --locked ruff check

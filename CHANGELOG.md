@@ -11,6 +11,16 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Added
+- **`make test-container` runs the whole test suite but the portability tests in a container.**
+  The Containerfile's new `test` stage (its first stage is now named `build`, which `make
+  bootstrap` selects) adds what the suite needs beyond a build: the sanitizer runtimes,
+  llvm-objdump, gcc, strace and groff, a user `tester` with one supplementary group, a
+  directory of root's in /tmp and one of another user under /var/lib, all from
+  `tools/test-setup.sh`. The suite runs as `tester` with `FSBPYR_TESTS_REQUIRE_ALL=container`,
+  so a skip outside that list fails the run. The end-to-end runtime's pinned downloads (CPython
+  and the sysroot's packages) are kept in a volume (`FSBPYR_TEST_DOWNLOADS`) and seed each
+  later session, and the terminal summary says whether each was seeded or fetched.
+  CONTRIBUTING.md describes the tiers and the expected skips.
 - **`fsbpyr self update`** replaces the running executable with the latest GitHub release when
   that is newer. It downloads `fsbpyr.xz`, unpacks it with the standard library's lzma,
   verifies it in-process as `inspect --verify` does before anything runs it, and renames it
