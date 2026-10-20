@@ -26,8 +26,9 @@ from .hold import hold
 from .toolchain import describe, find_toolchain
 
 BOOT_PACKAGES = ("_fsbpyr_boot", "_fsbpyr_rt")  # regenerated for every build, never runtime content
-LAYOUT_VERSION = 7  # bump when the stdlib selection, its canonical bytecode, the layout or the
-# launcher's link changes (7: a reproducible link)
+LAYOUT_VERSION = 8  # bump when the stdlib selection, its canonical bytecode, the layout or the
+# launcher's link changes (7: a reproducible link; 8: runtime.json records its inputs and
+# components, which build_info carries, REP-3)
 _STUB = "stub"
 _STDLIB = "stdlib.fsbp"
 _META = "runtime.json"
@@ -111,6 +112,15 @@ def runtime_id(pin: pins.PbsPin, *, sanitize: bool = False) -> str:
     return f"cp{pin.python.replace('.', '')}-{pin.triple}-{digest}{suffix}"
 
 
+def runtime_inputs(pin: pins.PbsPin) -> dict[str, object]:
+    """What the runtime was made from, for build_info's ``runtime_inputs``."""
+    return {
+        "pbs": {"release": pin.release, "name": pin.name, "sha256": pin.sha256},
+        "sysroot": pins.sysroot_for(pin.triple).identity,
+        "layout": LAYOUT_VERSION,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class Runtime:
     tag: str
@@ -123,6 +133,8 @@ class Runtime:
     modules: tuple[Module, ...]
     files: tuple[File, ...]
     toolchain: dict[str, str] = field(default_factory=dict)  # clang and lld versions, information
+    inputs: dict[str, object] = field(default_factory=dict)  # build_info's runtime_inputs
+    components: dict[str, str] = field(default_factory=dict)  # build_info's runtime_components
 
     def save(self, directory: Path) -> None:
         """Write atomically: a complete runtime directory appears, or nothing does.
@@ -179,6 +191,8 @@ class Runtime:
             "extension_suffixes": list(self.extension_suffixes),
             "fsbpyr": __version__,
             "toolchain": dict(self.toolchain),  # information only: not in runtime_id (D3)
+            "inputs": dict(self.inputs),  # recorded in every app (build_info)
+            "components": dict(self.components),
         }
 
     @classmethod
@@ -205,6 +219,8 @@ class Runtime:
             modules=fragment.modules,
             files=fragment.files,
             toolchain=dict(meta.get("toolchain", {})),
+            inputs=dict(meta.get("inputs", {})),
+            components=dict(meta.get("components", {})),
         )
 
     @classmethod
@@ -241,6 +257,9 @@ class Runtime:
                 if m.dist is None and m.name.partition(".")[0] not in BOOT_PACKAGES
             ),
             files=tuple(f for f in fragment.files if f.dist is None),
+            # what the building executable recorded: nothing here could find it out again
+            inputs=dict(info.get("runtime_inputs", {})),
+            components=dict(info.get("runtime_components", {})),
         )  # fmt: skip
 
 
@@ -316,6 +335,8 @@ def build_runtime(
         modules=modules,
         files=files,
         toolchain=describe(toolchain),
+        inputs=runtime_inputs(pin),
+        components=pbs.component_versions(dist.interpreter),
     )
     runtime.save(directory)
     hold(directory)

@@ -4,6 +4,7 @@ import dataclasses
 import hashlib
 import io
 import json
+import sys
 import tarfile
 import time
 import urllib.error
@@ -190,6 +191,7 @@ def test_build_runtime_orchestrates_and_caches(
         "python_implementation_hex_version": 0x030E08F0, "python_bytecode_magic_number": "2b0e0d0a",
         "python_suffixes": {"extension": [".so"]},
         "build_info": {"object_file_format": "llvm-bitcode:22.1.3"},
+        "python_exe": "install/bin/python3.14",
     })  # fmt: skip
     boot = Module("encodings", "encodings/__init__.py", ModuleKind.PACKAGE, code=Blob.code(b"c"),
                   flags=ModuleFlag.STARTUP)  # fmt: skip
@@ -200,6 +202,8 @@ def test_build_runtime_orchestrates_and_caches(
         return fake
 
     monkeypatch.setattr(pbs, "fetch", fetch)
+    components = {"openssl": "OpenSSL 3.5.9 29 Sep 2026", "sqlite": "3.53.1"}
+    monkeypatch.setattr(pbs, "component_versions", lambda interpreter: components)
     monkeypatch.setattr(registry, "find_toolchain", lambda major, explicit: Toolchain(
         Path("/usr/bin/clang-22"), Path("/usr/bin/ld.lld-22"), major))  # fmt: skip
     linked_against: list[Path] = []
@@ -231,6 +235,13 @@ def test_build_runtime_orchestrates_and_caches(
         (boot,),
     )
     assert registry.find_runtime("3.14", cache=tmp_path) == runtime
+    pin = pins.pin_for("3.14", registry.host_triple())
+    assert runtime.components == components
+    assert runtime.inputs == {
+        "pbs": {"release": pin.release, "name": pin.name, "sha256": pin.sha256},
+        "sysroot": pins.sysroot_for(pin.triple).identity,
+        "layout": registry.LAYOUT_VERSION,
+    }
     assert (tmp_path / "runtimes" / runtime.runtime_id / ".lock").is_file()  # held (D38)
     assert registry.list_runtimes(tmp_path) == [(runtime.runtime_id, "3.14.8")]
     assert linked_against == [tmp_path / "sysroots" / "debian10-glibc2.28-x86_64"]  # stubbed
@@ -297,3 +308,17 @@ def test_the_sanitized_runtime_has_an_identity_of_its_own() -> None:
 
     assert sanitized != registry.runtime_id(pin) and sanitized.endswith("-sanitized")
     assert stub.launcher_digest(sanitize=True) != stub.launcher_digest()
+
+
+def test_component_versions_come_from_running_the_interpreter() -> None:
+    found = pbs.component_versions(Path(sys.executable))
+
+    assert set(found) == {"expat", "libmpdec", "openssl", "sqlite", "zlib"}
+    assert found["openssl"].startswith("OpenSSL ") and all(found.values())
+
+
+def test_component_versions_name_an_interpreter_that_fails(tmp_path: Path) -> None:
+    with pytest.raises(pbs.PbsError, match="did not report"):
+        pbs.component_versions(Path("/bin/false"))
+    with pytest.raises(pbs.PbsError, match="cannot run"):
+        pbs.component_versions(tmp_path / "missing")

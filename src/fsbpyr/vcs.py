@@ -36,6 +36,20 @@ def _release_tag(names: str) -> str | None:
     return max(releases, key=lambda name: tuple(map(int, name[1:].split("."))), default=None)
 
 
+def _head(git: str, directory: Path, warn: Callable[[str], None] = lambda _: None) -> str | None:
+    """HEAD's commit for a directory in HEAD's tree; None outside a repository, and for a
+    directory the commit does not contain."""
+    head = _git(git, directory, "rev-parse", "--verify", "--quiet", "HEAD")
+    if head is None or head.returncode != 0:
+        if head is not None and head.stderr and "not a git repository" not in head.stderr:
+            warn(f"git: {head.stderr.strip().splitlines()[0]}; no commit recorded")
+        return None
+    tree = _git(git, directory, "ls-tree", "--name-only", "HEAD")  # never runs fsmonitor
+    if tree is None or tree.returncode != 0 or not tree.stdout.strip():
+        return None
+    return head.stdout.strip()
+
+
 def git_state(
     directory: Path, *, warn: Callable[[str], None] = lambda _: None
 ) -> dict[str, str | None] | None:
@@ -45,17 +59,25 @@ def git_state(
     git = shutil.which("git")
     if git is None:
         return None
-    head = _git(git, directory, "rev-parse", "--verify", "--quiet", "HEAD")
-    if head is None or head.returncode != 0:
-        if head is not None and head.stderr and "not a git repository" not in head.stderr:
-            warn(f"git: {head.stderr.strip().splitlines()[0]}; no commit recorded")
-        return None
-    tree = _git(git, directory, "ls-tree", "--name-only", "HEAD")  # never runs fsmonitor
-    if tree is None or tree.returncode != 0 or not tree.stdout.strip():
+    commit = _head(git, directory, warn)
+    if commit is None:
         return None
     tags = _git(git, directory, "tag", "--points-at", "HEAD", "--list", "v[0-9]*")
     names = tags.stdout if tags is not None and tags.returncode == 0 else ""
-    return {"commit": head.stdout.strip(), "tag": _release_tag(names)}
+    return {"commit": commit, "tag": _release_tag(names)}
+
+
+def commit_time(directory: Path) -> int | None:
+    """HEAD's commit time (seconds since the epoch) under the same conditions as
+    ``git_state``; None otherwise."""
+    git = shutil.which("git")
+    if git is None or _head(git, directory) is None:
+        return None
+    shown = _git(git, directory, "show", "--no-patch", "--format=%ct", "HEAD")
+    if shown is None or shown.returncode != 0:
+        return None
+    text = shown.stdout.strip()
+    return int(text) if text.isdecimal() else None
 
 
 def version_string(state: Mapping[str, object] | None) -> str:

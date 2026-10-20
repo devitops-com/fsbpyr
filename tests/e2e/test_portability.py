@@ -73,7 +73,8 @@ def apps(tmp_path_factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
     (pip_project / "uv.lock").unlink()
     assert main(["build", str(pip_project), "-o", str(directory / "heavy-pip")]) == 0
     with Executable.open(directory / "heavy-pip") as executable:
-        assert json.loads(executable.payload.build_info)["lock"] == LockSource.REQUIREMENTS.value
+        lock = json.loads(executable.payload.build_info)["lock"]
+        assert lock["kind"] == LockSource.REQUIREMENTS.value
     return directory
 
 

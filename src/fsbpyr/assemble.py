@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import __version__, bytecode
-from .payload.format import ModuleFlag, ModuleKind, extractable
+from .payload.format import PAGE_SIZE, ModuleFlag, ModuleKind, align, extractable
 from .payload.spec import ZSTD_LEVEL, Blob, Dist, File, Module, PayloadSpec
 from .payload.writer import commit, write_temporary
 from .runtime.registry import BOOT_PACKAGES, Runtime
@@ -78,6 +78,15 @@ def resources_id(files: tuple[File, ...]) -> str:
     return digest.hexdigest()[:32]
 
 
+def stub_digest(stub: bytes) -> str:
+    """SHA-256 of the bytes before the payload: the stub and its zero padding. Identical in
+    every executable that has the same stub, however it was handed on (the raw stub of a
+    source build, the padded prefix of a self-hosted one), so it links an app to the fsbpyr
+    release that built it."""
+    padding = bytes(align(len(stub), PAGE_SIZE) - len(stub))
+    return hashlib.sha256(stub + padding).hexdigest()
+
+
 def _builtin_or_frozen() -> set[str]:
     """Modules CPython resolves before the payload (the stub embeds the same CPython build)."""
     return {*sys.builtin_module_names, *_imp._frozen_module_names(), "_fsbpyr"}  # type: ignore[attr-defined]
@@ -132,6 +141,9 @@ def build_temporary(runtime: Runtime, app: App, out: Path) -> Path:
         "fsbpyr": __version__,
         "zstd": zstd.zstd_version,
         "resources": resources_id(all_files),
+        "runtime_inputs": dict(runtime.inputs),
+        "runtime_components": dict(runtime.components),
+        "stub_sha256": stub_digest(runtime.stub),
         **dict(app.build_info),
     }
     spec = PayloadSpec(

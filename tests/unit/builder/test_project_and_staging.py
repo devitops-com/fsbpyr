@@ -1,5 +1,7 @@
 """Project discovery, build configuration and staging commands (plan §3.6 steps 1-3)."""
 
+import dataclasses
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -8,6 +10,8 @@ from fsbpyr.config import BuildConfig, ConfigError, load_config
 from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL
 from fsbpyr.project import LockSource, Project, ProjectError, unpinned_requirements
 from fsbpyr.staging import (
+    EPOCH_FLOOR,
+    SOURCE_DATE_EPOCH,
     WHEEL,
     StagingError,
     StagingOptions,
@@ -269,6 +273,11 @@ def _expand(commands: list[list[str]], work: Path, project: Path) -> list[list[s
     return [[p.format(work=work, project=project, wheel="{wheel}") for p in c] for c in commands]
 
 
+@pytest.fixture(autouse=True)
+def _no_user_epoch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(SOURCE_DATE_EPOCH, raising=False)
+
+
 def test_uv_lock_syncs_dependencies_then_installs_the_fresh_wheel(tmp_path: Path) -> None:
     project = Project.load(_project(tmp_path, PYPROJECT, **{"uv.lock": ""}))
     work = tmp_path / "work"
@@ -278,7 +287,8 @@ def test_uv_lock_syncs_dependencies_then_installs_the_fresh_wheel(tmp_path: Path
 
     stage = work / "stage"
     assert plan.site == stage / "lib" / "python3.14" / "site-packages"
-    assert plan.env == {"UV_PROJECT_ENVIRONMENT": str(stage)}
+    assert plan.env == {"UV_PROJECT_ENVIRONMENT": str(stage),
+                        SOURCE_DATE_EPOCH: str(EPOCH_FLOOR)}  # fmt: skip
     assert plan.build == ["/u/uv", "build", "--out-dir", str(work / "wheel"), "--python", "3.14",
                           "--offline", "--quiet", str(tmp_path)]  # fmt: skip
     assert plan.install == [
@@ -313,7 +323,8 @@ def test_pip_projects_install_into_a_fresh_venv(
     plan = staging_plan(project, source, UV, work, StagingOptions("3.14"))
 
     assert plan.site == work / "stage" / "lib" / "python3.14" / "site-packages"
-    assert plan.env == {"UV_VENV_SEED": "0"}  # the user's environment must not add pip
+    # the user's environment must not add pip
+    assert plan.env == {"UV_VENV_SEED": "0", SOURCE_DATE_EPOCH: str(EPOCH_FLOOR)}
     assert plan.build == _expand([UV_BUILD], work, tmp_path)[0]
     assert plan.install == _expand(install, work, tmp_path)
 
@@ -580,3 +591,64 @@ def test_strict_requires_hashes_of_every_requirements_line(tmp_path: Path) -> No
 
     assert "--require-hashes" not in plain.install[1]
     assert "--require-hashes" in strict.install[1]
+
+# --- SOURCE_DATE_EPOCH (REP-3) -----------------------------------------------------------------
+
+
+def _git(directory: Path, *args: str, when: str = "2024-05-06T07:08:09+00:00") -> None:
+    env = {"GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when, "PATH": "/usr/bin:/bin",
+           "HOME": str(directory)}  # fmt: skip
+    base = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-C", str(directory)]
+    subprocess.run([*base, *args], check=True, capture_output=True, env=env)
+
+
+def _plan(project_dir: Path) -> StagingPlan:
+    project = Project.load(_project(project_dir, PYPROJECT, **{"uv.lock": ""}))
+    return staging_plan(project, LockSource.UV_LOCK, UV, project_dir / "work",
+                        StagingOptions("3.14"))  # fmt: skip
+
+
+def test_staging_uses_the_last_commit_time_as_the_source_date(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "--quiet")
+    _project(tmp_path, PYPROJECT, **{"uv.lock": ""})
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "--quiet", "-m", "x")
+
+    assert _plan(tmp_path).env[SOURCE_DATE_EPOCH] == "1714979289"  # 2024-05-06T07:08:09Z
+
+
+def test_staging_falls_back_to_1980_without_a_commit(tmp_path: Path) -> None:
+    assert _plan(tmp_path).env[SOURCE_DATE_EPOCH] == str(EPOCH_FLOOR) == "315532800"
+
+
+def test_staging_leaves_the_users_source_date_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(SOURCE_DATE_EPOCH, "1700000000")
+
+    assert SOURCE_DATE_EPOCH not in _plan(tmp_path).env  # the environment passes it on
+
+
+def test_the_source_date_reaches_the_staging_and_the_rebuild(tmp_path: Path) -> None:
+    wheel = "demo-1.0-py3-none-any.whl"
+    seen = tmp_path / "seen.txt"
+    record = f'echo "$0 $SOURCE_DATE_EPOCH" >> {seen}'
+    plan = dataclasses.replace(
+        _plan(tmp_path),
+        build=[
+            "sh",
+            "-c",
+            f'{record}; mkdir -p "$1" && touch "$1/{wheel}"',
+            "build",
+            str(tmp_path / "work" / "wheel"),
+        ],
+        install=[["sh", "-c", record, "install"]],
+        forget=[],
+    )
+
+    run_plan(plan, tmp_path)
+    rebuild(plan, tmp_path, tmp_path / "app.whl", ["x"], {"CFLAGS": "-O2"})
+    rebuild_wheel(plan, tmp_path, {"CFLAGS": "-O2"})
+
+    assert seen.read_text().splitlines() == [f"{step} {EPOCH_FLOOR}" for step in
+                                             ("build", "install", "install", "build")]  # fmt: skip

@@ -18,6 +18,7 @@ from fsbpyr.assemble import (
     build_executable,
     generation_id,
     resources_id,
+    stub_digest,
 )
 from fsbpyr.payload.convert import spec_from_payload
 from fsbpyr.payload.format import (
@@ -239,7 +240,7 @@ def test_runtimes_of_an_older_layout_are_refused(tmp_path: Path) -> None:
     _runtime().save(tmp_path / "rt")
     meta_path = tmp_path / "rt" / "runtime.json"
     meta = json.loads(meta_path.read_text())
-    assert meta["layout"] == registry.LAYOUT_VERSION == 7
+    assert meta["layout"] == registry.LAYOUT_VERSION == 8
     meta_path.write_text(json.dumps({**meta, "layout": 6}))
 
     with pytest.raises(RuntimeCacheError, match="old layout"):
@@ -380,3 +381,60 @@ def test_runtime_from_a_modified_executable_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeCacheError, match="modified or damaged"):
         Runtime.from_executable(out)
+
+
+INPUTS: dict[str, object] = {
+    "pbs": {"release": "20261009", "name": "cpython-3.14.8+20261009-x", "sha256": "ab" * 32},
+    "sysroot": "debian10-glibc2.28-x86_64-0123456789ab",
+    "layout": registry.LAYOUT_VERSION,
+}
+COMPONENTS = {"openssl": "OpenSSL 3.5.9 29 Sep 2026", "sqlite": "3.53.1"}
+
+
+def test_runtime_keeps_its_inputs_and_components_in_runtime_json(tmp_path: Path) -> None:
+    runtime = _runtime(inputs=INPUTS, components=COMPONENTS)
+
+    runtime.save(tmp_path / "rt")
+
+    meta = json.loads((tmp_path / "rt" / "runtime.json").read_text())
+    assert (meta["inputs"], meta["components"]) == (INPUTS, COMPONENTS)
+    assert Runtime.load(tmp_path / "rt") == runtime
+
+
+def test_the_inputs_and_components_reach_build_info_and_the_next_runtime(tmp_path: Path) -> None:
+    out = tmp_path / "app"
+    build_executable(_runtime(inputs=INPUTS, components=COMPONENTS), App("a", "a:main"), out)
+
+    with Executable.open(out) as exe:
+        info = json.loads(exe.payload.build_info)
+    embedded = Runtime.from_executable(out)  # self-hosted builds copy them from the builder
+
+    assert (info["runtime_inputs"], info["runtime_components"]) == (INPUTS, COMPONENTS)
+    assert (embedded.inputs, embedded.components) == (INPUTS, COMPONENTS)
+
+
+def test_stub_sha256_is_over_the_stub_and_its_padding(tmp_path: Path) -> None:
+    """The same value from the raw stub (a source build) and from the padded prefix a
+    self-hosted build passes on, and it is what `head -c <payload offset>` hashes."""
+    first, second = tmp_path / "first", tmp_path / "second"
+    build_executable(_runtime(), App("a", "a:main"), first)
+    build_executable(Runtime.from_executable(first), App("b", "b:main"), second)
+
+    infos = []
+    for path in (first, second):
+        with Executable.open(path) as exe:
+            infos.append(json.loads(exe.payload.build_info))
+            prefix = exe.stub_prefix()
+        assert infos[-1]["stub_sha256"] == hashlib.sha256(prefix).hexdigest()
+    assert infos[0]["stub_sha256"] == infos[1]["stub_sha256"] == stub_digest(_runtime().stub)
+
+
+def test_runtimes_cached_before_inputs_were_recorded_load_without_them(tmp_path: Path) -> None:
+    _runtime().save(tmp_path / "rt")
+    meta_path = tmp_path / "rt" / "runtime.json"
+    meta = json.loads(meta_path.read_text())
+    del meta["inputs"], meta["components"]
+    meta_path.write_text(json.dumps(meta))
+
+    assert (Runtime.load(tmp_path / "rt").inputs, Runtime.load(tmp_path / "rt").components) == (
+        {}, {})  # fmt: skip

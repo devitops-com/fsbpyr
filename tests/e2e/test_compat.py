@@ -5,6 +5,8 @@ Needs the cached runtime and, on the first run, network access for the fixtures'
 HTTP clients talk to a local server, so the checks themselves need no network.
 """
 
+import hashlib
+import json
 import os
 import pickle
 import shutil
@@ -17,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.cli import main
+from fsbpyr.payload.reader import Executable
 from fsbpyr.runtime.registry import Runtime
 
 from ..support.stderr import noise
@@ -254,3 +257,16 @@ def test_packages_reading_data_next_to_their_modules(
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == DATAFILES[check]
     assert noise(result.stderr) == ""
+
+
+def test_the_build_info_traces_every_dist_to_the_lock(compat: Path) -> None:
+    """REP-3: the lock's SHA-256, and for each dist but the project the hash of the artifact
+    the lock names for it."""
+    lock = (FIXTURES / "compat" / "uv.lock").read_bytes()
+    with Executable.open(compat) as executable:
+        info = json.loads(executable.payload.build_info)
+
+    assert info["lock"]["sha256"] == hashlib.sha256(lock).hexdigest()
+    external = [d for d in info["dists"] if d["source"] != "local"]
+    assert len(external) == len(info["dists"]) - 1
+    assert all(d["artifact_sha256"] in lock.decode() for d in external)

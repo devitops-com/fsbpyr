@@ -94,6 +94,16 @@ class Project:
             return LockSource.REQUIREMENTS
         return LockSource.UNLOCKED
 
+    def lock_path(self, source: LockSource, requirements: str | None = None) -> Path | None:
+        """The file ``source`` reads; None when unlocked."""
+        if source is LockSource.UV_LOCK and self.uv_root is not None:
+            return self.uv_root / LockSource.UV_LOCK.value
+        if source is LockSource.PYLOCK:
+            return self.directory / LockSource.PYLOCK.value
+        if source is LockSource.REQUIREMENTS:
+            return self.requirements_path(requirements)
+        return None
+
     def python_version_mismatch(self, python: str) -> str | None:
         """The .python-version pin if it names a different major.minor than ``python``."""
         pin_file = self.directory / ".python-version"

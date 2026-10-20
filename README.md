@@ -194,7 +194,7 @@ Keep sources for builds you debug.
 ## Inspecting an executable
 
 ```
-fsbpyr inspect BINARY [--json] [--verify] [--all-modules]
+fsbpyr inspect BINARY [--json] [--verify] [--all-modules] [--files]
 ```
 
 Shows the app and its version, the fsbpyr that built it (`fsbpyr --version` prints the same form:
@@ -206,7 +206,11 @@ file's digest, the bundled shared libraries and extension modules, and the top-l
 of each distribution, in as many columns as the terminal fits. `--all-modules` lists every module, `--json` prints
 everything as JSON, and `--verify` recomputes the digest and also prints the file's plain
 SHA-256 (`sha256` in the text and in `--json`), the hash a GitHub attestation or `sha256sum`
-names. Without `--verify` it is left out, so plain `inspect` stays fast.
+names. Without `--verify` it is left out, so plain `inspect` stays fast. It also shows the
+versions of the libraries the runtime carries (OpenSSL, SQLite, zlib, expat, libmpdec) and the
+lock the app was built from with its SHA-256, and `--files` lists every packaged file with its
+kind, size and SHA-256 (from the distributions' RECORD files). The build information `--json`
+prints under `build_info` is described in [docs/format.md](docs/format.md#build-information).
 
 A build warns when a native file needs a `GLIBCXX`, `CXXABI`, `GCC` or `ZLIB` version newer
 than the manylinux_2_28 policy allows, since such a library fails to import on a target with

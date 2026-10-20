@@ -22,14 +22,17 @@ import sys
 import tempfile
 import tomllib
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from packaging.utils import canonicalize_name
 
 from .project import LockSource, Project
+from .vcs import commit_time
 
 WHEEL = "{wheel}"  # placeholder in install commands, replaced by the built wheel's path
+SOURCE_DATE_EPOCH = "SOURCE_DATE_EPOCH"
+EPOCH_FLOOR = 315532800  # 1980-01-01, the earliest time a zip entry can hold
 _ERROR_TAIL = 3000
 _VERSION_TIMEOUT = 30
 _UV_VERSION = re.compile(r"uv (\S+)")
@@ -142,6 +145,22 @@ def _uv_sync_plan(project: Project, uv: Path, work: Path, options: StagingOption
 
 
 def staging_plan(
+    project: Project,
+    source: LockSource,
+    uv: Path,
+    work: Path,
+    options: StagingOptions,
+) -> StagingPlan:
+    """The plan for ``source``, its uv steps (and the rebuild of dists from sdists) running
+    with SOURCE_DATE_EPOCH: the user's, else the project's last commit time, else 1980."""
+    plan = _plan(project, source, uv, work, options)
+    if SOURCE_DATE_EPOCH in os.environ:
+        return plan
+    epoch = max(commit_time(project.directory) or 0, EPOCH_FLOOR)
+    return replace(plan, env={**plan.env, SOURCE_DATE_EPOCH: str(epoch)})
+
+
+def _plan(
     project: Project,
     source: LockSource,
     uv: Path,

@@ -1,5 +1,6 @@
 """fsbpyr inspect: what an executable was built from, and with which fsbpyr."""
 
+import base64
 import dataclasses
 import hashlib
 import json
@@ -479,3 +480,93 @@ def test_inspect_shows_no_toolchain_for_a_stub_without_comments(
     lines = _inspect(_executable(tmp_path), capsys)  # the test double is not even an ELF file
 
     assert not any(line.startswith("toolchain") for line in lines)
+
+
+def test_json_carries_its_schema_version(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["inspect", "--json", str(_executable(tmp_path))]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["schema"] == 1
+    assert "files" not in report  # only when asked for
+
+
+def test_inspect_shows_the_libraries_the_runtime_carries_and_the_lock(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    executable = _executable(
+        tmp_path,
+        ("runtime_components", {"openssl": "OpenSSL 3.5.9 29 Sep 2026", "sqlite": "3.53.1"}),
+        ("lock", {"kind": "uv.lock", "path": "uv.lock", "sha256": "ab" * 32, "hashed": True}),
+    )
+
+    lines = _inspect(executable, capsys)
+
+    assert "components openssl OpenSSL 3.5.9 29 Sep 2026; sqlite 3.53.1" in lines
+    assert f"lock       uv.lock sha256:{'ab' * 32}" in lines
+
+
+@pytest.mark.parametrize("lock", ["uv.lock", None, {"path": None}, {"path": "uv.lock"}, []])
+def test_older_or_unlocked_builds_show_no_lock_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], lock: object
+) -> None:
+    text = json.dumps({"lock": lock, "runtime_components": "x"})
+
+    lines = _inspect(_with_build_info(_executable(tmp_path), text), capsys)
+
+    assert not any(line.startswith(("lock ", "components")) for line in lines)
+
+
+def _record(rel: str, data: bytes | None) -> str:
+    if data is None:
+        return f"{rel},,"
+    digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+    return f"{rel},sha256={digest},{len(data)}"
+
+
+def _with_record(tmp_path: Path) -> Path:
+    info = "aiagent-0.8.1.dist-info"
+    lines = [_record("aiagent/__init__.py", b"c"), _record("aiagent/data/x.txt", b"hello"),
+             _record(f"{info}/METADATA", b"Name: aiagent\n"), _record(f"{info}/RECORD", None),
+             '"aiagent/odd,name.txt",sha256=bad!,7', "aiagent/gone.py,sha256=,"]  # fmt: skip
+    files = (File("aiagent/data/x.txt", FileKind.RESOURCE, Blob.zstd(b"hello"), dist="aiagent"),
+             File(f"{info}/RECORD", FileKind.METADATA, Blob.zstd("\n".join(lines).encode()),
+                  dist="aiagent"))  # fmt: skip
+    app = App("aiagent", "aiagent.cli:main", dists=DISTS[:1], modules=MODULES[:1], files=files)
+    out = tmp_path / "recorded"
+    build_executable(FAKE_RUNTIME, app, out)
+    return out
+
+
+def test_files_lists_the_record_lines_in_the_payload(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    executable = _with_record(tmp_path)
+
+    assert main(["inspect", "--json", "--files", str(executable)]) == 0
+
+    files = {f["path"]: f for f in json.loads(capsys.readouterr().out)["files"]}
+    sha = hashlib.sha256
+    assert files["aiagent/__init__.py"] == {"dist": "aiagent", "path": "aiagent/__init__.py",
+                                            "kind": "package", "size": 1,
+                                            "sha256": sha(b"c").hexdigest()}  # fmt: skip
+    assert files["aiagent/data/x.txt"]["kind"] == "resource"
+    assert files["aiagent/data/x.txt"]["sha256"] == sha(b"hello").hexdigest()
+    assert files["aiagent-0.8.1.dist-info/RECORD"] | {"dist": 0} == {
+        "dist": 0, "path": "aiagent-0.8.1.dist-info/RECORD", "kind": "metadata", "size": None,
+        "sha256": None}  # fmt: skip
+    assert files["aiagent/odd,name.txt"]["sha256"] is None  # not a digest
+    assert (files["aiagent/gone.py"]["kind"], files["aiagent/gone.py"]["size"]) == ("other", None)
+
+
+def test_files_in_text(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    executable = _with_record(tmp_path)
+
+    assert main(["inspect", "--files", str(executable)]) == 0
+
+    out = capsys.readouterr().out.splitlines()
+    assert "files: 6" in out
+    digest = hashlib.sha256(b"hello").hexdigest()
+    assert f"  {digest}           5  resource   aiagent: aiagent/data/x.txt" in out
+    assert any(line.startswith(f"  {'-' * 64}") for line in out)  # no digest listed

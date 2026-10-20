@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -126,6 +127,30 @@ def link_inputs(dist: PbsDist, archive_members: set[str]) -> LinkInputs:
         static_libs=tuple(static),
         system_libs=tuple(system),
     )
+
+
+_COMPONENTS_TIMEOUT = 60
+_COMPONENTS = """\
+import decimal, json, pyexpat, sqlite3, ssl, zlib
+print(json.dumps({"expat": pyexpat.EXPAT_VERSION, "libmpdec": decimal.__libmpdec_version__,
+                  "openssl": ssl.OPENSSL_VERSION, "sqlite": sqlite3.sqlite_version,
+                  "zlib": zlib.ZLIB_RUNTIME_VERSION}))
+"""
+
+
+def component_versions(interpreter: Path) -> dict[str, str]:
+    """The versions of the libraries ``interpreter`` carries, as it reports them: the ones a
+    security fix concerns, recorded in the runtime and in every app (REP-3)."""
+    try:
+        result = subprocess.run([interpreter, "-I", "-c", _COMPONENTS], capture_output=True,
+                                text=True, timeout=_COMPONENTS_TIMEOUT, check=False)  # fmt: skip
+        versions = json.loads(result.stdout) if result.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        raise PbsError(f"cannot run {interpreter} to read its library versions: {exc}") from exc
+    if not isinstance(versions, dict):
+        raise PbsError(f"{interpreter} did not report its library versions: "
+                       f"{result.stderr.strip()[-500:]}")  # fmt: skip
+    return {key: str(value) for key, value in versions.items()}
 
 
 def sha256_of(path: Path) -> str:
