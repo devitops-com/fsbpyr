@@ -22,7 +22,7 @@ from fsbpyr.elf import glibc_requirement
 from fsbpyr.payload.reader import Executable
 from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob, stored_bytes
 from fsbpyr.runtime import pins
-from fsbpyr.runtime.registry import Runtime, cache_home
+from fsbpyr.runtime.registry import Runtime, cache_home, cache_root
 from fsbpyr.staging import StagingPlan
 from fsbpyr.vcs import git_state, own_version, version_string
 
@@ -158,6 +158,23 @@ def test_builds_do_not_depend_on_the_build_environment(
     assert first.read_bytes() == second.read_bytes()
     with Executable.open(first) as executable:  # installer-made scripts name a host Python
         assert not [f.path for f in executable.payload.files() if f.path.startswith("bin/")]
+
+    # What the reproduce job of release.yml varies (REP-2): the checkout's path, the umask, the
+    # cache directories and the number of cores. The runtime is the one already built.
+    elsewhere = _fixture("clicky", tmp_path / "another" / "checkout", drop=drop)
+    third = tmp_path / "third"
+    monkeypatch.setenv("FSBPYR_CACHE_DIR", str(cache_root()))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "uv-cache"))
+    cores, old_umask = os.sched_getaffinity(0), os.umask(0o077)
+    os.sched_setaffinity(0, {min(cores)})
+    try:
+        assert main(["build", str(elsewhere), "-o", str(third), "--no-smoke"]) == 0
+    finally:
+        os.sched_setaffinity(0, cores)
+        os.umask(old_umask)
+
+    assert third.read_bytes() == first.read_bytes()
 
 
 def test_stdlib_frames_are_level_9_and_fast_builds_record_level_3(
