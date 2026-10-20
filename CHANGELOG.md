@@ -68,6 +68,13 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   `tools/bootstrap.sh` accepts only that uv; without it any uv still works. The daily
   upstream-watch workflow also opens a `toolchain-update` issue when the uv, the image digest
   or the snapshot (older than 90 days) needs a new pin.
+- **The man page documents configuration, exit status, environment and files.** New sections
+  CONFIGURATION (every `[tool.fsbpyr]` key, from the same table that reads them and names them
+  in the unknown-key error), EXIT STATUS (0, 1, 2, 130, and 70 for a built app that fails its
+  integrity check), ENVIRONMENT (`FSBPYR_CACHE_DIR`, `FSBPYR_GC`, `FSBPYR_TRACE`,
+  `FSBPYR_IMPORTTIME`, `FSBPYR_SELFTEST`, `XDG_CACHE_HOME`) and FILES. `fsbpyr runtime list` now
+  shows the runtime embedded in the running executable first, and the "no runtime" error also
+  points to the release binary.
 - **fsbpyr runs on CPython 3.14 only, and stops at once on any other Python.** Its
   `requires-python` is now `>=3.14,<3.15`, so pip refuses to install it on 3.15.
   `uv pip install` and `uv tool install` ignore that upper bound, so `fsbpyr build` and

@@ -1,5 +1,6 @@
 """Build configuration: command-line options override ``[tool.fsbpyr]`` (plan §3.6 step 1, §9)."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -59,36 +60,80 @@ def _package(key: str, value: Any) -> str:
     return name
 
 
+def _string(key: str, value: Any, project: Project) -> Any:
+    return _expect(key, value, str)
+
+
+def _flag(key: str, value: Any, project: Project) -> Any:
+    return _expect(key, value, bool)
+
+
+def _path(key: str, value: Any, project: Project) -> Any:
+    return project.directory / _expect(key, value, str)
+
+
+def _strings(key: str, value: Any, project: Project) -> Any:
+    return tuple(_expect(key, item, str) for item in _expect(key, value, list))
+
+
+def _sonames(key: str, value: Any, project: Project) -> Any:
+    return tuple(_soname(key, lib) for lib in _expect(key, value, list))
+
+
+def _packages(key: str, value: Any, project: Project) -> Any:
+    return tuple(_package(key, package) for package in _expect(key, value, list))
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigKey:
+    """A ``[tool.fsbpyr]`` key: the BuildConfig field it sets, how its value is read and
+    checked, and the text the man page's CONFIGURATION section shows for it."""
+
+    name: str
+    field: str
+    convert: Callable[[str, Any, Project], Any]
+    doc: str
+
+
+# The one list of keys: _from_tool reads it, the unknown-key message names its keys and the
+# man page documents them.
+CONFIG_KEYS = (
+    ConfigKey("entry", "entry", _string,
+              "String. The console script name, `module` or `module:function`; as `--entry`."),
+    ConfigKey("output", "output", _path,
+              "String. Where to write the executable, relative to the project; as `--output`."),
+    ConfigKey("requirements", "requirements", _string,
+              "String. A pinned requirements file, for pip projects without `pylock.toml`; "
+              "as `--requirements`."),
+    ConfigKey("extras", "extras", _strings,
+              "List of strings. Project extras to install; as `--extra`."),
+    ConfigKey("include-source", "include_source", _flag,
+              "Boolean. Keep the `.py` sources (default true); as `--source`."),
+    ConfigKey("fast-compression", "fast_compression", _flag,
+              "Boolean. zstd level 3 instead of 9; as `--fast-compression`."),
+    ConfigKey("best-compression", "best_compression", _flag,
+              "Boolean. Native files as xz instead of zstd; as `--best-compression`."),
+    ConfigKey("allow-system-libs", "allowed_system_libs", _sonames,
+              "List of library file names. Libraries native code may load from the host; "
+              "as `--allow-system-lib`."),
+    ConfigKey("fs-packages", "fs_packages", _packages,
+              "List of package names. Packages whose files must exist on disk; "
+              "as `--fs-package`."),
+    ConfigKey("interpreter-reexec", "interpreter_reexec", _flag,
+              "Boolean. Children the app starts with `-m` or `-c` run as Python; "
+              "as `--interpreter-reexec`."),
+)
+_KEYS_BY_NAME = {key.name: key for key in CONFIG_KEYS}
+
+
 def _from_tool(project: Project) -> dict[str, Any]:
     values: dict[str, Any] = {}
-    for key, value in project.tool.items():
-        if key in ("entry", "requirements"):
-            values[key] = _expect(key, value, str)
-        elif key == "output":
-            values["output"] = project.directory / _expect(key, value, str)
-        elif key == "extras":
-            extras = _expect(key, value, list)
-            values["extras"] = tuple(_expect(key, extra, str) for extra in extras)
-        elif key == "include-source":
-            values["include_source"] = _expect(key, value, bool)
-        elif key == "fast-compression":
-            values["fast_compression"] = _expect(key, value, bool)
-        elif key == "best-compression":
-            values["best_compression"] = _expect(key, value, bool)
-        elif key == "interpreter-reexec":
-            values["interpreter_reexec"] = _expect(key, value, bool)
-        elif key == "allow-system-libs":
-            libs = _expect(key, value, list)
-            values["allowed_system_libs"] = tuple(_soname(key, lib) for lib in libs)
-        elif key == "fs-packages":
-            packages = _expect(key, value, list)
-            values["fs_packages"] = tuple(_package(key, package) for package in packages)
-        else:
-            raise ConfigError(
-                f"unknown [tool.fsbpyr] key {key!r}; supported: entry, output, requirements, "
-                "extras, include-source, fast-compression, best-compression, "
-                "allow-system-libs, fs-packages, interpreter-reexec"
-            )
+    for name, value in project.tool.items():
+        key = _KEYS_BY_NAME.get(name)
+        if key is None:
+            supported = ", ".join(known.name for known in CONFIG_KEYS)
+            raise ConfigError(f"unknown [tool.fsbpyr] key {name!r}; supported: {supported}")
+        values[key.field] = key.convert(name, value, project)
     return values
 
 

@@ -2,14 +2,51 @@
 completions (D40). Help texts set code in backticks; the page sets it in bold."""
 
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 
 import click
 
 from . import __version__
+from .config import CONFIG_KEYS
 
 _CODE = re.compile(r"`([^`]+)`")
 _NO_REWRAP = "\b"  # click: a paragraph whose first line is this keeps its lines
+
+
+# (status, meaning): what `fsbpyr` and the executables it builds exit with.
+EXIT_STATUS = (
+    ("0", "Success."),
+    ("1", "The command failed; the reason is on standard error."),
+    ("2", "Usage error: an unknown command or option, or a value the command refuses."),
+    ("130", "Interrupted (Ctrl-C)."),
+    ("70", "An executable built by fsbpyr refused to start: its integrity check failed, the "
+           "file was modified or damaged. Printed by the built app, not by `fsbpyr`."),
+)
+
+# (variable, meaning): the ones fsbpyr or an executable it built reads; a test keeps this
+# list in step with the source.
+ENVIRONMENT = (
+    ("FSBPYR_CACHE_DIR", "The cache directory of fsbpyr and of built executables, in place of "
+                         "the ones under FILES."),
+    ("FSBPYR_GC", "Built executables only. `1`: collect the app's cache instead of running "
+                  "the app. `0`: never collect it in the background."),
+    ("FSBPYR_TRACE", "Built executables only. Set: print what the run loaded and extracted, "
+                     "and how long the integrity check took, as JSON on standard error."),
+    ("FSBPYR_IMPORTTIME", "Built executables only. Set: print CPython's import-time table."),
+    ("FSBPYR_SELFTEST", "Built executables only. Set: import the entry point, check it, and "
+                        "exit without running the app."),
+    ("XDG_CACHE_HOME", "The base of the cache directories when it is an absolute path; "
+                       "otherwise `~/.cache` is used."),
+)
+
+# (file, meaning)
+FILES = (
+    ("pyproject.toml", "The project's metadata and the `[tool.fsbpyr]` table (CONFIGURATION)."),
+    ("${XDG_CACHE_HOME:-~/.cache}/fsbpyr", "fsbpyr's own cache: runtimes, Python "
+                                           "distributions, sysroots and downloads."),
+    ("${XDG_CACHE_HOME:-~/.cache}/<app>", "What a built executable extracted on first use."),
+    (".fsbpyr-cache", "The marker in a cache root: only a root that has it is collected."),
+)
 
 
 def render(group: click.Group, name: str, examples: Sequence[tuple[str, str]] = ()) -> str:
@@ -32,11 +69,25 @@ def render(group: click.Group, name: str, examples: Sequence[tuple[str, str]] = 
         usage = " ".join(sub.command.collect_usage_pieces(sub))
         lines += [f'.SS "{_text(sub.command_path)} {_text(usage)}"', *_paragraphs(sub.command.help)]
         lines += _options(sub)
+    lines += [".SH CONFIGURATION", *_paragraphs(
+        "Options on the command line override the `[tool.fsbpyr]` table of `pyproject.toml`, "
+        "which takes these keys:")]
+    lines += _definitions((key.name, key.doc) for key in CONFIG_KEYS)
+    lines += [".SH EXIT STATUS", *_definitions(EXIT_STATUS)]
+    lines += [".SH ENVIRONMENT", *_definitions(ENVIRONMENT)]
+    lines += [".SH FILES", *_definitions(FILES)]
     if examples:
         lines += [".SH EXAMPLES", ".nh", ".ad l"]  # command lines: no hyphens added, no gaps
     for command, text in examples:
         lines += [".TP", f"\\fB{_text(command)}\\fR", _text(text)]
     return "\n".join(lines) + "\n"
+
+
+def _definitions(rows: Iterable[tuple[str, str]]) -> list[str]:
+    lines: list[str] = []
+    for term, text in rows:
+        lines += [".TP", f"\\fB{_text(term)}\\fR", _text(text)]
+    return lines
 
 
 def _commands(ctx: click.Context) -> Iterator[click.Context]:

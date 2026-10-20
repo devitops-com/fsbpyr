@@ -18,7 +18,7 @@ from click.shell_completion import ShellComplete
 from fsbpyr.build import TARGET_PYTHON
 from fsbpyr.classify import BUILTIN_FS_PACKAGES
 from fsbpyr.cli import EXAMPLES, cli, main
-from fsbpyr.config import BuildConfig, load_config
+from fsbpyr.config import CONFIG_KEYS, BuildConfig, ConfigError, load_config
 from fsbpyr.natives import SYSTEM_LIBRARIES
 from fsbpyr.project import Project
 from fsbpyr.runtime import pins
@@ -219,6 +219,62 @@ def test_every_example_is_a_command_line_fsbpyr_accepts(monkeypatch: pytest.Monk
         argv = shlex.split(command.partition(" > ")[0])
         assert argv[0] == "fsbpyr"
         assert main(argv[1:]) == 0, command
+
+
+ENVIRONMENT_READS = re.compile(r'(?:getenv|environ\.get)\(b?"(FSBPYR_\w+)"')
+
+
+def _man_page(capsys: pytest.CaptureFixture[str]) -> str:
+    main(["man"])
+    return capsys.readouterr().out
+
+
+def test_man_page_has_the_sections_of_a_complete_page(capsys: pytest.CaptureFixture[str]) -> None:
+    page = _man_page(capsys)
+
+    sections = re.findall(r"^\.SH (.*)$", page, re.MULTILINE)
+    assert len(sections) >= 10
+    assert sections[-1] == "EXAMPLES"
+    for name in ("CONFIGURATION", "EXIT STATUS", "ENVIRONMENT", "FILES"):
+        assert name in sections
+
+
+def test_man_page_documents_every_tool_fsbpyr_key(capsys: pytest.CaptureFixture[str]) -> None:
+    page = _man_page(capsys)
+    configuration = page.partition(".SH CONFIGURATION")[2].partition(".SH")[0]
+
+    for key in CONFIG_KEYS:
+        assert f"\\fB{key.name.replace('-', '\\-')}\\fR" in configuration, key.name
+
+
+def test_every_tool_fsbpyr_key_is_accepted_and_no_other(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[tool.fsbpyr]\nbogus = 1\n")
+
+    with pytest.raises(ConfigError) as error:
+        load_config(Project.load(tmp_path))
+
+    assert str(error.value).endswith("supported: " + ", ".join(key.name for key in CONFIG_KEYS))
+    assert {key.field for key in CONFIG_KEYS} <= set(BuildConfig.__dataclass_fields__)
+
+
+def test_man_page_documents_every_variable_the_sources_read(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    read = {name for path in (ROOT / "src").rglob("*") if path.suffix in (".py", ".c")
+            for name in ENVIRONMENT_READS.findall(path.read_text())}  # fmt: skip
+    environment = _man_page(capsys).partition(".SH ENVIRONMENT")[2].partition(".SH")[0]
+
+    assert read >= {"FSBPYR_CACHE_DIR", "FSBPYR_GC", "FSBPYR_TRACE", "FSBPYR_IMPORTTIME",
+                    "FSBPYR_SELFTEST"}  # fmt: skip
+    for name in read:
+        assert f"\\fB{name.replace('-', '\\-')}\\fR" in environment, name
+
+
+def test_man_page_documents_the_exit_statuses(capsys: pytest.CaptureFixture[str]) -> None:
+    status = _man_page(capsys).partition(".SH EXIT STATUS")[2].partition(".SH")[0]
+
+    for code in ("0", "1", "2", "130", "70"):
+        assert f".TP\n\\fB{code}\\fR\n" in status
 
 
 def test_man_page_sets_code_in_bold(capsys: pytest.CaptureFixture[str]) -> None:

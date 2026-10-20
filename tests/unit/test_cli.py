@@ -190,6 +190,25 @@ def test_runtime_list_on_empty_cache(
     assert capsys.readouterr().out == ""
 
 
+def test_runtime_list_shows_the_embedded_runtime_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cached = tmp_path / "runtimes" / "cp314-cached"
+    cached.mkdir(parents=True)
+    (cached / "runtime.json").write_text(
+        '{"runtime_id": "cp314-cached", "python_version": "3.14.7"}'
+    )
+    monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(registry, "running_executable", lambda: tmp_path / "fsbpyr")
+    embedded = types.SimpleNamespace(runtime_id="cp314-embedded", python_version="3.14.8")
+    monkeypatch.setattr(registry.Runtime, "from_executable", lambda path: embedded)
+
+    assert main(["runtime", "list"]) == 0
+    assert capsys.readouterr().out == (
+        "cp314-embedded  Python 3.14.8\ncp314-cached  Python 3.14.7\n"
+    )
+
+
 def test_a_failed_build_prints_its_warnings_before_the_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

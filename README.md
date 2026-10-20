@@ -435,9 +435,11 @@ the man page and shell completions it prints:
 `BINDIR`, `MANDIR`, `BASH_COMPLETION_DIR`, `ZSH_COMPLETION_DIR`, `FISH_COMPLETION_DIR` and
 `DESTDIR` override single locations. `make uninstall` removes the same files.
 
-`fsbpyr runtime list` shows the runtimes in the cache. Running fsbpyr from a checkout or a wheel
-(rather than as its own executable) always needs such a runtime, and a new fsbpyr version may
-need a new one: the build then says `no runtime for Python 3.14; run fsbpyr runtime build`.
+`fsbpyr runtime list` shows the runtime embedded in the executable you run, if any, then the
+runtimes in the cache. Running fsbpyr from a checkout or a wheel (rather than as its own
+executable) always needs a runtime in the cache, and a new fsbpyr version may need a new one: the
+build then says `no runtime for Python 3.14; run fsbpyr runtime build --python 3.14`, or use the
+release binary, which carries its own.
 
 ### Verifying a release
 
