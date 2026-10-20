@@ -16,6 +16,7 @@ import pytest
 from fsbpyr.classify import ClassifyError, _digested, classify
 from fsbpyr.closure import ClosureError, SiteIndex, resolve_entry
 from fsbpyr.compiler import compile_module
+from fsbpyr.config import _package
 from fsbpyr.payload.format import (
     NATIVE_KINDS,
     Codec,
@@ -449,6 +450,56 @@ def test_non_elf_shared_object_is_kept_as_data(site: Path) -> None:
     assert {f.path: f.kind for f in content.files}["odd/_stub.so"] is FileKind.RESOURCE
     assert all(m.name != "odd._stub" for m in content.modules)
     assert any("not an ELF" in w for w in content.warnings)
+
+
+def _record_extra(site: Path, dist: str, *lines: str) -> None:
+    record = next(site.glob(f"{dist.replace('-', '_')}-*.dist-info")) / "RECORD"
+    record.write_text(record.read_text() + "".join(f"{line}\n" for line in lines))
+
+
+def test_files_outside_site_packages_warn_once_per_dist_but_scripts_do_not(site: Path) -> None:
+    _dist(site, "dat", "1.0", {"dat/__init__.py": b""})
+    _record_extra(site, "dat", "../../../share/dat/x,sha256=x,1", "../../../share/dat/y,,",
+                  "../../../include/dat.h,,")  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["dat"]], extension_suffixes=SUFFIXES, include_source=True)
+    plain = classify([index.dists["click"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    outside = [w for w in content.warnings if "not packaged" in w]
+    assert outside == ["dat: 3 files under include/, share/ are not packaged; "
+                       "sys.prefix lookups will not find them"]  # fmt: skip
+    assert not [w for w in plain.warnings if "not packaged" in w]  # only ../../../bin/hello
+
+
+def test_a_legacy_pyc_next_to_nothing_warns(site: Path) -> None:
+    _dist(site, "old", "1.0", {"old/__init__.py": b"", "legacy.pyc": b"\0", "old/c.pyc": b"\0",
+                               "old/__pycache__/c.cpython-314.pyc": b"\0"})  # fmt: skip
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["old"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    pyc = [w for w in content.warnings if "bytecode without source" in w]
+    assert len(pyc) == 2 and "old: legacy.pyc " in pyc[0] and "old: old/c.pyc " in pyc[1]
+    assert not any("__pycache__" in w for w in content.warnings)
+    assert "legacy.pyc" not in {f.path for f in content.files}
+
+
+def test_unused_natives_hint_names_a_value_fs_packages_accepts(site: Path) -> None:
+    named = b"import ctypes\nctypes.CDLL('libinner.so.1')\nctypes.CDLL('libouter.so.1')\n"
+    _dist(site, "foo", "1.0", {"foo/__init__.py": named, "foo/libinner.so.1": make_elf()})
+    _dist(site, "foo-libs", "1.0", {"foo_libs/libouter.so.1": make_elf()})
+    index = SiteIndex.scan(site)
+
+    inner = classify([index.dists["foo"]], extension_suffixes=SUFFIXES, include_source=True)
+    outer = classify([index.dists["foo"], index.dists["foo-libs"]], extension_suffixes=SUFFIXES,
+                     include_source=True)  # fmt: skip
+
+    hint = next(w for w in inner.warnings if w.startswith("foo: "))
+    assert 'add "foo" to fs-packages' in hint
+    assert _package("fs-packages", "foo") == "foo"
+    outside = next(w for w in outer.warnings if w.startswith("foo-libs: "))
+    assert "no fs-packages value covers them" in outside and "add " not in outside
 
 
 def test_package_wins_over_same_named_module_from_another_dist(site: Path) -> None:
