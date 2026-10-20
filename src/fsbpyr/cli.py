@@ -175,6 +175,8 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     glibc = f", glibc >= {result.glibc}" if result.glibc else ""
     print(f"fsbpyr: built {result.output} ({result.size / 1e6:.1f} MB, entry "
           f"{result.entrypoint}{glibc})")  # fmt: skip
+    if result.target_needs:
+        print(f"fsbpyr: target needs: {result.target_needs}")
     return 0
 
 

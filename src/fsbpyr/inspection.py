@@ -23,6 +23,7 @@ from .elf import ElfError, section
 from .natives import init_symbol
 from .payload.format import NATIVE_KINDS, NONE, FileKind, PayloadError
 from .payload.reader import Executable, FileRecord, Payload
+from .system import target_needs
 from .vcs import version_string
 
 UNKNOWN = "unknown"
@@ -51,6 +52,7 @@ class Report:
     covers_file: bool = True
     sha256: str = ""  # hex: plain SHA-256 of the whole file, as attestations name it; --verify only
     toolchain: tuple[str, ...] = ()  # the stub's .comment lines: compilers and linker that made it
+    entrypoint: str = ""
 
 
 def _shown(value: object) -> str:
@@ -130,6 +132,7 @@ def read(path: Path, *, verify: bool = False) -> Report:
                 digest=executable.digest.hex(), covers_file=executable.covers_file,
                 sha256=_file_sha256(path) if verify else "",
                 toolchain=_toolchain(executable.stub_prefix()),
+                entrypoint=payload.entrypoint,
             )  # fmt: skip
     except PayloadError as exc:
         raise InspectError(f"{path} is not an executable fsbpyr built ({exc})") from exc
@@ -156,6 +159,23 @@ def _built_with(info: dict[str, object]) -> str:
     if not isinstance(version, str) or version == version_string(None):
         version = info.get("fsbpyr", UNKNOWN)
     return str(version)
+
+
+def _system_libraries(report: Report) -> dict[str, dict[str, object]]:
+    """The system libraries recorded at build time (NAT-2); none for older builds, or when
+    the recorded value is not the expected shape."""
+    system = report.info.get("system")
+    libraries = system.get("libraries") if isinstance(system, dict) else None
+    if not isinstance(libraries, dict):
+        return {}
+    return {name: entry for name, entry in libraries.items() if isinstance(entry, dict)}
+
+
+def _library_line(name: str, entry: dict[str, object]) -> str:
+    versions = entry.get("versions")
+    if not isinstance(versions, dict) or not versions:
+        return name
+    return f"{name} ({', '.join(f'{ns}_{v}' for ns, v in versions.items())})"
 
 
 def _compression(report: Report) -> str:
@@ -190,11 +210,13 @@ def as_json(report: Report, *, all_modules: bool = False) -> str:
         "uv": report.info.get("uv"),
         "glibc": report.info.get("glibc"),
         "toolchain": list(report.toolchain),
+        "entry": report.entrypoint,
         "digest": report.digest,
         "digest_covers": "file" if report.covers_file else "payload",
         "sha256": report.sha256 or None,
         "verified": report.verified or None,
         "distributions": [{"name": n, "version": v} for n, v in report.dists],
+        "system_libraries": _system_libraries(report),
         "shared_libraries": report.shared_libraries,
         "extension_modules": report.extension_modules,
         "all_modules": all_modules,  # modules lists every module, else top-level names
@@ -269,7 +291,13 @@ def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
     if report.toolchain:
         first, *rest = (_shown(line) for line in report.toolchain)
         lines += [f"toolchain  {first}", *(f"           {line}" for line in rest)]
+    libraries = _system_libraries(report)
+    needs = target_needs(libraries, glibc if isinstance(glibc, str) else None)
+    lines += [f"entry      {_shown(report.entrypoint)}"]
+    lines += [f"needs      {_shown(needs)}"] if needs else []
     lines += [
+        f"system libraries: {len(libraries)}",
+        *_columns([_library_line(name, entry) for name, entry in libraries.items()]),
         f"shared libraries: {len(report.shared_libraries)}",
         *_columns(report.shared_libraries),
         f"extension modules: {len(report.extension_modules)}",

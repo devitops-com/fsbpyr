@@ -36,6 +36,7 @@ from .staging import (
     staging_plan,
     uv_version,
 )
+from .system import system_report, target_needs
 from .vcs import git_state, own_version
 
 TARGET_PYTHON = "3.14"
@@ -55,6 +56,7 @@ class BuildResult:
     size: int
     warnings: tuple[str, ...]
     glibc: str | None = None  # the oldest glibc the app runs on, "2.25"
+    target_needs: str | None = None  # "glibc >= 2.28; libstdc++.so.6 (...)"
 
 
 def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
@@ -320,8 +322,8 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                                                 files=content.files)  # fmt: skip
             glibc, glibc_warnings = glibc_report(runtime.stub, content.glibc,
                                                  baseline=baseline.baseline)  # fmt: skip
-            warnings += glibc_warnings
-            natives = f"xz -{XZ_PRESET}" if config.best_compression else "zstd"
+            libraries, system_warnings = system_report(runtime.stub, content.system)
+            warnings += [*glibc_warnings, *system_warnings]
             app = App(
                 app_name,
                 entrypoint,
@@ -335,8 +337,15 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                     ("lock", source.value),
                     ("dists", sorted(f"{d.name}=={d.version}" for d in content.dists)),
                     ("glibc", glibc),
+                    (
+                        "system",
+                        {"libraries": libraries},
+                    ),  # libraries the target provides, with versions
                     ("zstd_level", level),  # of the app's content and of every block
-                    ("native_compression", natives),
+                    (
+                        "native_compression",
+                        f"xz -{XZ_PRESET}" if config.best_compression else "zstd",
+                    ),
                     ("interpreter_reexec", config.interpreter_reexec),  # read at start (D23)
                     ("git", git_state(project.directory, warn=warnings.append)),
                 ),
@@ -346,4 +355,6 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
             log(f"writing {output}")
             written.append(build_temporary(runtime, app, output))
     size = written[0].stat().st_size
-    return BuildResult(output, app_name, entrypoint, size, tuple(warnings), glibc)
+    return BuildResult(
+        output, app_name, entrypoint, size, tuple(warnings), glibc, target_needs(libraries, glibc)
+    )

@@ -20,6 +20,15 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   `--json`), the hash GitHub attestations and `sha256sum` use; plain `inspect` does not compute
   it. The README shows how to attest an app built with fsbpyr and verify it with `gh
   attestation verify`, with a manually dispatched example workflow, `attest-example.yml`.
+- **`fsbpyr inspect` lists what the target must provide beyond glibc.** The build records, for
+  every system library the launcher and the native files an extension module loads need, the
+  files that need it and the newest symbol version per namespace (`GLIBCXX`, `CXXABI`, `GCC`,
+  `ZLIB`, ...) in the build information (`system`). `inspect` shows them, a `needs` line and
+  the entry point; `--json` has them as `system_libraries` and `entry`, and `fsbpyr build`
+  prints `target needs: ...`. A build now warns, naming the file and the version, when a native
+  file needs a `GLIBCXX`, `CXXABI`, `GCC` or `ZLIB` version above manylinux_2_28's, or
+  `GLIBC_PRIVATE`, and when an `--allow-system-lib` entry is needed by no native file; a
+  version table that cannot be read gives a warning and does not fail the build.
 - **A security policy, `SECURITY.md`.** Vulnerabilities are reported privately, as GitHub
   security advisories, and acknowledged within 7 days; only the latest release is supported.
   Every executable carries its own CPython and the libraries linked into it (OpenSSL, SQLite,
