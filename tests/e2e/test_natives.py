@@ -92,6 +92,18 @@ def test_first_run_extracts_only_the_closure_it_needs(heavy: Path, tmp_path: Pat
     assert second["extracted"] == []
 
 
+# decompressed_bytes of `heavy np` on the first run, with a little room (D37: counts, not
+# timings). The decoder's block cache (launcher/payload.c BLOCK_CACHE) decodes a block again
+# when it was evicted; a cache too small for the imports shows up here.
+NP_DECOMPRESSED_MAX = 44_000_000
+
+
+def test_a_run_decompresses_no_more_than_recorded(heavy: Path, tmp_path: Path) -> None:
+    _, trace = _run(heavy, tmp_path / "cache", "np")
+
+    assert trace["decompressed_bytes"] <= NP_DECOMPRESSED_MAX, trace  # type: ignore[operator]
+
+
 @pytest.mark.parametrize("command", sorted(EXPECTED))
 def test_every_subcommand_runs(heavy: Path, tmp_path: Path, command: str) -> None:
     stdout, _ = _run(heavy, tmp_path / "cache", command)
