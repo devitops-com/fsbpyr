@@ -39,12 +39,16 @@ def _links_unnamed_files(directory: Path) -> bool:
         fd = os.open(directory, os.O_TMPFILE | os.O_WRONLY, 0o600)
     except OSError:
         return False
+    dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        os.link(f"/proc/self/fd/{fd}", directory / "probe", follow_symlinks=True)
+        # a dir_fd makes 3.12 and 3.13 call linkat(AT_SYMLINK_FOLLOW), as 3.14 always does;
+        # without one they call link(), which links the /proc symlink itself (EXDEV)
+        os.link(f"/proc/self/fd/{fd}", "probe", dst_dir_fd=dir_fd, follow_symlinks=True)
     except OSError:
         return False
     finally:
         os.close(fd)
+        os.close(dir_fd)
     (directory / "probe").unlink()
     return True
 
