@@ -152,6 +152,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   `runtime.json`, for information; they are not part of the runtime id.
 
 ### Changed
+- **The README's "Versions" states what is stable before 1.0**: the `inspect --json` schema,
+  the release asset names and URLs that self-update and installers use, and the trailer and
+  digest layout that `inspect --verify` reads. Breaking changes are marked `**Breaking:**`
+  in this file from now on.
 - **`build_info["lock"]` and `["dists"]` changed shape** (see the manifest above): `lock` was
   the lock's kind as a string, now an object with `kind`; `dists` was a list of
   `name==version` strings, now a list of objects.

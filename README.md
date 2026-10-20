@@ -391,6 +391,22 @@ Releases are tagged `vX.Y.Z`: a fix bumps the patch level, a new feature the min
 rewrite the major version. `fsbpyr --version` prints `X.Y.Z-<commit>` for a tagged build and
 `untagged-<commit>` otherwise.
 
+Before 1.0 only the following is kept stable; everything else may change in any release:
+
+- `fsbpyr inspect --json` carries a `schema` number (`docs/format.md`). A key that changes
+  meaning increments it; a new key does not. CLI flags and `[tool.fsbpyr]` keys are not
+  covered: they can change before 1.0, and a change that breaks them is marked **Breaking:**
+  in the [changelog](CHANGELOG.md).
+- What `fsbpyr self update` and an installer rely on across releases: the release assets
+  `fsbpyr` and `fsbpyr.xz` and their `releases/latest/download/` URLs. The planned target- and
+  version-named assets (`fsbpyr-3.12`, `fsbpyr-x86_64-linux-gnu`, `fsbpyr-3.12-aarch64-linux-musl`,
+  each with its `.xz`), `install.sh` and the record of which asset an executable was released
+  as come under the same promise when they ship, and `fsbpyr` and `fsbpyr.xz` then stay copies
+  of the default executable.
+- The trailer and the whole-file digest layout (`docs/format.md`) that `inspect --verify`
+  reads: an older fsbpyr checks its download of a newer release in-process, so a later format
+  version must keep that check working.
+
 The design, its decisions and the progress of each phase are in
 [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md); the executable format is in
 [`docs/format.md`](docs/format.md).

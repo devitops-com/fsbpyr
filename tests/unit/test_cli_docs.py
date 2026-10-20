@@ -20,6 +20,7 @@ from fsbpyr.classify import BUILTIN_FS_PACKAGES
 from fsbpyr.cli import EXAMPLES, cli, main
 from fsbpyr.config import CONFIG_KEYS, BuildConfig, ConfigError, load_config
 from fsbpyr.natives import SYSTEM_LIBRARIES
+from fsbpyr.payload.format import FORMAT_VERSION
 from fsbpyr.project import Project
 from fsbpyr.runtime import pins
 
@@ -435,3 +436,20 @@ def test_readme_environment_table_has_every_variable_the_sources_read() -> None:
     listed = set(re.findall(r"^\| `(FSBPYR_[A-Z_]+)", table, re.MULTILINE))
 
     assert read <= listed, sorted(read - listed)
+
+
+def test_docs_name_only_source_paths_that_exist() -> None:
+    """A rename that leaves a ``src/...`` path in docs/*.md behind fails here."""
+    missing = []
+    for doc in sorted((ROOT / "docs").glob("*.md")):
+        for path in re.findall(r"`(src/[\w./-]*[\w])`", doc.read_text()):
+            if "..." not in path and not (ROOT / path).exists():
+                missing.append(f"{doc.name}: {path}")
+
+    assert missing == []
+
+
+def test_format_doc_version_is_the_payload_format_version() -> None:
+    title = (ROOT / "docs" / "format.md").read_text().splitlines()[0]
+
+    assert title.endswith(f"version {FORMAT_VERSION}")
