@@ -19,6 +19,7 @@ from fsbpyr.payload.format import NATIVE_KINDS, Codec
 from fsbpyr.payload.reader import Executable
 from fsbpyr.runtime.registry import Runtime
 
+from ..support.differential import assert_same, make_venv
 from ..support.stderr import NO_HOSTNAME, TRACE_LINE, noise
 
 pytestmark = pytest.mark.slow
@@ -37,7 +38,7 @@ EXPECTED = {
 _RESTORING = re.compile(r"^fsbpyr: .* was modified after extraction; restoring it\n", re.MULTILINE)
 
 
-def _build(project: Path, out: Path) -> Path:
+def _build(project: Path, out: Path) -> Path:  # named like the console script (TST-2)
     assert main(["build", str(project), "-o", str(out)]) == 0
     return out
 
@@ -112,11 +113,21 @@ def test_a_run_decompresses_no_more_than_recorded(heavy: Path, tmp_path: Path) -
     assert trace["decompressed_bytes"] <= NP_DECOMPRESSED_MAX, trace  # type: ignore[operator]
 
 
-@pytest.mark.parametrize("command", sorted(EXPECTED))
-def test_every_subcommand_runs(heavy: Path, tmp_path: Path, command: str) -> None:
-    stdout, _ = _run(heavy, tmp_path / "cache", command)
+@pytest.fixture(scope="module")
+def heavy_venv(project: Path, tmp_path_factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
+    python = runtime.python_version.rpartition(".")[0]
+    return make_venv(project, tmp_path_factory.mktemp("heavy-venv"), python)
 
-    assert stdout.strip() == EXPECTED[command]
+
+@pytest.mark.parametrize("command", sorted(EXPECTED))
+def test_every_subcommand_runs(heavy: Path, heavy_venv: Path, tmp_path: Path, command: str) -> None:
+    env = {"FSBPYR_CACHE_DIR": str(tmp_path / "cache")}
+
+    result = assert_same(heavy_venv, heavy, [command], env=env)  # onnxruntime's noise: both
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() != ""
+    assert len(EXPECTED) == 5
 
 
 @pytest.fixture(scope="module")
