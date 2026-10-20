@@ -1515,10 +1515,11 @@ write, a truncated binary.
       it never fetches a released variant, which would mix released code into a development
       build.
   - **Steps:**
-    1. Spike, as Phase 0 did for 3.14: PBS `pgo+lto-full` for 3.12 and 3.13 (LLVM
-       bitcode objects, `PYTHON.json` link inputs and inittab, the built-in extensions, which
-       static libraries are missing, `libzstd.a` at least); the launcher's `PyConfig` fields
-       (all expected since 3.11).
+    1. **Done 2026-10-20**, findings in `docs/spikes.md` ("Phase 9"): the launcher links against
+       both with `libzstd.a` added. Spike, as Phase 0 did for 3.14: PBS `pgo+lto-full` for 3.12
+       and 3.13 (LLVM bitcode objects, `PYTHON.json` link inputs and inittab, the built-in
+       extensions, which static libraries are missing, `libzstd.a` at least); the launcher's
+       `PyConfig` fields (all expected since 3.11).
     2. Port fsbpyr's code to 3.12. Checked 2026-10-18: 4 of its 48 source files do not parse
        on 3.12 and 3.13 (3.14's unparenthesized `except A, B:`), `os.process_cpu_count()` is
        3.13's; the importlib internals the boot code uses exist in 3.12–3.14, and 3.12 and 3.13

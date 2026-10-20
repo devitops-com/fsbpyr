@@ -148,3 +148,83 @@ Spike code lives in `spikes/`. Build outputs go to `spikes/.out/`, which is git-
 | **D16 (new)** canonical bytecode | adopted |
 | **D17 (new)** non-PIE stub | adopted |
 | Fallback (memfd libpython) | not needed |
+
+---
+
+# Phase 9 — Python 3.12 and 3.13 spike
+
+Date: 2026-10-20. Host: Debian 13 (glibc 2.41), clang/lld 22.1.8 (Debian), x86_64.
+Input: the PBS release fsbpyr pins for 3.14 (`20261009`), `pgo+lto-full`, x86_64-unknown-linux-gnu:
+
+| Python | Archive | SHA-256 (from the release's `SHA256SUMS`, checked) | Size |
+|--------|---------|-----------------------------------------------------|------|
+| 3.12.15 | `cpython-3.12.15+20261009-x86_64-unknown-linux-gnu-pgo+lto-full.tar.zst` | `36a23ba5776ede9db3dfbb1b1f84c74b18939331c75e1e70760f12ad61aa96d5` | 98.4 MB |
+| 3.13.16 | `cpython-3.13.16+20261009-x86_64-unknown-linux-gnu-pgo+lto-full.tar.zst` | `b4fd36646765e6b8387ace2fd5a152d10028a84deb0d1f173f7299429129d202` | 109.5 MB |
+
+Downloaded with curl and unpacked with `zstd -dc | tar -x` into a scratch directory; no Python
+was installed with uv. The trial link is `spikes/p9_versions/trial_link.py`, which calls the
+build's own `link_inputs` and `build_stub`.
+
+Result: **PASS with one addition.** The existing launcher links against both distributions
+and starts, provided `build/lib/libzstd.a` is added to the link inputs. Nothing else in the
+link differs from 3.14.
+
+1. **Object format.** `PYTHON.json` `build_info.object_file_format` is `llvm-bitcode:22.1.3`
+   for both, so `PbsDist.llvm_major` gives 22 and the clang/lld 22 already needed for 3.14
+   links them. (`llvm-bcanalyzer` on `config.o`: `LLVM22.1.3`.) `crt_features` is
+   `glibc-dynamic`, `glibc-max-symbol-version:2.17`, as for 3.14. Bytecode magic: 3.12
+   `cb0d0d0a`, 3.13 `f30d0d0a` (3.14: `2b0e0d0a`).
+2. **Link inputs** (from `PYTHON.json`, via `link_inputs`):
+   - `libpython3.12.a` (64.1 MB, 127 core objects) and `libpython3.13.a` (70.0 MB, 149),
+     `core.static_lib` under `install/lib/python3.X/config-3.X-x86_64-linux-gnu/`
+   - static `bz2 ffi ncursesw panelw mpdec crypto lzma sqlite3 ssl uuid z expat edit` (13
+     libraries, the 3.14 list without `zstd`)
+   - system `pthread dl util m rt`
+   - tk, X11 and libdb are not needed, as for 3.14
+3. **Inittab.** `build/Modules/config.c` (object `config.o`, in `libpython`), cflags
+   `-std=c99 -DNDEBUG -DPy_BUILD_CORE`; the same layout as 3.14, so `builtin_modules()`
+   works unchanged.
+4. **Built-in extensions.** 92 in each (3.14: 96). Against 3.14:
+   - 3.13 lacks `_hmac`, `_remote_debugging`, `_types` and `_zstd` (3.14 additions)
+   - 3.12 lacks the same and has, besides, the modules 3.13 removed: it has `audioop`,
+     `ossaudiodev`, `spwd`, `_xxinterpchannels` and `_xxsubinterpreters`; it lacks
+     `_interpchannels`, `_interpqueues`, `_interpreters`, `_suggestions` and `_sysconfig`
+   - no built-in module of either links `zstd`, because `_zstd` is 3.14's
+5. **Objects missing from `libpython.a`.** Only `build/Modules/_hacl/Hacl_Hash_SHA2.o` (for
+   `_sha2`); 3.14 needs 11 HACL\* objects. `_hacl/` holds `Hacl_Hash_MD5/SHA1/SHA2/SHA3.o`,
+   of which MD5, SHA1 and SHA3 are archive members; `_blake2` has its own sources in 3.12 and
+   3.13. `link_inputs` finds it by itself.
+6. **Missing static libraries.** `libzstd.a` is the one the launcher needs and no built-in
+   module asks for: the launcher decodes zstd (`payload.c`, `vendor/zstd/zstd.h`, 1.5.7).
+   The file exists, `build/lib/libzstd.a` (34 members, plain ELF objects, `1.5.7`, the same
+   version as the vendored header), but no `links` entry names it, so `link_inputs` omits
+   it. Linking the launcher as is fails with `undefined symbol: ZSTD_isError`,
+   `ZSTD_DCtx_reset`, `ZSTD_decompress` and `ZSTD_decompressStream` (both versions).
+   Adding `build/lib/libzstd.a` to the static libraries fixes it. All the other libraries
+   `link_inputs` returns are present. Phase 9 step 2 also moves zstd *compression* into
+   `_fsbpyr`; the archive defines `ZSTD_compress` and `ZSTD_compressStream`, so it
+   would serve, which this spike did not test (the plan's vendored libzstd source is the alternative).
+7. **Trial link** (host glibc, no sysroot, current flags: LTO, PIE, `-s`):
+
+   | Python | Result | Stub size | Link time | Notes |
+   |--------|--------|-----------|-----------|-------|
+   | 3.12.15 | OK with `libzstd.a`, FAIL without | 20.99 MB | 66 s | no warnings; needs GLIBC_2.38 |
+   | 3.13.16 | OK with `libzstd.a`, FAIL without | 20.25 MB | 80 s | no warnings; needs GLIBC_2.38 |
+
+   (Times with two links running in parallel.) The stack-frame check (D38) printed nothing.
+   Each stub starts and stops at its integrity check ("the file was modified or damaged",
+   exit 70), as a stub without a payload does. **Not tested**: running an app on either
+   (the boot module and the build run on 3.14 only), the glibc 2.28 sysroot link (the
+   sysroot is Python-independent), `numpy` or `orjson` on 3.12/3.13.
+8. **`PyConfig` fields.** Every field `src/fsbpyr/launcher/main.c` sets exists in
+   `cpython/initconfig.h` of both: `install_signal_handlers`, `parse_argv`, `site_import`,
+   `safe_path`, `write_bytecode`, `pathconfig_warnings`, `module_search_paths_set`,
+   `import_time`, `executable`, `run_command`, `home`, `prefix`, `exec_prefix`,
+   `base_prefix`, `base_exec_prefix` and `stdlib_dir`, as do `PyConfig_InitIsolatedConfig`,
+   `PyConfig_SetBytesString` and `PyConfig_SetBytesArgv`. The launcher compiled unchanged
+   against both sets of headers. That the *runtime behaviour* matches 3.14 (frozen-table
+   precedence, `__path__` of frozen packages, the getpath probes of S2) is not tested here.
+
+Consequence for the plan: step 3's runtime build needs `libzstd.a` added to the link inputs
+for 3.12 and 3.13 (for 3.14 `_zstd` already pulls it in); the rest of the link, the HACL
+objects included, follows from `PYTHON.json` unchanged.
