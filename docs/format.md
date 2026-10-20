@@ -303,6 +303,7 @@ project's directory: nothing in it names the builder's paths, time or host.
 | `runtime_components` | versions the runtime's interpreter reports: `openssl`, `sqlite`, `zlib`, `expat`, `libmpdec`. Read once when the runtime is built; an executable that builds another passes them on |
 | `stub_sha256` | SHA-256 of the bytes before the payload (the stub and its zero padding): `head -c <payload_offset> app \| sha256sum`. The same in every app built by the same fsbpyr release; there is no digest of the builder |
 | `settings` | `{entry, fs_packages, allow_system_libs, extras, include_source}`: `fs_packages` is the effective list (the built-in packages and the configured ones) |
+| `release_asset` | only in fsbpyr's own executable: the release asset (without `.xz`) it is released as, `fsbpyr` for the newest supported Python and `fsbpyr-3.X` for another, which `fsbpyr self update` fetches the same variant of. Absent before the one fsbpyr per Python version releases of Phase 9, which updated to `fsbpyr` |
 | `project`, `fsbpyr_version`, `git`, `uv`, `glibc`, `system`, `zstd_level`, `native_compression`, `interpreter_reexec`, `runtime`, `runtime_tag`, `python`, `extension_suffixes`, `fsbpyr`, `zstd`, `resources` | as before (D28, D26, NAT-2, D29, D33, D23, D27) |
 
 `dists[].source` is one of:

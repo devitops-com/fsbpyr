@@ -1,6 +1,7 @@
 """``fsbpyr self update``: replace the running executable with the latest GitHub release.
 
-Settled with the owner on 2026-10-18 (plan, Phase 9): the release's ``fsbpyr.xz`` is unpacked
+Settled with the owner on 2026-10-18 (plan, Phase 9): the release's ``fsbpyr.xz`` (a variant's
+own ``fsbpyr-3.X.xz``, the asset its build_info says it was released as) is unpacked
 in-process with the standard library's lzma into the executable's own directory, verified
 in-process (``inspect --verify``, so no byte of it runs before it passes) and renamed over the
 executable's real path, keeping its mode. A man page and completions found under the
@@ -29,7 +30,8 @@ from .vcs import own_version
 REPO = "devitops-com/fsbpyr"
 API_VARIABLE = "FSBPYR_RELEASE_API"  # the release document's URL; tests serve their own
 DEFAULT_API = f"https://api.github.com/repos/{REPO}/releases/latest"
-ASSET = "fsbpyr.xz"
+ASSET = "fsbpyr"  # the newest Python's; a variant is released as fsbpyr-3.X (Phase 9)
+_ASSET_NAME = re.compile(r"fsbpyr(-3\.\d+)?")
 CURL_HINT = (
     f"curl -fLo ~/.local/bin/fsbpyr https://github.com/{REPO}/releases/latest/download/fsbpyr\n"
     "chmod +x ~/.local/bin/fsbpyr"
@@ -88,7 +90,17 @@ def own_release() -> tuple[int, int, int]:
     return numbers
 
 
-def latest_release() -> Release:
+def own_asset() -> str:
+    """The asset (without ``.xz``) this executable was released as, from its build_info;
+    ``fsbpyr`` for one built before the record existed, which were all the one asset."""
+    import _fsbpyr  # noqa: PLC0415  # only in executables
+
+    asset = json.loads(_fsbpyr.info()["build_info"]).get("release_asset")
+    return asset if isinstance(asset, str) and _ASSET_NAME.fullmatch(asset) else ASSET
+
+
+def latest_release(asset: str) -> Release:
+    """The latest release and the URL of its ``asset``.xz."""
     api = os.environ.get(API_VARIABLE) or DEFAULT_API
     try:
         request = urllib.request.Request(api, headers=_ACCEPT)  # noqa: S310  https, or a test's
@@ -101,9 +113,10 @@ def latest_release() -> Release:
     numbers = _release_numbers(tag) if isinstance(tag, str) else None
     if numbers is None:
         raise UpdateError(f"the latest release has no vX.Y.Z tag ({tag!r})")
-    if ASSET not in assets:
-        raise UpdateError(f"the latest release ({tag}) has no {ASSET}")
-    return Release(tag, numbers, assets[ASSET])
+    name = f"{asset}.xz"
+    if name not in assets:
+        raise UpdateError(f"the latest release ({tag}) has no {name}")
+    return Release(tag, numbers, assets[name])
 
 
 def _unpack(url: str, target: Path) -> None:
@@ -178,7 +191,7 @@ def update(
     if not os.access(directory, os.W_OK | os.X_OK):
         raise UpdateError(f"cannot write to {directory}; update with the owner's rights, or "
                           f"download the latest release there:\n{CURL_HINT}")  # fmt: skip
-    release = latest_release()
+    release = latest_release(own_asset())
     if release.numbers <= own:
         log(f"fsbpyr is up to date ({own_version()}; latest release {release.tag})")
         return False

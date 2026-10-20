@@ -20,6 +20,8 @@ from pathlib import Path
 import pytest
 from packaging.requirements import Requirement
 
+from fsbpyr.bytecode import SUPPORTED_PYTHON
+
 ROOT = Path(__file__).parents[2]
 VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
 SYSTEM_PATH = "/usr/bin:/bin"
@@ -888,7 +890,7 @@ def test_the_publish_job_checks_the_parent_commits_runs_and_names_the_suite_run(
     assert "Full suite: %s" in publish
 
 
-def test_the_full_suite_runs_on_main_nightly_and_weekly_in_a_one_entry_matrix() -> None:
+def test_the_full_suite_runs_on_main_nightly_and_weekly_once_per_python_version() -> None:
     workflow = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
     weekly = re.findall(r'^\s+- cron: "(.+)"$', workflow, re.MULTILINE)[1]
 
@@ -896,7 +898,8 @@ def test_the_full_suite_runs_on_main_nightly_and_weekly_in_a_one_entry_matrix() 
     assert "workflow_dispatch:" in workflow
     assert len(re.findall(r"^\s+- cron:", workflow, re.MULTILINE)) == 2
     assert f'WEEKLY="{weekly}"' in workflow  # the fuzzing time reads the weekly schedule
-    assert 'python: ["3.14"]' in workflow
+    # the suite and the portability matrix
+    assert len(re.findall(r'python: \["3.12", "3.13", "3.14"\]', workflow)) == 2
     assert "options: --privileged" in workflow and "timeout-minutes: 60" in workflow
     assert "--ignore=tests/e2e/test_portability.py" in workflow
     assert "FSBPYR_TESTS_REQUIRE_ALL=full" in workflow
@@ -909,7 +912,7 @@ def test_the_portability_job_runs_on_the_host_after_the_suite_with_nothing_skipp
 
     assert "needs: suite" in job and "runs-on: ubuntu-24.04" in job
     assert "container:" not in job
-    assert "tools/portability-apps.sh dist/fsbpyr" in job
+    assert "tools/portability-apps.sh dist/fsbpyr$SUFFIX" in job
     assert "FSBPYR_TESTS_REQUIRE_ALL=portability" in job
     assert "FSBPYR_PORTABILITY_APPS=" in job and "--junitxml=portability.xml" in job
     assert "podman login docker.io" in job
@@ -1033,6 +1036,36 @@ def test_toolchain_watch_is_silent_when_the_pins_are_current(tmp_path: Path) -> 
     assert "issue" not in (tmp_path / "gh.log").read_text(encoding="utf-8")
 
 
+def test_the_workflows_build_every_supported_python_and_the_release_publishes_each_variant(
+) -> None:
+    """The matrices list the Pythons fsbpyr supports (bytecode.SUPPORTED_PYTHON); the newest is
+    the plain asset (`fsbpyr`), the others carry their version (`fsbpyr-3.12`), each with its
+    .xz and licence notices, all in SHA256SUMS and attested."""
+    supported = sorted("{}.{}".format(*version) for version in SUPPORTED_PYTHON)
+    newest = (ROOT / ".python-version").read_text(encoding="utf-8").strip().rpartition(".")[0]
+    assert newest == supported[-1]
+    listed = ", ".join(f'"{version}"' for version in supported)
+    for name in ("release.yml", "full-suite.yml"):
+        workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
+        assert f"python: [{listed}]" in workflow, name
+    suite = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
+    assert f"for version in {' '.join(supported)}; do" in suite  # the other runtimes
+
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    jobs = dict(re.findall(r"^  ([a-z]+):\n(.*?)(?=^  [a-z]+:\n|\Z)", workflow, re.M | re.S))
+    build, publish = jobs["build"], jobs["publish"]
+    assert "make bootstrap $MAKE_ARGS" in build
+    assert 'echo "MAKE_ARGS=PYTHON=$MATRIX_PYTHON"' in build
+    assert "xz --x86 --lzma2=preset=9e --threads=1 --keep dist/fsbpyr$SUFFIX" in build
+    assert "dist/THIRD_PARTY_LICENSES$SUFFIX.txt" in build
+    assert "name: built-${{ matrix.python }}" in build
+    assert 'release_asset\\": \\"fsbpyr$SUFFIX' in build  # each records the asset it ships as
+    assert "pattern: built-*" in publish and "merge-multiple: true" in publish
+    assert "sha256sum fsbpyr* THIRD_PARTY_LICENSES*.txt > SHA256SUMS" in publish
+    assert "dist/fsbpyr*\n            dist/THIRD_PARTY_LICENSES*.txt" in publish  # attested
+    assert "dist/fsbpyr* dist/THIRD_PARTY_LICENSES*.txt dist/SHA256SUMS" in publish  # published
+
+
 def test_publish_waits_for_the_independent_rebuild_to_match() -> None:
     workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     jobs = dict(re.findall(r"^  ([a-z]+):\n(.*?)(?=^  [a-z]+:\n|\Z)", workflow, re.M | re.S))
@@ -1040,7 +1073,8 @@ def test_publish_waits_for_the_independent_rebuild_to_match() -> None:
     assert "    needs:" not in jobs["reproduce"]  # in parallel with build
     assert "needs: [build, reproduce]" in jobs["compare"]
     assert "needs: [build, compare]" in jobs["publish"]
-    assert 'python: ["3.14"]' in jobs["reproduce"] and 'python: ["3.14"]' in jobs["compare"]
+    for job in ("build", "reproduce", "compare"):
+        assert 'python: ["3.12", "3.13", "3.14"]' in jobs[job], job
     assert IMAGE_PIN.search(jobs["reproduce"])  # REP-1's pinned image
 
 

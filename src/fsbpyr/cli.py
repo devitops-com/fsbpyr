@@ -346,8 +346,9 @@ def self_group() -> None:
 
 
 @self_group.command("update", help="replace this executable with the latest release\n\n"
-                    "Downloads `fsbpyr.xz` from the latest GitHub release when it is newer, "
-                    "verifies it as `inspect --verify` does before anything runs it, and "
+                    "Downloads `fsbpyr.xz` (a variant's own `fsbpyr-3.X.xz`) from the latest "
+                    "GitHub release when it is newer, verifies it as `inspect --verify` does "
+                    "before anything runs it, and "
                     "renames it over this executable. The man page and the completions that "
                     "`make install` put under the same prefix are written again. Only "
                     "released executables update themselves.")  # fmt: skip
