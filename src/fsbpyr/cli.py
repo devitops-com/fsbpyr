@@ -110,6 +110,8 @@ def cli(ctx: click.Context) -> None:
                    "`-c CODE` run as Python")  # fmt: skip
 @click.option("--smoke/--no-smoke", default=None,
               help="run the new executable once as a smoke test (default) or skip it")  # fmt: skip
+@click.option("-v", "--verbose", is_flag=True,
+              help="print each uv command and let uv's error output through")  # fmt: skip
 def build_command(  # noqa: PLR0913  click passes every option by name
     *,
     project: Path,
@@ -126,6 +128,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     hints: bool | None,
     interpreter_reexec: bool | None,
     smoke: bool | None,
+    verbose: bool,
 ) -> int:
     if _unsupported_python():
         return 1
@@ -160,7 +163,8 @@ def build_command(  # noqa: PLR0913  click passes every option by name
             best_compression=best_compression,
             interpreter_reexec=interpreter_reexec,
         )
-        result = build(project, config, log=lambda message: print(f"fsbpyr: {message}"))
+        result = build(project, config, verbose=verbose,
+                       log=lambda message: print(f"fsbpyr: {message}"))
     except errors as exc:
         for warning in getattr(exc, "__notes__", ()):  # collected before the error
             print(f"fsbpyr: warning: {warning}", file=sys.stderr)

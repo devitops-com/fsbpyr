@@ -15,10 +15,13 @@ requirements files resolve as the user expects.
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -168,37 +171,90 @@ def staging_plan(
     return StagingPlan(site, build, install, wheel_dir, env, [str(uv), "cache", "clean"])
 
 
-def _run(command: list[str], cwd: Path, env: dict[str, str]) -> None:
+def _step(command: list[str], project_dir: Path) -> str:
+    """What a uv command does, for the build's progress lines and its errors."""
+    verb = command[1] if len(command) > 1 else ""
+    if verb == "build":
+        return f"building {project_dir.name}'s wheel"
+    if verb == "venv":
+        return "creating the staging environment"
+    if verb == "cache":
+        return "dropping uv's cached builds"
+    if verb == "sync" or "-r" in command:
+        return "installing the locked distributions"
+    if "--no-deps" in command:
+        return "installing the project's wheel"
+    return "installing the project's wheel and its dependencies"
+
+
+def _run(
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    *,
+    log: Callable[[str], None],
+    verbose: bool,
+) -> None:
+    """Run one uv command after logging its step. ``verbose`` prints the command on stderr and
+    lets uv's stderr through; uv stays ``--quiet``, so that is its errors and hints in full."""
+    step = _step(command, cwd)
+    log(f"uv: {step}")
+    if verbose:
+        print(f"fsbpyr: {shlex.join(command)}", file=sys.stderr, flush=True)
     result = subprocess.run(
-        command, cwd=cwd, env={**os.environ, **env}, capture_output=True, text=True, check=False
-    )
-    if result.returncode != 0:
-        output = (result.stderr or result.stdout)[-_ERROR_TAIL:]
-        raise StagingError(f"{' '.join(command[:4])} ... failed:\n{output}")
+        command, cwd=cwd, env={**os.environ, **env}, stdout=subprocess.PIPE,
+        stderr=None if verbose else subprocess.PIPE, text=True, check=False
+    )  # fmt: skip
+    if result.returncode == 0:
+        return
+    if verbose:
+        raise StagingError(f"{step}: uv failed (exit {result.returncode}), see its output above")
+    output = (result.stderr or result.stdout)[-_ERROR_TAIL:]
+    raise StagingError(f"{step}: uv failed (exit {result.returncode}):\n{output}")
 
 
-def _build_wheel(
-    plan: StagingPlan, project_dir: Path, wheel_dir: Path, env: dict[str, str]
+def _build_wheel(  # noqa: PLR0913  the plan, where, and the progress keywords
+    plan: StagingPlan,
+    project_dir: Path,
+    wheel_dir: Path,
+    env: dict[str, str],
+    *,
+    log: Callable[[str], None],
+    verbose: bool,
 ) -> Path:
     """The plan's build of the project wheel, into ``wheel_dir`` with ``env`` added."""
     wheel_dir.mkdir(parents=True, exist_ok=True)
     build = [str(wheel_dir) if part == str(plan.wheel_dir) else part for part in plan.build]
-    _run(build, project_dir, {**plan.env, **env})
+    _run(build, project_dir, {**plan.env, **env}, log=log, verbose=verbose)
     wheels = sorted(wheel_dir.glob("*.whl"))
     if len(wheels) != 1:
         raise StagingError(f"expected one built wheel in {wheel_dir}, found {len(wheels)}")
     return wheels[0]
 
 
-def rebuild_wheel(plan: StagingPlan, project_dir: Path, env: dict[str, str]) -> Path:
+def rebuild_wheel(
+    plan: StagingPlan,
+    project_dir: Path,
+    env: dict[str, str],
+    *,
+    log: Callable[[str], None] = lambda _: None,
+    verbose: bool = False,
+) -> Path:
     """Build the project wheel again with ``env`` added, into a new directory beside the first
     one's; returns the new wheel."""
     wheel_dir = tempfile.mkdtemp(prefix=f"{plan.wheel_dir.name}-", dir=plan.wheel_dir.parent)
-    return _build_wheel(plan, project_dir, Path(wheel_dir), env)
+    return _build_wheel(plan, project_dir, Path(wheel_dir), env, log=log, verbose=verbose)
 
 
-def rebuild(
-    plan: StagingPlan, project_dir: Path, wheel: Path, names: list[str], env: dict[str, str]
+def rebuild(  # noqa: PLR0913  the plan, what to rebuild and the progress keywords
+    plan: StagingPlan,
+    project_dir: Path,
+    wheel: Path,
+    names: list[str],
+    env: dict[str, str],
+    *,
+    log: Callable[[str], None] = lambda _: None,
+    verbose: bool = False,
 ) -> None:
     """Install ``names`` again, built anew from their sdists with ``env`` added: the plan's
     installs repeated, the environment not created again. uv reuses a wheel it built before,
@@ -206,18 +262,25 @@ def rebuild(
     of ``names`` go first; the new builds take their place. uv builds before it installs, so a
     failed build leaves the staged site as it was."""
     if plan.forget:
-        _run([*plan.forget, *names], project_dir, {**plan.env, **env})
+        _run([*plan.forget, *names], project_dir, {**plan.env, **env}, log=log, verbose=verbose)
     again = [arg for name in names for arg in ("--reinstall-package", name)]
     for command in plan.install:
         if command[1:2] == ["venv"]:
             continue
         _run([part.replace(WHEEL, str(wheel)) for part in command] + again, project_dir,
-             {**plan.env, **env})  # fmt: skip
+             {**plan.env, **env}, log=log, verbose=verbose)  # fmt: skip
 
 
-def run_plan(plan: StagingPlan, project_dir: Path) -> Path:
+def run_plan(
+    plan: StagingPlan,
+    project_dir: Path,
+    *,
+    log: Callable[[str], None] = lambda _: None,
+    verbose: bool = False,
+) -> Path:
     """Build the project wheel, install dependencies and the wheel; returns the wheel."""
-    wheel = _build_wheel(plan, project_dir, plan.wheel_dir, {})
+    wheel = _build_wheel(plan, project_dir, plan.wheel_dir, {}, log=log, verbose=verbose)
     for command in plan.install:
-        _run([part.replace(WHEEL, str(wheel)) for part in command], project_dir, plan.env)
+        _run([part.replace(WHEEL, str(wheel)) for part in command], project_dir, plan.env,
+             log=log, verbose=verbose)  # fmt: skip
     return wheel

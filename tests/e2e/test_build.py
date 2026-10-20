@@ -12,6 +12,7 @@ import shutil
 import subprocess
 from compression import zstd
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -300,10 +301,10 @@ def test_the_projects_own_extension_is_rebuilt_against_the_glibc_sysroot(
     host_builds: list[tuple[int, int] | None] = []
 
     def staged_then_rebuilt(plan: StagingPlan, project_dir: Path, wheel: Path, names: list[str],
-                            baseline: pins.SysrootPin, *, offline: bool) -> list[str]:  # fmt: skip
+                            baseline: pins.SysrootPin, **kwargs: Any) -> list[str]:  # fmt: skip
         host_builds.extend(glibc_requirement(so.read_bytes())
                            for so in (plan.site / "cext").glob("*.so"))  # fmt: skip
-        return rebuild_on_baseline(plan, project_dir, wheel, names, baseline, offline=offline)
+        return rebuild_on_baseline(plan, project_dir, wheel, names, baseline, **kwargs)
 
     monkeypatch.setattr("fsbpyr.build.rebuild_on_baseline", staged_then_rebuilt)
     executable = tmp_path / "bin" / "cext"

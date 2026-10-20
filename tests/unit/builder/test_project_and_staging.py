@@ -501,3 +501,47 @@ def test_run_plan_needs_exactly_one_wheel(tmp_path: Path) -> None:
 
     with pytest.raises(StagingError, match="wheel"):
         run_plan(plan, tmp_path)
+
+
+def test_run_plan_logs_each_uv_step(tmp_path: Path) -> None:
+    wheel = "demo-1.0-py3-none-any.whl"
+    uv = str(_fake_uv(tmp_path, f'[ "$1" = build ] && mkdir -p "$2" && touch "$2/{wheel}"; exit 0'))
+    plan = StagingPlan(
+        site=tmp_path,
+        build=[uv, "build", str(tmp_path / "wheel")],
+        install=[[uv, "sync"], [uv, "pip", "install", "--no-deps", WHEEL]],
+        wheel_dir=tmp_path / "wheel",
+    )
+    lines: list[str] = []
+
+    run_plan(plan, tmp_path, log=lines.append)
+
+    assert lines == [
+        f"uv: building {tmp_path.name}'s wheel",
+        "uv: installing the locked distributions",
+        "uv: installing the project's wheel",
+    ]
+
+
+def test_a_failed_step_names_the_step_and_shows_uvs_output(tmp_path: Path) -> None:
+    uv = str(_fake_uv(tmp_path, "echo boom >&2; exit 3"))
+    plan = StagingPlan(site=tmp_path, build=[uv, "build"], install=[],
+                       wheel_dir=tmp_path / "wheel")  # fmt: skip
+
+    with pytest.raises(StagingError, match=r"building .*wheel: uv failed \(exit 3\):\nboom"):
+        run_plan(plan, tmp_path)
+
+
+def test_verbose_prints_the_command_and_lets_uvs_stderr_through(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    uv = str(_fake_uv(tmp_path, "echo boom >&2; exit 3"))
+    plan = StagingPlan(site=tmp_path, build=[uv, "build", "a b"], install=[],
+                       wheel_dir=tmp_path / "wheel")  # fmt: skip
+
+    with pytest.raises(StagingError, match=r"building .*wheel: uv failed .*see its output above"):
+        run_plan(plan, tmp_path, verbose=True)
+
+    err = capfd.readouterr().err
+    assert f"fsbpyr: {uv} build 'a b'" in err
+    assert "boom" in err

@@ -11,6 +11,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Added
+- **`fsbpyr build` shows what it is doing.** Each uv step prints a line before it runs ("uv:
+  installing the locked distributions", "uv: building <project>'s wheel"), and the smoke test
+  prints "smoke-testing <path>". A failed uv step names the step instead of a truncated command.
+  `-v/--verbose` also prints each uv command on stderr and lets uv's error output through
+  rather than capturing it.
 - **A security policy, `SECURITY.md`.** Vulnerabilities are reported privately, as GitHub
   security advisories, and acknowledged within 7 days; only the latest release is supported.
   Every executable carries its own CPython and the libraries linked into it (OpenSSL, SQLite,

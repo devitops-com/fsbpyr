@@ -132,6 +132,8 @@ def rebuild_on_baseline(  # noqa: PLR0913  the staging, what to rebuild, and off
     baseline: pins.SysrootPin,
     *,
     offline: bool,
+    log: Callable[[str], None] = lambda _: None,
+    verbose: bool = False,
 ) -> list[str]:
     """Build ``names`` again from their sdists against the glibc baseline's sysroot (D25), with
     the build host's compiler, and the project's own wheel when it is among them; the warnings,
@@ -148,8 +150,8 @@ def rebuild_on_baseline(  # noqa: PLR0913  the staging, what to rebuild, and off
     flags = build_flags(root, os.environ)
     try:
         if canonicalize_name(parse_wheel_filename(wheel.name)[0]) in names:
-            wheel = rebuild_wheel(plan, project_dir, flags)
-        rebuild(plan, project_dir, wheel, names, flags)
+            wheel = rebuild_wheel(plan, project_dir, flags, log=log, verbose=verbose)
+        rebuild(plan, project_dir, wheel, names, flags, log=log, verbose=verbose)
     except StagingError as exc:
         reason = next((line for line in reversed(str(exc).splitlines()) if line.strip()), "")
         return [f"{listed}: building from source against the glibc {glibc} sysroot failed, the "
@@ -215,16 +217,21 @@ def smoke_test(executable: Path, app_name: str, output: Path | None = None) -> N
 
 
 def build(
-    directory: Path, config: BuildConfig, *, log: Callable[[str], None] = lambda _: None
+    directory: Path,
+    config: BuildConfig,
+    *,
+    log: Callable[[str], None] = lambda _: None,
+    verbose: bool = False,
 ) -> BuildResult:
     """Build the executable beside the output; it replaces the output only once it passed the
     smoke test (--no-smoke skips it). An error carries the warnings collected before it as
-    notes, which cli.py prints."""
+    notes, which cli.py prints. ``verbose`` shows uv's commands and lets its errors through."""
     warnings: list[str] = []
     written: list[Path] = []  # the new executable beside the output, until it is committed
     try:
-        result = _build(directory, config, log, warnings, written)
+        result = _build(directory, config, log, warnings, written, verbose=verbose)
         if config.smoke:
+            log(f"smoke-testing {written[0]}")
             smoke_test(written[0], result.app_name, result.output)
         commit(written[0], result.output)
         written.clear()
@@ -238,12 +245,14 @@ def build(
             path.unlink(missing_ok=True)
 
 
-def _build(
+def _build(  # noqa: PLR0913  the build's state and the progress keyword
     directory: Path,
     config: BuildConfig,
     log: Callable[[str], None],
     warnings: list[str],
     written: list[Path],
+    *,
+    verbose: bool,
 ) -> BuildResult:
     """Everything up to the new executable, written beside the output: ``written`` holds it as
     soon as it exists."""
@@ -266,13 +275,14 @@ def _build(
         options = StagingOptions(TARGET_PYTHON, config.extras, config.offline, config.requirements,
                                  platform=baseline.platform)  # fmt: skip
         plan = staging_plan(project, source, uv, Path(tmp), options)
-        wheel = run_plan(plan, project.directory)
+        wheel = run_plan(plan, project.directory, log=log, verbose=verbose)
         index = SiteIndex.scan(plan.site)
         index.check_no_editable()
         if stale := built_here_above(index.dists.values(), baseline.baseline):
             log(f"rebuilding {', '.join(stale)} against the glibc {baseline.glibc} sysroot")
             failed = rebuild_on_baseline(plan, project.directory, wheel, stale, baseline,
-                                         offline=config.offline)  # fmt: skip
+                                         offline=config.offline, log=log,
+                                         verbose=verbose)  # fmt: skip
             warnings += failed
             if not failed:
                 index = SiteIndex.scan(plan.site)
