@@ -160,7 +160,7 @@ def test_a_checkout_is_refused(
     assert github.requests == []
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root can write anywhere")
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
 def test_an_unwritable_directory_is_an_error_saying_how_to_update(
     github: FakeGitHub, installed: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -308,7 +308,7 @@ jobs:
       - name: Rebuild from source as builder
         working-directory: rebuild
         run: |
-          test "$(cat .python-version)" = "${{ matrix.python }}"
+          test "$(cut -d. -f1,2 .python-version)" = "${{ matrix.python }}"
           runuser -u builder -- env HOME=/home/builder XDG_CACHE_HOME=/home/builder/c \
             UV_CACHE_DIR=/home/builder/uv UV_PYTHON_INSTALL_DIR="$UV_PYTHON_INSTALL_DIR" \
             FSBPYR_UV_VERSION="$FSBPYR_UV_VERSION" \
