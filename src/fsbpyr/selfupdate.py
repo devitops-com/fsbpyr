@@ -1,0 +1,216 @@
+"""``fsbpyr self update``: replace the running executable with the latest GitHub release.
+
+Settled with the owner on 2026-10-18 (plan, Phase 9): the release's ``fsbpyr.xz`` is unpacked
+in-process with the standard library's lzma into the executable's own directory, verified
+in-process (``inspect --verify``, so no byte of it runs before it passes) and renamed over the
+executable's real path, keeping its mode. A man page and completions found under the
+executable's prefix are written again by the new executable and renamed into place after it.
+Only released executables update themselves: a developer build (``untagged-<commit>``) is
+refused with the ``curl`` command that downloads the latest release.
+"""
+
+import contextlib
+import json
+import lzma
+import os
+import re
+import stat
+import subprocess
+import tempfile
+import urllib.error
+import urllib.request
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+
+from .inspection import InspectError, read
+from .vcs import own_version
+
+REPO = "devitops-com/fsbpyr"
+API_VARIABLE = "FSBPYR_RELEASE_API"  # the release document's URL; tests serve their own
+DEFAULT_API = f"https://api.github.com/repos/{REPO}/releases/latest"
+ASSET = "fsbpyr.xz"
+CURL_HINT = (
+    f"curl -fLo ~/.local/bin/fsbpyr https://github.com/{REPO}/releases/latest/download/fsbpyr\n"
+    "chmod +x ~/.local/bin/fsbpyr"
+)
+_TIMEOUT_S = 60
+_CHUNK = 1 << 20
+_RELEASE = re.compile(r"v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
+_ACCEPT = {"Accept": "application/vnd.github+json", "User-Agent": "fsbpyr-self-update"}
+
+# What `make install` puts under the prefix (Makefile), and the command that writes each.
+_EXTRAS = (
+    ("share/man/man1/fsbpyr.1", ("man",)),
+    ("share/bash-completion/completions/fsbpyr", ("completion", "bash")),
+    ("share/zsh/site-functions/_fsbpyr", ("completion", "zsh")),
+    ("share/fish/vendor_completions.d/fsbpyr.fish", ("completion", "fish")),
+)
+
+
+class UpdateError(RuntimeError):
+    """The update cannot be done; the message says why and what to do instead."""
+
+
+@dataclass(frozen=True, slots=True)
+class Release:
+    tag: str
+    numbers: tuple[int, int, int]
+    asset_url: str
+
+
+def running_executable() -> Path:
+    """The real path of the running fsbpyr executable (it may be renamed or reached through a
+    symlink); an error when fsbpyr runs from a checkout or a wheel."""
+    try:
+        import _fsbpyr  # noqa: F401, PLC0415  # only in executables
+    except ImportError:
+        raise UpdateError(
+            "fsbpyr self update works on the fsbpyr executable only, not on a checkout or a "
+            f"wheel; to get the latest release:\n{CURL_HINT}"
+        ) from None
+    return Path(os.path.realpath("/proc/self/exe"))
+
+
+def _release_numbers(text: str) -> tuple[int, int, int] | None:
+    match = _RELEASE.fullmatch(text)
+    return None if match is None else (int(match[1]), int(match[2]), int(match[3]))
+
+
+def own_release() -> tuple[int, int, int]:
+    """The release number of this executable; a developer build is refused."""
+    numbers = _release_numbers(own_version().partition("-")[0])
+    if numbers is None:
+        raise UpdateError(
+            f"this is a developer build ({own_version()}); only released executables update "
+            f"themselves. To get the latest release:\n{CURL_HINT}"
+        )
+    return numbers
+
+
+def latest_release() -> Release:
+    api = os.environ.get(API_VARIABLE) or DEFAULT_API
+    try:
+        request = urllib.request.Request(api, headers=_ACCEPT)  # noqa: S310  https, or a test's
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
+            document = json.load(response)
+        tag = document["tag_name"]
+        assets = {a["name"]: a["browser_download_url"] for a in document["assets"]}
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise UpdateError(f"cannot read the latest release from {api}: {exc}") from exc
+    numbers = _release_numbers(tag) if isinstance(tag, str) else None
+    if numbers is None:
+        raise UpdateError(f"the latest release has no vX.Y.Z tag ({tag!r})")
+    if ASSET not in assets:
+        raise UpdateError(f"the latest release ({tag}) has no {ASSET}")
+    return Release(tag, numbers, assets[ASSET])
+
+
+def _unpack(url: str, target: Path) -> None:
+    """``url`` (an xz file), unpacked as it arrives into ``target``."""
+    decoder = lzma.LZMADecompressor(format=lzma.FORMAT_XZ)
+    try:
+        request = urllib.request.Request(url, headers=_ACCEPT)  # noqa: S310  the release's URL
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response, \
+                target.open("wb") as out:  # noqa: S310
+            while chunk := response.read(_CHUNK):
+                out.write(decoder.decompress(chunk))
+    except (OSError, lzma.LZMAError, EOFError) as exc:
+        raise UpdateError(f"downloading {url} failed: {exc}") from exc
+    if not decoder.eof:
+        raise UpdateError(f"{url} ended before the end of its xz stream")
+
+
+def _render(new: Path, command: tuple[str, ...]) -> bytes:
+    """What the new, verified executable prints for ``command``."""
+    try:
+        done = subprocess.run([str(new), *command], capture_output=True,  # noqa: S603  verified
+                              timeout=_TIMEOUT_S, check=True)  # fmt: skip
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise UpdateError(f"the new fsbpyr failed to run `fsbpyr {' '.join(command)}`: {exc}"
+                          ) from exc
+    return done.stdout
+
+
+def _stage_extras(
+    executable: Path, new: Path, warn: Callable[[str], None]
+) -> list[tuple[Path, Path]]:
+    """(temporary, final) for each man page or completion found under the executable's prefix,
+    written by the new executable beside the final file."""
+    prefix = executable.parent.parent
+    if executable.parent.name != "bin":
+        warn(f"not under a prefix with a bin directory: the man page and the completions are "
+             f"left alone; write them with `{executable.name} man` and `{executable.name} "
+             "completion SHELL`")  # fmt: skip
+        return []
+    staged: list[tuple[Path, Path]] = []
+    missing = False
+    for relative, command in _EXTRAS:
+        final = prefix / relative
+        if not final.is_file():
+            missing = True
+            continue
+        content = _render(new, command)
+        try:
+            handle, name = tempfile.mkstemp(dir=final.parent, prefix=f".{final.name}.")
+            temporary = Path(name)
+            with os.fdopen(handle, "wb") as out:
+                out.write(content)
+            temporary.chmod(stat.S_IMODE(final.stat().st_mode))
+        except OSError as exc:
+            warn(f"{final} was not updated: {exc.strerror or exc}; write it with "
+                 f"`fsbpyr {' '.join(command)}`")  # fmt: skip
+            continue
+        staged.append((temporary, final))
+    if missing:
+        warn(f"the man page or completions not found under {prefix} were left alone; write "
+             "them with `fsbpyr man` and `fsbpyr completion SHELL`")  # fmt: skip
+    return staged
+
+
+def update(
+    log: Callable[[str], None] = print, warn: Callable[[str], None] = print
+) -> bool:
+    """Update the running executable to the latest release; False when it is up to date."""
+    own = own_release()
+    executable = running_executable()
+    directory = executable.parent
+    if not os.access(directory, os.W_OK | os.X_OK):
+        raise UpdateError(f"cannot write to {directory}; update with the owner's rights, or "
+                          f"download the latest release there:\n{CURL_HINT}")  # fmt: skip
+    release = latest_release()
+    if release.numbers <= own:
+        log(f"fsbpyr is up to date ({own_version()}; latest release {release.tag})")
+        return False
+    log(f"downloading fsbpyr {release.tag}")
+    handle, name = tempfile.mkstemp(dir=directory, prefix=f".{executable.name}.update-")
+    os.close(handle)
+    new = Path(name)
+    staged: list[tuple[Path, Path]] = []
+    try:
+        _unpack(release.asset_url, new)
+        new.chmod(stat.S_IMODE(executable.stat().st_mode))
+        try:
+            read(new, verify=True)
+        except InspectError as exc:
+            raise UpdateError(f"the download failed verification, nothing was changed: {exc}"
+                              ) from exc
+        staged = _stage_extras(executable, new, warn)
+        new.rename(executable)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            new.unlink()
+        for temporary, _ in staged:
+            with contextlib.suppress(OSError):
+                temporary.unlink()
+        raise
+    for temporary, final in staged:
+        try:
+            temporary.rename(final)
+        except OSError as exc:
+            temporary.unlink(missing_ok=True)
+            warn(f"{final} was not updated: {exc.strerror or exc}")
+    log(f"updated {executable} to fsbpyr {release.tag}")
+    return True
+
+

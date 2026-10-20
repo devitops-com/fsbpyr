@@ -1,6 +1,6 @@
 """Command-line entry point: ``fsbpyr build``, ``inspect``, ``runtime build|list``, ``cache gc``,
-``completion`` and ``man``. The click commands below are the one source of the help text, the
-shell completions and the man page (D40)."""
+``self update``, ``completion`` and ``man``. The click commands below are the one source of the
+help text, the shell completions and the man page (D40)."""
 
 import errno
 import functools
@@ -287,6 +287,31 @@ def cache_gc() -> int:
     return 1 if failed else 0
 
 
+@cli.group("self", help="manage this fsbpyr executable")
+def self_group() -> None:
+    pass
+
+
+@self_group.command("update", help="replace this executable with the latest release\n\n"
+                    "Downloads `fsbpyr.xz` from the latest GitHub release when it is newer, "
+                    "verifies it as `inspect --verify` does before anything runs it, and "
+                    "renames it over this executable. The man page and the completions that "
+                    "`make install` put under the same prefix are written again. Only "
+                    "released executables update themselves.")  # fmt: skip
+def self_update() -> int:
+    from .selfupdate import UpdateError, update  # noqa: PLC0415  keep --version fast
+
+    def warn(message: str) -> None:
+        print(f"fsbpyr: warning: {message}", file=sys.stderr)
+
+    try:
+        update(log=lambda message: print(f"fsbpyr: {message}"), warn=warn)
+    except UpdateError as exc:
+        print(f"fsbpyr: error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 @cli.command(
     "completion",
     short_help="print the shell completion script for SHELL",
@@ -334,6 +359,9 @@ EXAMPLES = (
     ("fsbpyr cache gc",
      "Collect fsbpyr's own cache and every app cache now, rather than when the next "
      "collection is due."),
+    ("fsbpyr self update",
+     "Replace this executable with the latest release, if it is newer, along with the man "
+     "page and completions installed beside it."),
     ("fsbpyr completion bash > ~/.local/share/bash-completion/completions/fsbpyr",
      "Install the completion for bash; new shells pick it up."),
     ("fsbpyr man > ~/.local/share/man/man1/fsbpyr.1",

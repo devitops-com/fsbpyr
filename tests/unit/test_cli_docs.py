@@ -71,7 +71,9 @@ def _option_rows(command: click.Command) -> list[str]:
 
 
 def test_completion_offers_commands_and_both_forms_of_on_off_options() -> None:
-    assert _complete([], "") == ["build", "cache", "completion", "inspect", "man", "runtime"]
+    assert _complete([], "") == [
+        "build", "cache", "completion", "inspect", "man", "runtime", "self"
+    ]
     assert _complete(["build"], "--no-") == [
         "--no-offline", "--no-source", "--no-fast-compression", "--no-best-compression",
         "--no-hints", "--no-interpreter-reexec", "--no-smoke",

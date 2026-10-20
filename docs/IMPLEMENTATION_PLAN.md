@@ -1442,7 +1442,8 @@ write, a truncated binary.
 
 ### Phase 9 — Self-update, more Python versions and portability (L, after the MVP; owner decision 2026-10-18)
 
-- **Self-update first** (S; owner decision 2026-10-18, low-hanging fruit). An explicit command,
+- **Self-update first** (S; owner decision 2026-10-18, low-hanging fruit; **done 2026-10-20**:
+  `fsbpyr self update`, `src/fsbpyr/selfupdate.py`, tested against a fake release server). An explicit command,
   never part of another (plain `fsbpyr` stays help only), asks GitHub for the latest release
   and, when its `vX.Y.Z` is newer than its own version, downloads its own asset of the release
   (`fsbpyr`, or `fsbpyr-3.X` once there are variants, see below) into the directory of the
