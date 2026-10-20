@@ -27,9 +27,12 @@ _AHEAD_BYTES = 64 << 20  # and at most this much of their sources (one at least)
 
 def compile_module(source: bytes, rel: str) -> bytes:
     """Canonical bytecode, independent of the build interpreter's -O / PYTHONOPTIMIZE (D15)."""
+    # A copy: 3.12's pathlib interns the parts of a path, and marshal writes an interned filename
+    # differently from the fresh string a worker process gets by pickle.
+    filename = rel.encode().decode()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        code = compile(source, rel, "exec", dont_inherit=True, optimize=0)
+        code = compile(source, filename, "exec", dont_inherit=True, optimize=0)
     return bytecode.dumps(code)
 
 

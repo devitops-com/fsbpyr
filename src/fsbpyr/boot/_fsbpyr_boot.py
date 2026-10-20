@@ -344,7 +344,15 @@ def _excepthook(
         head = head.tb_next
     if head is not None:  # the default hook prints exc.__traceback__, not the tb argument
         exc = exc.with_traceback(head)
-    sys.__excepthook__(exc_type, exc, head or tb)
+    # 3.12's C printer reads the source files from disk, the traceback module asks the loaders.
+    # Not for Ctrl-C: importing it runs eval(), which on 3.12 forgets the unhandled
+    # KeyboardInterrupt, and the process must still end by SIGINT.
+    if sys.version_info < (3, 13) and not isinstance(exc, KeyboardInterrupt):
+        import traceback  # noqa: PLC0415  only for a crash
+
+        traceback.print_exception(exc_type, exc, head or tb)
+    else:
+        sys.__excepthook__(exc_type, exc, head or tb)
     if (note := _inside_executable_note(exc)) is not None:
         sys.stderr.write(note)
 
@@ -383,6 +391,29 @@ def _frozen_source(fullname: str) -> str | None:
     from _frozen_importlib_external import decode_source  # noqa: PLC0415  frozen, rarely used
 
     return decode_source(_fsbpyr.read(record[4]))
+
+
+def _locate_frozen_modules() -> None:
+    """3.12 leaves ``sys._stdlib_dir`` unset whatever ``PyConfig.stdlib_dir`` says, so the
+    frozen stdlib modules imported at startup (encodings, os, codecs, ...) have no ``__file__``
+    and ``encodings.__path__`` is empty. Set it as 3.13 does and place those modules in the
+    payload's tree (the executable is its root, see the launcher's pin_prefixes)."""
+    if getattr(sys, "_stdlib_dir", None) is not None:
+        return
+    sys._stdlib_dir = ROOT  # type: ignore[attr-defined]  # private, and typeshed has no entry
+    for name, module in list(sys.modules.items()):
+        spec = getattr(module, "__spec__", None)
+        state = getattr(spec, "loader_state", None)
+        if spec is None or spec.loader is not FrozenImporter or state is None or state.filename:
+            continue
+        if state.origname is None or name != state.origname:  # an alias (__hello_alias__)
+            continue
+        relative = _PREFIX + name.replace(".", "/")
+        if spec.submodule_search_locations is not None:
+            spec.submodule_search_locations.insert(0, relative)
+            module.__path__ = spec.submodule_search_locations
+            relative += "/__init__"
+        module.__file__ = state.filename = relative + ".py"
 
 
 def _install_frozen_sources() -> None:
@@ -428,6 +459,7 @@ def _interpreter_child() -> bool:
 
 
 def run() -> None:
+    _locate_frozen_modules()
     sys.path_hooks.insert(0, path_hook)
     sys.path[:] = [ROOT]
     sys.path_importer_cache.clear()

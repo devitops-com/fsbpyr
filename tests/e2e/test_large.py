@@ -67,7 +67,7 @@ site, out, raw = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3] == "raw"
 if raw:  # files too large to read whole are stored as they are, not compressed
     Spill.compress_files = lambda self, paths, **_: {rel: Blob.raw_file(path)
                                                     for rel, path in paths.items()}
-runtime = registry.find_runtime("3.14")
+runtime = registry.find_runtime("{}.{}".format(*sys.version_info[:2]))
 index = SiteIndex.scan(site)
 with Spill(out.parent) as spill:
     content = classify(list(index.dists.values()), include_source=True, spill=spill,

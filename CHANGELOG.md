@@ -21,6 +21,21 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   The new [docs/security.md](docs/security.md) is the threat model.
 
 ### Added
+- **fsbpyr builds on Python 3.12 and 3.13 as well as 3.14** (Phase 9, step 2, D13: fsbpyr
+  requires Python 3.12 to 3.14 from now on). The CLI no longer stops on 3.12 and 3.13: each
+  fsbpyr builds with, and its apps carry, the runtime of the Python it runs on (3.12.15,
+  3.13.16 or 3.14.8). `make test`, `make test-ci`, `make check` and `make build` take
+  `PYTHON=3.12` (or 3.13, 3.14) on the command line and run in the locked environment
+  `.venv-3.12`; `make build PYTHON=3.12` writes `dist/fsbpyr-3.12`, and `tools/bootstrap.sh
+  --python 3.12` (`make bootstrap PYTHON=3.12`) runs the three stages of that variant into
+  `dist/stage1-3.12` to `dist/stage3-3.12`, each verified and stage 2 identical to stage 3,
+  without installing it. Without a version nothing changes. The releases still carry the 3.14
+  variant only. Found by running the apps on 3.12: its frozen standard library modules had no
+  `__file__` and `encodings.__path__` was empty (CPython 3.12 does not set `sys._stdlib_dir`
+  from `PyConfig.stdlib_dir`), so `encodings.idna` and `inspect.getsource(os)` failed; the boot
+  module now sets it. Uncaught exceptions print their source lines on 3.12 (CPython 3.12's C
+  printer reads the files from disk), except a Ctrl-C traceback, which keeps the C printer so
+  that the process still ends by SIGINT. Nothing changes on 3.14.
 - **The multiprocessing child recognition knows each version's command lines** (Phase 9,
   step 2, D22): spawn and the resource tracker read the same on 3.12 to 3.14; the forkserver
   command line of 3.12 has no `sys_argv` and no `authkey_r`, 3.13's adds `sys_argv`, 3.14's
@@ -297,6 +312,12 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   container, as before, and the README's release check no longer runs `uv self update`.
 
 ### Fixed
+- **Runtimes build and modules compile alike on Python 3.12 and 3.13.** `fsbpyr runtime build`
+  unpacked the python-build-standalone archive with 3.14's `tarfile` mode `r:zst`; below 3.14
+  it uses the one of `backports.zstd`. A module's `co_filename` is now a copy of its name:
+  3.12's `pathlib` interns the parts of a path, so a module compiled in the build's process
+  had its filename interned in the bytecode and one compiled on a worker did not. Nothing
+  changes on 3.14.
 - **`import distutils` works in an executable that packages setuptools, also before setuptools
   is imported.** Python 3.12+ has no stdlib `distutils`; a venv gets it from setuptools'
   `distutils-precedence.pth`, which the build treats as redundant. The import now resolves to

@@ -8,7 +8,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 import time
 import urllib.error
@@ -17,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..compat import tarfile
 from .hold import hold
 from .pins import PbsPin
 
@@ -222,7 +222,7 @@ def fetch(pin: PbsPin, cache: Path) -> PbsDist:
     dest.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(dir=dest.parent, prefix=".extract-"))
     try:
-        with tarfile.open(archive, "r:zst") as tar:  # type: ignore[call-overload]  # "r:zst" is 3.14's; below it, Phase 9 step 3
+        with tarfile.open(archive, "r:zst") as tar:
             tar.extractall(staging, filter="data")
         if not (staging / "python" / "PYTHON.json").exists():
             raise PbsError(f"{archive} does not contain python/PYTHON.json")

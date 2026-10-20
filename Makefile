@@ -17,8 +17,18 @@ export PATH := $(HOME)/.local/bin:$(PATH)
 # .python-version pins is the user's to install (`uv python install`).
 export UV_PYTHON_DOWNLOADS := never
 
+# PYTHON=3.12 (3.12, 3.13 or 3.14, on the command line only: an exported one is ignored) runs the
+# checks, the tests and `make build` on that Python's variant of fsbpyr (Phase 9), in the locked
+# environment .venv-3.12; without it nothing changes. A variant's executable is dist/fsbpyr-3.12.
 UV  := uv
-BIN := dist/fsbpyr
+ifeq ($(origin PYTHON),command line)
+export UV_PROJECT_ENVIRONMENT := .venv-$(PYTHON)
+UVRUN := $(UV) run --python $(PYTHON) --locked
+BIN   := dist/fsbpyr-$(PYTHON)
+else
+UVRUN := $(UV) run --locked
+BIN   := dist/fsbpyr
+endif
 
 .PHONY: help bootstrap build install uninstall test test-ci test-container test-portability check release clean
 
@@ -32,16 +42,24 @@ help: ## Show this help
 # and clang/lld 22 you installed (a missing one is named; nothing is installed for you).
 # Anywhere else the build runs in a Debian trixie podman container (podman is yours to
 # install) and the install on this host. See tools/bootstrap.sh.
-bootstrap: ## From source to an installed fsbpyr: runtime, build, install
-	@bash tools/bootstrap.sh
+bootstrap: ## From source to an installed fsbpyr: runtime, build, install (PYTHON=3.X: that variant's three stages, no install)
+	@bash tools/bootstrap.sh$(if $(filter command line,$(origin PYTHON)), --python $(PYTHON))
 
 # --- Build ---
 
 # The installed fsbpyr builds the checkout: it carries its own runtime, so no compiler is
 # needed, only uv. Without an installed fsbpyr it stops: `make bootstrap` installs one. Its
 # --version names the vX.Y.Z tag on HEAD, else `untagged`.
-build: ## Build dist/fsbpyr with the installed fsbpyr (make bootstrap installs one)
+#
+# PYTHON=3.12 builds that variant instead, dist/fsbpyr-3.12, from source in its environment
+# with its own runtime (fsbpyr runtime build, cached after the first run): the installed fsbpyr
+# runs on one Python only. make bootstrap PYTHON=3.12 also checks it in three stages.
+build: ## Build dist/fsbpyr with the installed fsbpyr (make bootstrap installs one); PYTHON=3.X: dist/fsbpyr-3.X from source
 	@bash tools/bootstrap.sh --uv
+ifeq ($(origin PYTHON),command line)
+	$(UVRUN) fsbpyr runtime build --python $(PYTHON)
+	$(UVRUN) fsbpyr build . -o $(BIN)
+else
 	@fsbpyr="$$(command -v $(BINDIR)/fsbpyr || command -v fsbpyr || true)"; \
 	if [ -z "$$fsbpyr" ]; then \
 		echo "ERROR: no fsbpyr in $(BINDIR) or on PATH; make bootstrap builds and installs one" >&2; \
@@ -49,11 +67,13 @@ build: ## Build dist/fsbpyr with the installed fsbpyr (make bootstrap installs o
 	fi; \
 	echo "$$fsbpyr build . -o $(BIN)"; \
 	"$$fsbpyr" build . -o $(BIN)
+endif
 
 # --- Install ---
 
 # The man page and the completions come from the executable being installed (one source, D40).
 install: ## Install dist/fsbpyr, its man page and completions under PREFIX (default ~/.local)
+	@[ "$(origin PYTHON)" != "command line" ] || { echo "ERROR: install puts the newest variant's dist/fsbpyr in place; PYTHON is for builds and tests" >&2; exit 1; }
 	@[ -x $(BIN) ] || $(MAKE) --no-print-directory build
 	@mkdir -p dist/share
 	$(BIN) man > dist/share/fsbpyr.1
@@ -74,7 +94,7 @@ uninstall: ## Remove what `make install` installed
 # --- Checks ---
 
 test: ## Run the test suite
-	$(UV) run --locked pytest
+	$(UVRUN) pytest
 
 # What CI runs before a release: unit and integration tests, real builds, executables run
 # with the release launcher, and a real executable's boot imports and cache-sync contract
@@ -83,7 +103,7 @@ test: ## Run the test suite
 # the tests marked `sanitized`. Branch coverage below pyproject.toml's fail_under fails the run;
 # coverage.xml is the report CI keeps.
 test-ci: ## Run the core of the test suite, as CI does
-	$(UV) run --locked pytest tests/unit tests/integration tests/e2e/test_build.py \
+	$(UVRUN) pytest tests/unit tests/integration tests/e2e/test_build.py \
 		tests/e2e/test_runtime_app.py tests/e2e/test_imports.py \
 		tests/e2e/test_stub_hardening.py \
 		-k "not (sanitized and not release)" --cov --cov-report=term --cov-report=xml
@@ -113,11 +133,11 @@ test-portability: ## Run the portability matrix on 13 distributions (podman, dis
 	rm -rf dist/portability-apps
 	tools/portability-apps.sh $(BIN) dist/portability-apps
 	FSBPYR_PORTABILITY_APPS="$(CURDIR)/dist/portability-apps" FSBPYR_TESTS_REQUIRE_ALL=portability \
-		$(UV) run --locked pytest tests/e2e/test_portability.py
+		$(UVRUN) pytest tests/e2e/test_portability.py
 
 check: ## Static checks: ruff + mypy
-	$(UV) run --locked ruff check
-	$(UV) run --locked mypy
+	$(UVRUN) ruff check
+	$(UVRUN) mypy
 
 # --- Release ---
 

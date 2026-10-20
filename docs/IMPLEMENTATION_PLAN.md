@@ -102,7 +102,7 @@ PROJECT defaults to `.`; `build.py`: `dist/<app name>` unless `-o`).
 | D10 | **Generation id** = SHA-256(runtime ABI ‖ platform ‖ sorted (path, sha256) of every extractable artifact), computed at build time and stored in the header | Manifest §7. Releases that change only Python code reuse the existing generation | Per-build generations |
 | D11 | **Integrity:** SHA-256 for extractable artifacts, verified on extraction. zstd frame checksums for blobs kept in memory. Whole-payload SHA-256 in the trailer, checked only by `fsbpyr inspect --verify` or `FSBPYR_VERIFY=1` (superseded by D31: the whole file, on every start) | Meets manifest §11 without hashing on every import | — |
 | D12 | **Sources are kept** by default as separate zstd frames, read only for tracebacks and `inspect`. `--no-source` drops them | Size may grow, startup may not. Gives full tracebacks | — |
-| D13 | **fsbpyr itself** requires Python ≥ 3.14 (≥ 3.12 in Phase 9: one fsbpyr per Python version). Its only runtime dependency is `packaging` (and `click` since 0.18.0, D40; below 3.14 also `backports.zstd`, Phase 9). zstd comes from the stdlib `compression.zstd`, TOML from `tomllib`. Capped below the next minor (owner decision 2026-10-19; it was `>=3.14,<3.15`), since canonical bytecode knows one marshal format (D16): `bytecode.dumps` raises on any other version, and a build reaches it only after staging. `uv pip install` and `uv tool install` ignore the cap, so `fsbpyr build` and `fsbpyr runtime build` also stop on any other Python before they do anything else. `requires-python` is `>=3.12,<3.15` since 2026-10-20 (Phase 9, step 2: fsbpyr's code imports and runs on 3.12 and 3.13), but the CLI (`cli.py`, `CLI_PYTHON`) still refuses them until Phase 9's port is done; the cap rises whenever fsbpyr moves to a newer Python | Small self-hosting surface. fsbpyr is pure Python, so self-hosting does not depend on native-extension support | `zstandard` package (a native dependency) |
+| D13 | **fsbpyr itself** requires Python ≥ 3.12 (3.12, 3.13 or 3.14; one fsbpyr per Python version, Phase 9; it was ≥ 3.14 until 2026-10-20). Its only runtime dependency is `packaging` (and `click` since 0.18.0, D40; below 3.14 also `backports.zstd`, Phase 9). zstd comes from the stdlib `compression.zstd`, TOML from `tomllib`. Capped below the next minor (owner decision 2026-10-19; it was `>=3.14,<3.15`), since canonical bytecode knows the marshal formats of 3.12 to 3.14 only (D16): `bytecode.dumps` raises on any other version, and a build reaches it only after staging. `uv pip install` and `uv tool install` ignore the cap, so `fsbpyr build` and `fsbpyr runtime build` also stop on any Python but 3.12 to 3.14 before they do anything else. `requires-python` is `>=3.12,<3.15` since 2026-10-20 (Phase 9, step 2: fsbpyr's code imports and runs on 3.12 and 3.13), and the CLI accepts 3.12, 3.13 and 3.14 since the same day (`bytecode.SUPPORTED_PYTHON`; each fsbpyr builds with the runtime of the Python it runs on); the cap rises whenever fsbpyr moves to a newer Python | Small self-hosting surface. fsbpyr is pure Python, so self-hosting does not depend on native-extension support | `zstandard` package (a native dependency) |
 | D14 | **Interpreter config in built apps:** isolated (`PYTHON*` env vars ignored), `site_import=0`, `safe_path=1`, UTF-8 mode, `parse_argv=0`, `executable` = realpath of the binary. Debug knobs only through `FSBPYR_*` env vars | Deterministic startup. The app's argv stays untouched | — |
 | D15 | **Deterministic builds:** sorted entries, fixed blob order, no timestamps, single-threaded zstd with fixed parameters, canonical bytecode (D16); output is byte-identical for a fixed libzstd version, which `build_info` records. Self-hosting fixed point: stage2 == stage3, byte for byte | The classic compiler-bootstrap check for R2/R3 | — |
 | D16 | **Canonical bytecode:** every `marshal.dumps` result is rewritten by `fsbpyr/bytecode.py`. Strings are merged by value (interned if any occurrence was), FLAG_REF is set only for nodes that occur ≥ 2 times or are interned strings, refs are renumbered in pre-order, and set elements are sorted canonically | Raw marshal output depends on refcounts and on process-global interning (S3: 561/561 files differ in batch mode, 4 in a "noisy" build process). Canonical output: 0 differences, round-trip equality, same size and load time | Compiling in a clean worker process (still state-dependent). Accepting non-determinism |
@@ -1512,7 +1512,7 @@ write, a truncated binary.
       an executable records which asset it was released as; when 3.15 becomes the newest,
       `fsbpyr` moves to 3.15 and `fsbpyr-3.14` appears;
     - a developer build (`untagged-<commit>`) that needs another version stops with an error
-      saying how to build that variant locally (`make build` with a Python version, to add);
+      saying how to build that variant locally (`make build PYTHON=3.X`, added 2026-10-20);
       it never fetches a released variant, which would mix released code into a development
       build.
   - **Steps:**
@@ -1550,7 +1550,22 @@ write, a truncated binary.
        canonicalizer's marshal layout, the stdlib selection and startup modules, and the
        multiprocessing command lines (D22, with their security tests; 3.12's forkserver
        command line differs from 3.13's and 3.14's, checked 2026-10-18). D13 becomes Python
-       ≥ 3.12.
+       ≥ 3.12. **Turned on 2026-10-20** (the spec's "Exit" for the port): the CLI accepts 3.12,
+       3.13 and 3.14 (`bytecode.SUPPORTED_PYTHON`), each fsbpyr builds with the runtime of
+       the Python it runs on (`build.TARGET_PYTHON`, `runtime build`'s default), D13 and the
+       README say Python ≥ 3.12, and `make` takes `PYTHON=3.X` (`test`, `test-ci`, `check`,
+       `build`, `bootstrap`) and `tools/bootstrap.sh --python 3.X` runs the three stages of a
+       variant (`.venv-3.X`, `dist/stage{1,2,3}-3.X`, `dist/fsbpyr-3.X`). Running the apps on
+       3.12 found three things the earlier items could not: `runtime build` unpacked the PBS
+       archive with 3.14's `tarfile` `r:zst` (now `backports.zstd.tarfile` below 3.14), a
+       module compiled in the build's process and on a worker differed in the bytecode's
+       filename (3.12's `pathlib` interns path parts; `co_filename` is now a copy), and 3.12
+       leaves `sys._stdlib_dir` unset so its frozen stdlib modules had no `__file__` and
+       `encodings.__path__` was empty (`encodings.idna`, `inspect.getsource(os)`: the boot
+       module sets it), and its C traceback printer cannot read the payload's sources (the
+       boot's excepthook uses `traceback` there, except for Ctrl-C: importing it runs
+       `eval()`, which on 3.12 forgets the unhandled KeyboardInterrupt the exit by SIGINT
+       needs, so Ctrl-C tracebacks keep the C printer and show no source lines on 3.12).
     3. Runtimes, CI and releases (the runtimes of 3.12 and 3.13 **done 2026-10-20**: pins for
        3.12.15 and 3.13.16 from PBS 20261009, `build/lib/libzstd.a` added to the link inputs
        when no built-in module links it; both build and their stubs stop at the integrity

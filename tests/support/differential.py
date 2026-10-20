@@ -29,7 +29,7 @@ class Outcome:
 
 def make_venv(project: Path, venv: Path, python: str) -> Path:
     """The staging environment of a uv.lock project: its wheel (not an editable copy) and its
-    locked dependencies, without dev groups, on the runtime's Python ("3.14", not whichever
+    locked dependencies, without dev groups, on the runtime's Python (not whichever
     version the project's ``requires-python`` lets uv pick)."""
     command = [str(find_uv()), "sync", "--locked", "--no-dev", "--no-default-groups"]
     command += ["--no-editable", "--python", python, "--project", str(project), "--quiet"]

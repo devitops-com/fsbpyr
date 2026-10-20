@@ -6,6 +6,9 @@
 #     bash tools/bootstrap.sh --from-source only steps 1-3 (what the podman container runs)
 #     bash tools/bootstrap.sh --uv          only the check for uv (what `make build` needs)
 #     bash tools/bootstrap.sh --llvm23      only the fetch of clang/lld 23, printing its clang
+#     bash tools/bootstrap.sh --python 3.12 the variant for another Python (3.12, 3.13 or 3.14):
+#                                           steps 1-3 only, in .venv-3.12, into dist/stage1-3.12
+#                                           ... and dist/fsbpyr-3.12; no install (Phase 9)
 #
 # Nothing here installs or updates a tool on the host: a missing one is named, and installing
 # it is the user's.
@@ -41,6 +44,28 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# --python X.Y bootstraps that Python's variant: its own locked environment, runtime and stage
+# directories, so it never disturbs the default's .venv and dist/stage*. Without it nothing
+# below changes.
+PYTHON_VARIANT=""
+SUFFIX=""
+ARGS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --python)
+            [ $# -ge 2 ] && [[ "$2" =~ ^3\.[0-9]+$ ]] \
+                || { echo "usage: bootstrap.sh --python X.Y (3.12, 3.13 or 3.14)" >&2; exit 2; }
+            PYTHON_VARIANT="$2"
+            SUFFIX="-$2"
+            shift 2 ;;
+        *) ARGS+=("$1"); shift ;;
+    esac
+done
+set -- ${ARGS[@]+"${ARGS[@]}"}
+if [ -n "$PYTHON_VARIANT" ]; then
+    export UV_PROJECT_ENVIRONMENT=".venv$SUFFIX"
+fi
+
 IMAGE="${FSBPYR_BOOTSTRAP_IMAGE:-fsbpyr-build}"
 VOLUME="${FSBPYR_BOOTSTRAP_VOLUME:-fsbpyr-cache}"
 
@@ -70,9 +95,9 @@ need_uv() {
 
 need_python() {
     local version
-    version="$(cat .python-version)"
+    version="${PYTHON_VARIANT:-$(cat .python-version)}"
     uv python find "$version" >/dev/null 2>&1 \
-        || die "Python $version (.python-version) is not installed; install it (uv python install $version) and run this again"
+        || die "Python $version (${PYTHON_VARIANT:+--python}${PYTHON_VARIANT:-.python-version}) is not installed; install it (uv python install $version) and run this again"
 }
 
 # verify EXECUTABLE: `inspect --verify` recomputes its digest over the whole file; the report
@@ -136,28 +161,30 @@ from_source() {
         clang_args=(--clang "$CLANG23")
         linker=23
     fi
-    say "Locked environment on Python $(cat .python-version)"
-    uv sync --locked
+    local py=() s1="dist/stage1$SUFFIX" s2="dist/stage2$SUFFIX" s3="dist/stage3$SUFFIX"
+    [ -z "$PYTHON_VARIANT" ] || py=(--python "$PYTHON_VARIANT")
+    say "Locked environment on Python ${PYTHON_VARIANT:-$(cat .python-version)}"
+    uv sync "${py[@]}" --locked
     say "Runtime (links with clang/lld $linker; cached after the first run)"
-    uv run --locked fsbpyr runtime build "${clang_args[@]}"
-    rm -rf dist/stage1 dist/stage2 dist/stage3
-    mkdir -p dist/stage1 dist/stage2 dist/stage3
-    say "Stage 1: fsbpyr from source builds dist/stage1/fsbpyr"
-    uv run --locked fsbpyr build . -o dist/stage1/fsbpyr
-    verify dist/stage1/fsbpyr
-    say "Stage 2: dist/stage1/fsbpyr builds dist/stage2/fsbpyr"
-    dist/stage1/fsbpyr build . -o dist/stage2/fsbpyr
-    verify dist/stage2/fsbpyr
-    say "Stage 3: dist/stage2/fsbpyr builds dist/stage3/fsbpyr"
-    dist/stage2/fsbpyr build . -o dist/stage3/fsbpyr
-    verify dist/stage3/fsbpyr
+    uv run "${py[@]}" --locked fsbpyr runtime build "${py[@]}" "${clang_args[@]}"
+    rm -rf "$s1" "$s2" "$s3"
+    mkdir -p "$s1" "$s2" "$s3"
+    say "Stage 1: fsbpyr from source builds $s1/fsbpyr"
+    uv run "${py[@]}" --locked fsbpyr build . -o "$s1/fsbpyr"
+    verify "$s1/fsbpyr"
+    say "Stage 2: $s1/fsbpyr builds $s2/fsbpyr"
+    "$s1/fsbpyr" build . -o "$s2/fsbpyr"
+    verify "$s2/fsbpyr"
+    say "Stage 3: $s2/fsbpyr builds $s3/fsbpyr"
+    "$s2/fsbpyr" build . -o "$s3/fsbpyr"
+    verify "$s3/fsbpyr"
     # Builds are reproducible: two executables built from the same checkout by builders of the
     # same version are the same bytes. Stage 2 and 3 differ only if building changes fsbpyr.
-    cmp -s dist/stage2/fsbpyr dist/stage3/fsbpyr \
+    cmp -s "$s2/fsbpyr" "$s3/fsbpyr" \
         || die "stage 2 and stage 3 differ:
-$(sha256sum dist/stage2/fsbpyr dist/stage3/fsbpyr)"
-    say "Stage 2 and stage 3 are identical: $(sha256sum dist/stage3/fsbpyr | cut -d' ' -f1)"
-    cp dist/stage3/fsbpyr dist/fsbpyr.tmp && mv dist/fsbpyr.tmp dist/fsbpyr
+$(sha256sum "$s2/fsbpyr" "$s3/fsbpyr")"
+    say "Stage 2 and stage 3 are identical: $(sha256sum "$s3/fsbpyr" | cut -d' ' -f1)"
+    cp "$s3/fsbpyr" "dist/fsbpyr$SUFFIX.tmp" && mv "dist/fsbpyr$SUFFIX.tmp" "dist/fsbpyr$SUFFIX"
 }
 
 in_podman() {
@@ -171,7 +198,9 @@ in_podman() {
     # The container is its own environment: uv installs the pinned Python there, on the volume.
     podman run --rm --network pasta:-4 -e FSBPYR_LLVM23 \
         -v "$ROOT":/src:Z -v "$VOLUME":/root/.cache "$IMAGE" \
-        bash -c 'uv python install "$(cat .python-version)" && bash tools/bootstrap.sh --from-source'
+        bash -c 'uv python install "$1" && shift && bash tools/bootstrap.sh "$@"' \
+        bash "${PYTHON_VARIANT:-$(cat .python-version)}" --from-source \
+        ${PYTHON_VARIANT:+--python "$PYTHON_VARIANT"}
 }
 
 case "${1:-}" in
@@ -179,7 +208,7 @@ case "${1:-}" in
     --uv) need_uv; exit 0 ;;
     --llvm23) llvm23; echo "$CLANG23"; exit 0 ;;
     "") ;;
-    *) echo "usage: bootstrap.sh [--from-source | --uv | --llvm23]" >&2; exit 2 ;;
+    *) echo "usage: bootstrap.sh [--python X.Y] [--from-source | --uv | --llvm23]" >&2; exit 2 ;;
 esac
 
 [ "$(uname -m)" = x86_64 ] || die "fsbpyr builds for Linux x86-64 only (this is $(uname -m))"
@@ -188,6 +217,10 @@ if [ "${FSBPYR_BOOTSTRAP:-}" != podman ] && is_trixie; then
     from_source
 else
     in_podman
+fi
+if [ -n "$PYTHON_VARIANT" ]; then
+    say "Built dist/fsbpyr$SUFFIX; a variant is not installed"
+    exit 0
 fi
 say "Installing"
 make install

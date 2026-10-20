@@ -15,7 +15,6 @@ import click
 import pytest
 from click.shell_completion import ShellComplete
 
-from fsbpyr.build import TARGET_PYTHON
 from fsbpyr.classify import BUILTIN_FS_PACKAGES
 from fsbpyr.cli import EXAMPLES, cli, main
 from fsbpyr.config import CONFIG_KEYS, BuildConfig, ConfigError, load_config
@@ -312,9 +311,10 @@ def test_readme_option_table_is_the_build_commands_help() -> None:
 def test_readme_supported_targets_name_the_pinned_cpython() -> None:
     readme = (ROOT / "README.md").read_text()
     section = readme.partition("\n## Supported targets\n")[2].partition("\n## ")[0]
-    pin = pins.pin_for(TARGET_PYTHON, "x86_64-unknown-linux-gnu")
+    versions = [pins.pin_for(python, "x86_64-unknown-linux-gnu").version
+                for python in ("3.12", "3.13", "3.14")]  # fmt: skip
 
-    assert f"CPython {pin.version}" in section
+    assert all(version in section for version in versions)
 
 
 def test_readme_quickstart_runs_command_lines_fsbpyr_accepts(

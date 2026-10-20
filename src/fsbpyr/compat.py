@@ -4,11 +4,14 @@ import os
 import sys
 
 if sys.version_info >= (3, 14):
+    import tarfile
+
     from compression import zstd
 else:
     import backports.zstd as zstd  # noqa: PLR0402  the official backport, same API
+    from backports.zstd import tarfile  # the stdlib's tarfile with "r:zst" and "w:zst"
 
-__all__ = ["process_cpu_count", "zstd"]
+__all__ = ["process_cpu_count", "tarfile", "zstd"]
 
 
 def process_cpu_count() -> int | None:

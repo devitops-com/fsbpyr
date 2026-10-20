@@ -5,7 +5,6 @@ import hashlib
 import io
 import json
 import sys
-import tarfile
 import time
 import urllib.error
 import urllib.request
@@ -17,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.cli import main
+from fsbpyr.compat import tarfile
 from fsbpyr.payload.format import FileKind, ModuleFlag, ModuleKind
 from fsbpyr.payload.spec import Blob, File, Module
 from fsbpyr.runtime import notices, pbs, pins, registry, stdlib, stub, sysroot
@@ -26,7 +26,7 @@ from fsbpyr.runtime.toolchain import Toolchain
 
 def _archive(files: dict[str, bytes]) -> bytes:
     buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:zst") as tar:  # type: ignore[call-overload]  # "w:zst" is 3.14's
+    with tarfile.open(fileobj=buffer, mode="w:zst") as tar:
         for name, data in files.items():
             info = tarfile.TarInfo(name)
             info.size = len(data)

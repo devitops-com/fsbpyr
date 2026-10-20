@@ -1143,3 +1143,46 @@ def test_bootstrap_links_with_the_system_clang_unless_fsbpyr_llvm23_is_set(
     assert "links with clang/lld 23" in with_switch.stdout
     assert switched.startswith("uv run --locked fsbpyr runtime build --clang ")
     assert switched.endswith("/bin/clang")
+
+
+def test_bootstrap_python_runs_one_variants_stages_in_its_own_environment(tmp_path: Path) -> None:
+    root, _, env = _llvm23_repo(tmp_path)
+
+    result = run_script(
+        ["bash", str(root / "tools/bootstrap.sh"), "--python", "3.12", "--from-source"], env
+    )
+    calls = (tmp_path / "uv.log").read_text(encoding="utf-8").splitlines()
+
+    assert "Locked environment on Python 3.12" in result.stdout
+    assert "uv sync --python 3.12 --locked" in calls
+    assert "uv run --python 3.12 --locked fsbpyr runtime build --python 3.12" in calls
+    assert "uv run --python 3.12 --locked fsbpyr build . -o dist/stage1-3.12/fsbpyr" in calls
+    assert not (root / "dist/stage1").exists()  # the default's directories stay untouched
+
+
+def test_bootstrap_python_takes_a_minor_version(tmp_path: Path) -> None:
+    root, _, env = _llvm23_repo(tmp_path)
+
+    result = run_script(["bash", str(root / "tools/bootstrap.sh"), "--python", "latest"], env)
+
+    assert result.returncode == 2
+    assert result.stderr == "usage: bootstrap.sh --python X.Y (3.12, 3.13 or 3.14)\n"
+
+
+def test_make_runs_on_the_python_given_on_its_command_line_only() -> None:
+    make = shutil.which("make")
+    if make is None:
+        pytest.skip("make is not installed")
+    env = {"PATH": SYSTEM_PATH, "HOME": "/nonexistent"}
+
+    def dry_run(*arguments: str, **extra: str) -> str:
+        result = run_script([make, "-n", *arguments], {**env, **extra}, cwd=ROOT)
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    assert "uv run --python 3.12 --locked pytest" in dry_run("test-ci", "PYTHON=3.12")
+    assert "uv run --locked ruff check" in dry_run("check", PYTHON="3.12")  # the environment's
+    assert "--python 3.13 --locked fsbpyr build . -o dist/fsbpyr-3.13" in dry_run(
+        "build", "PYTHON=3.13"
+    )
+    assert "bootstrap.sh --python 3.14" in dry_run("bootstrap", "PYTHON=3.14")

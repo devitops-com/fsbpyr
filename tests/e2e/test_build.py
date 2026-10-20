@@ -11,12 +11,13 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from fsbpyr.build import rebuild_on_baseline
+from fsbpyr.build import TARGET_PYTHON, rebuild_on_baseline
 from fsbpyr.cli import main
 from fsbpyr.compat import zstd
 from fsbpyr.elf import glibc_requirement
@@ -32,6 +33,7 @@ from ..support.readme import quickstart
 pytestmark = pytest.mark.slow
 
 ROOT = Path(__file__).parents[2]
+VENV = Path(sys.prefix)  # the development environment: .venv, or .venv-3.X for make PYTHON=3.X
 FIXTURES = ROOT / "tests" / "fixtures" / "projects"
 UV = shutil.which("uv")
 GIT = shutil.which("git")
@@ -99,7 +101,7 @@ def test_readme_quickstart_works_on_a_new_account(tmp_path: Path) -> None:
     home.mkdir()
     tools.mkdir()
     (tools / "uv").symlink_to(UV)
-    under_test = shlex.quote(str(ROOT / ".venv" / "bin" / "fsbpyr"))
+    under_test = shlex.quote(str(VENV / "bin" / "fsbpyr"))
     fsbpyr.write_text(f'#!/bin/sh\nexec {under_test} "$@"\n')
     (tools / "curl").write_text(
         f'#!/bin/sh\ntest "$*" = "-fLo $HOME/.local/bin/fsbpyr {RELEASE}" ||\n'
@@ -156,7 +158,8 @@ def test_builds_do_not_depend_on_the_build_environment(
     first, second = tmp_path / "first", tmp_path / "second"
     assert main(["build", str(project), "-o", str(first), "--no-smoke"]) == 0
     other = tmp_path / "other-venv"  # uv prefers an active virtual environment's interpreter
-    subprocess.run([UV or "uv", "venv", "--quiet", "--python", "3.14", str(other)], check=True)
+    command = [UV or "uv", "venv", "--quiet", "--python", TARGET_PYTHON, str(other)]
+    subprocess.run(command, check=True)
     monkeypatch.setenv("VIRTUAL_ENV", str(other))
     monkeypatch.setenv("UV_VENV_SEED", "1")  # would add pip to a venv uv creates
 
@@ -254,7 +257,7 @@ def test_self_hosting_reaches_a_fixed_point(tmp_path: Path) -> None:
     (tmp_path / "git" / "git").symlink_to(GIT)
     path = os.pathsep.join([str(Path(UV).parent), str(tmp_path / "git")])
     env = {**os.environ, "PATH": path, "FSBPYR_CACHE_DIR": str(tmp_path / "c")}
-    venv_before = _tree(ROOT / ".venv")
+    venv_before = _tree(VENV)
     stages = [tmp_path / f"stage{n}" for n in (1, 2, 3)]
 
     assert main(["build", str(ROOT), "-o", str(stages[0])]) == 0
@@ -280,7 +283,7 @@ def test_self_hosting_reaches_a_fixed_point(tmp_path: Path) -> None:
     version = _run(stages[2], "--version")  # recorded by the build: the binary has no git
     assert version.stdout == version_string(git_state(ROOT)) + "\n"
     assert not (tmp_path / "c" / "runtimes").exists()  # the binary used its own runtime
-    assert _tree(ROOT / ".venv") == venv_before
+    assert _tree(VENV) == venv_before
 
 
 def test_self_hosted_binary_builds_offline_without_clang(tmp_path: Path) -> None:
@@ -303,7 +306,7 @@ def test_self_hosted_binary_builds_offline_without_clang(tmp_path: Path) -> None
 @pytest.mark.parametrize(
     ("change", "message"),
     [
-        (('requires-python = ">=3.12"', 'requires-python = "<3.13"'), "requires-python"),
+        (('requires-python = ">=3.12"', 'requires-python = "<3.12"'), "requires-python"),
         (('[project.scripts]\nclicky = "clicky.cli:main"', ""), "--entry"),
     ],
 )
@@ -436,7 +439,7 @@ def test_stale_setuptools_build_directories_never_leak(tmp_path: Path) -> None:
 
 def test_build_interpreter_optimization_does_not_change_the_output(tmp_path: Path) -> None:
     project = _fixture("hello", tmp_path)
-    fsbpyr = ROOT / ".venv" / "bin" / "fsbpyr"
+    fsbpyr = VENV / "bin" / "fsbpyr"
     outputs = []
     for optimize in ("", "2"):
         out = tmp_path / f"hello-{optimize or 'plain'}"

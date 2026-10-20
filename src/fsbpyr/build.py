@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -48,7 +49,7 @@ from .staging import (
 from .system import system_info, system_report, target_needs
 from .vcs import git_state, own_version
 
-TARGET_PYTHON = "3.14"
+TARGET_PYTHON = f"{sys.version_info[0]}.{sys.version_info[1]}"  # builder and apps run alike
 _SMOKE_TIMEOUT = 120
 _PACKAGES = (ModuleKind.PACKAGE, ModuleKind.NAMESPACE)
 
