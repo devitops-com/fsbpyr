@@ -50,15 +50,21 @@ def run_script(
 
 
 RELEASE_SH = ROOT / "tools" / "release" / "release.sh"
+GREEN_RUN_SH = ROOT / "tools" / "release" / "green-run.sh"
 RELEASE_NOTES_SH = ROOT / "tools" / "release" / "release-notes.sh"
 TAG = f"v{VERSION}"
 RUN_ID = "4242"
 MAIN_RUN_ID = "4141"
+FULL_RUN_ID = "4343"
+RUN_URL = "https://github.com/devitops-com/fsbpyr/actions/runs"
+DONE = "completed/success"
 REPO_URL = "https://github.com/devitops-com/fsbpyr"
 
 # A gh that is authenticated, logs every call and knows no release. `run list --branch main`
-# (HEAD's green run on main) answers $FAKE_GH_MAIN_RUN_ID; any other `run list` answers
-# $FAKE_GH_RUN_ID from its (FAKE_GH_RUN_AFTER + 1)th call on; `run watch` exits FAKE_GH_WATCH_RC.
+# (HEAD's run of a workflow on main, as "ID STATUS/CONCLUSION URL") answers $FAKE_GH_MAIN_RUN
+# for release.yml and $FAKE_GH_FULL_RUN for full-suite.yml, nothing when it is empty; any other
+# `run list` answers $FAKE_GH_RUN_ID from its (FAKE_GH_RUN_AFTER + 1)th call on. `run watch` of
+# one of those runs (4000 too) exits FAKE_GH_CHECK_WATCH_RC, any other FAKE_GH_WATCH_RC.
 # Anything else (such as `release create`) is not expected from release.sh and fails.
 FAKE_GH = """\
 echo "$*" >> "$FAKE_GH_LOG"
@@ -71,11 +77,19 @@ case "$1 $2" in
       *) [ -n "$FAKE_GH_RELEASE_EXISTS" ] || exit 1 ;;
     esac ;;
   "run list")
-    case "$*" in *"--branch main "*) echo "$FAKE_GH_MAIN_RUN_ID"; exit ;; esac
+    case "$*" in
+      *"--branch main "*"--workflow full-suite.yml"*|*"--workflow full-suite.yml"*"--branch main "*)
+        echo "$FAKE_GH_FULL_RUN"; exit ;;
+      *"--branch main "*) echo "$FAKE_GH_MAIN_RUN"; exit ;;
+    esac
     calls=$(cat "$FAKE_GH_LOG.runs" 2>/dev/null || echo 0)
     echo $((calls + 1)) > "$FAKE_GH_LOG.runs"
     if [ "$calls" -ge "${FAKE_GH_RUN_AFTER:-0}" ]; then echo "$FAKE_GH_RUN_ID"; fi ;;
-  "run watch") exit "${FAKE_GH_WATCH_RC:-0}" ;;
+  "run watch")
+    case "$3" in
+      4000|4141|4343) exit "${FAKE_GH_CHECK_WATCH_RC:-0}" ;;
+      *) exit "${FAKE_GH_WATCH_RC:-0}" ;;
+    esac ;;
   *) exit 64 ;;
 esac
 """
@@ -103,7 +117,8 @@ def release_env(tmp_path: Path) -> dict[str, str]:
         "TMPDIR": str(tmp_path),
         "FAKE_GH_LOG": str(tmp_path / "gh.log"),
         "FAKE_GH_RUN_ID": RUN_ID,
-        "FAKE_GH_MAIN_RUN_ID": MAIN_RUN_ID,
+        "FAKE_GH_MAIN_RUN": f"{MAIN_RUN_ID} {DONE} {RUN_URL}/{MAIN_RUN_ID}",
+        "FAKE_GH_FULL_RUN": f"{FULL_RUN_ID} {DONE} {RUN_URL}/{FULL_RUN_ID}",
         "FSBPYR_RELEASE_WATCH_WAIT": "0",
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_AUTHOR_NAME": "Test",
@@ -159,6 +174,7 @@ def make_release_repo(
     (repo / "tools" / "release").mkdir(parents=True)
     shutil.copy2(RELEASE_SH, repo / "tools" / "release" / "release.sh")
     shutil.copy2(RELEASE_NOTES_SH, repo / "tools" / "release" / "release-notes.sh")
+    shutil.copy2(GREEN_RUN_SH, repo / "tools" / "release" / "green-run.sh")
     for name, text in version_files(version).items():
         (repo / name).parent.mkdir(parents=True, exist_ok=True)
         (repo / name).write_text(text)
@@ -201,8 +217,13 @@ def gh_calls(tmp_path: Path) -> list[str]:
 
 
 def tag_run_calls(tmp_path: Path, prefix: str = "run ") -> list[str]:
-    """gh's calls about the tag's workflow run: not the check of main's run before the commit."""
-    return [c for c in gh_calls(tmp_path) if c.startswith(prefix) and "--branch main " not in c]
+    """gh's calls about the tag's workflow run: not the check of main's runs before the commit."""
+    checks = tuple(f"run watch {i}" for i in (MAIN_RUN_ID, FULL_RUN_ID, "4000"))
+    return [
+        c
+        for c in gh_calls(tmp_path)
+        if c.startswith(prefix) and "--branch main " not in c and not c.startswith(checks)
+    ]
 
 
 def assert_nothing_built_or_published(tmp_path: Path) -> None:
@@ -315,26 +336,79 @@ def test_release_refuses_when_main_is_not_in_sync_with_origin(
     assert_nothing_built_or_published(tmp_path)
 
 
-def test_release_refuses_a_head_without_a_green_run_on_main(
-    tmp_path: Path, release_env: dict[str, str]
+def check_calls(tmp_path: Path, workflow: str) -> list[str]:
+    return [c for c in gh_calls(tmp_path)
+            if c.startswith("run list") and f"--workflow {workflow}" in c
+            and "--branch main " in c]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("variable", "workflow"),
+    [("FAKE_GH_MAIN_RUN", "release.yml"), ("FAKE_GH_FULL_RUN", "full-suite.yml")],
+)
+def test_release_refuses_a_head_without_a_run_of_each_workflow_on_main(
+    variable: str, workflow: str, tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    """release.yml runs on every push to main; only a commit whose run passed is tagged, so a
-    failure shows on main before any tag exists. A run in progress, a failed one and none at all
-    are alike: none has succeeded."""
+    """release.yml and full-suite.yml run on every push to main; only a commit both passed is
+    tagged, so a failure shows on main before any tag exists."""
     repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
     head = git(repo, "rev-parse", "HEAD", env=release_env)
 
-    result = run_release(repo, release_env | {"FAKE_GH_MAIN_RUN_ID": ""})
+    result = run_release(repo, release_env | {variable: ""})
 
     assert result.returncode == 1
-    assert f"main at {head[:7]}" in result.stderr
-    assert "has no successful release.yml run" in result.stderr
-    assert "gh run watch" in result.stderr
+    assert f"main at {head[:7]} has no {workflow} run" in result.stderr
     assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
-    (check,) = [call for call in gh_calls(tmp_path) if call.startswith("run list")]
-    for option in ("--workflow release.yml", "--branch main", "--event push", f"--commit {head}"):
+    (check,) = check_calls(tmp_path, workflow)
+    for option in ("--branch main", "--event push", f"--commit {head}"):
         assert option in check
-    assert "--status success" in check
+
+
+@pytest.mark.parametrize("workflow", ["release.yml", "full-suite.yml"])
+@pytest.mark.parametrize("state", ["completed/failure", "completed/cancelled"])
+def test_release_refuses_a_head_whose_run_did_not_succeed(
+    workflow: str, state: str, tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    variable = "FAKE_GH_FULL_RUN" if workflow == "full-suite.yml" else "FAKE_GH_MAIN_RUN"
+
+    result = run_release(repo, release_env | {variable: f"4000 {state} {RUN_URL}/4000"})
+
+    assert result.returncode == 1
+    assert f"{workflow}'s run for main" in result.stderr
+    assert f"did not succeed ({state}): {RUN_URL}/4000" in result.stderr
+    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
+
+
+@pytest.mark.parametrize("workflow", ["release.yml", "full-suite.yml"])
+def test_release_waits_for_a_run_in_progress_and_goes_on_when_it_passes(
+    workflow: str, tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    variable = "FAKE_GH_FULL_RUN" if workflow == "full-suite.yml" else "FAKE_GH_MAIN_RUN"
+
+    result = run_release(repo, release_env | {variable: f"4000 in_progress/ {RUN_URL}/4000"})
+
+    assert result.returncode == 0, result.stderr
+    assert "run watch 4000 --exit-status" in gh_calls(tmp_path)
+    assert_released_at_origin(repo, tmp_path, release_env)
+
+
+@pytest.mark.parametrize("state", ["in_progress/", "queued/"])
+def test_release_refuses_when_the_run_it_waited_for_fails(
+    state: str, tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    env = release_env | {"FAKE_GH_FULL_RUN": f"4000 {state} {RUN_URL}/4000",
+                         "FAKE_GH_CHECK_WATCH_RC": "1"}  # fmt: skip
+
+    result = run_release(repo, env)
+
+    assert result.returncode == 1
+    assert "run watch 4000 --exit-status" in gh_calls(tmp_path)
+    assert "full-suite.yml's run for main" in result.stderr
+    assert "failed" in result.stderr
+    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
 
 
 @pytest.mark.parametrize("where", ["local", "origin", "github"])
@@ -784,15 +858,48 @@ IMAGE_PIN = re.compile(r"debian:trixie@sha256:([0-9a-f]{64})")
 def test_the_image_is_pinned_by_digest_in_the_workflow_and_the_containerfile() -> None:
     pins = {
         path: IMAGE_PIN.findall((ROOT / path).read_text(encoding="utf-8"))
-        for path in (".github/workflows/release.yml", "Containerfile")
+        for path in (
+            ".github/workflows/release.yml",
+            ".github/workflows/full-suite.yml",
+            "Containerfile",
+        )
     }
 
     # build and reproduce (REP-2) use the image, the Containerfile once
-    assert [len(found) for found in pins.values()] == [2, 1], pins
+    assert [len(found) for found in pins.values()] == [2, 1, 1], pins
     assert len({digest for found in pins.values() for digest in found}) == 1  # the same digest
     for path in pins:
         text = (ROOT / path).read_text(encoding="utf-8")
         assert not re.search(r"debian:trixie$", text, re.MULTILINE), path
+
+
+def test_the_publish_job_checks_the_parent_commits_runs_and_names_the_suite_run() -> None:
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    publish = workflow.split("\n  publish:\n")[1]
+
+    assert "actions: read" in publish
+    assert "fetch-depth: 2" in publish
+    for workflow_name in ("release.yml", "full-suite.yml"):
+        assert f'tools/release/green-run.sh {workflow_name} "$parent"' in publish
+    assert "parent=\"$(git rev-parse HEAD^)\"" in publish
+    assert "git diff --name-only HEAD^ HEAD" in publish
+    assert "CHANGELOG.md|pyproject.toml|src/fsbpyr/__init__.py|uv.lock)" in publish
+    assert "Full suite: %s" in publish
+
+
+def test_the_full_suite_runs_on_main_nightly_and_weekly_in_a_one_entry_matrix() -> None:
+    workflow = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
+    weekly = re.findall(r'^\s+- cron: "(.+)"$', workflow, re.MULTILINE)[1]
+
+    assert "push:\n    branches: [main]" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert len(re.findall(r"^\s+- cron:", workflow, re.MULTILINE)) == 2
+    assert f'WEEKLY="{weekly}"' in workflow  # the fuzzing time reads the weekly schedule
+    assert 'python: ["3.14"]' in workflow
+    assert "options: --privileged" in workflow and "timeout-minutes: 60" in workflow
+    assert "--ignore=tests/e2e/test_portability.py" in workflow
+    assert "FSBPYR_TESTS_REQUIRE_ALL=full" in workflow
+    assert 'git diff --quiet "$last" HEAD -- src/fsbpyr/launcher tests/fuzz' in workflow
 
 
 def test_uv_version_names_a_uv_that_the_build_backend_accepts() -> None:

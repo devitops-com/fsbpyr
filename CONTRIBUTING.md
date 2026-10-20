@@ -22,6 +22,17 @@ The tiers, from fastest to most complete:
 
 - `make test-ci`: unit and integration tests and the core end-to-end tests, as CI runs them
   before a release.
+- The full suite in CI (`.github/workflows/full-suite.yml`): everything but the portability
+  tests, as the user `tester` in a privileged Debian trixie container with rootless podman, so
+  the root-only, supplementary-group and `podman unshare` tests run. It runs on every push to
+  main, nightly and weekly, with `FSBPYR_TESTS_REQUIRE_ALL=full` (no skip is expected), and
+  `make release` and the publish job require a green run for the commit a release is made
+  from. The fuzzer runs for 600 s (`FSBPYR_FUZZ_SECONDS`) when `src/fsbpyr/launcher` or
+  `tests/fuzz` changed since the last tag and on the weekly run, else for 30 s; the corpus it
+  finds (`FSBPYR_FUZZ_CORPUS`) is kept in the Actions cache. The launcher programs the tests
+  build are instrumented for llvm-cov (`FSBPYR_LLVM_COV_DIR`), and the run's summary shows the
+  report; it is informational. A run's duration has not been measured yet; the job's limit is
+  60 minutes.
 - `make test`: everything, on your machine. The tests that need what it lacks skip: root's
   own directories, a second user, a supplementary group, strace, groff, podman.
 - `make test-container`: everything but `tests/e2e/test_portability.py` in the Containerfile's

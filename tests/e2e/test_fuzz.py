@@ -1,7 +1,8 @@
 """The launcher's payload parsing under libFuzzer, ASan and UBSan (D38; tests/fuzz/payload_fuzz.c):
 every edge case once, then a run exploring from them. ``FSBPYR_FUZZ_SECONDS`` sets how long it
 explores: 30 seconds in the test run; 600 before a release (docs/IMPLEMENTATION_PLAN.md,
-Phase 8)."""
+Phase 8). ``FSBPYR_FUZZ_CORPUS`` names the directory that keeps what the run finds, so that a
+later run (full-suite.yml restores it from its cache) starts from it."""
 
 import os
 import subprocess
@@ -60,8 +61,9 @@ def test_the_parser_survives_every_edge_case(harness: Path, corpus: Path) -> Non
 
 
 def test_the_parser_survives_a_fuzzing_run(harness: Path, corpus: Path, tmp_path: Path) -> None:
-    found = tmp_path / "found"  # new inputs the run keeps; the corpus stays as built
-    found.mkdir()
+    # new inputs the run keeps; the corpus stays as built
+    found = Path(os.environ.get("FSBPYR_FUZZ_CORPUS") or tmp_path / "found")
+    found.mkdir(parents=True, exist_ok=True)
 
     result = _fuzz(harness, f"-max_total_time={FUZZ_SECONDS}", "-rss_limit_mb=2048",
                    "-timeout=30", f"-max_len={1 << 20}", f"-artifact_prefix={tmp_path}/",
