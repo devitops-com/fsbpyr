@@ -26,7 +26,7 @@ from fsbpyr.runtime.toolchain import Toolchain
 
 def _archive(files: dict[str, bytes]) -> bytes:
     buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:zst") as tar:
+    with tarfile.open(fileobj=buffer, mode="w:zst") as tar:  # type: ignore[call-overload]  # "w:zst" is 3.14's
         for name, data in files.items():
             info = tarfile.TarInfo(name)
             info.size = len(data)

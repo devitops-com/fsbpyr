@@ -4,7 +4,6 @@ import base64
 import hashlib
 import json
 import marshal
-import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -15,6 +14,7 @@ import pytest
 
 from fsbpyr.classify import ClassifyError, Uncounted, _digested, classify
 from fsbpyr.closure import ClosureError, SiteIndex, resolve_entry
+from fsbpyr.compat import process_cpu_count
 from fsbpyr.compiler import compile_module
 from fsbpyr.config import _package
 from fsbpyr.payload.format import (
@@ -281,9 +281,10 @@ def _decompress(blob: object) -> bytes:
     assert isinstance(blob, Blob)
     if blob.codec.name == "NONE":
         return stored_bytes(blob.stored)
-    from compression import zstd  # noqa: PLC0415
+    from fsbpyr.compat import zstd  # noqa: PLC0415
 
-    return zstd.decompress(stored_bytes(blob.stored))
+    plain: bytes = zstd.decompress(stored_bytes(blob.stored))  # Any where zstd is untyped (3.14)
+    return plain
 
 
 def test_console_script_extras_are_not_part_of_the_entry_point(site: Path) -> None:
@@ -910,7 +911,7 @@ def test_compression_uses_at_most_the_usable_cores(
     classify([SiteIndex.scan(site).dists["fast"]], extension_suffixes=SUFFIXES,
              include_source=True, xz_natives=True)  # fmt: skip
 
-    assert min(8, os.process_cpu_count() or 1) == format_module.THREADS
+    assert min(8, process_cpu_count() or 1) == format_module.THREADS
     assert workers and set(workers) == {3}
 
 

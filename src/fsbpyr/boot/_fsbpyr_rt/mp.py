@@ -33,7 +33,7 @@ type Command = tuple[str, str, tuple[object, ...], dict[str, object], list[str]]
 def _literal(text: str) -> object:
     try:
         return ast.literal_eval(text)
-    except ValueError, SyntaxError, MemoryError, RecursionError:
+    except (ValueError, SyntaxError, MemoryError, RecursionError):
         return _INVALID
 
 

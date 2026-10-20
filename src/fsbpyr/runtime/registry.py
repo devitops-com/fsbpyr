@@ -1,5 +1,7 @@
 """Runtime cache: build, save, load and locate runtimes (plan D3, §3.7)."""
 
+from __future__ import annotations
+
 import contextlib
 import dataclasses
 import hashlib

@@ -1,5 +1,7 @@
 """python-build-standalone distributions: verified download, safe extraction, link metadata."""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import re
@@ -220,7 +222,7 @@ def fetch(pin: PbsPin, cache: Path) -> PbsDist:
     dest.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(dir=dest.parent, prefix=".extract-"))
     try:
-        with tarfile.open(archive, "r:zst") as tar:
+        with tarfile.open(archive, "r:zst") as tar:  # type: ignore[call-overload]  # "r:zst" is 3.14's; below it, Phase 9 step 3
             tar.extractall(staging, filter="data")
         if not (staging / "python" / "PYTHON.json").exists():
             raise PbsError(f"{archive} does not contain python/PYTHON.json")

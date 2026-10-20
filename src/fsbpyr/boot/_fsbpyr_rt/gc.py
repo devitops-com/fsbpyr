@@ -321,7 +321,7 @@ def _outside_owner(uid: int) -> bool:
         with open("/proc/sys/kernel/overflowuid") as overflow, open("/proc/self/uid_map") as m:
             nobody = int(overflow.read())
             ranges = [tuple(int(n) for n in line.split()) for line in m]
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return False
     mapped = any(r[0] <= nobody < r[0] + r[2] for r in ranges if len(r) == 3)  # initial: all
     return uid == nobody and not mapped

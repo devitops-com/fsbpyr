@@ -4,6 +4,8 @@ Lets the boot code run in-process (with coverage) on any assembled executable. B
 match src/fsbpyr/launcher/module.c; tests/support/contract.py checks that it does.
 """
 
+from __future__ import annotations
+
 import os
 import types
 from pathlib import Path

@@ -1,11 +1,11 @@
 """Regression tests for review findings: hostile sizes, file-level errors, spec rules on read."""
 
 import struct
-from compression import zstd
 from pathlib import Path
 
 import pytest
 
+from fsbpyr.compat import zstd
 from fsbpyr.payload.format import (
     BLOB,
     MAX_BLOB_SIZE,

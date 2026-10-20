@@ -1,5 +1,7 @@
 """Installed distributions of a staging site: index, project lookup, dependency walk (§3.6 4-5)."""
 
+from __future__ import annotations
+
 import configparser
 import json
 import re

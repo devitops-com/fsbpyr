@@ -4,10 +4,10 @@ module source may be, and the bytes are the same whatever the number of threads.
 
 import random
 import struct
-from compression import zstd
 
 import pytest
 
+from fsbpyr.compat import zstd
 from fsbpyr.payload import format as format_module
 from fsbpyr.payload import spec as spec_module
 from fsbpyr.payload.convert import spec_from_payload

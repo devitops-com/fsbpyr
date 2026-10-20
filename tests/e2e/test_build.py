@@ -11,7 +11,6 @@ import os
 import shlex
 import shutil
 import subprocess
-from compression import zstd
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +18,7 @@ import pytest
 
 from fsbpyr.build import rebuild_on_baseline
 from fsbpyr.cli import main
+from fsbpyr.compat import zstd
 from fsbpyr.elf import glibc_requirement
 from fsbpyr.payload.reader import Executable
 from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob, stored_bytes

@@ -292,7 +292,7 @@ class _Sync:
         for _ in range(HOLD_ATTEMPTS):
             try:
                 directory = self._walk(tree)
-            except OSError, CacheError:
+            except (OSError, CacheError):
                 return -1
             try:
                 fd = os.open(LOCK, _LOCK_FLAGS, 0o600, dir_fd=directory)
@@ -322,7 +322,7 @@ class _Sync:
     def _still_the_lock(self, fd: int, tree: str) -> bool:
         try:
             directory = self._walk(tree)
-        except OSError, CacheError:
+        except (OSError, CacheError):
             return False
         try:
             now = os.stat(LOCK, dir_fd=directory, follow_symlinks=False)

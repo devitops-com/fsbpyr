@@ -125,7 +125,7 @@ def _record_hash(value: str) -> str | None:
         return None
     try:
         return base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).hex()
-    except binascii.Error, ValueError:
+    except (binascii.Error, ValueError):
         return None
 
 
