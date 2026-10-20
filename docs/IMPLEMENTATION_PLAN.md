@@ -1681,7 +1681,8 @@ fsbpyr build [PROJECT_DIR] [--entry NAME | module | module:func] [-o OUT]
              [--requirements FILE] [--[no-]offline]
              [--[no-]fast-compression | --[no-]best-compression] [--extra NAME]...
              [--[no-]source] [--fs-package PACKAGE]... [--allow-system-lib SONAME]...
-             [--[no-]smoke] [--[no-]hints] [--[no-]interpreter-reexec] [--[no-]strict]
+             [--[no-]smoke] [--smoke-args ARGS] [--[no-]hints] [--[no-]interpreter-reexec]
+             [--[no-]strict]
 fsbpyr inspect BINARY [--json] [--verify] [--all-modules]   # D28, v0.3.0
 fsbpyr runtime list | build [--python X.Y] [--clang PATH]
 fsbpyr cache gc                                             # D38
@@ -1705,6 +1706,7 @@ best-compression = false      # D33: native files as xz -6 (not with fast-compre
 fs-packages = []
 allow-system-libs = []
 interpreter-reexec = false    # Phase 6b, D23
+smoke-args = []               # run the new executable once with these; none: do not
 strict = false                # a warning about the app, or an unlocked build, fails the build
 ```
 

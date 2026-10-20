@@ -109,6 +109,7 @@ build-constraint-dependencies` (read by `uv sync`, for `uv.lock` projects) or fr
 | `--hints / --no-hints` | also list packages that may read files next to `__file__` (a guess) |
 | `--interpreter-reexec / --no-interpreter-reexec` | let the app's own children started as `sys.executable -m MODULE` or `-c CODE` run as Python |
 | `--smoke / --no-smoke` | run the new executable once as a smoke test (default) or skip it |
+| `--smoke-args ARGS` | also run the new executable once with ARGS (one string, split like a shell would), for example "--version", and fail the build unless it exits 0; only you know which arguments have no side effects |
 | `--strict / --no-strict` | fail the build, leaving the output as it was, on any warning about the app and on an unlocked build; requirements files must pin and hash every line |
 | `-v, --verbose` | print each uv command and let uv's error output through |
 
@@ -137,8 +138,14 @@ fast-compression = true      # same as --fast-compression
 fs-packages = ["mypkg.templates"]
 allow-system-libs = ["libcuda.so.1"]
 interpreter-reexec = true    # same as --interpreter-reexec
+smoke-args = ["--version"]   # same as --smoke-args "--version"
 strict = true                # same as --strict
 ```
+
+`--smoke-args` is off unless given. The build then runs the new executable once more with
+those arguments, as `-o` (so `argv[0]` is the final path), with stdin from `/dev/null` and
+a 120 s limit, and fails unless it exits 0; the error names the arguments and shows the app's
+stderr. Only you know which arguments are safe, such as `--version` or `--help`.
 
 ## Failing a build on warnings
 

@@ -4,6 +4,7 @@ help text, the shell completions and the man page (D40)."""
 
 import errno
 import functools
+import shlex
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -110,6 +111,10 @@ def cli(ctx: click.Context) -> None:
                    "`-c CODE` run as Python")  # fmt: skip
 @click.option("--smoke/--no-smoke", default=None,
               help="run the new executable once as a smoke test (default) or skip it")  # fmt: skip
+@click.option("--smoke-args", "smoke_args_text", metavar="ARGS",
+              help="also run the new executable once with ARGS (one string, split like a "
+                   "shell would), for example \"--version\", and fail the build unless it "
+                   "exits 0; only you know which arguments have no side effects")  # fmt: skip
 @click.option("--strict/--no-strict", default=None,
               help="fail the build, leaving the output as it was, on any warning about the app "
                    "and on an unlocked build; requirements files must pin and hash every "
@@ -132,6 +137,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     hints: bool | None,
     interpreter_reexec: bool | None,
     smoke: bool | None,
+    smoke_args_text: str | None,
     strict: bool | None,
     verbose: bool,
 ) -> int:
@@ -149,6 +155,10 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     from .runtime.registry import RuntimeCacheError  # noqa: PLC0415
     from .staging import StagingError  # noqa: PLC0415
 
+    try:
+        smoke_args = None if smoke_args_text is None else tuple(shlex.split(smoke_args_text))
+    except ValueError as exc:
+        raise click.UsageError(f"--smoke-args: {exc}") from exc
     errors = (AssemblyError, BuildError, ClassifyError, ClosureError, ConfigError, ProjectError,
               RuntimeCacheError, StagingError, OSError)  # fmt: skip
     try:
@@ -163,6 +173,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
             offline=offline,
             include_source=include_source,
             smoke=smoke,
+            smoke_args=smoke_args,
             strict=strict,
             hints=hints,
             fast_compression=fast_compression,

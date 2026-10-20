@@ -230,6 +230,15 @@ def test_interpreter_reexec_is_off_unless_the_project_or_the_command_line_asks(
     assert configured.interpreter_reexec is True
 
 
+def test_smoke_args_come_from_the_project_and_the_command_line_wins(tmp_path: Path) -> None:
+    project = Project.load(_project(tmp_path, PYPROJECT + 'smoke-args = ["--help"]\n'))
+
+    assert load_config(Project.load(_project(tmp_path, PYPROJECT))).smoke_args == ()
+    assert load_config(project).smoke_args == ("--help",)
+    assert load_config(project, smoke_args=("--version",)).smoke_args == ("--version",)
+    assert load_config(project, smoke_args=()).smoke_args == ()
+
+
 def test_strict_is_off_unless_the_project_or_the_command_line_asks(tmp_path: Path) -> None:
     default = load_config(Project.load(_project(tmp_path, PYPROJECT)))
     flagged = load_config(Project.load(_project(tmp_path, PYPROJECT)), strict=True)

@@ -22,6 +22,7 @@ class BuildConfig:
     include_source: bool = True
     offline: bool = False
     smoke: bool = True
+    smoke_args: tuple[str, ...] = ()  # run the new executable once with these; none: do not
     allowed_system_libs: tuple[str, ...] = ()  # sonames extensions may load from the host
     fs_packages: tuple[str, ...] = ()  # packages whose files must exist on disk (FS_REQUIRED)
     hints: bool = False  # also print guesses (packages that may read files next to __file__)
@@ -120,6 +121,9 @@ CONFIG_KEYS = (
     ConfigKey("fs-packages", "fs_packages", _packages,
               "List of package names. Packages whose files must exist on disk; "
               "as `--fs-package`."),
+    ConfigKey("smoke-args", "smoke_args", _strings,
+              "List of strings. Arguments to run the new executable with after the smoke "
+              "test; it must exit 0. Off unless set; as `--smoke-args`."),
     ConfigKey("strict", "strict", _flag,
               "Boolean. Fail the build on warnings; as `--strict`."),
     ConfigKey("interpreter-reexec", "interpreter_reexec", _flag,

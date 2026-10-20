@@ -21,6 +21,7 @@ from fsbpyr.build import (
     check_strict,
     glibc_report,
     rebuild_on_baseline,
+    smoke_run,
     smoke_test,
     uv_mismatch,
 )
@@ -67,6 +68,26 @@ def test_a_failed_smoke_test_names_the_output_not_the_new_file(tmp_path: Path) -
     message = f"smoke test of the new {tmp_path / 'app'} failed (exit 3)"
     with pytest.raises(BuildError, match=re.escape(message)):
         smoke_test(_script(tmp_path / ".app.x.tmp", "exit 3"), "app", tmp_path / "app")
+
+
+def test_smoke_run_passes_the_arguments_and_the_final_path_as_argv0() -> None:
+    """The running file is the temporary one; the program sees the output's path."""
+    check = "import sys; assert sys.orig_argv[0] == '/final/app' and sys.argv[1:] == ['x']"
+
+    smoke_run(Path(sys.executable), Path("/final/app"), ("-c", check, "x"))
+
+
+def test_a_failed_smoke_run_names_the_arguments_and_shows_stderr(tmp_path: Path) -> None:
+    new = _script(tmp_path / ".app.x.tmp", "echo boom >&2; exit 2")
+
+    with pytest.raises(BuildError, match=r"arguments '--version' failed \(exit 2\):\nboom"):
+        smoke_run(new, tmp_path / "app", ("--version",))
+
+
+def test_a_smoke_run_cannot_read_stdin(tmp_path: Path) -> None:
+    new = _script(tmp_path / ".app.x.tmp", "cat >/dev/null")
+
+    smoke_run(new, tmp_path / "app", ())
 
 
 def test_build_without_project_files_fails_cleanly(

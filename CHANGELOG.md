@@ -30,6 +30,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   fetch and prints the clang. Without the switch nothing changes: Debian's clang 22 links, and
   the pin stays on PBS 20261009. The release workflow and the Containerfile do not turn it on
   yet (SEC-4; the spike is in docs/spikes.md).
+- **`fsbpyr build --smoke-args "ARGS"` (`smoke-args = [...]`) runs the app once.** After the
+  smoke test, the new executable runs with these arguments, for example `--version`, and the
+  build fails unless it exits 0, with the arguments and the app's stderr in the error. The
+  output stays as it was. Off unless set: only you know which arguments are safe.
 - **`make test-container` runs the whole test suite but the portability tests in a container.**
   The Containerfile's new `test` stage (its first stage is now named `build`, which `make
   bootstrap` selects) adds what the suite needs beyond a build: the sanitizer runtimes,
