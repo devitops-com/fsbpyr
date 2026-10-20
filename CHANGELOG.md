@@ -31,6 +31,12 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   and the sysroot's packages) are kept in a volume (`FSBPYR_TEST_DOWNLOADS`) and seed each
   later session, and the terminal summary says whether each was seeded or fetched.
   CONTRIBUTING.md describes the tiers and the expected skips.
+- **docs/compatibility.md** lists how an executable differs from a venv (symptom, cause and
+  remedy), what the target must provide beyond glibc, the distributions and checks the tests
+  cover, and troubleshooting. The README links it from "Supported targets", documents
+  `FSBPYR_SELFTEST` and `FSBPYR_IMPORTTIME`, and gains a note on offline and air-gapped builds.
+  Tests keep the tables equal to the portability images and the compatibility matrix, and
+  every environment variable the sources read in the README table.
 - **`fsbpyr self update`** replaces the running executable with the latest GitHub release when
   that is newer. It downloads `fsbpyr.xz`, unpacks it with the standard library's lzma,
   verifies it in-process as `inspect --verify` does before anything runs it, and renames it

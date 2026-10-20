@@ -67,6 +67,9 @@ attestation check and building fsbpyr from source are in [Getting fsbpyr](#getti
 - **Planned** in [Phase 9](docs/IMPLEMENTATION_PLAN.md), after the MVP: Python 3.12 and 3.13
   (one fsbpyr per Python version), then Linux aarch64, musl and macOS arm64.
 
+How an executable differs from a venv, what the target must provide, which distributions and
+packages are tested, and what to do when an app fails: [docs/compatibility.md](docs/compatibility.md).
+
 ## Building an app
 
 ```
@@ -84,6 +87,12 @@ than 2.28, fsbpyr builds it again against the glibc 2.28 sysroot it links the la
 (downloaded once), so the executable keeps the baseline; uv's cached build of it is replaced.
 If that build fails, as a C++ extension does (the sysroot has no libstdc++), or the build is
 offline, the host's build is packaged and the build warns which glibc it needs.
+
+Offline and air-gapped builds: warm uv's cache with a build that has network access, then build
+with `--offline`. Build backends get their build constraints from `[tool.uv]
+build-constraint-dependencies` (read by `uv sync`, for `uv.lock` projects) or from
+`UV_BUILD_CONSTRAINT` (read by `uv pip install`, for requirements and `pylock.toml` sources; see
+`uv pip install --help`). The build passes its environment through to uv.
 
 | Option | |
 |---|---|
@@ -330,6 +339,8 @@ directory anyone may add to, such as `/tmp`.) Environment variables the executab
 | `FSBPYR_CACHE_DIR` | cache directory |
 | `FSBPYR_GC=1` | collect the app's cache instead of running the app (see below); `0`: never collect it in the background |
 | `FSBPYR_TRACE=1` | print what the run loaded and extracted, and how long the integrity check took, as JSON on stderr |
+| `FSBPYR_SELFTEST` | when set, import the entry point and check it instead of running the app (what `--smoke` does) |
+| `FSBPYR_IMPORTTIME` | when set, print CPython's import-time table |
 
 ### Helper interpreters
 

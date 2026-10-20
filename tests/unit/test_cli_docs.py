@@ -378,3 +378,60 @@ def test_allow_system_lib_examples_name_libraries_the_build_does_not_allow_anywa
 
     assert sonames
     assert SYSTEM_LIBRARIES.isdisjoint(sonames), sonames
+
+
+# --- docs/compatibility.md -------------------------------------------------------------------
+
+COMPATIBILITY = ROOT / "docs" / "compatibility.md"
+_FIRST_CELL = re.compile(r"^\| `([^`]+)` \|", re.MULTILINE)
+_LITERAL_JOIN = re.compile(r'"\s*\n\s*f?"')  # adjacent string literals, in Python and C
+_PLACEHOLDER = re.compile(r"<[^>]*>|\d+(?:\.\d+)*|/\S*")  # what a message composes at run time
+_MIN_FRAGMENT = 10
+
+
+def _first_column(section: str) -> set[str]:
+    """The code spans that start the table rows under the heading ``section``."""
+    text = COMPATIBILITY.read_text().partition(f"\n## {section}\n")[2]
+    return set(_FIRST_CELL.findall(text.partition("\n## ")[0]))
+
+
+def test_compatibility_distribution_table_is_the_portability_images() -> None:
+    from ..e2e.test_portability import IMAGES  # noqa: PLC0415
+
+    text = COMPATIBILITY.read_text().partition("## Tested on")[2].partition("`compat` app")[0]
+
+    assert set(_FIRST_CELL.findall(text)) == set(IMAGES)
+
+
+def test_compatibility_checks_table_is_the_compat_matrix() -> None:
+    from ..e2e.test_compat import MATRIX  # noqa: PLC0415
+
+    text = COMPATIBILITY.read_text().partition("`compat` app")[2].partition("\n## ")[0]
+
+    assert set(_FIRST_CELL.findall(text)) == set(MATRIX)
+
+
+def test_compatibility_quotes_only_messages_the_sources_can_compose() -> None:
+    sources = "\n".join(
+        _LITERAL_JOIN.sub("", path.read_text())
+        for path in (ROOT / "src" / "fsbpyr").rglob("*")
+        if path.suffix in (".py", ".c") and "vendor" not in path.parts
+    )
+    quotes = [quote for span in re.findall(r"`([^`]*)`", COMPATIBILITY.read_text())
+              for quote in span.split("fsbpyr: ")[1:]]  # fmt: skip
+
+    assert quotes, "no message with an fsbpyr: prefix is quoted"
+    for quote in quotes:
+        for fragment in _PLACEHOLDER.split(quote):
+            if len(fragment.strip()) >= _MIN_FRAGMENT:
+                assert fragment.strip() in sources, (quote, fragment)
+
+
+def test_readme_environment_table_has_every_variable_the_sources_read() -> None:
+    read = {name for path in (ROOT / "src" / "fsbpyr").rglob("*")
+            if path.suffix in (".py", ".c") and "vendor" not in path.parts
+            for name in ENVIRONMENT_READS.findall(path.read_text())}  # fmt: skip
+    table = (ROOT / "README.md").read_text().partition("| Variable |")[2].partition("\n\n")[0]
+    listed = set(re.findall(r"^\| `(FSBPYR_[A-Z_]+)", table, re.MULTILINE))
+
+    assert read <= listed, sorted(read - listed)
