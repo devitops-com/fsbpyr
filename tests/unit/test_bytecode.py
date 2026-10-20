@@ -181,3 +181,14 @@ def test_code_objects_are_never_merged() -> None:
     code = _code("def f():\n    pass\n")
 
     assert marshal.loads(canonicalize(marshal.dumps((code, _copy(code))))) == (code, code)
+
+
+def test_slice_type_belongs_to_marshal_version_5_only() -> None:
+    """3.14 writes slice constants (marshal version 5); 3.12 and 3.13 do not know the type."""
+    stream = b":" + b"N" * 3
+
+    if sys.version_info >= (3, 14):
+        assert canonicalize(stream) == stream
+    else:
+        with pytest.raises(BytecodeError, match="unsupported marshal type"):
+            canonicalize(stream)

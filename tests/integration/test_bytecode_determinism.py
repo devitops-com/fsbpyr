@@ -75,7 +75,9 @@ def test_canonical_output_is_identical_across_build_process_shapes() -> None:
     batch = _worker("batch", names, "123")
     noisy = _worker("noisy", list(reversed(names)), "random")
 
-    # sanity: modules loaded in the build process perturb raw marshal output of these files
-    assert all(clean[n][0] != noisy[n][0] for n in SENSITIVE)
+    # sanity: modules loaded in the build process perturb raw marshal output of these files; 3.12
+    # shows no such difference on them
+    if sys.version_info >= (3, 13):
+        assert all(clean[n][0] != noisy[n][0] for n in SENSITIVE)
     for name in names:
         assert clean[name][1] == batch[name][1] == noisy[name][1], name
