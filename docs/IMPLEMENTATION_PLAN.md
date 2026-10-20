@@ -1524,8 +1524,13 @@ write, a truncated binary.
     2. Port fsbpyr's code to 3.12. **Base done 2026-10-20** (code imports and runs on 3.12 and
        3.13; `requires-python` `>=3.12,<3.15`; ruff and mypy target 3.12; `fsbpyr.compat` holds
        `zstd` and `process_cpu_count`; a test imports every module and checks the libzstd
-       version; the CLI still refuses 3.12 and 3.13; per-version canonicalizer, stdlib
-       selection and multiprocessing command lines are still to do).
+       version; the CLI still refuses 3.12 and 3.13; per-version canonicalizer and
+       multiprocessing command lines are still to do). **Stdlib selection and startup modules
+       done 2026-10-20**: the rules in `runtime/stdlib.py` need no per-version code, they select
+       from each PBS distribution (3.12: 585 modules, startup `encodings` only, as `linecache`
+       is imported at init from 3.13 on; 3.13: 533; 3.14: 555), and
+       `tests/integration/test_pbs_stdlib_versions.py` pins each version's built-ins (92, 92,
+       96), startup set and selected modules.
        Checked 2026-10-18: 4 of its 48 source files do not parse
        on 3.12 and 3.13 (3.14's unparenthesized `except A, B:`), `os.process_cpu_count()` is
        3.13's; the importlib internals the boot code uses exist in 3.12–3.14, and 3.12 and 3.13
