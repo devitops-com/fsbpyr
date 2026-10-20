@@ -1,9 +1,12 @@
 """Phase 6c exit criteria: executables run on older distributions (glibc 2.28 baseline, D25).
 
-Needs podman with the images below (pulled on first use) and the cached runtime.
+Needs podman with the images below (pulled on first use) and the cached runtime. When
+FSBPYR_PORTABILITY_APPS names a directory with the four built apps (tools/portability-apps.sh,
+`make test-portability`), they are used as they are and no runtime is needed.
 """
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -16,7 +19,6 @@ from fsbpyr.natives import GLIBC_LIBRARIES
 from fsbpyr.payload.format import NATIVE_KINDS
 from fsbpyr.payload.reader import Executable
 from fsbpyr.project import LockSource
-from fsbpyr.runtime.registry import Runtime
 
 from ..support.stderr import NO_HOSTNAME
 from .test_compat import MATRIX
@@ -59,7 +61,10 @@ _VERSION_REF = re.compile(r"^\s+0x[0-9a-f]+ 0x[0-9a-f]+ \d+ ([A-Z]+)_(\d+(?:\.\d
 
 
 @pytest.fixture(scope="module")
-def apps(tmp_path_factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
+def apps(tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest) -> Path:
+    if prebuilt := os.environ.get("FSBPYR_PORTABILITY_APPS"):
+        return Path(prebuilt)
+    request.getfixturevalue("runtime")
     directory = tmp_path_factory.mktemp("portable")
     for name in ("hello", "heavy", "compat"):
         project = directory / "src" / name
@@ -86,7 +91,7 @@ def test_apps_run_on_older_distributions(apps: Path, image: str) -> None:
         for binary, args in COMMANDS
     )
     result = subprocess.run(
-        [PODMAN or "podman", "run", "--rm", "-v", f"{apps}:/apps:ro,Z",
+        [PODMAN or "podman", "run", "--rm", "--network=none", "-v", f"{apps}:/apps:ro,Z",
          image, "sh", "-c", script],
         capture_output=True, text=True, timeout=900, check=False,
     )  # fmt: skip

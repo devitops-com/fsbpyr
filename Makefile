@@ -20,7 +20,7 @@ export UV_PYTHON_DOWNLOADS := never
 UV  := uv
 BIN := dist/fsbpyr
 
-.PHONY: help bootstrap build install uninstall test test-ci test-container check release clean
+.PHONY: help bootstrap build install uninstall test test-ci test-container test-portability check release clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -105,6 +105,15 @@ test-container: ## Run the whole suite but the portability tests in a Debian tri
 		fsbpyr-test bash -c 'tar -C /checkout --exclude=./.venv --exclude=./dist -cf - . | tar -xf - \
 			&& uv python install "$$(cat .python-version)" \
 			&& uv run --locked pytest --ignore=tests/e2e/test_portability.py'
+
+# The portability matrix (tests/e2e/test_portability.py): 13 images pulled and run with podman,
+# on $(BIN)'s builds of the fixtures (tools/portability-apps.sh); needs llvm-objdump.
+# FSBPYR_TESTS_REQUIRE_ALL=portability fails any skip. Run `make build` first.
+test-portability: ## Run the portability matrix on 13 distributions (podman, dist/fsbpyr)
+	rm -rf dist/portability-apps
+	tools/portability-apps.sh $(BIN) dist/portability-apps
+	FSBPYR_PORTABILITY_APPS="$(CURDIR)/dist/portability-apps" FSBPYR_TESTS_REQUIRE_ALL=portability \
+		$(UV) run --locked pytest tests/e2e/test_portability.py
 
 check: ## Static checks: ruff + mypy
 	$(UV) run --locked ruff check

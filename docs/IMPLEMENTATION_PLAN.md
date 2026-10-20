@@ -1623,7 +1623,8 @@ the fuzzer in `tests/fuzz/` (8a); CI (`.github/workflows/release.yml`) runs `mak
 after 0.20.0) on every pull request and tag since 0.19.0 and on every push to main after 0.20.0,
 the rest locally (`make test`) and, after 0.20.0, in `.github/workflows/full-suite.yml`: every
 test but the portability ones, as an unprivileged user in a container, on every push to main,
-nightly and weekly, and a release needs a green run of it for its parent commit; tests that
+nightly and weekly (its `portability` job runs those on the runner host, `make test-portability`
+locally), and a release needs a green run of it for its parent commit; tests that
 need the kernel to refuse access skip as root, and after 0.20.0 a skip that the `ci` list (the
 `full` list for the full suite, which expects none) in `tests/conftest.py` does not expect
 fails CI. After

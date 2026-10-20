@@ -45,6 +45,14 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   packages. The release attaches the output for fsbpyr's executable as
   `THIRD_PARTY_LICENSES.txt` (also in `SHA256SUMS` and attested). The README says what to ship
   with an app.
+- **The portability matrix runs in CI and with `make test-portability`.** A `portability` job
+  in `full-suite.yml` (after the `suite` job, on the runner host, no container) builds the four
+  test apps with the suite's executable (`tools/portability-apps.sh`) and runs
+  `tests/e2e/test_portability.py`: 13 distributions from glibc 2.28 to 2.44 and the objdump
+  check of the glibc floor, with `FSBPYR_TESTS_REQUIRE_ALL=portability` (no skip is expected).
+  The job's result is part of the run that `make release` and the publish job require. The
+  images now run with `--network=none`. `FSBPYR_PORTABILITY_APPS` makes the test use prebuilt
+  apps and no runtime.
 - **`make test-container` runs the whole test suite but the portability tests in a container.**
   The Containerfile's new `test` stage (its first stage is now named `build`, which `make
   bootstrap` selects) adds what the suite needs beyond a build: the sanitizer runtimes,
