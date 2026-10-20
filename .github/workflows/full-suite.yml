@@ -1,0 +1,214 @@
+name: Full suite
+
+# The whole test suite but the portability tests (tests/e2e/test_portability.py, which need
+# `podman run` on the runner host), as an unprivileged user in a Debian trixie container:
+#   - on every push to main, so that tools/release/release.sh and the publish job of release.yml
+#     can require a green run for the commit a release is made from;
+#   - nightly, and weekly with a longer fuzzing run (below);
+#   - on request.
+# release.yml runs the core of the suite as root before a release; this runs the rest: natives,
+# compatibility, the ASan/UBSan launcher, the fuzzer, the cache-directory and GC tests, and the
+# ownership checks that have nothing to test as root. Nothing is published from here, so the
+# fuzz corpus is kept in actions/cache (release.yml stays cache-free).
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Nightly. Keep the weekly one's string equal to WEEKLY in "Choose the fuzzing time".
+    - cron: "17 2 * * *"
+    - cron: "43 3 * * 0"
+  workflow_dispatch:
+
+# A push to main replaces its predecessor's run; a nightly or manual run is never cancelled.
+concurrency:
+  group: full-suite-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    name: suite (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.14"]  # one entry; adding a Python version adds an entry here
+    # Debian trixie by digest, as release.yml. Privileged: rootless podman for the tests that map
+    # a second range of user ids, strace and user namespaces inside the container.
+    container:
+      image: docker.io/library/debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
+      options: --privileged
+    timeout-minutes: 60
+    steps:
+      # As root. git before the checkout (it needs the tags); bootstrap.sh's packages; rootless
+      # podman and what it needs in a container (uidmap, passt, catatonit, fuse-overlayfs).
+      - name: Install the build prerequisites and podman
+        run: |
+          apt-get update -q
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+            ca-certificates curl git make clang-22 lld-22 \
+            podman uidmap passt catatonit fuse-overlayfs
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0  # the tags: the fuzzing time and the executable's --version read them
+
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # The uv that tools/release/uv.version names, as release.yml installs it. The tester's
+      # Python and caches are its own (below); only the uv executable is shared.
+      - name: Install uv
+        run: |
+          read -r version sha256 < tools/release/uv.version
+          name=uv-x86_64-unknown-linux-gnu
+          curl -fsSL -o "$RUNNER_TEMP/uv.tar.gz" \
+            "https://github.com/astral-sh/uv/releases/download/$version/$name.tar.gz"
+          echo "$sha256  $RUNNER_TEMP/uv.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/uv.tar.gz" --strip-components=1 -C /usr/local/bin \
+            "$name/uv" "$name/uvx"
+          echo "FSBPYR_UV_VERSION=$version" >> "$GITHUB_ENV"
+
+      # The sanitizer runtimes, llvm-objdump and llvm-cov, gcc, strace, groff, the user `tester`
+      # and the directories the cache-ownership tests walk through.
+      - name: Set up the test environment
+        run: bash tools/test-setup.sh
+
+      # Not as root: as root some cache-ownership tests have nothing to test (root owns /usr)
+      # and podman would not be rootless. The checkout is copied to the user's home, where it
+      # and fsbpyr's cache belong to that user, as fsbpyr requires.
+      - name: An unprivileged user, with rootless podman
+        run: |
+          grep -q '^tester:' /etc/subuid || echo 'tester:100000:65536' >> /etc/subuid
+          grep -q '^tester:' /etc/subgid || echo 'tester:100000:65536' >> /etc/subgid
+          cp -a "$GITHUB_WORKSPACE" /home/tester/src
+          # Inside a container: no systemd for cgroups or the event log, and an overlay
+          # filesystem that podman's own overlay storage cannot stack on.
+          mkdir -p /home/tester/.config/containers /home/tester/run /home/tester/fuzz-corpus
+          printf '[storage]\ndriver = "vfs"\n' > /home/tester/.config/containers/storage.conf
+          printf '[engine]\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\n' \
+            > /home/tester/.config/containers/containers.conf
+          chown -R tester: /home/tester
+          chmod 700 /home/tester/run
+          # Ubuntu's AppArmor keeps unprivileged processes out of user namespaces (rootless
+          # podman, the `unshare -r` tests); the setting is the host's, writable when privileged
+          # (actions/runner-images#10443).
+          f=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [ -e "$f" ]; then echo 0 > "$f"; fi
+          # The tests' temporary files on a tmpfs: a symlink target of 4,000 bytes
+          # (test_cache_root.py) fails on a container's overlay file system with "File name
+          # too long", as in `make test-container`.
+          mount -t tmpfs -o size=10g,mode=1777 tmpfs /var/tmp
+          # What runs as tester from here on: its own clean environment, in its copy.
+          cat > /usr/local/bin/as-tester <<'WRAPPER'
+          #!/bin/sh
+          cd /home/tester/src || exit 1
+          exec runuser -u tester -- env -i HOME=/home/tester USER=tester LANG=C.UTF-8 \
+            XDG_RUNTIME_DIR=/home/tester/run TMPDIR=/var/tmp \
+            PATH=/home/tester/.local/bin:/usr/local/bin:/usr/bin:/bin "$@"
+          WRAPPER
+          chmod 755 /usr/local/bin/as-tester
+
+      # 600 s when the launcher or the fuzz harness changed since the last tag, so that the run
+      # a release is made from fuzzes for 600 s whenever the launcher changed since the
+      # previous release; 600 s on the weekly schedule; else the test's 30 s default.
+      - name: Choose the fuzzing time
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          WEEKLY="43 3 * * 0"
+          seconds=30
+          if [ "$SCHEDULE" = "$WEEKLY" ]; then
+            seconds=600
+          elif ! last="$(git describe --tags --abbrev=0 2>/dev/null)"; then
+            seconds=600  # no tag to compare with
+          elif ! git diff --quiet "$last" HEAD -- src/fsbpyr/launcher tests/fuzz; then
+            seconds=600
+          fi
+          echo "FSBPYR_FUZZ_SECONDS=$seconds" | tee -a "$GITHUB_ENV"
+
+      # What earlier runs' fuzzing found interesting: the run starts from it and adds to it.
+      - name: Restore the fuzz corpus
+        id: corpus
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /home/tester/fuzz-corpus
+          key: fuzz-corpus-${{ matrix.python }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.python }}-
+
+      - name: Show the corpus
+        run: |
+          echo "restored from: ${{ steps.corpus.outputs.cache-matched-key || 'nothing (empty corpus)' }}"
+          echo "corpus files:  $(find /home/tester/fuzz-corpus -type f | wc -l)"
+          chown -R tester: /home/tester/fuzz-corpus
+
+      - name: The Python of .python-version
+        env:
+          MATRIX_PYTHON: ${{ matrix.python }}
+        run: |
+          case "$(cat .python-version)" in
+            "$MATRIX_PYTHON".*) ;;
+            *) echo "::error::.python-version names $(cat .python-version), not $MATRIX_PYTHON"; exit 1 ;;
+          esac
+          as-tester uv python install "$(cat .python-version)"
+
+      # The packages are present, so no sudo: the locked environment, the runtime, fsbpyr in
+      # three stages and `make install` under tester's ~/.local.
+      - name: make bootstrap
+        run: as-tester FSBPYR_UV_VERSION="$FSBPYR_UV_VERSION" make bootstrap
+
+      - name: Upload the executable
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fsbpyr-${{ matrix.python }}
+          path: /home/tester/src/dist/fsbpyr
+          if-no-files-found: error
+
+      - name: make check
+        run: as-tester make check
+
+      # Everything but the portability tests. FSBPYR_TESTS_REQUIRE_ALL=full: no skip is
+      # expected, so a test that cannot run here fails the step. Branch coverage below
+      # pyproject.toml's fail_under fails it too. The launcher programs the tests build are
+      # instrumented for llvm-cov and kept (FSBPYR_LLVM_COV_DIR), for the report below.
+      - name: The whole suite
+        run: |
+          as-tester FSBPYR_TESTS_REQUIRE_ALL=full \
+            FSBPYR_FUZZ_SECONDS="$FSBPYR_FUZZ_SECONDS" FSBPYR_FUZZ_CORPUS=/home/tester/fuzz-corpus \
+            FSBPYR_LLVM_COV_DIR=/home/tester/llvm-cov/bin \
+            LLVM_PROFILE_FILE=/home/tester/llvm-cov/prof/%p-%m.profraw \
+            uv run --locked pytest --ignore=tests/e2e/test_portability.py --durations=30 \
+              --junitxml=full.xml --cov --cov-report=xml
+
+      # Informational: the launcher sources (copied by each session, so listed by their temporary
+      # paths) that the probes and the fuzz harness exercised.
+      - name: Launcher coverage (llvm-cov)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: |
+          as-tester bash -c '
+            set -eu
+            cd /home/tester/llvm-cov
+            llvm-profdata-22 merge -sparse prof/*.profraw -o all.profdata
+            set -- bin/*
+            first="$1"; shift
+            objects=(); for b in "$@"; do objects+=(-object "$b"); done
+            llvm-cov-22 report "$first" "${objects[@]}" -instr-profile=all.profdata' | tee /home/tester/launcher-coverage.txt
+          { echo '### Launcher coverage (llvm-cov, informational)'; echo '```'
+            cat /home/tester/launcher-coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      # Also when a test failed, as long as the suite ran. For the portability job.
+      - name: Upload the reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: full-suite-${{ matrix.python }}
+          path: |
+            /home/tester/src/full.xml
+            /home/tester/src/coverage.xml
+            /home/tester/launcher-coverage.txt
+          if-no-files-found: warn

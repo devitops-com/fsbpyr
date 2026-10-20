@@ -1,6 +1,7 @@
 """End-to-end fixtures: a real runtime (built once, cached) and an app builder."""
 
 import os
+import shutil
 import subprocess
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
@@ -22,6 +23,11 @@ type BuildApp = Callable[[dict[str, str], str], Path]
 # The pinned downloads kept between sessions (tests/support/downloads.py): a directory named by
 # FSBPYR_TEST_DOWNLOADS (`make test-container` keeps one in a volume), none without it.
 DOWNLOADS_VARIABLE = "FSBPYR_TEST_DOWNLOADS"
+# A directory named by FSBPYR_LLVM_COV_DIR (full-suite.yml sets one) makes LauncherBuild.compile
+# build with llvm-cov's instrumentation and keep each program there, for the launcher coverage
+# report; LLVM_PROFILE_FILE says where the runs write their profiles.
+COVERAGE_VARIABLE = "FSBPYR_LLVM_COV_DIR"
+COVERAGE_FLAGS = ("-fprofile-instr-generate", "-fcoverage-mapping")
 _download_status: dict[str, str] = {}  # file name -> "seeded" or "fetched", for the summary
 
 
@@ -81,11 +87,17 @@ class LauncherBuild:
     def compile(self, out: Path, files: Sequence[Path | str], *flags: str) -> Path:
         """``files``: test sources, and launcher sources by name ("integrity.c")."""
         inputs = [os.fspath(f if isinstance(f, Path) else self.sources / f) for f in files]
+        coverage = os.environ.get(COVERAGE_VARIABLE)
         command = [os.fspath(self.clang), "-std=c11", "-D_GNU_SOURCE", "-g", "-O1", *flags,
+                   *(COVERAGE_FLAGS if coverage else ()),
                    f"-I{self.sources}", "-o", os.fspath(out), *inputs,
                    *map(os.fspath, self.libs), "-lpthread", "-ldl"]  # fmt: skip
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         assert result.returncode == 0, result.stderr
+        if coverage:
+            kept = Path(coverage)
+            kept.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(out, kept / f"{out.parent.name}-{out.name}")
         return out
 
 

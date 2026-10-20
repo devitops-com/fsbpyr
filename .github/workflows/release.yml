@@ -5,7 +5,7 @@ name: Release
 #     Debian trixie, then the installed fsbpyr builds itself with `make build`, byte for byte
 #     bootstrap's stage 3, then a smoke test) and run the static checks and the core of the
 #     test suite (`make test-ci`), before any tag exists; tools/release/release.sh tags only a
-#     commit whose main run passed;
+#     commit whose main run and full-suite.yml's main run (every other test) passed;
 #   - a pushed version tag (tools/release/release.sh pushes it): the same, then attest and
 #     publish the GitHub release. Nothing is released unless the tests pass.
 # GitHub artifact attestations can only be made inside GitHub Actions, so releases are built
@@ -359,6 +359,7 @@ jobs:
     timeout-minutes: 10
     # The only job that may write: the build above ran with a read-only token.
     permissions:
+      actions: read        # the parent commit's workflow runs (gh run list)
       contents: write      # create the GitHub release
       id-token: write      # sign the attestation (Sigstore, through the job's OIDC token)
       attestations: write  # store it with the repository
@@ -366,6 +367,27 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false  # gh gets the token through GH_TOKEN
+          fetch-depth: 2  # the release commit and its parent
+
+      # A release is made from a commit whose release.yml and full-suite.yml runs on main were
+      # green: tools/release/release.sh checks that before it commits, this checks it again for
+      # the parent of the release commit, which release.sh made on top of that commit. The
+      # release commit may change nothing but the version and the changelog.
+      - name: Check the parent commit's runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          parent="$(git rev-parse HEAD^)"
+          for f in $(git diff --name-only HEAD^ HEAD); do
+            case "$f" in
+              CHANGELOG.md|pyproject.toml|src/fsbpyr/__init__.py|uv.lock) ;;
+              *) echo "::error::the release commit changes $f, which release.sh does not touch"; exit 1 ;;
+            esac
+          done
+          bash tools/release/green-run.sh release.yml "$parent" > /dev/null
+          suite_run="$(bash tools/release/green-run.sh full-suite.yml "$parent")"
+          echo "FULL_SUITE_RUN=$suite_run" >> "$GITHUB_ENV"
 
       - name: Download the executable
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -376,7 +398,9 @@ jobs:
       - name: Release notes from CHANGELOG.md
         env:
           TAG: ${{ github.ref_name }}
-        run: bash tools/release/release-notes.sh "${TAG#v}" > "$RUNNER_TEMP/notes.md"
+        run: |
+          bash tools/release/release-notes.sh "${TAG#v}" > "$RUNNER_TEMP/notes.md"
+          printf '\nFull suite: %s\n' "$FULL_SUITE_RUN" >> "$RUNNER_TEMP/notes.md"
 
       # Verify with: gh attestation verify fsbpyr --repo devitops-com/fsbpyr \
       #   --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml \

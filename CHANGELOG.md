@@ -11,6 +11,16 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Added
+- **CI runs the whole test suite on every push to main, nightly and weekly, and a release
+  needs it.** The new `full-suite.yml` workflow runs everything but the portability tests as an
+  unprivileged user in a privileged Debian trixie container with rootless podman, so the
+  root-only, group and user-namespace tests run, with `FSBPYR_TESTS_REQUIRE_ALL=full` (no skip
+  is expected). The fuzzer runs for 600 s when the launcher or the fuzz harness changed since
+  the last tag and on the weekly run (its corpus is kept in the Actions cache,
+  `FSBPYR_FUZZ_CORPUS`), and the launcher programs the tests build report llvm-cov coverage
+  (informational). `make release` refuses a commit without a green `release.yml` and
+  `full-suite.yml` run on main, waiting for one in progress; the publish job checks the same for
+  the release commit's parent and adds the suite run's URL to the release notes.
 - **`make test-container` runs the whole test suite but the portability tests in a container.**
   The Containerfile's new `test` stage (its first stage is now named `build`, which `make
   bootstrap` selects) adds what the suite needs beyond a build: the sanitizer runtimes,

@@ -24,8 +24,9 @@
 # Guards (all must pass before anything mutates): the three versions agree, X.Y.Z
 # well-formed and not lower, on `main`, clean working tree (untracked files and
 # assume-unchanged / skip-worktree entries included), local == hub/main, a
-# successful release.yml run for HEAD's push to main, neither the tag nor the GitHub
-# release exists yet, and a non-empty [Unreleased] section.
+# successful release.yml and full-suite.yml run for HEAD's push to main (a run in progress
+# is waited for), neither the tag nor the GitHub release exists yet, and a non-empty
+# [Unreleased] section.
 #
 # Non-interactive use: set FSBPYR_RELEASE_ASSUME_YES=1 to skip the prompt.
 # FSBPYR_RELEASE_WATCH_WAIT: how many seconds to wait for the tag's workflow run
@@ -40,6 +41,7 @@ BRANCH="main"
 CHANGELOG="CHANGELOG.md"
 VERSION_FILES=(pyproject.toml src/fsbpyr/__init__.py uv.lock)
 WORKFLOW="release.yml"
+SUITE_WORKFLOW="full-suite.yml"
 WATCH_WAIT="${FSBPYR_RELEASE_WATCH_WAIT:-60}"
 WATCH_POLL=3
 
@@ -160,21 +162,12 @@ REMOTE_HEAD="$(git rev-parse FETCH_HEAD)"
 [ "$LOCAL_HEAD" = "$REMOTE_HEAD" ] \
     || { echo "ERROR: local $BRANCH differs from hub/$BRANCH; push or pull first" >&2; exit 1; }
 
-# The workflow runs on every push to $BRANCH: tag only a commit whose run passed, so that a
-# failure shows on $BRANCH before any tag exists.
-GREEN_RUN="$(gh run list --workflow "$WORKFLOW" --branch "$BRANCH" --event push \
-    --commit "$LOCAL_HEAD" --status success --limit 1 --json databaseId \
-    --jq '.[0].databaseId // empty' || true)"
-case "$GREEN_RUN" in
-    ''|*[!0-9]*)
-        cat >&2 <<EOF
-ERROR: $BRANCH at $(git rev-parse --short HEAD) has no successful $WORKFLOW run:
-       only a commit CI passed is tagged.
-       Still running: wait for it (gh run watch), then run this again
-       Failed:        fix $BRANCH and push; release once that push's run is green
-EOF
-        exit 1 ;;
-esac
+# The workflows run on every push to $BRANCH: tag only a commit whose runs passed, so that a
+# failure shows on $BRANCH before any tag exists. A run in progress is waited for. Both are
+# needed: release.yml (build, smoke test, checks, core tests) and full-suite.yml (every test).
+for run_workflow in "$WORKFLOW" "$SUITE_WORKFLOW"; do
+    bash tools/release/green-run.sh "$run_workflow" "$LOCAL_HEAD" >/dev/null
+done
 
 # --- 2. The [Unreleased] section must have something to release --------------
 # The release workflow publishes the promoted section as the release notes.

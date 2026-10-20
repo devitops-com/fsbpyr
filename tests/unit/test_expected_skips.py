@@ -57,6 +57,22 @@ def test_a_skip_the_list_does_not_expect_fails_the_run(
                                  "test_probe.py::test_probe: x"])  # fmt: skip
 
 
+def test_the_full_list_expects_no_skip_at_all(
+    suite: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """full-suite.yml's container has everything the root-only and podman tests need."""
+    suite.makepyfile(
+        test_probe="import pytest\n\ndef test_probe():\n    pytest.skip('needs podman')\n"
+    )
+    monkeypatch.setenv(REQUIRE_ALL, "full")
+
+    result = suite.runpytest()
+
+    assert result.ret == pytest.ExitCode.TESTS_FAILED
+    result.stdout.fnmatch_lines(["*= skips the full list does not expect =*",
+                                 "test_probe.py::test_probe: needs podman"])  # fmt: skip
+
+
 def test_with_no_list_named_a_skip_passes(suite: pytest.Pytester) -> None:
     _probe(suite)
 
@@ -91,7 +107,9 @@ def test_an_unknown_list_is_a_usage_error(
     result = suite.runpytest()
 
     assert result.ret == pytest.ExitCode.USAGE_ERROR
-    result.stderr.fnmatch_lines(["*FSBPYR_TESTS_REQUIRE_ALL=cl: no such list (ci, container)*"])
+    result.stderr.fnmatch_lines(
+        ["*FSBPYR_TESTS_REQUIRE_ALL=cl: no such list (ci, container, full)*"]
+    )
 
 
 def test_container_expects_only_the_skips_of_a_stage_without_podman(
