@@ -46,7 +46,7 @@ def intact(runtime: Runtime, tmp_path_factory: pytest.TempPathFactory) -> bytes:
 
 def _outcome(app: Path) -> str:
     result = subprocess.run(
-        [app], capture_output=True, text=True, check=False,
+        [app], capture_output=True, text=True, check=False, timeout=60,
         env={**os.environ, "FSBPYR_CACHE_DIR": os.fspath(app.parent / "cache")},
     )  # fmt: skip
     assert result.returncode >= 0, f"killed by signal {-result.returncode}: {result.stderr}"

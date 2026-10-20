@@ -28,14 +28,16 @@ def demo(runtime: Runtime, tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture(scope="module")
 def probe(demo: Path) -> dict[str, Any]:
-    result = subprocess.run([demo], capture_output=True, text=True, check=False)
+    result = subprocess.run([demo], capture_output=True, text=True, check=False, timeout=60)
     assert result.returncode == 0, result.stderr
     parsed: dict[str, Any] = json.loads(result.stdout)
     return parsed
 
 
 def test_c_module_and_standin_honour_the_same_contract(demo: Path) -> None:
-    result = subprocess.run([demo, "contract"], capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        [demo, "contract"], capture_output=True, text=True, check=False, timeout=60
+    )
     assert result.returncode == 0, result.stderr
     standin = StandIn(demo)
     try:
@@ -68,7 +70,7 @@ def test_extracted_files_are_never_synced_to_disk(demo: Path, tmp_path: Path) ->
     calls = "fsync,fdatasync,sync,syncfs,sync_file_range"
     command = ["strace", "-f", "-qq", "-o", str(log), "-e", f"trace={calls}", str(demo), "contract"]
 
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=60)
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["sync"]["natives"]["first"][0][0] == "ok"
@@ -127,6 +129,8 @@ def test_cwd_files_never_shadow_payload_sources(demo: Path, tmp_path: Path) -> N
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "cli.py").write_text("SHADOW\n" * 5)
 
-    result = subprocess.run([demo], capture_output=True, text=True, check=False, cwd=tmp_path)
+    result = subprocess.run(
+        [demo], capture_output=True, text=True, check=False, cwd=tmp_path, timeout=60
+    )
 
     assert json.loads(result.stdout)["getsource"] == "def main():\n    return 'cli'\n"

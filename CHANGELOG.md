@@ -36,6 +36,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   file needs a `GLIBCXX`, `CXXABI`, `GCC` or `ZLIB` version above manylinux_2_28's, or
   `GLIBC_PRIVATE`, and when an `--allow-system-lib` entry is needed by no native file; a
   version table that cannot be read gives a warning and does not fail the build.
+- **A test that the built stub keeps its hardening.** It runs `readelf` and `objdump` on the
+  stub and asserts PIE, BIND_NOW, GNU_RELRO, a non-executable GNU_STACK and the stack
+  protector (`__stack_chk_fail`); dropping `-Wl,-z,now` from the link flags now fails it. The
+  end-to-end tests that run built executables also time out after 60 seconds instead of
+  hanging a CI job.
 - **A security policy, `SECURITY.md`.** Vulnerabilities are reported privately, as GitHub
   security advisories, and acknowledged within 7 days; only the latest release is supported.
   Every executable carries its own CPython and the libraries linked into it (OpenSSL, SQLite,
