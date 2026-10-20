@@ -11,7 +11,7 @@ import stat
 import sys
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import __version__
@@ -23,7 +23,7 @@ from ..payload.spec import File, Module, PayloadSpec
 from ..payload.writer import encode_payload
 from . import pbs, pins, stdlib, stub, sysroot
 from .hold import hold
-from .toolchain import find_toolchain
+from .toolchain import describe, find_toolchain
 
 BOOT_PACKAGES = ("_fsbpyr_boot", "_fsbpyr_rt")  # regenerated for every build, never runtime content
 LAYOUT_VERSION = 7  # bump when the stdlib selection, its canonical bytecode, the layout or the
@@ -122,6 +122,7 @@ class Runtime:
     stub: bytes
     modules: tuple[Module, ...]
     files: tuple[File, ...]
+    toolchain: dict[str, str] = field(default_factory=dict)  # clang and lld versions, information
 
     def save(self, directory: Path) -> None:
         """Write atomically: a complete runtime directory appears, or nothing does.
@@ -177,6 +178,7 @@ class Runtime:
             "bytecode_magic": self.bytecode_magic.hex(),
             "extension_suffixes": list(self.extension_suffixes),
             "fsbpyr": __version__,
+            "toolchain": dict(self.toolchain),  # information only: not in runtime_id (D3)
         }
 
     @classmethod
@@ -202,6 +204,7 @@ class Runtime:
             stub=paths[0].read_bytes(),
             modules=fragment.modules,
             files=fragment.files,
+            toolchain=dict(meta.get("toolchain", {})),
         )
 
     @classmethod
@@ -311,6 +314,7 @@ def build_runtime(
         stub=stub_bytes,
         modules=modules,
         files=files,
+        toolchain=describe(toolchain),
     )
     runtime.save(directory)
     hold(directory)

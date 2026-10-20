@@ -4,7 +4,9 @@ name: Upstream watch
 # runtime is built from (src/fsbpyr/runtime/pins.py)? If so, tools/upstream-watch.sh opens an
 # issue labelled runtime-update, or updates the open one, with the release notes since the pin
 # and the LLVM version of both archives' objects, whose major decides the clang and lld that
-# `fsbpyr runtime build` needs.
+# `fsbpyr runtime build` needs. The same run checks the release toolchain pins (uv, the Debian
+# snapshot, the debian:trixie image digest; tools/toolchain-watch.sh) and keeps a toolchain-update
+# issue.
 
 on:
   schedule:
@@ -35,3 +37,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: bash tools/upstream-watch.sh
+
+  toolchain:
+    name: release toolchain pins
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false  # gh gets the token through GH_TOKEN
+
+      # gh and curl come with the runner image.
+      - name: Compare the pins with what is current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash tools/toolchain-watch.sh

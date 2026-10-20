@@ -2,7 +2,7 @@
 # other than Debian trixie (tools/bootstrap.sh). The checkout is mounted at /src and
 # dist/fsbpyr lands in it; a volume keeps uv's cache, its Pythons and fsbpyr's runtime
 # between runs.
-FROM docker.io/library/debian:trixie
+FROM docker.io/library/debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
 
 # Everything but uv and Python from Debian's own packages (trixie ships clang and lld 22 since 13.7).
 RUN apt-get update \

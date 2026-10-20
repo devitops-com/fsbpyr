@@ -15,6 +15,7 @@ def make_elf(
     machine: int = 62,
     dynamic: bool = True,
     versions: tuple[tuple[str, tuple[str, ...]], ...] = (),
+    comment: bytes | None = None,
 ) -> bytes:
     """Minimal ELF64 shared object: one PT_LOAD over the file (vaddr == offset + 0x1000)."""
     strings = bytearray(b"\0")
@@ -53,4 +54,20 @@ def make_elf(
     image = bytearray(header + load + dyn_seg + strings)
     image.extend(bytes(verneed_off - len(image)))
     image += verneed
-    return bytes(image + dyn)
+    image += dyn
+    if comment is None:
+        return bytes(image)
+    # a .comment section, then .shstrtab and the section header table
+    comment_at = len(image)
+    image += comment
+    shstrtab = b"\0.comment\0.shstrtab\0"
+    shstrtab_at = len(image)
+    image += shstrtab
+    image += bytes(-len(image) % 8)
+    shoff = len(image)
+    image += bytes(64)  # the null section
+    image += struct.pack("<IIQQQQIIQQ", 1, 1, 0, 0, comment_at, len(comment), 0, 0, 1, 0)
+    image += struct.pack("<IIQQQQIIQQ", 10, 3, 0, 0, shstrtab_at, len(shstrtab), 0, 0, 1, 0)
+    image[40:48] = struct.pack("<Q", shoff)  # e_shoff
+    image[60:64] = struct.pack("<HH", 3, 2)  # e_shnum, e_shstrndx
+    return bytes(image)

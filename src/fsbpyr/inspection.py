@@ -19,6 +19,7 @@ from pathlib import Path
 
 from packaging.utils import canonicalize_name
 
+from .elf import ElfError, section
 from .natives import init_symbol
 from .payload.format import NATIVE_KINDS, NONE, FileKind, PayloadError
 from .payload.reader import Executable, FileRecord, Payload
@@ -49,6 +50,7 @@ class Report:
     digest: str = ""  # hex: of the whole file (D31), of the payload in older executables
     covers_file: bool = True
     sha256: str = ""  # hex: plain SHA-256 of the whole file, as attestations name it; --verify only
+    toolchain: tuple[str, ...] = ()  # the stub's .comment lines: compilers and linker that made it
 
 
 def _shown(value: object) -> str:
@@ -85,6 +87,17 @@ def _file_sha256(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def _toolchain(stub: bytes) -> tuple[str, ...]:
+    """The lines of the stub's ``.comment`` section (clang, lld and what they linked in); none
+    when the stub has no such section or is not an ELF file (a test double)."""
+    try:
+        comment = section(stub, ".comment")
+    except ElfError:
+        return ()
+    lines = (part.decode("utf-8", errors="replace") for part in (comment or b"").split(b"\0"))
+    return tuple(dict.fromkeys(line for line in lines if line))
+
+
 def read(path: Path, *, verify: bool = False) -> Report:
     try:
         status = path.stat()
@@ -116,6 +129,7 @@ def read(path: Path, *, verify: bool = False) -> Report:
                 sorted(libraries), sorted(extensions), verified=verify,
                 digest=executable.digest.hex(), covers_file=executable.covers_file,
                 sha256=_file_sha256(path) if verify else "",
+                toolchain=_toolchain(executable.stub_prefix()),
             )  # fmt: skip
     except PayloadError as exc:
         raise InspectError(f"{path} is not an executable fsbpyr built ({exc})") from exc
@@ -175,6 +189,7 @@ def as_json(report: Report, *, all_modules: bool = False) -> str:
         "python": report.info.get("python"),
         "uv": report.info.get("uv"),
         "glibc": report.info.get("glibc"),
+        "toolchain": list(report.toolchain),
         "digest": report.digest,
         "digest_covers": "file" if report.covers_file else "payload",
         "sha256": report.sha256 or None,
@@ -251,6 +266,9 @@ def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
     ]
     if report.sha256:
         lines.append(f"sha256     {report.sha256}")
+    if report.toolchain:
+        first, *rest = (_shown(line) for line in report.toolchain)
+        lines += [f"toolchain  {first}", *(f"           {line}" for line in rest)]
     lines += [
         f"shared libraries: {len(report.shared_libraries)}",
         *_columns(report.shared_libraries),

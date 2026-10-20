@@ -9,12 +9,14 @@ type ElfData = bytes | mmap.mmap  # a file's content, or its file mapped (D38)
 _HEADER = struct.Struct("<HHIQQQIHHHHHH")  # e_type .. e_shstrndx, after e_ident[16]
 _PHDR = struct.Struct("<IIQQQQQQ")  # type, flags, offset, vaddr, paddr, filesz, memsz, align
 _DYN = struct.Struct("<qQ")
+_SHDR = struct.Struct("<IIQQQQIIQQ")  # name, type, flags, addr, offset, size, link, info, ...
 _VERNEED = struct.Struct("<HHIII")  # vn_version, vn_cnt, vn_file, vn_aux, vn_next
 _VERNAUX = struct.Struct("<IHHII")  # vna_hash, vna_flags, vna_other, vna_name, vna_next
 _GLIBC = re.compile(r"GLIBC_(\d+)\.(\d+)")
 _GLIBC_ABI = {"GLIBC_ABI_DT_RELR": (2, 36)}  # version markers that are not release numbers
 _MAX_NAME = 4096
 PT_LOAD, PT_DYNAMIC = 1, 2
+SHT_NOBITS = 8
 DT_NULL, DT_NEEDED, DT_STRTAB, DT_STRSZ, DT_SONAME, DT_RPATH, DT_RUNPATH = 0, 1, 5, 10, 14, 15, 29
 DT_VERNEED, DT_VERNEEDNUM = 0x6FFFFFFE, 0x6FFFFFFF
 EM_X86_64 = 62
@@ -43,17 +45,50 @@ def _unpack(layout: struct.Struct, data: ElfData, offset: int) -> tuple[int, ...
     return layout.unpack_from(data, offset)
 
 
-def _segments(data: ElfData) -> list[tuple[int, ...]]:
+def _header(data: ElfData) -> tuple[int, ...]:
     if not is_elf(data):
         raise ElfError("not an ELF file")
     if len(data) < 64 or data[4] != 2 or data[5] != 1:
         raise ElfError("only 64-bit little-endian ELF objects are supported")
-    _, machine, _, _, phoff, _, _, _, phentsize, phnum, _, _, _ = _unpack(_HEADER, data, 16)
-    if machine != EM_X86_64:
-        raise ElfError(f"ELF object for machine {machine}, not x86-64")
+    header = _unpack(_HEADER, data, 16)
+    if header[1] != EM_X86_64:
+        raise ElfError(f"ELF object for machine {header[1]}, not x86-64")
+    return header
+
+
+def _segments(data: ElfData) -> list[tuple[int, ...]]:
+    _, _, _, _, phoff, _, _, _, phentsize, phnum, _, _, _ = _header(data)
     if phentsize < _PHDR.size:
         raise ElfError("truncated ELF program headers")
     return [_unpack(_PHDR, data, phoff + i * phentsize) for i in range(phnum)]
+
+
+def section(data: ElfData, name: str) -> bytes | None:
+    """The content of the section called ``name`` (``.comment``, ...), None if there is none."""
+    _, _, _, _, _, shoff, _, _, _, _, shentsize, shnum, shstrndx = _header(data)
+    if not shoff or not shnum:
+        return None
+    if shentsize < _SHDR.size or shstrndx >= shnum or shnum > _MAX_ENTRIES:
+        raise ElfError("bad ELF section headers")
+
+    def header(index: int) -> tuple[int, ...]:
+        return _unpack(_SHDR, data, shoff + index * shentsize)
+
+    def content(entry: tuple[int, ...]) -> bytes:
+        offset, size = entry[4], entry[5]
+        if entry[1] == SHT_NOBITS:
+            return b""
+        if offset + size > len(data):
+            raise ElfError("ELF section beyond the end of the file")
+        return bytes(data[offset : offset + size])
+
+    names = content(header(shstrndx))
+    wanted = name.encode() + b"\0"
+    for index in range(shnum):
+        entry = header(index)
+        if names[entry[0] :].startswith(wanted):
+            return content(entry)
+    return None
 
 
 def _file_offset(loads: list[tuple[int, ...]], address: int) -> int:

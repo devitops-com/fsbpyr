@@ -102,6 +102,28 @@ def test_runtime_save_and_load(tmp_path: Path) -> None:
     assert meta["python_version"] == "3.14.8"
 
 
+def test_runtime_records_its_toolchain_for_information_only(tmp_path: Path) -> None:
+    toolchain = {"clang": "Debian clang version 22.1.8 (1~deb13u4)", "lld": "Debian LLD 22.1.8"}
+    plain, recorded = _runtime(), _runtime(toolchain=toolchain)
+
+    recorded.save(tmp_path / "rt")
+
+    meta = json.loads((tmp_path / "rt" / "runtime.json").read_text())
+    assert meta["toolchain"] == toolchain
+    assert Runtime.load(tmp_path / "rt").toolchain == toolchain
+    assert plain.runtime_id == recorded.runtime_id  # not part of the identity (D3)
+
+
+def test_runtime_without_recorded_toolchain_still_loads(tmp_path: Path) -> None:
+    _runtime().save(tmp_path / "rt")
+    meta_path = tmp_path / "rt" / "runtime.json"
+    meta = json.loads(meta_path.read_text())
+    del meta["toolchain"]  # a cache written before the toolchain was recorded
+    meta_path.write_text(json.dumps(meta))
+
+    assert Runtime.load(tmp_path / "rt").toolchain == {}
+
+
 def test_runtime_load_rejects_incomplete_directory(tmp_path: Path) -> None:
     _runtime().save(tmp_path / "rt")
     (tmp_path / "rt" / "stub").unlink()

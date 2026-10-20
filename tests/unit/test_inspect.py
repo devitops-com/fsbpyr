@@ -18,6 +18,7 @@ from fsbpyr.payload.reader import Executable, Payload
 from fsbpyr.payload.spec import Blob, Dist, File, Module
 from fsbpyr.payload.writer import write_executable
 
+from ..support.elf import make_elf
 from .boot.conftest import FAKE_RUNTIME
 
 COMMIT = "4f9771de" + "0" * 32
@@ -391,3 +392,36 @@ def test_inspect_rejects_files_fsbpyr_did_not_build(
     assert errors[1].startswith(f"fsbpyr: error: cannot read {tmp_path / 'missing'}")
     assert errors[2] == f"fsbpyr: error: {tmp_path / 'fifo'} is not a regular file"
     assert errors[3] == f"fsbpyr: error: {tmp_path} is not a regular file"
+
+
+def test_inspect_shows_the_toolchain_that_linked_the_stub(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    comment = (b"\0GCC: (Debian 8.3.0-6) 8.3.0\0Linker: Debian LLD 22.1.8\0"
+               b"Debian clang version 22.1.8 (1~deb13u4)\0Linker: Debian LLD 22.1.8\0")  # fmt: skip
+    runtime = dataclasses.replace(FAKE_RUNTIME, stub=make_elf(comment=comment))
+    out = tmp_path / "aiagent"
+    build_executable(runtime, App("aiagent", "aiagent.cli:main", dists=DISTS[:1]), out)
+
+    lines = _inspect(out, capsys)
+
+    start = lines.index("toolchain  GCC: (Debian 8.3.0-6) 8.3.0")
+    assert lines[start : start + 3] == [
+        "toolchain  GCC: (Debian 8.3.0-6) 8.3.0",
+        "           Linker: Debian LLD 22.1.8",  # a repeated line is shown once
+        "           Debian clang version 22.1.8 (1~deb13u4)",
+    ]
+    assert main(["inspect", "--json", str(out)]) == 0
+    assert json.loads(capsys.readouterr().out)["toolchain"] == [
+        "GCC: (Debian 8.3.0-6) 8.3.0",
+        "Linker: Debian LLD 22.1.8",
+        "Debian clang version 22.1.8 (1~deb13u4)",
+    ]
+
+
+def test_inspect_shows_no_toolchain_for_a_stub_without_comments(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lines = _inspect(_executable(tmp_path), capsys)  # the test double is not even an ELF file
+
+    assert not any(line.startswith("toolchain") for line in lines)

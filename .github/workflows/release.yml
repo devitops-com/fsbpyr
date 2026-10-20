@@ -30,9 +30,10 @@ jobs:
   build:
     name: build + smoke test
     runs-on: ubuntu-24.04
-    # Debian trixie, as `make bootstrap` expects. It installs no tools, so the job does: clang/lld
-    # 22 and the rest from Debian's packages, uv from astral.sh and the Python of .python-version.
-    container: docker.io/library/debian:trixie
+    # Debian trixie, as `make bootstrap` expects, by digest: the tag alone moves. It installs no
+    # tools, so the job does: clang/lld 22 and the rest from Debian's packages, the pinned uv
+    # (tools/release/uv.version) and the Python of .python-version.
+    container: docker.io/library/debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
     timeout-minutes: 75
     env:
       PREFIX: ${{ github.workspace }}/../prefix
@@ -44,14 +45,12 @@ jobs:
       XDG_CACHE_HOME: /root/.cache
     steps:
       # git before the checkout: without it actions/checkout downloads a tarball, with no tags.
-      # make runs `make bootstrap`, clang and lld 22 link the launcher, curl fetches uv, and xz
-      # compresses the release's copy. gcc (the tests' `cc`), strace and groff: tests that would
-      # skip without them run.
-      - name: Install git, make, clang, xz and the test tools
+      # xz-utils decides fsbpyr.xz's bytes: it comes from the live mirror, here, and the log
+      # records its version. ca-certificates and curl fetch uv.
+      - name: Install git, xz and curl
         run: |
           apt-get update -q
-          apt-get install -y -q --no-install-recommends ca-certificates git make curl \
-            clang-22 lld-22 xz-utils gcc strace groff-base
+          apt-get install -y -q --no-install-recommends ca-certificates git curl xz-utils
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -79,11 +78,62 @@ jobs:
             exit 1
           fi
 
-      # The newest uv, and the Python that .python-version pins.
+      # A tag is built from a snapshot of the Debian archive (tools/release/apt-snapshot), so
+      # that clang and lld 22 are the versions the release was built with and a rebuild later
+      # finds them; the snapshot replaces the image's sources, a second line beside them would
+      # pin nothing. Main and pull request runs use the live mirror. make runs `make bootstrap`,
+      # clang and lld 22 link the launcher, gcc (the tests' `cc`), strace and groff: tests that
+      # would skip without them run.
+      - name: Use the Debian snapshot
+        if: github.ref_type == 'tag'
+        run: |
+          ts="$(tr -d '[:space:]' < tools/release/apt-snapshot)"
+          cat > /etc/apt/sources.list.d/debian.sources <<EOF
+          Types: deb
+          URIs: http://snapshot.debian.org/archive/debian/$ts/
+          Suites: trixie trixie-updates
+          Components: main
+          Check-Valid-Until: no
+          Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
+
+          Types: deb
+          URIs: http://snapshot.debian.org/archive/debian-security/$ts/
+          Suites: trixie-security
+          Components: main
+          Check-Valid-Until: no
+          Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
+          EOF
+          echo "FSBPYR_APT_SNAPSHOT=$ts" >> "$GITHUB_ENV"
+
+      # snapshot.debian.org is slow now and then: three tries.
+      - name: Install clang, lld and the test tools
+        run: |
+          for try in 1 2 3; do apt-get update -q && break; [ "$try" -lt 3 ] || exit 1; sleep 15; done
+          apt-get install -y -q --no-install-recommends make clang-22 lld-22 gcc strace groff-base
+
+      # The uv that tools/release/uv.version names, from its release tarball and checked against
+      # the sha256 recorded there, and the Python that .python-version pins. bootstrap.sh
+      # installs no tool; with FSBPYR_UV_VERSION set it fails on any other uv.
       - name: Install uv and Python
         run: |
-          curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh
+          read -r version sha256 < tools/release/uv.version
+          name=uv-x86_64-unknown-linux-gnu
+          curl -fsSL -o "$RUNNER_TEMP/uv.tar.gz" \
+            "https://github.com/astral-sh/uv/releases/download/$version/$name.tar.gz"
+          echo "$sha256  $RUNNER_TEMP/uv.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/uv.tar.gz" --strip-components=1 -C /usr/local/bin \
+            "$name/uv" "$name/uvx"
+          echo "FSBPYR_UV_VERSION=$version" >> "$GITHUB_ENV"
           uv python install "$(cat .python-version)"
+
+      # What the release was built with, for whoever reproduces it later.
+      - name: Record the toolchain
+        run: |
+          echo "image:    $(grep -o 'debian:trixie@sha256:[0-9a-f]*' .github/workflows/release.yml | head -n1)"
+          echo "snapshot: ${FSBPYR_APT_SNAPSHOT:-none (live mirror)}"
+          echo "uv:       $(uv --version)"
+          dpkg-query -W clang-22 lld-22 xz-utils
+          apt-cache policy clang-22 lld-22
 
       # The locked environment, the runtime, fsbpyr in three stages
       # (each verified, stages 2 and 3 identical) and `make install` under $PREFIX. No cache: the release is built from the lock, never from

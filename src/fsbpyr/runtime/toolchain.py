@@ -74,3 +74,18 @@ def find_toolchain(
         f"clang >= {min_major} with ld.lld not found; install LLVM {min_major} "
         "(e.g. apt.llvm.org) or pass --clang"
     )
+
+
+def describe(toolchain: Toolchain) -> dict[str, str]:
+    """The first line of ``--version`` of the clang and the lld, for the runtime's metadata."""
+    versions = {}
+    for key, program in (("clang", toolchain.clang), ("lld", toolchain.lld)):
+        try:
+            result = subprocess.run(
+                [program, "--version"], capture_output=True, text=True, check=False, timeout=30
+            )
+            lines = result.stdout.splitlines()
+        except OSError, subprocess.TimeoutExpired:
+            lines = []
+        versions[key] = lines[0].strip() if lines else "unknown"
+    return versions
