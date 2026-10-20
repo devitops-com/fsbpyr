@@ -7,7 +7,10 @@ trusted, so text output never carries control characters (terminal escape sequen
 escapes them anyway. Lists are laid out in as many columns as the terminal fits, like ``ls``.
 """
 
+import base64
+import binascii
 import cmd
+import csv
 import hashlib
 import io
 import json
@@ -26,6 +29,7 @@ from .payload.reader import Executable, FileRecord, Payload
 from .system import target_needs
 from .vcs import version_string
 
+SCHEMA = 1  # of --json
 UNKNOWN = "unknown"
 RUNTIME = "standard library and fsbpyr"  # modules of no distribution
 _INDENT = "  "
@@ -34,6 +38,17 @@ _PLAIN_SO = re.compile(r"[^.]+\.so")  # no ABI tag: a library or an extension, t
 
 class InspectError(RuntimeError):
     """The file cannot be read, or fsbpyr did not build it."""
+
+
+@dataclass(frozen=True, slots=True)
+class FileEntry:
+    """One line of a distribution's RECORD, as packaged: what --files lists."""
+
+    dist: str
+    path: str
+    kind: str  # a file kind (resource, source, ...), a module kind, or "other"
+    size: int | None
+    sha256: str | None  # hex
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +68,7 @@ class Report:
     sha256: str = ""  # hex: plain SHA-256 of the whole file, as attestations name it; --verify only
     toolchain: tuple[str, ...] = ()  # the stub's .comment lines: compilers and linker that made it
     entrypoint: str = ""
+    files: tuple[FileEntry, ...] | None = None  # None unless asked for (--files)
 
 
 def _shown(value: object) -> str:
@@ -100,7 +116,42 @@ def _toolchain(stub: bytes) -> tuple[str, ...]:
     return tuple(dict.fromkeys(line for line in lines if line))
 
 
-def read(path: Path, *, verify: bool = False) -> Report:
+def _record_hash(value: str) -> str | None:
+    """RECORD's ``sha256=<urlsafe base64>`` as hex; None for another or a missing digest."""
+    algorithm, _, encoded = value.partition("=")
+    if algorithm != "sha256" or not encoded:
+        return None
+    try:
+        return base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).hex()
+    except binascii.Error, ValueError:
+        return None
+
+
+def _record_entries(payload: Payload) -> tuple[FileEntry, ...]:
+    """Path, kind, size and SHA-256 of every file the distributions' RECORD files list, as
+    the build packaged them (they are in the payload already: nothing is read from the
+    files themselves)."""
+    kinds = {m.path: m.kind for m in payload.modules()}
+    files = {f.path: f.kind for f in payload.files()}
+    entries = []
+    for dist in payload.dists():
+        record = payload.find_file(f"{dist.dist_info}/RECORD")
+        if record is None:
+            continue
+        text = payload.read_blob(record.blob).decode("utf-8", errors="replace")
+        for row in csv.reader(text.splitlines()):
+            if not row or not row[0]:
+                continue
+            rel, digest, size = [*row, "", ""][:3]
+            kind = (files[rel].name if rel in files else
+                    kinds[rel].name if rel in kinds else "other")  # fmt: skip
+            entries.append(FileEntry(dist.name, rel, kind.lower(),
+                                     int(size) if size.isdecimal() else None,
+                                     _record_hash(digest)))  # fmt: skip
+    return tuple(entries)
+
+
+def read(path: Path, *, verify: bool = False, files: bool = False) -> Report:
     try:
         status = path.stat()
         if not stat.S_ISREG(status.st_mode):  # a FIFO would block the open
@@ -133,6 +184,7 @@ def read(path: Path, *, verify: bool = False) -> Report:
                 sha256=_file_sha256(path) if verify else "",
                 toolchain=_toolchain(executable.stub_prefix()),
                 entrypoint=payload.entrypoint,
+                files=_record_entries(payload) if files else None,
             )  # fmt: skip
     except PayloadError as exc:
         raise InspectError(f"{path} is not an executable fsbpyr built ({exc})") from exc
@@ -191,6 +243,34 @@ def _compression(report: Report) -> str:
     return f"{content}, native files {content if natives == 'zstd' else natives}"
 
 
+def _components(info: dict[str, object]) -> str:
+    """The libraries the runtime carries, "openssl OpenSSL 3.5.9 ...; sqlite 3.53.1"
+    (REP-3); empty for builds before they were recorded."""
+    components = info.get("runtime_components")
+    if not isinstance(components, dict):
+        return ""
+    return "; ".join(f"{_shown(name)} {_shown(version)}" for name, version in components.items())
+
+
+def _lock(info: dict[str, object]) -> str:
+    """The lock the app was built from, "uv.lock sha256:3a7bd3e2..." (REP-3, schema 1); empty
+    for older builds and unlocked ones."""
+    lock = info.get("lock")
+    if not isinstance(lock, dict) or not isinstance(lock.get("path"), str):
+        return ""
+    digest = lock.get("sha256")
+    return f"{_shown(lock['path'])} sha256:{_shown(digest)}" if isinstance(digest, str) else ""
+
+
+def _provenance(info: dict[str, object]) -> list[str]:
+    lines = []
+    if components := _components(info):
+        lines.append(f"components {components}")
+    if lock := _lock(info):
+        lines.append(f"lock       {lock}")
+    return lines
+
+
 def _tops(names: list[str]) -> list[str]:
     return sorted({name.partition(".")[0] for name in names})
 
@@ -201,7 +281,8 @@ def _top_level(report: Report) -> dict[str, list[str]]:
 
 def as_json(report: Report, *, all_modules: bool = False) -> str:
     name, version, revision = _project(report)
-    document = {
+    document: dict[str, object] = {
+        "schema": SCHEMA,
         "path": str(report.path),
         "size": report.size,
         "app": {"name": name, "version": version, "revision": revision},
@@ -224,6 +305,11 @@ def as_json(report: Report, *, all_modules: bool = False) -> str:
         "runtime_modules": report.runtime if all_modules else _tops(report.runtime),
         "build_info": report.info,
     }
+    if report.files is not None:
+        document["files"] = [
+            {"dist": f.dist, "path": f.path, "kind": f.kind, "size": f.size, "sha256": f.sha256}
+            for f in report.files
+        ]
     return json.dumps(document, indent=2)
 
 
@@ -269,6 +355,14 @@ def _every_module(report: Report) -> list[str]:
             *_columns(report.runtime)]  # fmt: skip
 
 
+def _file_lines(report: Report) -> list[str]:
+    if report.files is None:
+        return []
+    rows = [f"{f.sha256 or '-' * 64}  {'-' if f.size is None else f.size:>10}  "
+            f"{f.kind:<9}  {_shown(f'{f.dist}: {f.path}')}" for f in report.files]  # fmt: skip
+    return [f"files: {len(rows)}", *(_INDENT + row for row in rows)]
+
+
 def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
     name, version, revision = _project(report)
     app_line = " ".join(_shown(part) for part in (name, version) if part)
@@ -291,6 +385,7 @@ def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
     if report.toolchain:
         first, *rest = (_shown(line) for line in report.toolchain)
         lines += [f"toolchain  {first}", *(f"           {line}" for line in rest)]
+    lines += _provenance(report.info)
     libraries = _system_libraries(report)
     needs = target_needs(libraries, glibc if isinstance(glibc, str) else None)
     lines += [f"entry      {_shown(report.entrypoint)}"]
@@ -303,4 +398,5 @@ def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
         f"extension modules: {len(report.extension_modules)}",
         *_columns(report.extension_modules),
     ]
-    return lines + (_every_module(report) if all_modules else _modules_by_distribution(report))
+    lines += _every_module(report) if all_modules else _modules_by_distribution(report)
+    return lines + _file_lines(report)

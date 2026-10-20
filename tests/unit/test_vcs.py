@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from fsbpyr.vcs import git_state, version_string
+from fsbpyr.vcs import commit_time, git_state, version_string
 
 COMMIT = "6457a95b" + "0" * 32
 GIT = shutil.which("git") or "git"
@@ -116,3 +116,13 @@ def test_git_failures_are_reported(repo: Path, monkeypatch: pytest.MonkeyPatch) 
 )
 def test_version_string(state: dict[str, str | None] | None, expected: str) -> None:
     assert version_string(state) == expected
+
+
+def test_commit_time_is_heads(repo: Path) -> None:
+    assert commit_time(repo) == int(_git(repo, "show", "--no-patch", "--format=%ct", "HEAD"))
+
+
+def test_commit_time_needs_a_commit_that_contains_the_directory(tmp_path: Path, repo: Path) -> None:
+    (repo / "later").mkdir()  # in the work tree only: HEAD's tree does not contain it
+    assert commit_time(repo / "later") is None
+    assert commit_time(tmp_path.parent / "no-such-directory") is None

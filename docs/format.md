@@ -287,6 +287,43 @@ this short list to build CPython's frozen-module table, so it never scans the MO
   member's whole block (at most `MAX_BLOCK_SIZE`).
 - Tables must be strictly sorted.
 
+## Build information
+
+`build_info` is JSON with sorted keys. Since `schema` 1 (REP-3) it is a manifest of what the
+executable was built from; a reader treats a missing key as "not recorded" (older builds) and
+an unknown `schema` as unreadable. The same inputs give the same `build_info`, whatever the
+project's directory: nothing in it names the builder's paths, time or host.
+
+| Key | Content |
+|-----|---------|
+| `schema` | `1`. Incremented when a key changes meaning, never for a new key |
+| `lock` | `{kind, path, sha256, hashed}`: `kind` is `uv.lock`, `pylock.toml`, `requirements` or `unlocked`; `path` is relative to the project directory (`../uv.lock` for a workspace member), null if unlocked; `sha256` is of the file; `hashed` says whether it pins artifact hashes |
+| `dists` | `[{name, version, source, artifact_sha256}]`, sorted by name |
+| `runtime_inputs` | `{pbs: {release, name, sha256}, sysroot, layout}`: the python-build-standalone archive and the glibc sysroot the runtime was made from, and its layout version |
+| `runtime_components` | versions the runtime's interpreter reports: `openssl`, `sqlite`, `zlib`, `expat`, `libmpdec`. Read once when the runtime is built; an executable that builds another passes them on |
+| `stub_sha256` | SHA-256 of the bytes before the payload (the stub and its zero padding): `head -c <payload_offset> app \| sha256sum`. The same in every app built by the same fsbpyr release; there is no digest of the builder |
+| `settings` | `{entry, fs_packages, allow_system_libs, extras, include_source}`: `fs_packages` is the effective list (the built-in packages and the configured ones) |
+| `project`, `fsbpyr_version`, `git`, `uv`, `glibc`, `system`, `zstd_level`, `native_compression`, `interpreter_reexec`, `runtime`, `runtime_tag`, `python`, `extension_suffixes`, `fsbpyr`, `zstd`, `resources` | as before (D28, D26, NAT-2, D29, D33, D23, D27) |
+
+`dists[].source` is one of:
+
+- `registry`, `git`, `url`, `path`: the lock's source of the package, and `artifact_sha256` is the
+  SHA-256 of the wheel in the lock that shares a tag with the installed wheel's `WHEEL` file.
+  A build from `requirements.txt` or without a lock cannot tell which hash belongs to the
+  installed wheel, so it records no `artifact_sha256`, and sources by PEP 610 (`direct_url.json`).
+- `local`: the project and its editable or directory workspace members. The lock holds no hash
+  for them; uv builds their wheels at staging.
+- `built-from-sdist`: the lock lists wheels for the package (or only an sdist), but none shares
+  a tag with the installed one, so it was built on the build host, pure-Python ones included.
+  `artifact_sha256` is the sdist's, and `backend` is the installed `WHEEL` file's `Generator:`
+  line. These bytes depend on the host's build backend and environment; the build prints their
+  names. Staging sets `SOURCE_DATE_EPOCH` (the user's, else the project's last commit time, else
+  315532800) for them.
+
+`fsbpyr inspect --json` has its own `"schema": 1` (the report's, not `build_info`'s) and, with
+`--files`, a `files` list of `{dist, path, kind, size, sha256}` taken from the RECORD files in
+the payload.
+
 ## Determinism
 
 The same spec always encodes to the same bytes with the same zstd library version. The zstd

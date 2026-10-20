@@ -192,13 +192,17 @@ def build_command(  # noqa: PLR0913  click passes every option by name
 @click.option("--json", "as_json", is_flag=True, help="machine-readable output")
 @click.option("--verify", is_flag=True, help="recompute the file's digest and print its SHA-256")
 @click.option("--all-modules", is_flag=True, help="list every module, not only top-level names")
-def inspect_command(*, binary: Path, as_json: bool, verify: bool, all_modules: bool) -> int:
+@click.option("--files", "list_files", is_flag=True,
+              help="list every packaged file with its kind, size and SHA-256")  # fmt: skip
+def inspect_command(
+    *, binary: Path, as_json: bool, verify: bool, all_modules: bool, list_files: bool
+) -> int:
     _collect_when_due()
     from .inspection import InspectError, as_text, read  # noqa: PLC0415  fast --version
     from .inspection import as_json as json_text  # noqa: PLC0415
 
     try:
-        report = read(binary, verify=verify)
+        report = read(binary, verify=verify, files=list_files)
     except InspectError as exc:
         print(f"fsbpyr: error: {exc}", file=sys.stderr)
         return 1

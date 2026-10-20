@@ -11,13 +11,14 @@ from pathlib import Path
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from .assemble import App, build_temporary, runtime_module_names
-from .classify import Uncounted, _record_path, classify
+from .classify import BUILTIN_FS_PACKAGES, Uncounted, _record_path, classify
 from .closure import InstalledDist, SiteIndex, resolve_entry
 from .config import BuildConfig
 from .elf import ElfError, glibc_requirement, is_elf
+from .manifest import SCHEMA, LockError, built_here, dist_records, lock_record
 from .natives import opened
 from .payload.format import NATIVE_KINDS, ModuleKind
-from .payload.spec import XZ_PRESET, File
+from .payload.spec import XZ_PRESET, Dist, File
 from .payload.spill import Spill
 from .payload.writer import commit
 from .project import LockSource, Project, unpinned_requirements
@@ -163,6 +164,43 @@ def rebuild_on_baseline(  # noqa: PLR0913  the staging, what to rebuild, and off
         return [f"{listed}: building from source against the glibc {glibc} sysroot failed, the "
                 f"build host's builds are packaged: {reason.strip()}"]  # fmt: skip
     return []
+
+
+def settings_record(config: BuildConfig) -> dict[str, object]:
+    """build_info's ``settings``: what the configuration decided about the content, with the
+    packages that must be on disk as they take effect (the built-in ones and the configured)."""
+    return {
+        "entry": config.entry,
+        "fs_packages": sorted(BUILTIN_FS_PACKAGES | set(config.fs_packages)),
+        "allow_system_libs": sorted(config.allowed_system_libs),
+        "extras": sorted(config.extras),
+        "include_source": config.include_source,
+    }
+
+
+def _provenance(  # noqa: PLR0913  what the records are made of, and where to log
+    project: Project,
+    source: LockSource,
+    config: BuildConfig,
+    index: SiteIndex,
+    packaged: Iterable[Dist],
+    *,
+    project_dist: str,
+    log: Callable[[str], None],
+) -> tuple[tuple[str, object], ...]:
+    """build_info's schema, ``lock``, ``dists`` and ``settings``. Dists built here from their
+    sdists are named in one line of the build's output: information, not a warning, so
+    --strict does not fail on it."""
+    try:
+        lock, locked = lock_record(project.directory, source,
+                                   project.lock_path(source, config.requirements))  # fmt: skip
+    except LockError as exc:
+        raise BuildError(str(exc)) from exc
+    dists = dist_records((index.dists[d.name] for d in packaged), locked, project=project_dist)
+    if sdists := built_here(dists):
+        log("built on this host from sdists, not reproducible elsewhere: " + ", ".join(sdists))
+    return (("schema", SCHEMA), ("lock", lock), ("dists", dists),
+            ("settings", settings_record(config)))  # fmt: skip
 
 
 def builder_uv() -> str | None:
@@ -364,11 +402,18 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                 files=content.files,
                 dists=content.dists,
                 build_info=(
+                    *_provenance(
+                        project,
+                        source,
+                        config,
+                        index,
+                        content.dists,
+                        project_dist=dist.name,
+                        log=log,
+                    ),
                     ("project", {"name": dist.name, "version": dist.version}),
                     ("fsbpyr_version", own_version()),  # with the commit (fsbpyr inspect)
                     ("uv", uv_used),  # builds the wheel, installs everything
-                    ("lock", source.value),
-                    ("dists", sorted(f"{d.name}=={d.version}" for d in content.dists)),
                     ("glibc", glibc),
                     (
                         "system",

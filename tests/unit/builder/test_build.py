@@ -13,6 +13,7 @@ import pytest
 from fsbpyr.build import (
     BuildError,
     StrictError,
+    _provenance,
     best_compression_unused,
     build,
     builder_uv,
@@ -27,8 +28,10 @@ from fsbpyr.classify import Uncounted
 from fsbpyr.cli import main
 from fsbpyr.closure import SiteIndex
 from fsbpyr.config import BuildConfig
+from fsbpyr.manifest import SCHEMA
 from fsbpyr.payload.format import FileKind
-from fsbpyr.payload.spec import Blob, File
+from fsbpyr.payload.spec import Blob, Dist, File
+from fsbpyr.project import LockSource, Project
 from fsbpyr.runtime import pins
 from fsbpyr.runtime.sysroot import build_flags
 from fsbpyr.staging import StagingError, StagingPlan
@@ -448,3 +451,33 @@ def test_requirements_without_pins_are_a_warning_even_when_not_strict(
                                         smoke=False))  # fmt: skip
 
     assert any("not pinned with ==" in w and "dep>=1" in w for w in result.warnings)
+
+def test_dists_built_here_from_sdists_are_named_in_one_line_that_is_no_warning(
+    tmp_path: Path,
+) -> None:
+    lock = (
+        'version = 1\n[[package]]\nname = "pure"\nversion = "1.0"\n'
+        'source = { registry = "https://pypi.org/simple" }\n'
+        'sdist = { url = "https://h/pure-1.0.tar.gz", hash = "sha256:' + "a" * 64 + '" }\n'
+        'wheels = [{ url = "https://h/pure-1.0-py3-none-any.whl", hash = "sha256:'
+        + "b" * 64
+        + '" }]\n'
+    )
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "uv.lock").write_text(lock)
+    site = tmp_path / "site"
+    info = site / "pure-1.0.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text("Name: pure\nVersion: 1.0\n")
+    (info / "WHEEL").write_text("Generator: hatchling 1.0\nTag: py2-none-any\n")
+    project = Project.load(tmp_path)
+    lines: list[str] = []
+
+    entries = dict(_provenance(project, LockSource.UV_LOCK, BuildConfig(), SiteIndex.scan(site),
+                               [Dist("pure", info.name, "1.0")], project_dist="app",
+                               log=lines.append))  # fmt: skip
+
+    assert lines == ["built on this host from sdists, not reproducible elsewhere: pure"]
+    assert entries["schema"] == SCHEMA == 1
+    assert entries["dists"][0]["backend"] == "hatchling 1.0"  # type: ignore[index]
+    assert set(entries) == {"schema", "lock", "dists", "settings"}

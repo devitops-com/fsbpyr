@@ -74,6 +74,25 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   protector (`__stack_chk_fail`); dropping `-Wl,-z,now` from the link flags now fails it. The
   end-to-end tests that run built executables also time out after 60 seconds instead of
   hanging a CI job.
+- **`build_info` is a versioned manifest traceable to its inputs (`schema` 1).** It records
+  the lock (`lock`: kind, path relative to the project, SHA-256, whether it carries hashes),
+  every distribution as `{name, version, source, artifact_sha256}`, the runtime's inputs
+  (`runtime_inputs`: python-build-standalone release, name and SHA-256, the sysroot, the
+  runtime layout), the versions of the libraries the runtime carries (`runtime_components`:
+  OpenSSL, SQLite, zlib, expat, libmpdec, read once at `fsbpyr runtime build`), the SHA-256 of
+  the bytes before the payload (`stub_sha256`, the same in every build by the same fsbpyr
+  release) and the effective settings (`settings`). `source` is registry, git, url, path,
+  local (the project and workspace members, which have no hash) or built-from-sdist: with a
+  uv.lock or pylock.toml, a distribution whose installed wheel shares no tag with the wheels
+  the lock lists was built on the build host, pure-Python ones included; it carries the
+  sdist's hash and the build backend (`backend`). `fsbpyr inspect` shows the runtime's library
+  versions and the lock, `--json` has `"schema": 1`, and `inspect --files` lists every
+  packaged file with its kind, size and SHA-256 (`files` in `--json`). docs/format.md
+  describes the schema. Runtimes built by an earlier fsbpyr are built again (runtime layout 8).
+- **A build prints the dists it built from sdists.** "built on this host from sdists, not
+  reproducible elsewhere: X, Y"; it is information, not a warning. `uv` builds them and the
+  project's wheel with `SOURCE_DATE_EPOCH` set to the project's last commit time (1980-01-01
+  outside git), unless the environment already sets it.
 - **A security policy, `SECURITY.md`.** Vulnerabilities are reported privately, as GitHub
   security advisories, and acknowledged within 7 days; only the latest release is supported.
   Every executable carries its own CPython and the libraries linked into it (OpenSSL, SQLite,
@@ -104,6 +123,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   `runtime.json`, for information; they are not part of the runtime id.
 
 ### Changed
+- **`build_info["lock"]` and `["dists"]` changed shape** (see the manifest above): `lock` was
+  the lock's kind as a string, now an object with `kind`; `dists` was a list of
+  `name==version` strings, now a list of objects.
 - **The release toolchain is pinned.** Release CI uses `debian:trixie` by digest, the uv named
   by `tools/release/uv.version` (version and the SHA-256 of its release tarball, checked on
   download) instead of the newest one, and, on tag runs, a snapshot of the Debian archive

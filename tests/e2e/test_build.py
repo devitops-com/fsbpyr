@@ -4,6 +4,7 @@ Needs the cached runtime and, on the first run, network access for the fixtures'
 (the uv cache afterwards).
 """
 
+import hashlib
 import itertools
 import json
 import os
@@ -78,6 +79,12 @@ def test_hello_from_uv_lock(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     report = json.loads(capsys.readouterr().out)
     assert report["verified"] is True and report["modules"]["hello"] == ["hello"]
     assert report["build_info"]["zstd_level"] == ZSTD_LEVEL
+    info = report["build_info"]  # the manifest (REP-3)
+    assert report["schema"] == info["schema"] == 1
+    lock = hashlib.sha256((project / "uv.lock").read_bytes()).hexdigest()
+    assert info["lock"] == {"kind": "uv.lock", "path": "uv.lock", "hashed": True, "sha256": lock}
+    assert {"name": "hello", "version": "1.0.0", "source": "local"} in info["dists"]
+    assert info["runtime_components"]["openssl"].startswith("OpenSSL 3.")
     assert report["shared_libraries"] == [] and "json" in report["runtime_modules"]
 
 
@@ -264,6 +271,12 @@ def test_self_hosting_reaches_a_fixed_point(tmp_path: Path) -> None:
     data = [stage.read_bytes() for stage in stages]
     assert data[1] == data[2], "stage2 and stage3 differ"
     assert data[0] == data[1], "stage1 and stage2 differ"
+    infos = []
+    for stage in stages[:2]:
+        with Executable.open(stage) as exe:
+            infos.append((json.loads(exe.payload.build_info), exe.stub_prefix()))
+    (info, prefix), (other, _) = infos
+    assert info["stub_sha256"] == other["stub_sha256"] == hashlib.sha256(prefix).hexdigest()
     version = _run(stages[2], "--version")  # recorded by the build: the binary has no git
     assert version.stdout == version_string(git_state(ROOT)) + "\n"
     assert not (tmp_path / "c" / "runtimes").exists()  # the binary used its own runtime
