@@ -38,6 +38,7 @@ _SHARED_OBJECT = re.compile(r"\.so(\.\d+)*$")
 _TEST_DIRECTORIES = frozenset({"tests", "test"})
 # .pth files whose code only re-creates what PEP 420 namespaces (and the payload) provide
 _REDUNDANT_PTH = re.compile(r"(-nspkg|^distutils-precedence)\.pth$")
+_EXECUTABLE_MODE = 0o755  # fixed for resources that were executable in the wheel (D27)
 _NATIVE_MODE = 0o755  # fixed: the installer's umask must not leak into the build
 # Packages that need their data files on disk, whatever the configuration says (plan §3.5).
 # Each one was verified to fail without (Phase 6b, fixture datafiles; litellm with aiagent;
@@ -201,12 +202,13 @@ class _Collector:
         self.reads: list[tuple[str, str, int]] = []  # (dist, path, line) reading next to __file__
         self.reached: set[str] = set()  # shared objects some extension's closure loads
         self.fs_directories: tuple[str, ...] = ()  # FS_REQUIRED package directories, with "/"
-        self.large: dict[str, tuple[Path, FileKind, str]] = {}  # rel -> file, kind, dist (D38)
+        self.large: dict[str, tuple[Path, FileKind, str, int]] = {}  # file, kind, dist, mode (D38)
         self.compiler: Compiler | None = None  # modules compiled ahead on workers (D39)
         self._compressor: ThreadPoolExecutor | None = None  # files compressed on threads (D39)
-        self._compressing: deque[tuple[str, FileKind, str, int, Future[tuple[Blob, bytes]]]] = (
-            deque()
-        )
+        # rel, kind, dist, mode, size, compressed blob and digest
+        self._compressing: deque[
+            tuple[str, FileKind, str, int, int, Future[tuple[Blob, bytes]]]
+        ] = deque()
         self._compressing_bytes = 0
 
     def read_pth_files(self, dists: list[InstalledDist]) -> None:
@@ -305,11 +307,13 @@ class _Collector:
         elif names and self._add_module(dist, rel, names, path):
             return
         kind = FileKind.METADATA if rel.startswith(f"{dist.dist_info}/") else FileKind.RESOURCE
+        executable = kind is FileKind.RESOURCE and path.stat().st_mode & 0o100
+        mode = _EXECUTABLE_MODE if executable else 0o644  # files(pkg) / "bin/tool" runs (D27)
         if self.spill is not None and large:  # streamed (D38), with the others (add_large)
-            self.large[rel] = (path, kind, dist.name)
+            self.large[rel] = (path, kind, dist.name, mode)
             self.owners[rel] = dist.name
             return
-        self._add_file(dist, rel, kind, path.read_bytes())
+        self._add_file(dist, rel, kind, path.read_bytes(), mode)
 
     def _add_module(
         self, dist: InstalledDist, rel: str, names: list[tuple[tuple[str, bool], int]], path: Path
@@ -409,10 +413,10 @@ class _Collector:
         pieces on up to 8 threads (D39)."""
         if not self.large or self.spill is None:
             return
-        paths = {rel: path for rel, (path, _, _) in self.large.items()}
+        paths = {rel: path for rel, (path, _, _, _) in self.large.items()}
         blobs = self.spill.compress_files(paths, level=self.level)
-        for rel, (_, kind, dist) in self.large.items():
-            self.files[rel] = File(rel, kind, blobs[rel], dist=dist)
+        for rel, (_, kind, dist, mode) in self.large.items():
+            self.files[rel] = File(rel, kind, blobs[rel], mode=mode, dist=dist)
 
     def add_natives(self, allowed: frozenset[str]) -> None:
         """NATIVE_EXT files (backing an extension module) and NATIVE_LIB files, with closures."""
@@ -429,7 +433,9 @@ class _Collector:
             self.files[rel] = File(rel, kind, blobs[rel], mode=_NATIVE_MODE,
                                    dist=self.owners[rel], closure=needs.get(rel, ()))  # fmt: skip
 
-    def _add_file(self, dist: InstalledDist, rel: str, kind: FileKind, data: bytes) -> None:
+    def _add_file(
+        self, dist: InstalledDist, rel: str, kind: FileKind, data: bytes, mode: int = 0o644
+    ) -> None:
         """A file read whole, compressed on up to 8 threads (D39): in its place once done."""
         self.owners[rel] = dist.name
         future = None if self.compiler is None else self.compiler.compress(data)
@@ -437,16 +443,16 @@ class _Collector:
             if self._compressor is None:
                 self._compressor = ThreadPoolExecutor(THREADS, initializer=pooled_thread)
             future = self._compressor.submit(compressed, data, self.level)
-        self._compressing.append((rel, kind, dist.name, len(data), future))
+        self._compressing.append((rel, kind, dist.name, mode, len(data), future))
         self._compressing_bytes += len(data)
         while self._compressing_bytes > _COMPRESSING:  # bounded memory (D38)
             self._file_done()
 
     def _file_done(self) -> None:
-        rel, kind, dist, size, future = self._compressing.popleft()
+        rel, kind, dist, mode, size, future = self._compressing.popleft()
         self._compressing_bytes -= size
         blob, digest = future.result()
-        self.files[rel] = File(rel, kind, self._kept(blob, digest), dist=dist)
+        self.files[rel] = File(rel, kind, self._kept(blob, digest), mode=mode, dist=dist)
 
     def files_done(self) -> None:
         """Every file _add_file compressed, in its place."""

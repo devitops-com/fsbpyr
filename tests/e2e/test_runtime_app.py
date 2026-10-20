@@ -631,6 +631,37 @@ def test_a_fork_while_a_sync_decodes_leaves_the_child_able_to_read(
     assert result.stdout == "hung 0 of 40\n", result.stderr
 
 
+_RUNS_A_RESOURCE_TOOL = """\
+import os, stat, subprocess
+from importlib.resources import files
+
+def main():
+    tool = files("x") / "bin/tool"
+    path = str(tool)
+    ran = subprocess.run([path], capture_output=True, text=True).stdout.strip()
+    print(os.access(path, os.X_OK), ran)
+    big = str(files("x") / "bin/big")
+    print(oct(stat.S_IMODE(os.stat(big).st_mode)))
+"""
+
+
+def test_an_executable_resource_runs_and_a_large_one_extracts_0500(
+    runtime: Runtime, tmp_path: Path
+) -> None:
+    """RT-3 (D27): resources marked executable keep owner-exec when extracted (never writable)."""
+    script = b"#!/bin/sh\necho tool-ran\n"
+    big = b"#!/bin/sh\n" + bytes(17 << 20)  # over 16 MiB, compressible
+    resources = (File("x/bin/tool", FileKind.RESOURCE, Blob.zstd(script), mode=0o755),
+                 File("x/bin/big", FileKind.RESOURCE, Blob.zstd(big), mode=0o755))  # fmt: skip
+    modules, files = app_content({"x/__init__.py": _RUNS_A_RESOURCE_TOOL})
+    app = tmp_path / "app"
+    build_executable(runtime, App("x", "x:main", modules=modules, files=(*files, *resources)), app)
+
+    result = _run(app, FSBPYR_CACHE_DIR=str(tmp_path / "cache"))
+
+    assert result.stdout == "True tool-ran\n0o500\n", result.stderr
+
+
 _RESIDENT = """\
 import mmap, os, sys
 import _fsbpyr
