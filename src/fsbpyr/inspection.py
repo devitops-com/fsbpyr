@@ -226,6 +226,13 @@ def _system_libraries(report: Report) -> dict[str, dict[str, object]]:
     return {name: entry for name, entry in libraries.items() if isinstance(entry, dict)}
 
 
+def _may_load(report: Report) -> list[str]:
+    """The libraries the application's code may open from the system (a heuristic, since NAT-3)."""
+    system = report.info.get("system")
+    loaded = system.get("may_load") if isinstance(system, dict) else None
+    return sorted(loaded) if isinstance(loaded, dict) else []
+
+
 def _library_line(name: str, entry: dict[str, object]) -> str:
     versions = entry.get("versions")
     if not isinstance(versions, dict) or not versions:
@@ -318,6 +325,7 @@ def as_json(report: Report, *, all_modules: bool = False) -> str:
         "distributions": [{"name": n, "version": v} for n, v in report.dists],
         "settings": report.info.get("settings"),
         "system_libraries": _system_libraries(report),
+        "may_load_from_system": _may_load(report),
         "shared_libraries": report.shared_libraries,
         "extension_modules": report.extension_modules,
         "sizes": _sizes_json(report.sizes),
@@ -449,6 +457,8 @@ def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
     lines += [
         f"system libraries: {len(libraries)}",
         *_columns([_library_line(name, entry) for name, entry in libraries.items()]),
+        *([f"may load from the system (heuristic): {len(may_load)}", *_columns(may_load)]
+          if (may_load := _may_load(report)) else []),
         f"shared libraries: {len(report.shared_libraries)}",
         *_columns(report.shared_libraries),
         f"extension modules: {len(report.extension_modules)}",

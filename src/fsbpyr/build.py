@@ -45,7 +45,7 @@ from .staging import (
     staging_plan,
     uv_version,
 )
-from .system import system_report, target_needs
+from .system import system_info, system_report, target_needs
 from .vcs import git_state, own_version
 
 TARGET_PYTHON = "3.14"
@@ -476,10 +476,7 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                     ("fsbpyr_version", own_version()),  # with the commit (fsbpyr inspect)
                     ("uv", uv_used),  # builds the wheel, installs everything
                     ("glibc", glibc),
-                    (
-                        "system",
-                        {"libraries": libraries},
-                    ),  # libraries the target provides, with versions
+                    ("system", system_info(libraries, content.system)),  # target needs, guesses
                     ("zstd_level", level),  # of the app's content and of every block
                     (
                         "native_compression",

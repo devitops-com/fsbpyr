@@ -16,7 +16,8 @@ _GLIBC = re.compile(r"GLIBC_(\d+)\.(\d+)")
 _NUMERIC = re.compile(r"([A-Z]+)_(\d+(?:\.\d+)*)")  # GLIBCXX_3.4.22, CXXABI_1.3.9, GCC_7.0.0
 _GLIBC_ABI = {"GLIBC_ABI_DT_RELR": (2, 36)}  # version markers that are not release numbers
 _MAX_NAME = 4096
-PT_LOAD, PT_DYNAMIC = 1, 2
+PT_LOAD, PT_DYNAMIC, PT_INTERP = 1, 2, 3
+ET_EXEC = 2
 SHT_NOBITS = 8
 DT_NULL, DT_NEEDED, DT_STRTAB, DT_STRSZ, DT_SONAME, DT_RPATH, DT_RUNPATH = 0, 1, 5, 10, 14, 15, 29
 DT_VERNEED, DT_VERNEEDNUM = 0x6FFFFFFE, 0x6FFFFFFF
@@ -62,6 +63,14 @@ def _segments(data: ElfData) -> list[tuple[int, ...]]:
     if phentsize < _PHDR.size:
         raise ElfError("truncated ELF program headers")
     return [_unpack(_PHDR, data, phoff + i * phentsize) for i in range(phnum)]
+
+
+def is_executable(data: ElfData) -> bool:
+    """Whether an object is a program: ET_EXEC, or a position-independent executable, which is
+    ET_DYN with a PT_INTERP (a shared library has none)."""
+    if _header(data)[0] == ET_EXEC:
+        return True
+    return any(segment[0] == PT_INTERP for segment in _segments(data))
 
 
 def section(data: ElfData, name: str) -> bytes | None:

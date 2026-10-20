@@ -106,7 +106,7 @@ build-constraint-dependencies` (read by `uv sync`, for `uv.lock` projects) or fr
 | `--source / --no-source` | keep the `.py` sources (default) or leave them out: smaller, but tracebacks show no source lines and `inspect.getsource()` fails |
 | `--fast-compression / --no-fast-compression` | zstd level 3 instead of 9 (the standard library's files of 64 KiB and more stay level 9): a faster build, up to ~9% larger for large apps (measured with 0.14.0 and 0.15.0, docs/performance.md) |
 | `--best-compression / --no-best-compression` | native files (extension modules and shared libraries, nothing else) as xz -6 instead of zstd 9: about 11% smaller for an app with numpy and onnxruntime (measured with 0.20.0, docs/performance.md), no change for pure-Python apps, a slower build, and a slower first run, which decodes them into the cache; not with `--fast-compression` |
-| `--hints / --no-hints` | also list packages that may read files next to `__file__` (a guess) |
+| `--hints / --no-hints` | also list packages that may read files next to `__file__`, and system libraries the code may open by name (guesses) |
 | `--interpreter-reexec / --no-interpreter-reexec` | let the app's own children started as `sys.executable -m MODULE` or `-c CODE` run as Python |
 | `--smoke / --no-smoke` | run the new executable once as a smoke test (default) or skip it |
 | `--smoke-args ARGS` | also run the new executable once with ARGS (one string, split like a shell would), for example "--version", and fail the build unless it exits 0; only you know which arguments have no side effects |

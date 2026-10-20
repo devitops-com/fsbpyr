@@ -10,6 +10,7 @@ from fsbpyr.elf import (
     ElfError,
     dynamic_info,
     glibc_requirement,
+    is_executable,
     needed_versions,
     section,
 )
@@ -30,6 +31,20 @@ def test_dynamic_info_reads_needed_paths_and_soname() -> None:
         runpath=("$ORIGIN", "$ORIGIN/../lib"),
         soname="libext.so",
     )
+
+
+@pytest.mark.parametrize(
+    ("executable", "interp", "program"),
+    [(False, False, False), (False, True, True), (True, False, True), (True, True, True)],
+    ids=["library", "pie", "et-exec", "dynamic-et-exec"],
+)
+def test_a_program_is_et_exec_or_has_an_interpreter(
+    executable: bool, interp: bool, program: bool
+) -> None:
+    data = make_elf(needed=("libc.so.6",), executable=executable, interp=interp)
+
+    assert is_executable(data) is program
+    assert dynamic_info(data).needed == ("libc.so.6",)  # the extra header changes nothing else
 
 
 def test_section_reads_a_named_section_by_its_name() -> None:

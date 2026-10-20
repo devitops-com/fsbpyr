@@ -119,3 +119,13 @@ def system_report(stub: bytes, use: SystemUse) -> tuple[dict[str, dict[str, obje
     """The libraries of the build information (sorted), and the warnings for needs above the
     manylinux_2_28 floors."""
     return _merged(use, stub), _over_floor(use)
+
+
+def system_info(libraries: Mapping[str, object], use: SystemUse) -> dict[str, object]:
+    """The build information's ``system``: the libraries the target provides and, when
+    ``--hints`` found any, those the application's Python code may open by name (a heuristic,
+    each with the files that name it; not a need, and no warning)."""
+    info: dict[str, object] = {"libraries": libraries}
+    if use.may_load:
+        info["may_load"] = {lib: sorted(files) for lib, files in sorted(use.may_load.items())}
+    return info

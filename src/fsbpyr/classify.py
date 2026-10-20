@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 
 from .closure import InstalledDist
 from .compiler import Compiled, Compiler, Job, compiled, compressed
-from .elf import ElfError, glibc_requirement, is_elf
+from .elf import ElfError, glibc_requirement, is_elf, is_executable
 from .natives import NativeError, SystemUse, closures, is_extension_module, opened
 from .payload.format import (
     NATIVE_KINDS,
@@ -83,6 +83,11 @@ def _native_blobs_in_memory(
                            strict=True))  # fmt: skip
     return {rel: Blob.from_xz(data, [streams[rel, n] for n in range(len(pieces[rel]))],
                               digest=True) for rel, data in natives.items()}  # fmt: skip
+
+
+def _starts_elf(path: Path) -> bool:
+    with path.open("rb") as file:
+        return is_elf(file.read(4))
 
 
 class ClassifyError(RuntimeError):
@@ -191,6 +196,8 @@ class _Collector:
         self.owners: dict[str, str] = {}  # path -> dist
         self.natives: dict[str, Path] = {}  # ELF shared objects, path -> their file
         self.system = SystemUse()
+        self.elf_resources: dict[str, Path] = {}  # ELF files kept as data: executables, maybe
+        self.executables: dict[str, Path] = {}  # those that are programs (add_natives)
         # Directories that top-level .pth files add to sys.path, in site.py's order.
         self.roots: list[str] = []
         # CPython's order: sys.path entry (site-packages, then .pth directories), then within a
@@ -314,6 +321,8 @@ class _Collector:
         kind = FileKind.METADATA if rel.startswith(f"{dist.dist_info}/") else FileKind.RESOURCE
         executable = kind is FileKind.RESOURCE and path.stat().st_mode & 0o100
         mode = _EXECUTABLE_MODE if executable else 0o644  # files(pkg) / "bin/tool" runs (D27)
+        if executable and _starts_elf(path):
+            self.elf_resources[rel] = path
         if self.spill is not None and large:  # streamed (D38), with the others (add_large)
             self.large[rel] = (path, kind, dist.name, mode)
             self.owners[rel] = dist.name
@@ -334,6 +343,8 @@ class _Collector:
             return False
         if hints:
             self.reads += [(dist.name, rel, line) for line in result.reads]
+            for library in result.libraries:
+                self.system.may_load.setdefault(library, set()).add(rel)
         source = None
         if result.source is not None:
             source = self._kept(result.source, result.source_digest)
@@ -426,17 +437,34 @@ class _Collector:
     def add_natives(self, allowed: frozenset[str]) -> None:
         """NATIVE_EXT files (backing an extension module) and NATIVE_LIB files, with closures."""
         extensions = {m.path for m in self.modules.values() if m.kind is ModuleKind.EXTENSION}
+        self.executables = self._executables()
         try:
-            needs = closures(self.natives, extensions, allowed=allowed,
-                             warn=self.warnings.append, system=self.system)  # fmt: skip
+            needs = closures(self.natives, extensions, allowed=allowed, warn=self.warnings.append,
+                             system=self.system, executables=self.executables)  # fmt: skip
         except NativeError as exc:
             raise ClassifyError(str(exc)) from exc
         self.reached = {member for members in needs.values() for member in members}
+        known = {PurePosixPath(rel).name for rel in self.natives} | set(self.system.needed_by)
+        for library in known & set(self.system.may_load):  # bundled or needed: not a guess
+            del self.system.may_load[library]
         blobs = _native_blobs(self.natives, self.level, self.xz_natives, self.spill)
         for rel in self.natives:
             kind = FileKind.NATIVE_EXT if rel in extensions else FileKind.NATIVE_LIB
             self.files[rel] = File(rel, kind, blobs[rel], mode=_NATIVE_MODE,
                                    dist=self.owners[rel], closure=needs.get(rel, ()))  # fmt: skip
+
+    def _executables(self) -> dict[str, Path]:
+        """The ELF files kept as data that are programs, not libraries or other data."""
+        found = {}
+        for rel, path in self.elf_resources.items():
+            with opened(path) as data:
+                try:
+                    program = is_executable(data)
+                except ElfError:
+                    continue  # not an x86-64 ELF64 file: data to us
+            if program:
+                found[rel] = path
+        return found
 
     def _add_file(
         self, dist: InstalledDist, rel: str, kind: FileKind, data: bytes, mode: int = 0o644
@@ -499,6 +527,7 @@ class _Collector:
         if self.hints:
             self._hint_file_reads()
         self._hint_unused_natives()
+        self._hint_executables()
 
     def _hint_file_reads(self) -> None:
         # (directory, name) of regular packages; sorted, the outermost container comes first
@@ -538,6 +567,26 @@ class _Collector:
                     f"{dist}: {', '.join(named[:3])}{' ...' if len(named) > 3 else ''} loaded by "
                     f"no extension module but named by its Python code; {self._remedy(named)}"
                 ))  # fmt: skip
+
+    def _hint_executables(self) -> None:
+        for rel in sorted(self.executables):
+            if rel.startswith(self.fs_directories):
+                continue  # extracted when its package is imported
+            self.warnings.append(Uncounted(
+                f"{self.owners[rel]}: {rel} is an executable; "
+                f"{self._executable_remedy(rel)}"
+            ))  # fmt: skip
+
+    def _executable_remedy(self, rel: str) -> str:
+        """What to do if the package runs it from a path built from ``__file__``: a path from
+        importlib.resources needs nothing (D27), and fs-packages takes only regular packages."""
+        top = rel.partition("/")[0]
+        module = self.modules.get(top)
+        if module is not None and module.kind is ModuleKind.PACKAGE:
+            where = f'add "{top}" to fs-packages'
+        else:
+            where = "no fs-packages value covers it (it is not inside a regular package)"
+        return f"if the package runs it from a path built from __file__, {where}"
 
     def _remedy(self, libraries: list[str]) -> str:
         """What to do if the code loads them itself (ctypes): fs-packages takes only regular

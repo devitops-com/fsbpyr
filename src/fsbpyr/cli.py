@@ -106,8 +106,8 @@ def cli(ctx: click.Context) -> None:
                    "pure-Python apps, a slower build, and a slower first run, which decodes "
                    "them into the cache; not with `--fast-compression`")  # fmt: skip
 @click.option("--hints/--no-hints", default=None,
-              help="also list packages that may read files next to `__file__` "
-                   "(a guess)")  # fmt: skip
+              help="also list packages that may read files next to `__file__`, "
+                   "and system libraries the code may open by name (guesses)")  # fmt: skip
 @click.option("--interpreter-reexec/--no-interpreter-reexec", default=None,
               help="let the app's own children started as `sys.executable -m MODULE` or "
                    "`-c CODE` run as Python")  # fmt: skip

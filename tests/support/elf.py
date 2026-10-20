@@ -16,8 +16,12 @@ def make_elf(
     dynamic: bool = True,
     versions: tuple[tuple[str, tuple[str, ...]], ...] = (),
     comment: bytes | None = None,
+    executable: bool = False,
+    interp: bool = False,
 ) -> bytes:
-    """Minimal ELF64 shared object: one PT_LOAD over the file (vaddr == offset + 0x1000)."""
+    """Minimal ELF64 shared object: one PT_LOAD over the file (vaddr == offset + 0x1000).
+    ``executable`` makes it ET_EXEC, ``interp`` adds a PT_INTERP (with both: a PIE is
+    ``interp`` alone)."""
     strings = bytearray(b"\0")
 
     def add(text: str) -> int:
@@ -37,7 +41,7 @@ def make_elf(
         for j, name in enumerate(names):
             verneed += struct.pack("<IHHII", 0, 0, 0, add(name), 0 if j == len(names) - 1 else 16)
     base = 0x1000
-    phoff, phnum = 64, 2
+    phoff, phnum = 64, 3 if interp else 2
     strtab_off = phoff + 56 * phnum
     verneed_off = strtab_off + len(strings) + (-len(strings) % 8)
     dyn_off = verneed_off + len(verneed)
@@ -47,11 +51,15 @@ def make_elf(
     dyn = b"".join(struct.pack("<qQ", tag, value) for tag, value in entries)
     size = dyn_off + len(dyn)
     header = b"\x7fELF" + bytes([2, 1, 1]) + bytes(9)
-    header += struct.pack("<HHIQQQIHHHHHH", 3, machine, 1, 0, phoff, 0, 0, 64, 56, phnum, 64, 0, 0)
+    e_type = 2 if executable else 3
+    header += struct.pack("<HHIQQQIHHHHHH", e_type, machine, 1, 0, phoff, 0, 0, 64, 56, phnum,
+                          64, 0, 0)  # fmt: skip
     load = struct.pack("<IIQQQQQQ", 1, 5, 0, base, base, size, size, 0x1000)
     dyn_seg = struct.pack("<IIQQQQQQ", 2 if dynamic else 4, 6, dyn_off, base + dyn_off,
                           base + dyn_off, len(dyn), len(dyn), 8)  # fmt: skip
-    image = bytearray(header + load + dyn_seg + strings)
+    interp_seg = struct.pack("<IIQQQQQQ", 3, 4, strtab_off, base + strtab_off, base + strtab_off,
+                             1, 1, 1) if interp else b""  # fmt: skip
+    image = bytearray(header + load + dyn_seg + interp_seg + strings)
     image.extend(bytes(verneed_off - len(image)))
     image += verneed
     image += dyn
