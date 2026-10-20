@@ -1,0 +1,8 @@
+[[command]]
+argv = ["work/test_sample.py"]
+
+[[command]]
+argv = ["work/test_sample.py", "--shout"]
+
+[[command]]
+argv = ["work/test_failing.py"]

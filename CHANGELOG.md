@@ -11,6 +11,13 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Added
+- **A corpus of real applications is built and compared with their venvs.** `tests/corpus`
+  holds 11 small projects, one per risk class (black, pytest with a pluggy plugin, alembic,
+  pandas, Pillow, lxml, scipy, Flask, setuptools' vendored packages, gnureadline, psycopg), and
+  `tests/fixtures/projects/plugins` a host with two plugin distributions. `full-suite.yml` builds
+  each and runs its commands in a venv and in the executable; the log ends with the false-success
+  count and the first-build success rate. The corpus found one failure, listed in
+  `docs/compatibility.md`: black's mypyc-compiled package cannot import its plain modules.
 - **CI runs the whole test suite on every push to main, nightly and weekly, and a release
   needs it.** The new `full-suite.yml` workflow runs everything but the portability tests as an
   unprivileged user in a privileged Debian trixie container with rootless podman, so the

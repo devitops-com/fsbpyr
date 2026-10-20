@@ -1,0 +1,5 @@
+[[command]]
+argv = ["history"]
+
+[[command]]
+argv = ["upgrade"]

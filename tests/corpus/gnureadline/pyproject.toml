@@ -1,0 +1,13 @@
+[project]
+name = "corpus-gnureadline"
+version = "1.0.0"
+description = "fsbpyr corpus app: gnureadline"
+requires-python = ">=3.12"
+dependencies = ["gnureadline>=8.2"]
+
+[project.scripts]
+corpus-gnureadline = "corpus_gnureadline.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

@@ -1,0 +1,20 @@
+[project]
+name = "plugins"
+version = "1.0.0"
+description = "fsbpyr test fixture: a host and two plugin distributions (entry points, a PEP 420 namespace)"
+requires-python = ">=3.12"
+dependencies = ["plugin-alpha", "plugin-beta"]
+
+[project.scripts]
+plugins = "host.cli:main"
+
+[tool.uv.sources]
+plugin-alpha = { path = "plugin-alpha" }
+plugin-beta = { path = "plugin-beta" }
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "host"

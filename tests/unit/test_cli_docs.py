@@ -412,6 +412,12 @@ def test_compatibility_checks_table_is_the_compat_matrix() -> None:
     assert set(_FIRST_CELL.findall(text)) == set(MATRIX)
 
 
+def test_compatibility_corpus_table_is_the_corpus_directories() -> None:
+    from ..support.corpus import apps  # noqa: PLC0415
+
+    assert _first_column("Tested on real applications") == set(apps())
+
+
 def test_compatibility_quotes_only_messages_the_sources_can_compose() -> None:
     sources = "\n".join(
         _LITERAL_JOIN.sub("", path.read_text())

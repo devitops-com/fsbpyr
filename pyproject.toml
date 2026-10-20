@@ -50,7 +50,7 @@ fail_under = 92.75
 [tool.ruff]
 line-length = 100
 target-version = "py314"
-extend-exclude = ["spikes"]
+extend-exclude = ["spikes", "tests/corpus/*/work"]  # work/ holds the apps' own inputs
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF", "S", "PL"]
@@ -59,6 +59,7 @@ ignore = ["PLR2004"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S302", "S603", "PLR0913", "PLR0917"]
 "tests/fixtures/projects/**" = ["PLC0415", "S701"]  # lazy imports on purpose; text templates
+"tests/corpus/**" = ["PLC0415", "S701", "E402"]  # the same: apps of the corpus
 "src/fsbpyr/boot/**" = ["S302"]  # unmarshals code from its own payload
 "src/fsbpyr/runtime/**" = ["S603"]  # runs the pinned interpreter and the located toolchain
 "src/fsbpyr/staging.py" = ["S603"]  # runs uv with argument lists, never a shell
@@ -68,7 +69,7 @@ ignore = ["PLR2004"]
 strict = true
 python_version = "3.14"
 files = ["src", "tests"]
-exclude = ["^tests/fixtures/"]  # fixture projects use their own dependencies
+exclude = ["^tests/(fixtures|corpus)/"]  # fixture projects use their own dependencies
 mypy_path = "stubs"
 
 [[tool.mypy.overrides]]
