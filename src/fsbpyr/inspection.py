@@ -26,6 +26,7 @@ from .elf import ElfError, section
 from .natives import init_symbol
 from .payload.format import NATIVE_KINDS, NONE, FileKind, PayloadError
 from .payload.reader import Executable, FileRecord, Payload
+from .sizes import PARTS, Sizes, measure
 from .system import target_needs
 from .vcs import version_string
 
@@ -68,6 +69,7 @@ class Report:
     sha256: str = ""  # hex: plain SHA-256 of the whole file, as attestations name it; --verify only
     toolchain: tuple[str, ...] = ()  # the stub's .comment lines: compilers and linker that made it
     entrypoint: str = ""
+    sizes: Sizes | None = None
     files: tuple[FileEntry, ...] | None = None  # None unless asked for (--files)
 
 
@@ -184,6 +186,7 @@ def read(path: Path, *, verify: bool = False, files: bool = False) -> Report:
                 sha256=_file_sha256(path) if verify else "",
                 toolchain=_toolchain(executable.stub_prefix()),
                 entrypoint=payload.entrypoint,
+                sizes=measure(executable),
                 files=_record_entries(payload) if files else None,
             )  # fmt: skip
     except PayloadError as exc:
@@ -271,6 +274,22 @@ def _provenance(info: dict[str, object]) -> list[str]:
     return lines
 
 
+def _setting_lines(info: dict[str, object]) -> list[str]:
+    """The build options REP-3 recorded in ``settings``; none for builds before it."""
+    settings = info.get("settings")
+    if not isinstance(settings, dict):
+        return []
+    lines = []
+    for label, key in (("extras", "extras"), ("fs pkgs", "fs_packages"),
+                       ("allow libs", "allow_system_libs")):  # fmt: skip
+        value = settings.get(key)
+        if isinstance(value, list):
+            lines.append(f"{label:<10} {_shown(', '.join(map(str, value))) or '(none)'}")
+    if isinstance(settings.get("include_source"), bool):
+        lines.append(f"sources    {'kept' if settings['include_source'] else 'left out'}")
+    return lines
+
+
 def _tops(names: list[str]) -> list[str]:
     return sorted({name.partition(".")[0] for name in names})
 
@@ -297,9 +316,11 @@ def as_json(report: Report, *, all_modules: bool = False) -> str:
         "sha256": report.sha256 or None,
         "verified": report.verified or None,
         "distributions": [{"name": n, "version": v} for n, v in report.dists],
+        "settings": report.info.get("settings"),
         "system_libraries": _system_libraries(report),
         "shared_libraries": report.shared_libraries,
         "extension_modules": report.extension_modules,
+        "sizes": _sizes_json(report.sizes),
         "all_modules": all_modules,  # modules lists every module, else top-level names
         "modules": report.modules if all_modules else _top_level(report),
         "runtime_modules": report.runtime if all_modules else _tops(report.runtime),
@@ -311,6 +332,18 @@ def as_json(report: Report, *, all_modules: bool = False) -> str:
             for f in report.files
         ]
     return json.dumps(document, indent=2)
+
+
+def _sizes_json(sizes: Sizes | None) -> dict[str, object] | None:
+    if sizes is None:
+        return None
+    return {
+        "stub": sizes.stub, "stub_padding": sizes.stub_padding,
+        "payload_header": sizes.payload_header, "tables": sizes.tables,
+        "blob_padding": sizes.blob_padding, "runtime": sizes.runtime,
+        "distributions": sizes.distributions, "unreferenced": sizes.unreferenced,
+        "total": sizes.total,
+    }  # fmt: skip
 
 
 def _columns(items: list[str]) -> list[str]:
@@ -355,6 +388,28 @@ def _every_module(report: Report) -> list[str]:
             *_columns(report.runtime)]  # fmt: skip
 
 
+def _size_lines(sizes: Sizes | None) -> list[str]:
+    """Stored bytes by part; the rows add up to the file less its trailer."""
+    if sizes is None:
+        return []
+    rows = [("stub", sizes.stub), ("zero padding to the page boundary", sizes.stub_padding),
+            ("payload header", sizes.payload_header), ("index and string tables", sizes.tables),
+            ("blob alignment padding", sizes.blob_padding),
+            ("standard library and boot modules", sizes.runtime)]
+    if sizes.unreferenced:
+        rows.append(("unreferenced blobs", sizes.unreferenced))
+    lines = ["stored bytes (without the trailer):",
+             *(f"{_INDENT}{label:<36}{count:>13,}" for label, count in rows)]  # fmt: skip
+    width = max((len(_shown(name)) for name in sizes.distributions), default=0)
+    if sizes.distributions:
+        head = "".join(f"{part:>13}" for part in PARTS)
+        lines.append(f"{_INDENT}{'distribution':<{max(width, 12)}}{head}")
+    for name, parts in sizes.distributions.items():
+        lines.append(f"{_INDENT}{_shown(name):<{max(width, 12)}}"
+                     + "".join(f"{parts[part]:>13,}" for part in PARTS))  # fmt: skip
+    return [*lines, f"{_INDENT}{'total':<36}{sizes.total:>13,}"]
+
+
 def _file_lines(report: Report) -> list[str]:
     if report.files is None:
         return []
@@ -386,6 +441,7 @@ def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
         first, *rest = (_shown(line) for line in report.toolchain)
         lines += [f"toolchain  {first}", *(f"           {line}" for line in rest)]
     lines += _provenance(report.info)
+    lines += _setting_lines(report.info)
     libraries = _system_libraries(report)
     needs = target_needs(libraries, glibc if isinstance(glibc, str) else None)
     lines += [f"entry      {_shown(report.entrypoint)}"]
@@ -399,4 +455,4 @@ def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
         *_columns(report.extension_modules),
     ]
     lines += _every_module(report) if all_modules else _modules_by_distribution(report)
-    return lines + _file_lines(report)
+    return lines + _size_lines(report.sizes) + _file_lines(report)

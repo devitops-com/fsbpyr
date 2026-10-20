@@ -322,7 +322,9 @@ project's directory: nothing in it names the builder's paths, time or host.
 
 `fsbpyr inspect --json` has its own `"schema": 1` (the report's, not `build_info`'s) and, with
 `--files`, a `files` list of `{dist, path, kind, size, sha256}` taken from the RECORD files in
-the payload.
+the payload. `settings` is
+`build_info`'s, and `sizes` is the stored size by part (see docs/performance.md, "Where the
+bytes go"); neither changes the format.
 
 ## Determinism
 

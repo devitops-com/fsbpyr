@@ -53,6 +53,13 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   The job's result is part of the run that `make release` and the publish job require. The
   images now run with `--network=none`. `FSBPYR_PORTABILITY_APPS` makes the test use prebuilt
   apps and no runtime.
+- **`fsbpyr inspect` shows the build options and where the bytes go.** The text output has
+  `extras`, `fs pkgs`, `allow libs` and `sources` lines from the build information's
+  `settings`, and a "stored bytes" table: the stub, the padding to the page boundary, the
+  payload header, the index and string tables, the blob alignment padding, the standard library
+  and boot modules, and per distribution its code, sources, resources and natives. The rows add
+  up to the file's size less the trailer. `--json` has `settings` and `sizes`. docs/performance.md
+  has the table for `hello`, `heavy` and fsbpyr.
 - **`make test-container` runs the whole test suite but the portability tests in a container.**
   The Containerfile's new `test` stage (its first stage is now named `build`, which `make
   bootstrap` selects) adds what the suite needs beyond a build: the sanitizer runtimes,

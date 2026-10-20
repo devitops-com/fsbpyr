@@ -14,14 +14,25 @@ import fsbpyr
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.cli import main
 from fsbpyr.payload.convert import spec_from_payload
-from fsbpyr.payload.format import TRAILER, TRAILER_MAGIC, FileKind, ModuleKind, PayloadError
+from fsbpyr.payload.format import (
+    HEADER_SIZE,
+    TRAILER,
+    TRAILER_MAGIC,
+    TRAILER_SIZE,
+    FileKind,
+    ModuleKind,
+    PayloadError,
+)
 from fsbpyr.payload.reader import Executable, Payload
 from fsbpyr.payload.spec import Blob, Dist, File, Module
 from fsbpyr.payload.writer import write_executable
+from fsbpyr.sizes import measure
 
 from ..support.elf import make_elf
 from .boot.conftest import FAKE_RUNTIME
 
+SETTINGS = {"entry": "aiagent.cli:main", "fs_packages": ["certifi"],
+            "allow_system_libs": ["libz.so.1"], "extras": ["fast"], "include_source": False}
 COMMIT = "4f9771de" + "0" * 32
 DISTS = (Dist("aiagent", "aiagent-0.8.1.dist-info", "0.8.1"),
          Dist("click", "click-8.2.1.dist-info", "8.2.1"),
@@ -248,6 +259,7 @@ def test_json_describes_everything(tmp_path: Path, capsys: pytest.CaptureFixture
         tmp_path, ("project", {"name": "aiagent", "version": "0.8.1"}),
         ("git", {"commit": COMMIT, "tag": "v0.8.1"}), ("fsbpyr_version", "0.3.0-1a2b3c4d"),
         ("uv", "0.13.1"), ("glibc", "2.28"),
+        ("settings", SETTINGS),
         ("system", {"libraries": {"libstdc++.so.6": {"needed_by": [EXT],
                                                       "versions": {"GLIBCXX": "3.4.22"}}}}),
     )  # fmt: skip
@@ -268,6 +280,16 @@ def test_json_describes_everything(tmp_path: Path, capsys: pytest.CaptureFixture
     assert report["modules"]["pyyaml"] == ["yaml"] and report["all_modules"] is False
     assert report["runtime_modules"] == ["_fsbpyr_boot", "_fsbpyr_rt"]
     assert report["build_info"]["git"]["tag"] == "v0.8.1"
+    assert report["settings"] == SETTINGS
+    sizes = report["sizes"]
+    assert sizes["total"] == executable.stat().st_size - TRAILER_SIZE
+    assert sizes["payload_header"] == HEADER_SIZE and sizes["stub_padding"] > 0
+    assert sizes["unreferenced"] == 0 and sizes["runtime"] > 0
+    assert sizes["distributions"]["pyyaml"]["natives"] > 0
+    plain = ("stub", "stub_padding", "payload_header", "tables", "blob_padding", "runtime",
+             "unreferenced")  # fmt: skip
+    owned = sum(sum(parts.values()) for parts in sizes["distributions"].values())
+    assert sum(sizes[key] for key in plain) + owned == sizes["total"]
 
 
 def _lines(capsys: pytest.CaptureFixture[str], executable: Path) -> list[str]:
@@ -638,3 +660,46 @@ def test_licenses_stands_alone_and_rejects_other_files(
     assert "not an executable fsbpyr built" in capsys.readouterr().err
     assert main(["inspect", "--licenses", str(tmp_path / "missing")]) == 1
     assert "cannot read" in capsys.readouterr().err
+
+
+def test_text_shows_the_settings_and_the_sizes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    executable = _executable(tmp_path, ("settings", SETTINGS))
+
+    lines = _lines(capsys, executable)
+
+    assert "extras     fast" in lines and "fs pkgs    certifi" in lines
+    assert "allow libs libz.so.1" in lines and "sources    left out" in lines
+    assert "stored bytes (without the trailer):" in lines
+    total = executable.stat().st_size - TRAILER_SIZE
+    assert any(line.strip().startswith("total") and f"{total:,}" in line for line in lines)
+
+
+def test_older_builds_without_settings_show_none(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    executable = _executable(tmp_path)
+
+    assert main(["inspect", "--json", str(executable)]) == 0
+
+    assert json.loads(capsys.readouterr().out)["settings"] is None
+    assert not any(line.startswith("extras") for line in _lines(capsys, executable))
+
+
+def test_sizes_add_up_for_blocks_and_shared_blobs(tmp_path: Path) -> None:
+    same = Blob.code(b"x" * 300)  # one blob, owned by two modules: the first path takes it
+    modules = (Module("a", "a.py", ModuleKind.MODULE, code=same, dist="aiagent"),
+               Module("b", "b.py", ModuleKind.MODULE, code=same, dist="click"),
+               Module("c", "c.py", ModuleKind.MODULE, code=Blob.code(b"y" * 1000),
+                      dist="click"))  # fmt: skip
+    app = App("aiagent", "a:main", dists=DISTS[:2], modules=modules)
+    out = tmp_path / "aiagent"
+    build_executable(FAKE_RUNTIME, app, out)
+
+    with Executable.open(out) as executable:
+        sizes = measure(executable)
+
+    assert sizes.total == out.stat().st_size - TRAILER_SIZE
+    assert sizes.unreferenced == 0
+    assert sizes.distributions["aiagent"]["code"] > 0

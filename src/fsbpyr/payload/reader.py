@@ -395,6 +395,11 @@ class Payload:
         """Modules the launcher hands to CPython's frozen-module table before initialization."""
         return tuple(self._modules[i] for i in self._startup)
 
+    @property
+    def data_start(self) -> int:
+        """Where the tables end; the blob data lies after it, the first blob aligned."""
+        return self._data_start
+
     def blobs(self) -> tuple[BlobRecord, ...]:
         return self._blobs
 
