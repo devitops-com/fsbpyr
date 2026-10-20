@@ -181,14 +181,17 @@ jobs:
 
       # tests/integration/test_pbs_stdlib_versions.py compares the distributions of all three
       # versions, and the bootstrap built the runtime of this entry's only; the full suite
-      # expects no skip.
+      # expects no skip. tests/e2e/test_dispatch.py builds fsbpyr on another Python, which
+      # needs that Python installed as well.
       - name: The other versions' runtimes
         env:
           MATRIX_PYTHON: ${{ matrix.python }}
         run: |
           for version in 3.12 3.13 3.14; do
-            [ "$version" = "$MATRIX_PYTHON" ] \
-              || as-tester $UV_ENV $UV_RUN fsbpyr runtime build --python "$version"
+            [ "$version" = "$MATRIX_PYTHON" ] || {
+              as-tester uv python install "$version"
+              as-tester $UV_ENV $UV_RUN fsbpyr runtime build --python "$version"
+            }
           done
 
       - name: Upload the executable
@@ -316,7 +319,7 @@ jobs:
         run: |
           chmod +x dist/fsbpyr$SUFFIX
           uv python install "$(cat .python-version)" "$MATRIX_PYTHON"
-          tools/portability-apps.sh dist/fsbpyr$SUFFIX "$RUNNER_TEMP/apps"
+          tools/portability-apps.sh dist/fsbpyr$SUFFIX "$RUNNER_TEMP/apps" "$MATRIX_PYTHON"
 
       # FSBPYR_TESTS_REQUIRE_ALL=portability: no skip is expected.
       - name: The portability tests

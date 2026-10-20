@@ -74,14 +74,14 @@ def running_executable() -> Path:
     return Path(os.path.realpath("/proc/self/exe"))
 
 
-def _release_numbers(text: str) -> tuple[int, int, int] | None:
+def release_numbers(text: str) -> tuple[int, int, int] | None:
     match = _RELEASE.fullmatch(text)
     return None if match is None else (int(match[1]), int(match[2]), int(match[3]))
 
 
 def own_release() -> tuple[int, int, int]:
     """The release number of this executable; a developer build is refused."""
-    numbers = _release_numbers(own_version().partition("-")[0])
+    numbers = release_numbers(own_version().partition("-")[0])
     if numbers is None:
         raise UpdateError(
             f"this is a developer build ({own_version()}); only released executables update "
@@ -110,7 +110,7 @@ def latest_release(asset: str) -> Release:
         assets = {a["name"]: a["browser_download_url"] for a in document["assets"]}
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise UpdateError(f"cannot read the latest release from {api}: {exc}") from exc
-    numbers = _release_numbers(tag) if isinstance(tag, str) else None
+    numbers = release_numbers(tag) if isinstance(tag, str) else None
     if numbers is None:
         raise UpdateError(f"the latest release has no vX.Y.Z tag ({tag!r})")
     name = f"{asset}.xz"
@@ -119,7 +119,7 @@ def latest_release(asset: str) -> Release:
     return Release(tag, numbers, assets[name])
 
 
-def _unpack(url: str, target: Path) -> None:
+def unpack(url: str, target: Path) -> None:
     """``url`` (an xz file), unpacked as it arrives into ``target``."""
     decoder = lzma.LZMADecompressor(format=lzma.FORMAT_XZ)
     try:
@@ -201,7 +201,7 @@ def update(
     new = Path(name)
     staged: list[tuple[Path, Path]] = []
     try:
-        _unpack(release.asset_url, new)
+        unpack(release.asset_url, new)
         new.chmod(stat.S_IMODE(executable.stat().st_mode))
         try:
             read(new, verify=True)

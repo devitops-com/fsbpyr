@@ -10,6 +10,8 @@ from collections.abc import Iterator
 
 import pytest
 
+from fsbpyr.project import Project
+
 # The skips each list's environment cannot avoid, each entry a nodeid or the start of a reason
 # (some reasons carry runtime text).
 EXPECTED_SKIPS = {
@@ -30,9 +32,11 @@ EXPECTED_SKIPS = {
         "needs set-id bits",
     ),
     # `make test-container`: the Containerfile's `test` stage, as `tester` (uid 1000, one
-    # supplementary group) with no podman
+    # supplementary group) with no podman, and the Python of .python-version only
     "container": (
         "PBS distribution for",
+        "needs Python ",  # the variant a dispatch test builds: another Python, its runtime
+        "needs the Python ",
         "3.12's takes one resource name",
         "needs podman",
         "needs a mount that allows set-id bits",
@@ -54,6 +58,27 @@ _skips: list[tuple[str, str]] = []  # this run's, as (nodeid, reason)
 def _no_collection() -> Iterator[None]:
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv("FSBPYR_GC", "0")
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _build_for_own_python(request: pytest.FixtureRequest) -> Iterator[None]:
+    """A build in a test is for the Python the tests run on, as `--python` would say: the
+    fixture projects' `requires-python = ">=3.12"` would hand them to the 3.12 variant
+    (Phase 9). A test marked `version_rule` runs the rule itself."""
+    if request.node.get_closest_marker("version_rule"):
+        yield
+        return
+    from fsbpyr import pyversion  # noqa: PLC0415
+
+    resolve = pyversion.resolve
+
+    def own_python(project: Project, requested: str | None, *, own: str) -> pyversion.Choice:
+        return resolve(project, requested or own, own=own)
+
+    # not the monkeypatch fixture: using it would change the order other fixtures end in
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(pyversion, "resolve", own_python)
         yield
 
 

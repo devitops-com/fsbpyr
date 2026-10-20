@@ -25,9 +25,11 @@ ifeq ($(origin PYTHON),command line)
 export UV_PROJECT_ENVIRONMENT := .venv-$(PYTHON)
 UVRUN := $(UV) run --python $(PYTHON) --locked
 BIN   := dist/fsbpyr-$(PYTHON)
+PYTHON_MINOR := $(PYTHON)
 else
 UVRUN := $(UV) run --locked
 BIN   := dist/fsbpyr
+PYTHON_MINOR := $(shell cut -d. -f1,2 .python-version)
 endif
 
 .PHONY: help bootstrap build install uninstall test test-ci test-container test-portability check release clean
@@ -58,7 +60,7 @@ build: ## Build dist/fsbpyr with the installed fsbpyr (make bootstrap installs o
 	@bash tools/bootstrap.sh --uv
 ifeq ($(origin PYTHON),command line)
 	$(UVRUN) fsbpyr runtime build --python $(PYTHON)
-	$(UVRUN) fsbpyr build . -o $(BIN)
+	$(UVRUN) fsbpyr build . --python $(PYTHON) -o $(BIN)
 else
 	@fsbpyr="$$(command -v $(BINDIR)/fsbpyr || command -v fsbpyr || true)"; \
 	if [ -z "$$fsbpyr" ]; then \
@@ -131,7 +133,7 @@ test-container: ## Run the whole suite but the portability tests in a Debian tri
 # FSBPYR_TESTS_REQUIRE_ALL=portability fails any skip. Run `make build` first.
 test-portability: ## Run the portability matrix on 13 distributions (podman, dist/fsbpyr)
 	rm -rf dist/portability-apps
-	tools/portability-apps.sh $(BIN) dist/portability-apps
+	tools/portability-apps.sh $(BIN) dist/portability-apps $(PYTHON_MINOR)
 	FSBPYR_PORTABILITY_APPS="$(CURDIR)/dist/portability-apps" FSBPYR_TESTS_REQUIRE_ALL=portability \
 		$(UVRUN) pytest tests/e2e/test_portability.py
 

@@ -114,23 +114,26 @@ class Project:
             return self.requirements_path(requirements)
         return None
 
-    def python_version_mismatch(self, python: str) -> str | None:
-        """The .python-version pin if it names a different major.minor than ``python``."""
+    def python_pin(self) -> str | None:
+        """What the first line of ``.python-version`` pins ("3.12", "3.12.4"; the part after
+        ``@`` of a uv-style ``cpython@3.12``), if the file exists and names something."""
         pin_file = self.directory / ".python-version"
         if not pin_file.is_file():
             return None
         lines = pin_file.read_text().split()
-        pin = lines[0].rpartition("@")[2] if lines else ""
-        return None if pin in ("", python) or pin.startswith(python + ".") else pin
+        return lines[0].rpartition("@")[2] or None if lines else None
 
-    def check_python(self, version: str) -> None:
+    def specifiers(self) -> SpecifierSet | None:
+        """``requires-python`` as a specifier set; None when the project has none."""
         if self.requires_python is None:
-            return
+            return None
         try:
-            allowed = SpecifierSet(self.requires_python)
+            return SpecifierSet(self.requires_python)
         except InvalidSpecifier as exc:
             raise ProjectError(f"invalid requires-python {self.requires_python!r}") from exc
-        if version not in allowed:
+
+    def check_python(self, version: str) -> None:
+        if (allowed := self.specifiers()) is not None and version not in allowed:
             raise ProjectError(
                 f"requires-python {self.requires_python!r} excludes the runtime's Python {version}"
             )

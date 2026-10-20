@@ -37,7 +37,7 @@ jobs:
 
       - name: Build the app
         run: |
-          "$RUNNER_TEMP/fsbpyr" build tests/fixtures/projects/hello -o "$RUNNER_TEMP/hello"
+          "$RUNNER_TEMP/fsbpyr" build tests/fixtures/projects/hello --python 3.14 -o "$RUNNER_TEMP/hello"
           "$RUNNER_TEMP/fsbpyr" inspect --verify "$RUNNER_TEMP/hello"
 
       # The attestation names the file's plain SHA-256, which `fsbpyr inspect --verify` prints.

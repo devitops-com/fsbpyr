@@ -36,6 +36,7 @@ tmp_path_retention_policy = "failed"
 markers = [
     "slow: takes more than a few seconds",
     "sanitized: also runs with the ASan/UBSan launcher (D38)",
+    "version_rule: runs the Python version rule as it is (other tests build for the Python they run on)",
 ]
 
 [tool.coverage.run]

@@ -30,6 +30,7 @@ class BuildConfig:
     best_compression: bool = False  # native files as xz -6 (D33): smaller, slower to build
     interpreter_reexec: bool = False  # -m/-c from the app's own children run as Python (D23)
     strict: bool = False  # a warning about the app, or an unlocked build, fails the build
+    python: str | None = None  # "3.12": the Python to build for; None: the version rule decides
 
     def __post_init__(self) -> None:
         if self.fast_compression and self.best_compression:
@@ -124,6 +125,10 @@ CONFIG_KEYS = (
     ConfigKey("smoke-args", "smoke_args", _strings,
               "List of strings. Arguments to run the new executable with after the smoke "
               "test; it must exit 0. Off unless set; as `--smoke-args`."),
+    ConfigKey("python", "python", _string,
+              "String. The Python version to build for, `X.Y` (3.12 to 3.14), inside "
+              "`requires-python`; as `--python`. Without it `.python-version` and "
+              "`requires-python` decide."),
     ConfigKey("strict", "strict", _flag,
               "Boolean. Fail the build on warnings; as `--strict`."),
     ConfigKey("interpreter-reexec", "interpreter_reexec", _flag,

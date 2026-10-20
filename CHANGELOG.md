@@ -21,6 +21,22 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   The new [docs/security.md](docs/security.md) is the threat model.
 
 ### Added
+- **`fsbpyr build` chooses the Python of the app and hands the build to the fsbpyr of that
+  Python** (Phase 9, step 4). The version comes from, strongest first, the new `--python X.Y`
+  (or `python = "X.Y"` in `[tool.fsbpyr]`), a `.python-version` pin that names a supported
+  version inside `requires-python`, then `requires-python`: the lowest of 3.12 to 3.14 that
+  satisfies a lower bound (`>=3.10` gives 3.12), the highest below an upper-only bound
+  (`<3.14` gives 3.13), a pinned minor as pinned. An unsupported version, or one outside
+  `requires-python`, is an error naming the supported ones (a pin fsbpyr cannot build for is a
+  warning). When the chosen version is not the running fsbpyr's, a released fsbpyr downloads
+  the matching variant of its own release (`fsbpyr-3.X.xz`, unpacked in-process and verified
+  as `fsbpyr self update` does), keeps it in `downloads/` of its cache and runs it with the
+  same arguments, so cached variants build offline; a developer build stops and names `make
+  build PYTHON=3.X`. A project without `requires-python` builds with the running fsbpyr's
+  Python. A project that allows 3.12 and neither pins nor asks for another version
+  (`requires-python = ">=3.12"`) is now built with 3.12, where the 3.14 fsbpyr built it with
+  3.14 before: pass `--python 3.14` to keep that. The warning that `.python-version` pins
+  another Python than the build's is gone, as the pin now decides.
 - **fsbpyr builds on Python 3.12 and 3.13 as well as 3.14** (Phase 9, step 2, D13: fsbpyr
   requires Python 3.12 to 3.14 from now on). The CLI no longer stops on 3.12 and 3.13: each
   fsbpyr builds with, and its apps carry, the runtime of the Python it runs on (3.12.15,

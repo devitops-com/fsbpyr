@@ -1,7 +1,7 @@
 # fsbpyr
 
 Fast single-binary Python CLI runtime: `fsbpyr build` turns a Python project (uv or pip) into one
-executable that carries CPython 3.14, the project and its locked dependencies. The executable
+executable that carries CPython (3.12, 3.13 or 3.14), the project and its locked dependencies. The executable
 needs nothing on the target machine but Linux x86-64 with glibc 2.28 or newer (the baseline
 every build targets and the tests run on; `fsbpyr inspect` shows the glibc an executable
 actually needs, which can be older), plus the system libraries its native dependencies link
@@ -49,8 +49,8 @@ attestation check and building fsbpyr from source are in [Getting fsbpyr](#getti
   projects too.
 - **Project:** a console script (`[project.scripts]`, or the build backend's own table such as
   setuptools' `entry_points`), or `--entry` with a script's name, a module or
-  `module:function`; and a `requires-python`, if it sets one, that admits the Python of the
-  fsbpyr that builds (3.14 for a release; see "Supported targets").
+  `module:function`; and a `requires-python`, if it sets one, that admits 3.12, 3.13 or 3.14
+  (see "Which Python").
 - **Lock sources,** the first one found: a requirements file that `--requirements` or
   `requirements` names, `uv.lock` (the project's or its uv workspace's), `pylock.toml`,
   `requirements.txt`. With none, the build resolves the dependencies itself and warns that it
@@ -59,7 +59,7 @@ attestation check and building fsbpyr from source are in [Getting fsbpyr](#getti
 ## Supported targets
 
 - **Python:** apps run the CPython of the fsbpyr that built them: 3.12.15, 3.13.16 or 3.14.8,
-  the version that fsbpyr embeds, so a project's `requires-python` must admit it. fsbpyr itself
+  the version that fsbpyr embeds, which "Which Python" says how a build chooses. fsbpyr itself
   needs Python 3.12 to 3.14 (D13) and one checkout builds all three variants (`make build
   PYTHON=3.12`, see "Building from source"). The releases carry the 3.14 variant only so far.
 - **Platform:** Linux x86-64 with glibc only. On a musl system such as Alpine the glibc loader
@@ -80,7 +80,7 @@ fsbpyr build [PROJECT_DIR] [-o OUT] [options]
 ```
 
 The build host needs [uv](https://docs.astral.sh/uv/) on `PATH`, and network access the first
-time (uv fetches a Python 3.14 and the locked dependencies; later builds work from its cache, or
+time (uv fetches the Python it builds with and the locked dependencies; later builds work from its cache, or
 with `--offline`). git is optional: with it, the executable records the commit it was built
 from. The output defaults to `dist/<console-script-name>`.
 
@@ -99,6 +99,7 @@ build-constraint-dependencies` (read by `uv sync`, for `uv.lock` projects) or fr
 
 | Option | |
 |---|---|
+| `--python X.Y` | the Python to build for, 3.12 to 3.14, inside `requires-python` (default: `python` in `[tool.fsbpyr]`, else `.python-version`, else `requires-python` decides) |
 | `--entry NAME` | console script name, `module` or `module:function` (default: the only script) |
 | `-o, --output PATH` | where to write the executable (default: `dist/` and the console script's name) |
 | `--requirements FILE` | pinned requirements file, for pip projects without `pylock.toml` |
@@ -131,6 +132,7 @@ one set in the project:
 
 ```toml
 [tool.fsbpyr]
+python = "3.13"              # same as --python
 entry = "mytool"
 output = "dist/mytool"
 requirements = "requirements.txt"  # pip projects only; overrides uv.lock
@@ -149,6 +151,34 @@ strict = true                # same as --strict
 those arguments, as `-o` (so `argv[0]` is the final path), with stdin from `/dev/null` and
 a 120 s limit, and fails unless it exits 0; the error names the arguments and shows the app's
 stderr. Only you know which arguments are safe, such as `--version` or `--help`.
+
+### Which Python
+
+An app runs on the CPython of the fsbpyr that builds it, and there is one fsbpyr per Python
+(3.12, 3.13 and 3.14; "Getting fsbpyr"). `fsbpyr build` chooses the version, strongest first:
+
+1. `--python X.Y` on the command line;
+2. `python = "X.Y"` in `[tool.fsbpyr]`: both are an error when the version is not supported or
+   is outside `requires-python`;
+3. the Python pinned in `.python-version`, when it names a supported version inside
+   `requires-python`: a pin outside `requires-python` is an error, and a pin fsbpyr cannot
+   build for (3.11, say) a warning, after which the next rule applies;
+4. `requires-python`: with a lower bound, the lowest supported version that satisfies it (`>=3.10`
+   gives 3.12); with only an upper bound, the highest below it (`<3.14` gives 3.13); a pinned
+   minor version as pinned (`==3.13.*` gives 3.13). If none is supported, the build stops and
+   names the supported ones. A project without `requires-python` (or with only `!=` bounds)
+   uses the Python of the fsbpyr that builds it.
+
+The patch release is the one that variant embeds. When the chosen version is not the running
+fsbpyr's, the build is handed to the matching one: a released fsbpyr downloads the variant of
+its own release (the `.xz` of the release's `fsbpyr-3.X` asset, unpacked and checked as
+`fsbpyr self update` does before anything runs it), keeps it in its cache
+(`~/.cache/fsbpyr/downloads/fsbpyr-3.X-vX.Y.Z`, or under `$FSBPYR_CACHE_DIR`; `fsbpyr cache gc`
+leaves it alone, delete it by hand to reclaim the space) and runs it with the same
+arguments, so only the variants a project needs are downloaded, and a cached one builds
+offline. A developer build (`fsbpyr --version` starts with `untagged`) never downloads a
+variant, which would mix released code into a development build: it stops and says how to
+build the variant from a checkout, `make build PYTHON=3.X`.
 
 ## Failing a build on warnings
 
@@ -474,7 +504,9 @@ The other versions are the assets `fsbpyr-3.12` and `fsbpyr-3.13`, each with its
 same URLs (`.../releases/latest/download/fsbpyr-3.12`). When a newer Python becomes the
 newest, `fsbpyr` moves to it and `fsbpyr-3.14` appears. A release also carries
 `THIRD_PARTY_LICENSES.txt` for `fsbpyr` and `THIRD_PARTY_LICENSES-3.12.txt` and so on for the
-others, and `SHA256SUMS` lists every file.
+others, and `SHA256SUMS` lists every file. One installed `fsbpyr` is enough: for a project that
+needs another Python it downloads the matching variant of its own release (see "Which
+Python").
 
 ### Updating
 

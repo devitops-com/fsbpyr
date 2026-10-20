@@ -340,8 +340,10 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
 
 1. **Config.** CLI flags override `[tool.fsbpyr]` in `pyproject.toml`, which overrides
    defaults.
-2. **Runtime.** The target is Python 3.14 (MVP). Check that `requires-python` admits it, and warn
-   if `.python-version` disagrees. Select the runtime: self if the minor version matches,
+2. **Runtime.** The target was Python 3.14 in the MVP; since Phase 9 the version rule
+   (`pyversion.py`) chooses it from `--python`, `[tool.fsbpyr]`, `.python-version` and
+   `requires-python`, and a build for another Python than the running fsbpyr's is handed to
+   that variant (`dispatch.py`). Select the runtime: self if the minor version matches,
    otherwise the cache, otherwise fail with an error that suggests
    `fsbpyr runtime build --python X.Y`.
 3. **Staging install.** Install into `build/fsbpyr/staging/<key>/`. `<key>` hashes the lock
@@ -461,6 +463,8 @@ src/fsbpyr/
   manpage.py                roff man page from the click commands (D40)
   config.py                 [tool.fsbpyr] + CLI merge (tomllib)
   project.py                project discovery, pyproject/requires-python, lock-source selection
+  pyversion.py              the version rule: --python, [tool.fsbpyr], .python-version, requires-python
+  dispatch.py               a build for another Python runs the variant of the release, fetched once
   staging.py                fresh install into staging (uv sync / uv venv + uv pip install)
   closure.py                staging dist index, Requires-Dist consistency walk, markers (packaging)
   classify.py               RECORD → typed entries
@@ -1580,7 +1584,27 @@ write, a truncated binary.
        runs the suite once per version (the development venv through `uv run --python 3.X`,
        then that variant's end-to-end tests and its three-stage bootstrap); each release
        builds, attests and publishes every variant, and each reproduces itself.
-    4. The version rule (a table test from `requires-python` to runtime) and the dispatch.
+    4. The version rule and the dispatch (**done 2026-10-20**; `pyversion.py`, `dispatch.py`,
+       `--python X.Y` and `python` in `[tool.fsbpyr]`, the README's "Which Python"). Tested by
+       a table from `requires-python` and `.python-version` to runtime
+       (`tests/unit/test_pyversion.py`), by the dispatch against a fake release server
+       (fetch, cache, offline reuse, a failed or damaged download, the developer-build
+       refusal: `tests/unit/test_dispatch.py`), and by a project whose `requires-python`
+       excludes the running Python, built through the dispatch to a real variant of fsbpyr
+       built from the checkout and served by that server (`tests/e2e/test_dispatch.py`; it
+       needs the other Python and its runtime, and skips without them). Details the spec left
+       open: a variant is fetched from the release's download URL for its tag
+       (`.../releases/download/vX.Y.Z/fsbpyr-3.X.xz`, no API call) and kept as
+       `downloads/fsbpyr-3.X-vX.Y.Z` in the tool's cache, a name the cache collector never
+       matches, so a variant stays until it is deleted by hand; a project whose
+       `requires-python` picks no version (none, or only `!=`) uses the running fsbpyr's; a
+       pin is judged against `requires-python` before support (a 3.11 pin of a project that
+       needs `>=3.12` is an error, of one that allows 3.10 a warning); `requires-python` is
+       tested with each version's newest patch release (`<=3.13` admits 3.12 only, as
+       3.13.16 is above 3.13). Everything that builds with fsbpyr in the repository now says
+       `--python` (the bootstrap's stages, `make build PYTHON=3.X`, the variants' rebuild in
+       `release.yml`, `portability-apps.sh`), and the test suite builds for the Python it runs
+       on (`tests/conftest.py`), because the fixtures' `>=3.12` now means 3.12.
   - **Exit:** every variant passes the full suite, builds itself byte-identically in three
     stages and builds and runs the fixture apps; a project whose `requires-python` excludes
     3.14 builds through the 3.14 fsbpyr's dispatch.

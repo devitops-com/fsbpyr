@@ -12,6 +12,7 @@ from pathlib import Path
 
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
+from . import pyversion
 from .assemble import App, build_temporary, runtime_module_names
 from .classify import BUILTIN_FS_PACKAGES, Uncounted, _record_path, classify
 from .closure import (
@@ -382,6 +383,17 @@ def build(
             path.unlink(missing_ok=True)
 
 
+def python_warnings(project: Project, config: BuildConfig) -> tuple[str, ...]:
+    """What the version rule says against the project's files; an error when the project
+    builds with another Python than this fsbpyr's (the CLI hands such a build to the matching
+    fsbpyr, so only a direct call gets here)."""
+    chosen = pyversion.resolve(project, config.python, own=TARGET_PYTHON)
+    if chosen.version != TARGET_PYTHON:
+        raise BuildError(f"this project builds with Python {chosen.version}, not this fsbpyr's "
+                         f"{TARGET_PYTHON}")  # fmt: skip
+    return chosen.warnings
+
+
 def _build(  # noqa: PLR0913  the build's state and the progress keyword
     directory: Path,
     config: BuildConfig,
@@ -397,11 +409,10 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
     check_before_staging(project, config)
     uv = find_uv()  # before anything slow: a build cannot go far without it (D26)
     uv_used = uv_version(uv)
+    warnings += python_warnings(project, config)
     runtime = select_runtime(TARGET_PYTHON)
     project.check_python(runtime.python_version)
     warnings += uv_mismatch(builder=builder_uv(), current=uv_used)
-    if pin := project.python_version_mismatch(TARGET_PYTHON):
-        warnings.append(f".python-version pins {pin}; building for Python {runtime.python_version}")
     source = project.lock_source(config.requirements)
     warnings += lock_warnings(project, source, config.requirements)
     log(f"staging {project.name or project.directory.name} from {source.value}")
