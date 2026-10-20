@@ -91,4 +91,17 @@ def test_an_unknown_list_is_a_usage_error(
     result = suite.runpytest()
 
     assert result.ret == pytest.ExitCode.USAGE_ERROR
-    result.stderr.fnmatch_lines(["*FSBPYR_TESTS_REQUIRE_ALL=cl: no such list (ci)*"])
+    result.stderr.fnmatch_lines(["*FSBPYR_TESTS_REQUIRE_ALL=cl: no such list (ci, container)*"])
+
+
+def test_container_expects_only_the_skips_of_a_stage_without_podman(
+    suite: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    suite.makepyfile(test_nested="import pytest\n\n@pytest.mark.skip(reason='needs podman')\n"
+                     "def test_nested():\n    pass\n")  # fmt: skip
+    monkeypatch.setenv(REQUIRE_ALL, "container")
+    assert suite.runpytest().ret == pytest.ExitCode.OK
+
+    _probe(suite)
+
+    assert suite.runpytest().ret == pytest.ExitCode.TESTS_FAILED

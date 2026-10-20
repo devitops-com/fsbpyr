@@ -22,6 +22,9 @@ EXPECTED_SKIPS = {
         "needs unshare, /tmp/.X",
         "needs podman",
     ),
+    # `make test-container`: the Containerfile's `test` stage, as `tester` (uid 1000, one
+    # supplementary group) with no podman
+    "container": ("needs podman",),
 }
 _skips: list[tuple[str, str]] = []  # this run's, as (nodeid, reason)
 

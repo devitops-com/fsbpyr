@@ -15,7 +15,14 @@ from fsbpyr.payload.spec import Blob, File, Module
 from fsbpyr.runtime import pbs, pins, registry, stub
 from fsbpyr.runtime.toolchain import ToolchainError, find_toolchain
 
+from ..support import downloads
+
 type BuildApp = Callable[[dict[str, str], str], Path]
+
+# The pinned downloads kept between sessions (tests/support/downloads.py): a directory named by
+# FSBPYR_TEST_DOWNLOADS (`make test-container` keeps one in a volume), none without it.
+DOWNLOADS_VARIABLE = "FSBPYR_TEST_DOWNLOADS"
+_download_status: dict[str, str] = {}  # file name -> "seeded" or "fetched", for the summary
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -41,10 +48,25 @@ def runtime(request: pytest.FixtureRequest) -> registry.Runtime:
         return registry.find_runtime("3.14", sanitize=sanitize)
     except registry.RuntimeCacheError:
         pass
+    pinned = downloads.pinned("3.14")
+    kept = Path(os.environ[DOWNLOADS_VARIABLE]) if os.environ.get(DOWNLOADS_VARIABLE) else None
+    seeded = downloads.seed(pinned, kept, registry.cache_root())
+    for name, how in seeded.items():
+        _download_status.setdefault(name, how)
     try:
-        return registry.build_runtime("3.14", log=lambda _: None, sanitize=sanitize)
+        built = registry.build_runtime("3.14", log=lambda _: None, sanitize=sanitize)
     except ToolchainError as exc:  # pragma: no cover - depends on the host
         pytest.skip(f"cannot build a runtime here: {exc}")
+    downloads.keep(pinned, kept, registry.cache_root())
+    return built
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    """Whether the runtime's pinned downloads came from FSBPYR_TEST_DOWNLOADS or the network."""
+    if _download_status:
+        terminalreporter.section("runtime downloads")
+        for name, how in _download_status.items():
+            terminalreporter.line(f"{how}: {name}")
 
 
 @dataclass(frozen=True)
