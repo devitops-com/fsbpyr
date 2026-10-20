@@ -39,6 +39,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   libraries that only the package's Python code loads now names an `fs-packages` value the
   config accepts (the regular package holding them), or says that none covers them; it named
   the distribution, which `foo-libs` is not a valid value for.
+- **`spikes/bench.py --cold` and `--cache DIR`** measure starts with a cold page cache, with no
+  root: before each sample the executable's pages, and with `--cache` those of the cache's
+  files, are dropped. `docs/performance.md` has new "Cold start" and "Integrity check" tables
+  (28 MB to 1.07 GB, one core and without SHA instructions), each with a "Reproduce:" command
+  that runs; the README's "Integrity" figures are the new ones.
 
 ### Changed
 - **fsbpyr runs on CPython 3.14 only, and stops at once on any other Python.** Its
