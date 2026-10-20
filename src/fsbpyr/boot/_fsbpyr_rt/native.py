@@ -35,7 +35,7 @@ def _corrupt(what: str) -> NativeCacheError:
     return NativeCacheError(f"corrupt executable payload: {what}")
 
 
-def cache_directory(app: str, environ: Mapping[str, str]) -> str:
+def cache_directory(app: str, environ: "Mapping[str, str]") -> str:
     if "/" in app or app in ("", ".", ".."):
         raise _corrupt(f"app name {app!r}")
     if explicit := environ.get("FSBPYR_CACHE_DIR"):
@@ -57,7 +57,7 @@ class NativeCache:
         files = _fsbpyr.info()["files"]
         self._checked = bytearray((files + 7) // 8)  # a bit per FILES index: checked here
 
-    def sync(self, files: Sequence[int], *, resources: bool = False) -> int:
+    def sync(self, files: "Sequence[int]", *, resources: bool = False) -> int:
         """Extract the files (FILES indices, a range from files_below or a closure) that are
         missing or whose content does not match the payload's, reporting the changed ones;
         returns the number of files written. Each process hashes a file once (extensions share
@@ -135,7 +135,7 @@ class PayloadExtensionLoader(ExtensionFileLoader):
         super().__init__(name, path)
         self.files = files  # the extension's FILES index, then its closure
 
-    def create_module(self, spec: ModuleSpec) -> ModuleType:
+    def create_module(self, spec: ModuleSpec) -> "ModuleType":
         cache = native_cache()
         try:
             cache.sync(self.files)

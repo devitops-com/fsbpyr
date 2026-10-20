@@ -5,8 +5,12 @@ description = "Fast single-binary Python CLI runtime and packager"
 authors = [{ name = "Kresimir Sparavec", email = "ksparavec@devitops.com" }]
 license = "LicenseRef-fsbpyr-MIT-with-runtime-exception"
 license-files = ["LICENSE"]
-requires-python = ">=3.14,<3.15"
-dependencies = ["click>=8.5", "packaging>=25"]
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "backports.zstd; python_version < '3.14'",
+    "click>=8.5",
+    "packaging>=25",
+]
 
 [project.scripts]
 fsbpyr = "fsbpyr.cli:main"
@@ -49,7 +53,7 @@ fail_under = 92.75
 
 [tool.ruff]
 line-length = 100
-target-version = "py314"
+target-version = "py312"
 extend-exclude = ["spikes", "tests/corpus/*/work"]  # work/ holds the apps' own inputs
 
 [tool.ruff.lint]
@@ -67,7 +71,7 @@ ignore = ["PLR2004"]
 
 [tool.mypy]
 strict = true
-python_version = "3.14"
+python_version = "3.12"
 files = ["src", "tests"]
 exclude = ["^tests/(fixtures|corpus)/"]  # fixture projects use their own dependencies
 mypy_path = "stubs"
@@ -75,3 +79,7 @@ mypy_path = "stubs"
 [[tool.mypy.overrides]]
 module = ["pkg", "pkg.*", "ns.*"]  # demo-app packages that exist only inside test executables
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["backports", "backports.zstd"]
+ignore_missing_imports = true  # a dependency below 3.14 only: typed on 3.12 and 3.13, Any on 3.14

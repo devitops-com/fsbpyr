@@ -6,11 +6,11 @@ import importlib.resources
 import importlib.util
 import json
 import sys
-from compression import zstd
 from dataclasses import dataclass
 from pathlib import Path
 
 from . import __version__, bytecode
+from .compat import zstd
 from .payload.format import PAGE_SIZE, ModuleFlag, ModuleKind, align, extractable
 from .payload.spec import ZSTD_LEVEL, Blob, Dist, File, Module, PayloadSpec
 from .payload.writer import commit, write_temporary

@@ -1,17 +1,19 @@
 """Deterministic payload encoder and executable assembler (docs/format.md)."""
 
+from __future__ import annotations
+
 import hashlib
 import io
 import os
 import tempfile
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator
-from compression import zstd
 from concurrent.futures import Future, ThreadPoolExecutor
 from enum import IntEnum
 from pathlib import Path
 from typing import BinaryIO
 
+from ..compat import zstd
 from .format import (
     BLOB,
     BLOB_ALIGN,

@@ -23,9 +23,9 @@ class PayloadDistribution(Distribution):
             return None
         return _fsbpyr.read(record[4]).decode("utf-8")
 
-    def locate_file(  # type: ignore[override]  # a Traversable, structurally a SimplePath
+    def locate_file(
         self, path: str | os.PathLike[str]
-    ) -> PayloadTraversable:
+    ) -> "PayloadTraversable":
         return PayloadTraversable(self._root, "").joinpath(os.fspath(path))
 
 

@@ -1,5 +1,7 @@
 """Binary layout of the fsbpyr executable format, version 6 (normative spec: docs/format.md)."""
 
+from __future__ import annotations
+
 import errno
 import hashlib
 import os
@@ -9,6 +11,8 @@ import threading
 from collections.abc import Buffer, Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from enum import IntEnum, IntFlag
+
+from ..compat import process_cpu_count
 
 FORMAT_VERSION = 6
 READABLE_VERSIONS = (1, 2, 3, 4, 5, 6)  # the Python reader (inspect) also reads older executables
@@ -140,7 +144,7 @@ def tree_digest(data: Buffer) -> bytes:
 
 
 DIGEST_THREADS = 8  # as the launcher (D31): at most 8, never more than the usable cores
-THREADS = min(DIGEST_THREADS, os.process_cpu_count() or 1)  # every phase's (D39)
+THREADS = min(DIGEST_THREADS, process_cpu_count() or 1)  # every phase's (D39)
 
 
 _POOLED = threading.local()
@@ -259,7 +263,7 @@ def file_digest(fd: int, size: int, offset: int = 0) -> bytes:
         start = number * DIGEST_LEAF
         return _leaf_digest(fd, offset + start, min(DIGEST_LEAF, size - start))
 
-    with ThreadPoolExecutor(min(DIGEST_THREADS, os.process_cpu_count() or 1)) as pool:
+    with ThreadPoolExecutor(min(DIGEST_THREADS, process_cpu_count() or 1)) as pool:
         for first in range(0, leaves, _PASS_LEAVES):
             for digest in pool.map(leaf, range(first, min(first + _PASS_LEAVES, leaves))):
                 root.update(digest)

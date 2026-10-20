@@ -81,7 +81,7 @@ class PayloadTraversable(Traversable):
         return posixpath.basename(self._path or "")
 
     @property
-    def parent(self) -> PayloadTraversable:
+    def parent(self) -> "PayloadTraversable":
         return PayloadTraversable(self._root, posixpath.dirname(self._path or ""))
 
     def _record(self) -> tuple[int, ...] | None:
@@ -96,7 +96,7 @@ class PayloadTraversable(Traversable):
     def exists(self) -> bool:
         return self.is_file() or self.is_dir()
 
-    def iterdir(self) -> Iterator[PayloadTraversable]:
+    def iterdir(self) -> "Iterator[PayloadTraversable]":
         names = _fsbpyr.list_dir(self._path) if self._path is not None else []
         if not names and self._path != "":
             raise (
@@ -107,7 +107,7 @@ class PayloadTraversable(Traversable):
         for name in names:
             yield self.joinpath(name)
 
-    def joinpath(self, *descendants: str | os.PathLike[str]) -> PayloadTraversable:
+    def joinpath(self, *descendants: str | os.PathLike[str]) -> "PayloadTraversable":
         if self._path is None:
             return self
         parts = [os.fspath(part) for part in descendants]

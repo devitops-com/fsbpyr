@@ -123,7 +123,7 @@ def _flagged_lines(
         return []
     try:
         tree = ast.parse(source, filename)
-    except SyntaxError, ValueError:
+    except (SyntaxError, ValueError):
         return []
     tainted, guarded = _tainted_names(tree), _main_guarded(tree)
     calls = (node for node in ast.walk(tree) if isinstance(node, ast.Call))
@@ -162,7 +162,7 @@ def loaded_libraries(source: bytes, filename: str) -> list[str]:
         return []
     try:
         tree = ast.parse(source, filename)
-    except SyntaxError, ValueError:
+    except (SyntaxError, ValueError):
         return []
     found = set()
     for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):

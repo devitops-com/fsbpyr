@@ -3,17 +3,19 @@ unlinked at once and appended to, so that no blob's bytes stay in memory however
 packages, and nothing is left behind however the build ends. Blobs then hold Extents of it
 (read through its descriptor), which the writer streams into the executable."""
 
+from __future__ import annotations
+
 import dataclasses
 import hashlib
 import os
 import tempfile
 import threading
 from collections.abc import Mapping
-from compression import zstd
 from pathlib import Path
 from types import TracebackType
 from typing import Self
 
+from ..compat import zstd
 from .format import (
     DIGEST_LEAF,
     XZ_PIECE,

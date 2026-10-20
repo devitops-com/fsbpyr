@@ -214,6 +214,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   `runtime.json`, for information; they are not part of the runtime id.
 
 ### Changed
+- **fsbpyr's code imports and runs on Python 3.12 and 3.13** (Phase 9, the base of the port):
+  `requires-python` is now `>=3.12,<3.15`, with `backports.zstd` (the official backport of
+  3.14's `compression.zstd`) as a dependency below 3.14. The CLI still refuses 3.12 and 3.13:
+  building for them waits for the rest of Phase 9. Nothing changes on 3.14.
 - **The README's "Versions" states what is stable before 1.0**: the `inspect --json` schema,
   the release asset names and URLs that self-update and installers use, and the trailer and
   digest layout that `inspect --verify` reads. Breaking changes are marked `**Breaking:**`

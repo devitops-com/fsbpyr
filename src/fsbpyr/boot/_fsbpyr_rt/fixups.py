@@ -24,7 +24,7 @@ SYSTEM_BUNDLES = (
 OWN_EXECUTABLE = "/proc/self/exe"
 
 
-def fallback_bundle(environ: Mapping[str, str]) -> str | None:
+def fallback_bundle(environ: "Mapping[str, str]") -> str | None:
     """A system CA bundle to load when OpenSSL's defaults find no trust store: neither
     ``cert.pem`` nor a hashed ``certs/`` directory, and no SSL_CERT_* override."""
     if "SSL_CERT_FILE" in environ or "SSL_CERT_DIR" in environ or os.path.exists(CA_FILE):
@@ -39,7 +39,7 @@ def fallback_bundle(environ: Mapping[str, str]) -> str | None:
     return next(readable, None)
 
 
-def _ssl(module: ModuleType) -> None:
+def _ssl(module: "ModuleType") -> None:
     bundle = fallback_bundle(os.environ)
     if bundle is None:
         return
@@ -58,7 +58,7 @@ def _ssl(module: ModuleType) -> None:
     context.set_default_verify_paths = with_system_bundle
 
 
-def _multiprocessing_spawn(module: ModuleType) -> None:
+def _multiprocessing_spawn(module: "ModuleType") -> None:
     # Children start from the parent's own binary even when the file was replaced on disk in
     # the meantime: parent and children never mix code versions, and the check that a child's
     # parent runs this executable (D22) keeps passing.
@@ -69,5 +69,5 @@ def _multiprocessing_spawn(module: ModuleType) -> None:
 FIXUPS = {"ssl": _ssl, "multiprocessing.spawn": _multiprocessing_spawn}
 
 
-def apply(module: ModuleType) -> None:
+def apply(module: "ModuleType") -> None:
     FIXUPS[module.__name__](module)

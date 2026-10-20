@@ -27,7 +27,7 @@ def _git(git: str, directory: Path, *args: str) -> subprocess.CompletedProcess[s
     try:
         return subprocess.run([git, "-C", str(directory), *args], capture_output=True,
                               text=True, env=env, timeout=_TIMEOUT, check=False)  # fmt: skip
-    except OSError, subprocess.TimeoutExpired:
+    except (OSError, subprocess.TimeoutExpired):
         return None
 
 

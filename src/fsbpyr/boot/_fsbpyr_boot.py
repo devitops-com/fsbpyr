@@ -24,7 +24,7 @@ from _frozen_importlib_external import NamespaceLoader, PathFinder
 import _fsbpyr
 
 TYPE_CHECKING = False
-if TYPE_CHECKING:  # annotations are lazy (PEP 649): nothing below is imported at runtime
+if TYPE_CHECKING:  # nothing below is imported at runtime: the annotations using it are quoted
     from collections.abc import Iterable, Iterator
     from importlib.abc import Loader as _LoaderBase
     from importlib.metadata import Distribution, DistributionFinder
@@ -75,7 +75,7 @@ class PayloadLoader(_LoaderBase):
     def create_module(self, spec: ModuleSpec) -> None:
         return None
 
-    def exec_module(self, module: ModuleType) -> None:
+    def exec_module(self, module: "ModuleType") -> None:
         spec = module.__spec__
         if spec is None:
             raise ImportError(f"{module.__name__!r} has no spec", name=module.__name__)
@@ -92,13 +92,13 @@ class PayloadLoader(_LoaderBase):
             raise ImportError(f"no module named {fullname!r} in the payload", name=fullname)
         return record
 
-    def _code(self, record: Record) -> CodeType:
+    def _code(self, record: Record) -> "CodeType":
         code: CodeType = marshal.loads(_fsbpyr.read(record[3]))
         # Absolute virtual path: linecache can never mistake a file in the cwd for our source.
         _imp._fix_co_filename(code, self.prefix + record[7])  # type: ignore[attr-defined]
         return code
 
-    def get_code(self, fullname: str) -> CodeType:
+    def get_code(self, fullname: str) -> "CodeType":
         return self._code(self._record(fullname))
 
     def get_source(self, fullname: str) -> str | None:
@@ -123,7 +123,7 @@ class PayloadLoader(_LoaderBase):
             raise FileNotFoundError(2, "No such file in the executable payload", path)
         return _fsbpyr.read(record[4])
 
-    def get_resource_reader(self, fullname: str) -> TraversableResources:
+    def get_resource_reader(self, fullname: str) -> "TraversableResources":
         # _fsbpyr_rt exists as a top-level package only inside executables (and boot tests)
         from _fsbpyr_rt.resources import (  # type: ignore[import-not-found]  # noqa: PLC0415
             DirectoryReader,
@@ -220,7 +220,7 @@ class PayloadPathFinder:
             spec.submodule_search_locations = [location + payload.replace(".", "/")]
         return spec
 
-    def iter_modules(self, prefix: str = "") -> Iterator[tuple[str, bool]]:
+    def iter_modules(self, prefix: str = "") -> "Iterator[tuple[str, bool]]":
         """For ``pkgutil.iter_modules`` / ``walk_packages``: like FileFinder, list modules and
         regular packages, not namespace directories."""
         for name, kind in _fsbpyr.list_modules(self._prefix):
@@ -251,7 +251,7 @@ class PayloadNamespaceLoader(NamespaceLoader):
 
     def get_resource_reader(  # type: ignore[override]  # importlib passes the module name
         self, module: str
-    ) -> TraversableResources:
+    ) -> "TraversableResources":
         from _fsbpyr_rt.resources import PayloadResourceReader  # noqa: PLC0415
 
         location: str = self._path[0]  # type: ignore[attr-defined]
@@ -268,12 +268,12 @@ class SetuptoolsDistutilsLoader(_LoaderBase):
     """``distutils`` as setuptools' ``_distutils_hack`` makes it: the module setuptools ships."""
 
     @staticmethod
-    def create_module(spec: ModuleSpec) -> ModuleType:
+    def create_module(spec: ModuleSpec) -> "ModuleType":
         module: ModuleType = __import__("setuptools._distutils", fromlist=["_"])
         return module
 
     @staticmethod
-    def exec_module(module: ModuleType) -> None:
+    def exec_module(module: "ModuleType") -> None:
         pass  # setuptools._distutils is already executed
 
 
@@ -291,7 +291,7 @@ class PayloadMetaFinder:
 
     @staticmethod
     def find_spec(
-        fullname: str, path: Iterable[str] | None = None, target: object = None
+        fullname: str, path: "Iterable[str] | None" = None, target: object = None
     ) -> ModuleSpec | None:
         record = _fsbpyr.find_module(fullname)
         if record is None:
@@ -317,8 +317,8 @@ class PayloadMetaFinder:
 
     @staticmethod
     def find_distributions(
-        context: DistributionFinder.Context | None = None,
-    ) -> list[Distribution]:
+        context: "DistributionFinder.Context | None" = None,
+    ) -> "list[Distribution]":
         from _fsbpyr_rt.metadata import (  # type: ignore[import-not-found]  # noqa: PLC0415
             find_distributions,
         )
@@ -335,7 +335,7 @@ META_FINDER = PayloadMetaFinder()
 
 
 def _excepthook(
-    exc_type: type[BaseException], exc: BaseException, tb: TracebackType | None
+    exc_type: type[BaseException], exc: BaseException, tb: "TracebackType | None"
 ) -> None:
     """Hide the launcher's own frames (run_command, this module) at the top of tracebacks."""
     hidden = ("<string>", _excepthook.__code__.co_filename)

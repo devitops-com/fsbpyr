@@ -1,5 +1,7 @@
 """Project discovery: pyproject.toml / setup.py, Python constraints and lock source (§3.6)."""
 
+from __future__ import annotations
+
 import tomllib
 from dataclasses import dataclass, field
 from enum import Enum

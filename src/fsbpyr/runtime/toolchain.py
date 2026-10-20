@@ -85,7 +85,7 @@ def describe(toolchain: Toolchain) -> dict[str, str]:
                 [program, "--version"], capture_output=True, text=True, check=False, timeout=30
             )
             lines = result.stdout.splitlines()
-        except OSError, subprocess.TimeoutExpired:
+        except (OSError, subprocess.TimeoutExpired):
             lines = []
         versions[key] = lines[0].strip() if lines else "unknown"
     return versions

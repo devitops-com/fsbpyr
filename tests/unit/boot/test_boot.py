@@ -179,10 +179,11 @@ def test_resources_traversal(boot: ModuleType) -> None:
 def test_functional_resources_api(boot: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "pkg", _load(boot, "pkg"))
 
-    assert importlib.resources.read_text("pkg", "data", "table.json", encoding="utf-8") == (
-        '{"k": 1}'
-    )
-    assert importlib.resources.is_resource("pkg", "data", "table.json")
+    # the functional API takes several path parts from 3.13 on
+    assert importlib.resources.read_text(  # type: ignore[misc]
+        "pkg", "data", "table.json", encoding="utf-8"
+    ) == ('{"k": 1}')
+    assert importlib.resources.is_resource("pkg", "data", "table.json")  # type: ignore[call-arg]
 
 
 def test_resources_missing_and_escaping_paths(boot: ModuleType) -> None:

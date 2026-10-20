@@ -8,13 +8,13 @@ import os
 from bisect import bisect_left
 from collections import OrderedDict
 from collections.abc import Callable, Generator, Iterator
-from compression import zstd
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
 from types import TracebackType
 from typing import Self
 
+from ..compat import zstd
 from .format import (
     BLOB,
     BLOB_ALIGN,

@@ -1,14 +1,16 @@
 """Immutable input model for the payload writer."""
 
+from __future__ import annotations
+
 import errno
 import lzma
 import os
 from collections.abc import Iterator
-from compression import zstd
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 
+from ..compat import zstd
 from .format import (
     DIGEST_LEAF,
     MAX_BLOB_SIZE,
