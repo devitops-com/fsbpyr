@@ -474,13 +474,24 @@ A rebuild checks the bytes themselves, at two levels:
   changed stub would pass this check.
 - **(b) The runtime.** Only an independent rebuild checks the stub, CPython and the standard
   library. It compiles the launcher from the tag's sources and links it with clang and lld 22
-  (on Debian trixie, `sudo apt-get install clang-22 lld-22`); CPython, which the launcher links in, and
+  (on Debian trixie, from the archive snapshot below); CPython, which the launcher links in, and
   the standard library, which is compiled to bytecode, come from the python-build-standalone
   archive that the tag pins by SHA-256. So (b) proves the stub, and that CPython and the
   standard library are that pinned build; it does not compile CPython. CI's release is
   `make build`'s output, so on a clean checkout of the tag `make bootstrap` and `make build`
-  give the released bytes, with the release's uv and clang (`readelf -p .comment fsbpyr` names
-  the Debian clang that built the launcher). `make bootstrap` also installs the result, though,
+  give the released bytes, with the release's uv and clang (`fsbpyr inspect` lists the stub's
+  `.comment` lines as "toolchain"; they name the Debian clang that built the launcher). The
+  launcher's bytes depend on that exact clang and lld: v0.19.0 and v0.20.0 were linked by
+  Debian's `22.1.8-1~deb13u4`, which the snapshot `20261005T000000Z` of the Debian archive
+  serves (a later clang may link other bytes). A release tag's CI run takes its
+  packages from the snapshot in `tools/release/apt-snapshot`, and its log lists the image digest,
+  the snapshot, the uv version and the versions of `clang-22`, `lld-22` and `xz-utils`. To
+  install the same packages, point apt at the snapshot
+  (`http://snapshot.debian.org/archive/debian/TIMESTAMP/` for trixie and trixie-updates,
+  `.../debian-security/TIMESTAMP/` for trixie-security) before installing `clang-22 lld-22`,
+  and use the uv named by `tools/release/uv.version` (release CI downloads that release's
+  tarball and checks its SHA-256; `FSBPYR_UV_VERSION=<version>` makes `tools/bootstrap.sh`
+  refuse any other uv). `make bootstrap` also installs the result, though,
   so run fsbpyr from source directly in the checkout above: it builds the runtime, then `stage1`,
   and `stage1` builds the file to compare. A runtime already in the cache under the same id is
   reused, not built again; an empty cache (`XDG_CACHE_HOME` set to a new directory) builds it

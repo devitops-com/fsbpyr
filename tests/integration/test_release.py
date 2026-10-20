@@ -10,12 +10,14 @@ committed, tagged or pushed. Everything lives under ``tmp_path``; nothing reache
 from __future__ import annotations
 
 import datetime
+import re
 import shutil
 import subprocess
 import tomllib
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
 
 ROOT = Path(__file__).parents[2]
 VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
@@ -769,3 +771,136 @@ def test_release_notes_rejects_bad_usage(args: list[str]) -> None:
 
     assert result.returncode == 2
     assert "usage: release-notes.sh VERSION [CHANGELOG]" in result.stderr
+
+
+# The release toolchain pins (REP-1): files in the repository, the workflow and Containerfile that
+# use them, bootstrap.sh's check of the uv, and the daily check that they have not aged.
+
+BOOTSTRAP_SH = ROOT / "tools" / "bootstrap.sh"
+TOOLCHAIN_WATCH_SH = ROOT / "tools" / "toolchain-watch.sh"
+IMAGE_PIN = re.compile(r"debian:trixie@sha256:([0-9a-f]{64})")
+
+
+def test_the_image_is_pinned_by_digest_in_the_workflow_and_the_containerfile() -> None:
+    pins = {
+        path: IMAGE_PIN.findall((ROOT / path).read_text(encoding="utf-8"))
+        for path in (".github/workflows/release.yml", "Containerfile")
+    }
+
+    assert all(len(found) == 1 for found in pins.values()), pins
+    assert len({found[0] for found in pins.values()}) == 1  # the same digest in both
+    for path in pins:
+        text = (ROOT / path).read_text(encoding="utf-8")
+        assert not re.search(r"debian:trixie$", text, re.MULTILINE), path
+
+
+def test_uv_version_names_a_uv_that_the_build_backend_accepts() -> None:
+    version, sha256 = (ROOT / "tools/release/uv.version").read_text(encoding="utf-8").split()
+    backend = next(
+        Requirement(r)
+        for r in tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+            "build-system"
+        ]["requires"]
+        if r.startswith("uv_build")
+    )
+
+    assert re.fullmatch(r"[0-9a-f]{64}", sha256)
+    assert backend.specifier.contains(version)  # uv_build is released with uv: same numbering
+
+
+def test_the_apt_snapshot_is_a_timestamp_used_on_tag_runs_only() -> None:
+    snapshot = (ROOT / "tools/release/apt-snapshot").read_text(encoding="utf-8").strip()
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+    assert re.fullmatch(r"\d{8}T\d{6}Z", snapshot)
+    step = workflow.split("- name: Use the Debian snapshot")[1].split("- name:")[0]
+    assert "if: github.ref_type == 'tag'" in step
+    assert "tools/release/apt-snapshot" in step and "debian-security" in step
+
+
+def _fake_uv(directory: Path, version: str) -> dict[str, str]:
+    write_program(directory / "uv", f'echo "uv {version} (abcdef 2026-01-01)"\n')
+    return {"PATH": f"{directory}:{SYSTEM_PATH}"}
+
+
+def test_bootstrap_accepts_only_the_uv_that_fsbpyr_uv_version_names(tmp_path: Path) -> None:
+    env = _fake_uv(tmp_path, "0.13.1")
+
+    wrong = run_script(["bash", str(BOOTSTRAP_SH), "--uv"], {**env, "FSBPYR_UV_VERSION": "0.13.2"})
+    right = run_script(["bash", str(BOOTSTRAP_SH), "--uv"], {**env, "FSBPYR_UV_VERSION": "0.13.1"})
+    unset = run_script(["bash", str(BOOTSTRAP_SH), "--uv"], env)
+
+    assert wrong.returncode == 1
+    assert "FSBPYR_UV_VERSION is 0.13.2, but uv on PATH is 0.13.1" in wrong.stderr
+    assert (right.returncode, unset.returncode) == (0, 0)  # a user's own uv is accepted (D26)
+
+
+def _watch_env(
+    tmp_path: Path, *, uv: str, snapshot: str, image: str
+) -> tuple[Path, dict[str, str]]:
+    """A copy of tools/ and the Containerfile with these pins, a gh that knows the newest uv
+    and logs its calls, and a curl that answers like the registry."""
+    root = tmp_path / "repo"
+    shutil.copytree(ROOT / "tools", root / "tools", ignore=shutil.ignore_patterns("__pycache__"))
+    (root / "tools/release/uv.version").write_text(f"{uv} {'0' * 64}\n", encoding="utf-8")
+    (root / "tools/release/apt-snapshot").write_text(snapshot + "\n", encoding="utf-8")
+    (root / "Containerfile").write_text(f"FROM docker.io/library/debian:trixie@{image}\n",
+                                        encoding="utf-8")  # fmt: skip
+    bin_dir = tmp_path / "bin"
+    write_program(
+        bin_dir / "gh",
+        """\
+echo "$*" >> "$FAKE_GH_LOG"
+case "$1 $2" in
+  "release view") echo 0.13.3 ;;
+  "issue list") ;;
+  "label create") ;;
+  "issue create") echo https://github.com/devitops-com/fsbpyr/issues/1 ;;
+  *) exit 64 ;;
+esac
+""",
+    )
+    write_program(
+        bin_dir / "curl",
+        """\
+case "$*" in
+  *auth.docker.io*) echo '{"token":"t"}' ;;
+  *) printf 'HTTP/2 200\\r\\ndocker-content-digest: sha256:%s\\r\\n' "$FAKE_REGISTRY_DIGEST" ;;
+esac
+""",
+    )
+    env = {"PATH": f"{bin_dir}:{SYSTEM_PATH}", "FAKE_GH_LOG": str(tmp_path / "gh.log"),
+           "FAKE_REGISTRY_DIGEST": "a" * 64}  # fmt: skip
+    return root, env
+
+
+def _today_snapshot(days_ago: int) -> str:
+    day = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days_ago)
+    return day.strftime("%Y%m%dT000000Z")
+
+
+def test_toolchain_watch_opens_an_issue_for_old_pins(tmp_path: Path) -> None:
+    root, env = _watch_env(
+        tmp_path, uv="0.13.1", snapshot=_today_snapshot(120), image="sha256:" + "b" * 64
+    )
+
+    result = run_script(["bash", str(root / "tools/toolchain-watch.sh")], env)
+
+    log = (tmp_path / "gh.log").read_text(encoding="utf-8")
+    assert result.returncode == 0, result.stderr
+    assert "issue create" in log and "--label toolchain-update" in log
+    assert "3 release pin(s)" in log
+    assert "not the newest release, 0.13.3" in log and "days old" in log
+    assert "sha256:" + "b" * 64 in log and "sha256:" + "a" * 64 in log
+
+
+def test_toolchain_watch_is_silent_when_the_pins_are_current(tmp_path: Path) -> None:
+    root, env = _watch_env(
+        tmp_path, uv="0.13.3", snapshot=_today_snapshot(5), image="sha256:" + "a" * 64
+    )
+
+    result = run_script(["bash", str(root / "tools/toolchain-watch.sh")], env)
+
+    assert result.returncode == 0, result.stderr
+    assert "Up to date" in result.stdout
+    assert "issue" not in (tmp_path / "gh.log").read_text(encoding="utf-8")

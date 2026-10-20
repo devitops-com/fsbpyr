@@ -10,7 +10,13 @@ import pytest
 from fsbpyr.runtime import ar, stub
 from fsbpyr.runtime.pbs import PbsDist, link_inputs
 from fsbpyr.runtime.stub import StubBuildError, stub_command
-from fsbpyr.runtime.toolchain import Toolchain, ToolchainError, clang_major, find_toolchain
+from fsbpyr.runtime.toolchain import (
+    Toolchain,
+    ToolchainError,
+    clang_major,
+    describe,
+    find_toolchain,
+)
 
 
 def _ar_archive(members: dict[str, bytes]) -> bytes:
@@ -87,6 +93,18 @@ def test_find_toolchain_picks_first_clang_with_required_major(tmp_path: Path) ->
     toolchain = find_toolchain(22, search_path=str(tmp_path))
 
     assert toolchain == Toolchain(clang=good, lld=lld, major=22)
+
+
+def test_describe_gives_the_first_line_of_each_version(tmp_path: Path) -> None:
+    clang = _fake_tool(tmp_path, "clang-22", "Debian clang version 22.1.8 (1~deb13u4)\\nTarget: x")
+    lld = _fake_tool(tmp_path, "ld.lld-22", "Debian LLD 22.1.8 (compatible with GNU linkers)")
+
+    assert describe(Toolchain(clang=clang, lld=lld, major=22)) == {
+        "clang": "Debian clang version 22.1.8 (1~deb13u4)",
+        "lld": "Debian LLD 22.1.8 (compatible with GNU linkers)",
+    }
+    gone = Toolchain(clang=tmp_path / "missing", lld=lld, major=22)
+    assert describe(gone)["clang"] == "unknown"
 
 
 def test_find_toolchain_reports_what_is_missing(tmp_path: Path) -> None:

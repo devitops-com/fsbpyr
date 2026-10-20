@@ -22,7 +22,10 @@
 # 4. `make install`: dist/fsbpyr, its man page and completions under PREFIX (on the host,
 #    also after a podman build).
 #
-# Environment: FSBPYR_BOOTSTRAP=podman builds in the container on Debian trixie too.
+# Environment: FSBPYR_UV_VERSION=X.Y.Z (release CI sets it from tools/release/uv.version;
+# a verifier sets the uv a release records) makes the check for uv fail unless uv on PATH is
+# exactly that version. Without it any uv is accepted: user builds keep the user's own uv (D26).
+# FSBPYR_BOOTSTRAP=podman builds in the container on Debian trixie too.
 # PREFIX etc. pass through to `make install`. FSBPYR_BOOTSTRAP_IMAGE names the
 # podman image (default fsbpyr-build); FSBPYR_BOOTSTRAP_VOLUME the volume that keeps uv's
 # cache, its Python and the runtime between container runs (default fsbpyr-cache).
@@ -49,6 +52,13 @@ is_trixie() {
 need_uv() {
     command -v uv >/dev/null \
         || die "uv is not on PATH; install it (https://docs.astral.sh/uv/getting-started/installation/) and run this again"
+    # Release CI and verifiers name the uv that built a release; its bytes depend on it.
+    if [ -n "${FSBPYR_UV_VERSION:-}" ]; then
+        local have
+        have="$(uv --version | cut -d' ' -f2)"
+        [ "$have" = "$FSBPYR_UV_VERSION" ] \
+            || die "FSBPYR_UV_VERSION is $FSBPYR_UV_VERSION, but uv on PATH is $have; install uv $FSBPYR_UV_VERSION and run this again"
+    fi
 }
 
 need_python() {

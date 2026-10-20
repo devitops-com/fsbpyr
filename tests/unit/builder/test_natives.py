@@ -5,7 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from fsbpyr.elf import DynamicInfo, ElfError, dynamic_info, glibc_requirement, needed_versions
+from fsbpyr.elf import (
+    DynamicInfo,
+    ElfError,
+    dynamic_info,
+    glibc_requirement,
+    needed_versions,
+    section,
+)
 from fsbpyr.natives import NativeError, closures, is_extension_module
 
 from ...support.elf import DT_NEEDED, make_elf
@@ -23,6 +30,37 @@ def test_dynamic_info_reads_needed_paths_and_soname() -> None:
         runpath=("$ORIGIN", "$ORIGIN/../lib"),
         soname="libext.so",
     )
+
+
+def test_section_reads_a_named_section_by_its_name() -> None:
+    comment = b"\0Linker: Debian LLD 22.1.8\0Debian clang version 22.1.8 (1~deb13u4)\0"
+    data = make_elf(needed=("libc.so.6",), comment=comment)
+
+    assert section(data, ".comment") == comment
+    assert section(data, ".shstrtab") == b"\0.comment\0.shstrtab\0"
+    assert section(data, ".nope") is None
+    assert section(data, ".comm") is None  # a prefix is not the name
+    assert dynamic_info(data).needed == ("libc.so.6",)  # the sections change nothing else
+
+
+def test_section_of_an_object_without_section_headers_is_none() -> None:
+    assert section(make_elf(), ".comment") is None
+
+
+def test_section_rejects_damaged_section_headers() -> None:
+    data = bytearray(make_elf(comment=b"x\0"))
+    with pytest.raises(ElfError, match="truncated"):
+        section(bytes(data[:-100]), ".comment")  # the header table is cut off
+    (shoff,) = struct.unpack_from("<Q", data, 40)
+    bigger = bytearray(data)
+    struct.pack_into("<Q", bigger, shoff + 64 + 32, 1 << 40)  # .comment claims a huge size
+    with pytest.raises(ElfError, match="beyond the end"):
+        section(bytes(bigger), ".comment")
+    data[60:64] = struct.pack("<HH", 3, 9)  # e_shstrndx past e_shnum
+    with pytest.raises(ElfError, match="bad ELF section headers"):
+        section(bytes(data), ".comment")
+    with pytest.raises(ElfError, match="not an ELF"):
+        section(b"MZ", ".comment")
 
 
 def test_objects_without_dynamic_section_have_no_dependencies() -> None:

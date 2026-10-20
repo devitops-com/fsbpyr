@@ -44,8 +44,21 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   files, are dropped. `docs/performance.md` has new "Cold start" and "Integrity check" tables
   (28 MB to 1.07 GB, one core and without SHA instructions), each with a "Reproduce:" command
   that runs; the README's "Integrity" figures are the new ones.
+- **`fsbpyr inspect` shows the toolchain that linked the launcher**, the stub's `.comment`
+  lines ("toolchain", `.toolchain` in `--json`), such as `Debian clang version 22.1.8
+  (1~deb13u4)`. `fsbpyr runtime build` also records the clang and lld versions in the runtime's
+  `runtime.json`, for information; they are not part of the runtime id.
 
 ### Changed
+- **The release toolchain is pinned.** Release CI uses `debian:trixie` by digest, the uv named
+  by `tools/release/uv.version` (version and the SHA-256 of its release tarball, checked on
+  download) instead of the newest one, and, on tag runs, a snapshot of the Debian archive
+  (`tools/release/apt-snapshot`) for clang-22, lld-22 and the rest, so a rebuild finds the
+  clang that linked the launcher. The Containerfile pins the same image digest. The release log
+  lists the image, snapshot, uv and package versions. With `FSBPYR_UV_VERSION` set,
+  `tools/bootstrap.sh` accepts only that uv; without it any uv still works. The daily
+  upstream-watch workflow also opens a `toolchain-update` issue when the uv, the image digest
+  or the snapshot (older than 90 days) needs a new pin.
 - **fsbpyr runs on CPython 3.14 only, and stops at once on any other Python.** Its
   `requires-python` is now `>=3.14,<3.15`, so pip refuses to install it on 3.15.
   `uv pip install` and `uv tool install` ignore that upper bound, so `fsbpyr build` and
