@@ -214,10 +214,12 @@ fsbpyr: cannot start /usr/local/bin/app: integrity check failed: the file was mo
 ```
 
 The check hashes the file with SHA-256 on up to 8 threads, never more than the cores it may
-use. On a Core Ultra 9 285 with the file in the page cache it takes 2.0 ms for a 28 MB app and
-8.9 ms for 148 MB (one core: 6.9 and 38 ms; without SHA instructions: 7.1 and 30 ms;
-[docs/performance.md](docs/performance.md#the-integrity-check), measured at 0.6.0 and 0.7.0,
-not re-measured). The first start after a reboot also reads the whole file from disk.
+use. On a Core Ultra 9 285 with the file in the page cache it takes 1.7 ms for a 28 MB app,
+11 ms for 244 MB and 47 ms for 1.07 GB (one core: 7.8, 84 and 311 ms; without SHA instructions
+on one core: 46 ms, 0.4 s and 1.6 s;
+[docs/performance.md](docs/performance.md#integrity-check-0200), measured at 0.20.0). The
+first start after a reboot also reads the whole file from disk: 6 to 12 ms more for a 28 and a
+77 MB app on an NVMe SSD ([cold start](docs/performance.md#cold-start-0200)).
 `FSBPYR_TRACE=1` reports the time as `integrity_ns`. Files extracted to the cache are hashed
 again by every process, once, before it first uses them, with the same digest and the same
 multithreaded routine; a changed one is reported and restored.

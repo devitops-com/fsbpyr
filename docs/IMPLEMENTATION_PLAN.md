@@ -1607,8 +1607,8 @@ cache, and cold where it matters). **Exit:** the comparison is committed in
   venv (the integrity and cache checks), pex and PyApp at the venv, PyInstaller onefile
   4.6–18× (it unpacks 35–179 MB on every start). First runs: fsbpyr 13–153 ms, PyApp
   0.28–1.17 s, pex 1.4–3.2 s. Disk after all runs: fsbpyr 96.5 MB, pex 814 MB, PyApp 1.52 GB.
-  Not measured: a cold page cache (needs root), PyApp's default mode (it
-  installs the dependencies from an index on the first run).
+  Not measured then: a cold page cache (it needs no root: `docs/performance.md`, "Cold start
+  (0.20.0)"), PyApp's default mode (it installs the dependencies from an index on the first run).
 
 ---
 

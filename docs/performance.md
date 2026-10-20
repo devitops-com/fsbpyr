@@ -9,7 +9,7 @@ the boot code, and keep the old rows.
 - Machine: Intel Core Ultra 9 285 (8 performance cores, CPUs 0–7; 16 efficiency cores,
   CPUs 8–23; SHA-NI and AVX2), Linux 6.12 (Debian 13).
 - Warm: the executable is in the page cache and its natives are already extracted. A first
-  start after a reboot also reads the whole file from disk; that is not measured here.
+  start after a reboot also reads the whole file from disk; see "Cold start (0.20.0)".
 - Each figure is the median (p50) of 31 to 200 runs started with `subprocess` from Python.
   Variants that are compared are run interleaved, so that a drift of the CPU clock hits both.
   Runs of 100 ms and more vary by about ±1.5 ms between rounds; repeat before trusting a
@@ -59,6 +59,73 @@ measured side by side.
 Thread count: one thread per 4 pieces of 1 MiB, at most 8 and never more than the usable
 cores. On this machine 5–6 threads beat 8 for files under about 40 MB (21 MB: 2.1 against
 2.4 ms); `mmap` beat `pread` at every size (21 MB: 2.2 against 3.1 ms).
+
+## Integrity check (0.20.0)
+
+The same check with the launcher since D36 (files read in pieces, not mapped), for apps of 28 MB
+(the `hello` fixture), 244 MB and 1.07 GB (the same plus 206 and 996 MB of random data, which
+does not compress), `integrity_ns` from `FSBPYR_TRACE`, median of 31 runs each, warm page
+cache, fsbpyr 0.20.0-7064cb77:
+
+| Executable | Up to 8 threads | One core | Up to 8 threads, no SHA-NI | One core, no SHA-NI |
+|---|---|---|---|---|
+| 27.7 MB | 1.72 ms | 7.8 ms | 7.3 ms | 45.7 ms |
+| 244 MB | 11.4 ms | 83.5 ms | 58.3 ms | 411 ms |
+| 1,072 MB | 47.0 ms | 311 ms | 235 ms | 1,564 ms |
+| per GB (from 1,072 MB) | 44 ms | 290 ms | 219 ms | 1,459 ms |
+
+"One core" is `taskset -c 2`, "no SHA-NI" `OPENSSL_ia32cap=:~0x20000000`. Compared with the
+table above (mmap-based launcher of 0.6.0/0.7.0), one core takes 7.8 against 6.9 ms for the
+28 MB app; the other cells were not measured for 0.6.0/0.7.0 at these sizes. The time grows
+with the size, about linearly past 244 MB: about 44 ms per GB on this machine, 0.3 s per GB on a single core and 1.5 s
+per GB on a single core without SHA instructions. The check reads the file from the page cache;
+after a reboot the disk read comes on top (see "Cold start").
+
+Reproduce: from a checkout, with `fsbpyr` installed:
+
+```sh
+D=~/fsbpyr-bench; mkdir -p $D; cp -r tests/fixtures/projects/hello $D/small
+cp -r $D/small $D/big; head -c 996M /dev/urandom > $D/big/src/hello/blob.bin  # 206M: 244 MB
+fsbpyr build $D/small -o $D/small.app; fsbpyr build --fast-compression $D/big -o $D/big.app
+for i in $(seq 31); do FSBPYR_TRACE=1 $D/big.app 2>&1 >/dev/null |
+  sed -n 's/.*"integrity_ns": \([0-9]*\).*/\1/p'; done | sort -n | sed -n 16p  # median, ns
+```
+
+For the other columns put `taskset -c 2`, `env OPENSSL_ia32cap=:~0x20000000` or both in front
+of `$D/big.app`.
+
+## Cold start (0.20.0)
+
+Starts with the page cache empty of the executable and, separately, of the files extracted to
+the cache. `spikes/bench.py --cold` skips the warm-up runs and, before each sample, writes the
+executable out and drops its pages with `posix_fadvise(POSIX_FADV_DONTNEED)`, with `--cache DIR`
+those of every file under DIR as well. That needs no root, but the files must be on a disk file
+system (here XFS on an NVMe SSD, Samsung 9100 PRO): on tmpfs nothing is evicted. `fincore`
+showed the 73.5 MB executable at 73.5M resident before and 0B after. Median of 51 runs, two
+rounds each (the second in brackets), fsbpyr 0.20.0-7064cb77. The `hello` fixture stands in
+for the no-op app; it also prints a line, so it runs a little above the no-op rows of
+"Starting a no-op app".
+
+| App | Warm | Executable evicted | Executable and cache evicted |
+|---|---|---|---|
+| `hello` (27.7 MB; extracts nothing) | 8.84 ms (9.08) | 15.18 ms (15.13) | same as the previous column |
+| `heavy np` (77.1 MB; extracts 5 files, 37 MB) | 128.1 ms (130.6) | 139.9 ms (142.4) | 170.4 ms (163.3) |
+
+Evicting the executable adds 6 ms for `hello` and 12 ms for `heavy np`, the time to
+read the whole file from this SSD, which D31 does at every start; `heavy np` adds
+another 21 to 30 ms for reading the 37 MB of natives it loads. On a slower disk it grows with
+the size of the file, since the integrity check needs all of it before the app starts.
+
+Reproduce: the `D` and the `hello` app of the previous section, and `heavy` built the same way:
+
+```sh
+cp -r tests/fixtures/projects/heavy $D/heavy; fsbpyr build $D/heavy -o $D/heavy.app
+C=$D/cache; FSBPYR_CACHE_DIR=$C $D/heavy.app np  # fills the cache
+python3 spikes/bench.py -n 51 --cache $C "warm=$D/heavy.app np"
+FSBPYR_CACHE_DIR=$C python3 spikes/bench.py -n 51 --cold "exe=$D/heavy.app np"
+python3 spikes/bench.py -n 51 --cold --cache $C "exe+cache=$D/heavy.app np"
+python3 spikes/bench.py -n 51 --cold "hello=$D/small.app"
+```
 
 ## The cache check
 
@@ -491,7 +558,7 @@ Measured as above, with these differences: each tool ran with a `HOME` and `TMPD
 each variant; first runs are medians of 11 interleaved rounds, the tool's `HOME` emptied before
 each run; peak RSS is `ru_maxrss` from `wait4`, the largest process of the run (PyInstaller's
 onefile parent or its child), not their sum. All 24 cores, warm page cache; a cold page cache
-needs root and was not measured. Bare CPython: 5.2–5.4 ms in a check of 101 rounds; in the main
+was not measured in that run (it needs no root: see "Cold start (0.20.0)"). Bare CPython: 5.2–5.4 ms in a check of 101 rounds; in the main
 run, where it always ran right after aiagent's `--help`, it took 10.3 ms.
 
 ### What it took to get the venv's output
