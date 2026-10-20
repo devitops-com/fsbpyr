@@ -214,6 +214,11 @@ def test_json_describes_everything(tmp_path: Path, capsys: pytest.CaptureFixture
     assert report["build_info"]["git"]["tag"] == "v0.8.1"
 
 
+def _lines(capsys: pytest.CaptureFixture[str], executable: Path) -> list[str]:
+    assert main(["inspect", str(executable)]) == 0
+    return capsys.readouterr().out.splitlines()
+
+
 def test_verify_checks_the_file_digest(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     executable = _executable(tmp_path)
     digest = executable.read_bytes()[-32:].hex()
@@ -222,7 +227,14 @@ def test_verify_checks_the_file_digest(tmp_path: Path, capsys: pytest.CaptureFix
     assert main(["inspect", "--verify", str(executable)]) == 0
     assert f"digest     {digest} verified" in capsys.readouterr().out.splitlines()
     assert main(["inspect", "--json", str(executable)]) == 0
-    assert json.loads(capsys.readouterr().out)["digest"] == digest
+    plain = json.loads(capsys.readouterr().out)
+    assert plain["digest"] == digest and plain["sha256"] is None
+    file_sha256 = hashlib.sha256(executable.read_bytes()).hexdigest()
+    assert not any(line.startswith("sha256") for line in _lines(capsys, executable))
+    assert main(["inspect", "--verify", str(executable)]) == 0
+    assert f"sha256     {file_sha256}" in capsys.readouterr().out.splitlines()
+    assert main(["inspect", "--json", "--verify", str(executable)]) == 0
+    assert json.loads(capsys.readouterr().out)["sha256"] == file_sha256
     with Executable.open(executable) as reader:
         offset = reader.payload_offset - 1  # the stub's padding: outside the payload
     data = bytearray(executable.read_bytes())
