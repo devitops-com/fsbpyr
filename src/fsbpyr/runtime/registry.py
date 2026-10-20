@@ -21,14 +21,15 @@ from ..payload.format import PayloadError, tree_digest
 from ..payload.reader import Executable, Payload
 from ..payload.spec import File, Module, PayloadSpec
 from ..payload.writer import encode_payload
-from . import pbs, pins, stdlib, stub, sysroot
+from . import notices, pbs, pins, stdlib, stub, sysroot
 from .hold import hold
 from .toolchain import describe, find_toolchain
 
 BOOT_PACKAGES = ("_fsbpyr_boot", "_fsbpyr_rt")  # regenerated for every build, never runtime content
 LAYOUT_VERSION = 8  # bump when the stdlib selection, its canonical bytecode, the layout or the
 # launcher's link changes (7: a reproducible link; 8: runtime.json records its inputs and
-# components, which build_info carries, REP-3)
+# components, which build_info carries, REP-3; the stdlib fragment carries the licence notices
+# of what the runtime links, REP-4)
 _STUB = "stub"
 _STDLIB = "stdlib.fsbp"
 _META = "runtime.json"
@@ -324,6 +325,7 @@ def build_runtime(
         stub_bytes = stub_path.read_bytes()
     log("compiling the standard library")
     modules, files = stdlib.fragment(dist, warn=log)
+    files = (*files, *notices.files(dist))
     runtime = Runtime(
         tag=f"{dist.tag}-{dist.triple}",
         runtime_id=directory.name,

@@ -34,6 +34,17 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   smoke test, the new executable runs with these arguments, for example `--version`, and the
   build fails unless it exits 0, with the arguments and the app's stderr in the error. The
   output stays as it was. Off unless set: only you know which arguments are safe.
+- **`fsbpyr inspect --licenses` prints the third-party licence notices of an executable.**
+  Every runtime now carries the licence texts of what its launcher links, as resources under
+  `_fsbpyr_licenses/`: the texts PBS ships for the built-in extensions (OpenSSL, libffi,
+  libedit, ncurses, expat, mpdecimal, SQLite, zlib, liblzma, bzip2, libuuid and CPython's),
+  zstd's and the HACL\* hash code's, which PBS does not ship, and fsbpyr's LICENSE
+  (runtime layout 8). `--licenses` prints them, then each distribution's notices, best effort:
+  the dist-info `licenses/` directory, METADATA's `License-File` names, licence files in the
+  dist-info root, and `LICENSE*`, `COPYING*`, `NOTICE*` and `ThirdPartyNotices*` files in its
+  packages. The release attaches the output for fsbpyr's executable as
+  `THIRD_PARTY_LICENSES.txt` (also in `SHA256SUMS` and attested). The README says what to ship
+  with an app.
 - **`make test-container` runs the whole test suite but the portability tests in a container.**
   The Containerfile's new `test` stage (its first stage is now named `build`, which `make
   bootstrap` selects) adds what the suite needs beyond a build: the sanitizer runtimes,
@@ -156,6 +167,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   the release asset names and URLs that self-update and installers use, and the trailer and
   digest layout that `inspect --verify` reads. Breaking changes are marked `**Breaking:**`
   in this file from now on.
+- **LICENSE gains a runtime exception** for the launcher and the boot modules, so an app built
+  with fsbpyr need not reproduce fsbpyr's MIT notice for them. The package's licence
+  expression is now `LicenseRef-fsbpyr-MIT-with-runtime-exception`.
 - **`build_info["lock"]` and `["dists"]` changed shape** (see the manifest above): `lock` was
   the lock's kind as a string, now an object with `kind`; `dists` was a list of
   `name==version` strings, now a list of objects.

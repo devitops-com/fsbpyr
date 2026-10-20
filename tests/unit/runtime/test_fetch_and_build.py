@@ -17,9 +17,9 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.cli import main
-from fsbpyr.payload.format import ModuleFlag, ModuleKind
+from fsbpyr.payload.format import FileKind, ModuleFlag, ModuleKind
 from fsbpyr.payload.spec import Blob, File, Module
-from fsbpyr.runtime import pbs, pins, registry, stdlib, stub, sysroot
+from fsbpyr.runtime import notices, pbs, pins, registry, stdlib, stub, sysroot
 from fsbpyr.runtime.pins import PbsPin, pin_for
 from fsbpyr.runtime.toolchain import Toolchain
 
@@ -223,8 +223,10 @@ def test_build_runtime_orchestrates_and_caches(
         warn("x.py: SyntaxWarning: from the stdlib")
         return (boot,), ()
 
+    notice = File("_fsbpyr_licenses/LICENSE.fsbpyr.txt", FileKind.RESOURCE, Blob.zstd(b"MIT"))
     monkeypatch.setattr(stub, "build_stub", build_stub)
     monkeypatch.setattr(stdlib, "fragment", fragment)
+    monkeypatch.setattr(notices, "files", lambda dist: (notice,))
     messages: list[str] = []
 
     runtime = registry.build_runtime("3.14", cache=tmp_path, log=messages.append)
@@ -234,6 +236,7 @@ def test_build_runtime_orchestrates_and_caches(
         "cp314-x86_64-unknown-linux-gnu",
         (boot,),
     )
+    assert runtime.files == (notice,)  # the licence notices travel with the runtime (REP-4)
     assert registry.find_runtime("3.14", cache=tmp_path) == runtime
     pin = pins.pin_for("3.14", registry.host_triple())
     assert runtime.components == components

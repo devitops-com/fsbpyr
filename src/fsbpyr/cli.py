@@ -205,10 +205,23 @@ def build_command(  # noqa: PLR0913  click passes every option by name
 @click.option("--all-modules", is_flag=True, help="list every module, not only top-level names")
 @click.option("--files", "list_files", is_flag=True,
               help="list every packaged file with its kind, size and SHA-256")  # fmt: skip
-def inspect_command(
-    *, binary: Path, as_json: bool, verify: bool, all_modules: bool, list_files: bool
+@click.option("--licenses", "show_licenses", is_flag=True,
+              help="print the third-party licence notices BINARY carries: the runtime's, and "
+                   "the distributions' as far as they ship them")  # fmt: skip
+def inspect_command(  # noqa: PLR0913  click passes every option by name
+    *,
+    binary: Path,
+    as_json: bool,
+    verify: bool,
+    all_modules: bool,
+    list_files: bool,
+    show_licenses: bool,
 ) -> int:
+    if show_licenses and (as_json or verify or all_modules or list_files):
+        raise click.UsageError("--licenses cannot be combined with the other options")
     _collect_when_due()
+    if show_licenses:
+        return _print_licenses(binary)
     from .inspection import InspectError, as_text, read  # noqa: PLC0415  fast --version
     from .inspection import as_json as json_text  # noqa: PLC0415
 
@@ -221,6 +234,21 @@ def inspect_command(
         print(json_text(report, all_modules=all_modules))
     else:
         print("\n".join(as_text(report, all_modules=all_modules)))
+    return 0
+
+
+def _print_licenses(binary: Path) -> int:
+    from .licensing import read, render  # noqa: PLC0415  keep --version fast
+    from .payload.format import PayloadError  # noqa: PLC0415
+
+    try:
+        print(render(read(binary)))
+    except PayloadError as exc:
+        print(f"fsbpyr: error: {binary} is not an executable fsbpyr built ({exc})", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"fsbpyr: error: cannot read {binary}: {exc.strerror or exc}", file=sys.stderr)
+        return 1
     return 0
 
 

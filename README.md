@@ -211,6 +211,7 @@ Keep sources for builds you debug.
 
 ```
 fsbpyr inspect BINARY [--json] [--verify] [--all-modules] [--files]
+fsbpyr inspect BINARY --licenses
 ```
 
 Shows the app and its version, the fsbpyr that built it (`fsbpyr --version` prints the same form:
@@ -227,6 +228,25 @@ versions of the libraries the runtime carries (OpenSSL, SQLite, zlib, expat, lib
 lock the app was built from with its SHA-256, and `--files` lists every packaged file with its
 kind, size and SHA-256 (from the distributions' RECORD files). The build information `--json`
 prints under `build_info` is described in [docs/format.md](docs/format.md#build-information).
+
+### Licence notices
+
+Every executable statically links third-party libraries (OpenSSL, libffi, libedit, ncurses,
+expat, mpdecimal, SQLite, zlib, liblzma, zstd, bzip2, libuuid, and the HACL\* code in the hash
+modules) and holds fsbpyr's launcher and boot modules. The licence texts for those travel in
+the executable under `_fsbpyr_licenses/`, with CPython's and fsbpyr's own.
+`fsbpyr inspect --licenses BINARY` prints them, then the notices of each distribution in the
+app: the files of its dist-info `licenses/` directory, those METADATA names with
+`License-File`, licence files in the dist-info root, and files named `LICENSE*`, `COPYING*`,
+`NOTICE*` or `ThirdPartyNotices*` in its packages. The runtime's part is the exact list of
+what fsbpyr links. The distributions' part is best effort: it finds what the packages ship
+under those names, which need not be every notice their bundled libraries require.
+
+fsbpyr's LICENSE has a runtime exception for the launcher and the boot modules, so an app need
+not reproduce fsbpyr's MIT notice for them. To redistribute an app, ship the output of
+`inspect --licenses` with it (or point to the executable), and check the distributions' part
+against what you know your dependencies bundle. Each release also carries it for fsbpyr's own
+executable as the asset `THIRD_PARTY_LICENSES.txt`.
 
 A build warns when a native file needs a `GLIBCXX`, `CXXABI`, `GCC` or `ZLIB` version newer
 than the manylinux_2_28 policy allows, since such a library fails to import on a target with

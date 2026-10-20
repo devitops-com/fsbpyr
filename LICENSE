@@ -19,3 +19,13 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Runtime exception
+
+As a special exception, the following parts of the Software may be distributed
+as part of an executable built with the Software, in source or object form,
+without reproducing the copyright notice and this permission notice: the
+launcher (the files in src/fsbpyr/launcher/, but not those in its vendor/
+directory) and the boot modules (src/fsbpyr/boot/). This exception covers
+only that distribution inside such an executable; it does not apply to any
+other part of the Software, nor to distributing the Software itself.
