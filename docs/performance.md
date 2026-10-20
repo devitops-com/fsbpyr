@@ -223,6 +223,38 @@ columns, not other tables:
 
 Leaving out the sources does not change a start: nothing reads them on the normal path.
 
+## Where the bytes go (DX-5)
+
+`fsbpyr inspect` (and `inspect --json`, under `sizes`) splits the stored size of an executable
+into the parts of its layout, from the reader's records alone. The rows add up to the file's
+size less the 64-byte trailer. Blocks of small blobs mix owners, so a block's stored size is
+split by its members' raw sizes (the rounding remainder goes to its first member); a blob
+shared by several owners counts for the first in path order. "Standard library and boot" is
+every blob of a module or file that belongs to no distribution.
+
+`hello` and `heavy` (tests/fixtures/projects) and fsbpyr itself (the project at this commit,
+`fsbpyr build` with the checkout's own runtime), built from the commit that added this
+section; bytes, so the sums are exact:
+
+| Part | `hello` | `heavy` | fsbpyr |
+|---|---:|---:|---:|
+| stub | 20,913,529 | 20,913,529 | 20,913,529 |
+| zero padding to the page boundary | 647 | 647 | 647 |
+| payload header | 208 | 208 | 208 |
+| index and string tables | 100,268 | 392,724 | 119,556 |
+| blob alignment padding (16 bytes) | 1,674 | 5,098 | 2,000 |
+| standard library and boot modules | 6,685,090 | 6,655,982 | 6,689,534 |
+| distributions: code | 403 | 7,280,431 | 797,947 |
+| distributions: sources | 65 | 3,296,238 | 312,259 |
+| distributions: resources | 212 | 1,129,629 | 103,483 |
+| distributions: natives | 0 | 37,394,211 | 0 |
+| **file less trailer** | **27,702,096** | **77,068,697** | **28,939,163** |
+
+The floor of every app is the stub (20.9 MB: the launcher with CPython and its libraries linked
+in statically, D2) plus the standard library (6.7 MB), together 27.6 MB. `hello`
+adds about 100 KB of tables and a few hundred bytes of its own. In `heavy`, onnxruntime and numpy
+hold 31 of the 37 MB of natives.
+
 ## A PyTorch app (0.8.0, D34)
 
 `torchopt`: CPU-only torch 2.14.1, a 100-step Adam loop; 233 MB with zstd 9; the cache on disk
