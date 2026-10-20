@@ -1,0 +1,13 @@
+[project]
+name = "corpus-psycopg"
+version = "1.0.0"
+description = "fsbpyr corpus app: psycopg with its bundled libpq"
+requires-python = ">=3.12"
+dependencies = ["psycopg[binary]>=3.2"]
+
+[project.scripts]
+corpus-psycopg = "corpus_psycopg.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

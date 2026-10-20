@@ -95,6 +95,35 @@ The `compat` app runs one small check per library or behaviour in each build:
 Distributions and checks are compared with the tests in `tests/unit/test_cli_docs.py`, so this
 list cannot drift from the code. It says nothing about packages that are not in it.
 
+## Tested on real applications
+
+Besides the fixtures, a corpus of small applications is built and run once a night, on every
+push to main and before a release (`full-suite.yml`). Each is a project in `tests/corpus/<name>`
+with its own `uv.lock`; the test runs its commands in a venv and in the built executable and
+compares exit code, stdout and stderr. A failing row is marked in its directory's
+`commands.toml`.
+
+| App | Risk it covers | `[tool.fsbpyr]` |
+|---|---|---|
+| `alembic` | migration files named by digits, loaded by path | none |
+| `black` | modules compiled with mypyc; **fails**: `black.output` is not found, because the compiled package's `__path__` is the cache directory and `--fs-package` refuses a package of native code | none |
+| `flask-jinja` | templates and static files next to the package; without the setting the build succeeds and the app answers 500 | `fs-packages = ["corpus_flask"]` |
+| `gnureadline` | an extension that links GNU readline statically | none |
+| `lxml` | libxml2 and libxslt bundled in the wheel | none |
+| `pandas-csv` | pandas with numpy and dateutil | none |
+| `pillow` | Pillow's codecs and embedded font | none |
+| `psycopg` | a database driver whose wheel bundles libpq, libssl and libcrypto | none |
+| `pytest-plugin` | a pluggy plugin found through an entry point | none |
+| `scipy` | scipy's compiled libraries | none |
+| `setuptools-vendor` | the libraries setuptools vendors | none |
+
+`tests/fixtures/projects/plugins` is a host and two plugin distributions with a custom
+entry-point group and a PEP 420 namespace they share. The apps were only run on Linux x86-64
+with the Python of `.python-version`, and only for the commands in their `commands.toml`.
+`distutils` imported before `setuptools` is not found in the executable; the
+`setuptools-vendor` app imports `setuptools` first, as the `compat` app does (*not
+investigated further*).
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |

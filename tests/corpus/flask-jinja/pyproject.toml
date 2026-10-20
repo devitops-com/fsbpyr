@@ -1,0 +1,16 @@
+[project]
+name = "corpus-flask"
+version = "1.0.0"
+description = "fsbpyr corpus app: Flask with jinja2 templates and static files"
+requires-python = ">=3.12"
+dependencies = ["flask>=3"]
+
+[project.scripts]
+corpus-flask-jinja = "corpus_flask.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+fs-packages = ["corpus_flask"]  # Flask reads templates/ and static/ next to its package

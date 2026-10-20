@@ -1,0 +1,13 @@
+[project]
+name = "corpus-setuptools"
+version = "1.0.0"
+description = "fsbpyr corpus app: setuptools and the packages it vendors"
+requires-python = ">=3.12"
+dependencies = ["setuptools>=80"]
+
+[project.scripts]
+corpus-setuptools-vendor = "corpus_setuptools.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

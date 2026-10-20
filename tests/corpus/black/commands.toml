@@ -1,0 +1,14 @@
+# Fails today (found by this corpus): mypyc compiles black's package, whose __path__ it sets to
+# the directory the extension was extracted to; black.output, black.report and others are
+# plain modules that the payload serves, so `from black.output import err` finds nothing there.
+# --fs-package refuses a package of native code. Remove this line when the importer is fixed.
+known-failure = "a mypyc package's __path__ is the cache directory: black.output is not found"
+
+[[command]]
+argv = ["--version"]
+
+[[command]]
+argv = ["--check", "--diff", "--no-cache", "work/messy.py"]
+
+[[command]]
+argv = ["--check", "--no-cache", "work/clean.py"]

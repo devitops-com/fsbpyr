@@ -1,0 +1,13 @@
+[project]
+name = "corpus-lxml"
+version = "1.0.0"
+description = "fsbpyr corpus app: lxml parsing, XPath and XSLT"
+requires-python = ">=3.12"
+dependencies = ["lxml>=5"]
+
+[project.scripts]
+corpus-lxml = "corpus_lxml.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

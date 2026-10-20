@@ -16,7 +16,7 @@ from fsbpyr.payload.spec import Blob, File, Module
 from fsbpyr.runtime import pbs, pins, registry, stub
 from fsbpyr.runtime.toolchain import ToolchainError, find_toolchain
 
-from ..support import downloads
+from ..support import corpus, downloads
 
 type BuildApp = Callable[[dict[str, str], str], Path]
 
@@ -68,7 +68,12 @@ def runtime(request: pytest.FixtureRequest) -> registry.Runtime:
 
 
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
-    """Whether the runtime's pinned downloads came from FSBPYR_TEST_DOWNLOADS or the network."""
+    """Whether the runtime's pinned downloads came from FSBPYR_TEST_DOWNLOADS or the network,
+    and how the real-world corpus fared (TST-3)."""
+    if lines := corpus.summary():
+        terminalreporter.section("corpus")
+        for line in lines:
+            terminalreporter.line(line)
     if _download_status:
         terminalreporter.section("runtime downloads")
         for name, how in _download_status.items():

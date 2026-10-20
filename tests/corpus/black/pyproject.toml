@@ -1,0 +1,13 @@
+[project]
+name = "corpus-black"
+version = "1.0.0"
+description = "fsbpyr corpus app: black, whose modules are compiled with mypyc"
+requires-python = ">=3.12"
+dependencies = ["black>=25"]
+
+[project.scripts]
+corpus-black = "corpus_black.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
