@@ -5,6 +5,7 @@ Needs the cached runtime and, on the first run, network access for the fixtures'
 HTTP clients talk to a local server, so the checks themselves need no network.
 """
 
+import ast
 import hashlib
 import json
 import os
@@ -22,12 +23,13 @@ from fsbpyr.cli import main
 from fsbpyr.payload.reader import Executable
 from fsbpyr.runtime.registry import Runtime
 
+from ..support.differential import assert_same, make_venv
 from ..support.stderr import noise
 
 pytestmark = pytest.mark.slow
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "projects"
-MATRIX = {
+MATRIX = {  # check -> its output; the differential compares with the venv's run instead
     "click": "click n=3",
     "typer": "typer hello Ada",
     "rich": "rich True",
@@ -56,7 +58,7 @@ def _build(name: str, tmp: Path, *options: str) -> Path:
     project = tmp / name
     if not project.exists():
         shutil.copytree(FIXTURES / name, project)
-    out = tmp / "bin" / f"{name}{len(options)}"
+    out = tmp / "bin" / f"{name}{len(options) or ''}"  # named like the console script
     assert main(["build", str(project), "-o", str(out), *options]) == 0
     return out
 
@@ -64,6 +66,16 @@ def _build(name: str, tmp: Path, *options: str) -> Path:
 @pytest.fixture(scope="module")
 def compat(tmp_path_factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
     return _build("compat", tmp_path_factory.mktemp("compat"))
+
+
+@pytest.fixture(scope="module")
+def compat_venv(tmp_path_factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
+    return _venv("compat", tmp_path_factory, runtime)
+
+
+@pytest.fixture(scope="module")
+def mp_venv(tmp_path_factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
+    return _venv("mp", tmp_path_factory, runtime)
 
 
 @pytest.fixture(scope="module")
@@ -91,6 +103,14 @@ def url() -> Iterator[str]:
     server.shutdown()
 
 
+def _venv(name: str, factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
+    """The fixture project run from a venv, on the runtime's Python (TST-2)."""
+    project = factory.mktemp(f"{name}-src") / name
+    shutil.copytree(FIXTURES / name, project)
+    python = runtime.python_version.rpartition(".")[0]
+    return make_venv(project, factory.mktemp(f"{name}-venv"), python)
+
+
 def _run(executable: Path, cache: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "FSBPYR_CACHE_DIR": str(cache)}
     return subprocess.run([executable, *args], env=env, capture_output=True, text=True,
@@ -98,12 +118,26 @@ def _run(executable: Path, cache: Path, *args: str) -> subprocess.CompletedProce
 
 
 @pytest.mark.parametrize("check", sorted(MATRIX))
-def test_compatibility_matrix(compat: Path, url: str, tmp_path: Path, check: str) -> None:
-    result = _run(compat, tmp_path / "cache", check, url)
+def test_compatibility_matrix(
+    compat: Path, compat_venv: Path, url: str, tmp_path: Path, check: str
+) -> None:
+    env = {"FSBPYR_CACHE_DIR": str(tmp_path / "cache")}
+
+    result = assert_same(compat_venv, compat, [check, url], env=env)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == MATRIX[check]
+    assert result.stdout.strip() != ""
     assert noise(result.stderr) == ""
+
+
+def test_every_command_of_the_compat_fixture_is_in_the_matrix() -> None:
+    source = (FIXTURES / "compat" / "src" / "compat" / "cli.py").read_text()
+    (checks,) = [n.value for n in ast.parse(source).body
+                 if isinstance(n, ast.Assign) and n.targets[0].id == "CHECKS"]  # type: ignore[attr-defined]  # fmt: skip
+    assert isinstance(checks, ast.Dict)
+    names = [str(k.value) for k in checks.keys if isinstance(k, ast.Constant)]
+
+    assert sorted(names) == sorted(MATRIX) and len(MATRIX) == 17
 
 
 def _site(cache: Path) -> Path:
@@ -158,6 +192,18 @@ def test_the_app_starts_helper_interpreters_only_when_built_so(
 
     assert result.returncode == 0, result.stderr
     assert [line.rstrip() for line in result.stdout.splitlines()] == expected
+
+
+def test_the_app_ran_like_the_original_when_it_calls_exit_in_a_child(
+    mp_tmp: Path, mp_venv: Path, tmp_path: Path
+) -> None:
+    """RT-1: the child's `-c 'exit(4)'` needs site's builtins, which built apps define."""
+    executable = _build("mp", mp_tmp, "--interpreter-reexec")
+    env = {"FSBPYR_CACHE_DIR": str(tmp_path / "cache")}
+
+    result = assert_same(mp_venv, executable, ["reexec"], env=env, script="mp")
+
+    assert result.stdout.split()[-1] == "4"
 
 
 def test_helper_interpreters_are_refused_to_other_callers(mp_tmp: Path, tmp_path: Path) -> None:
@@ -246,16 +292,21 @@ def datafiles(tmp_path_factory: pytest.TempPathFactory, runtime: Runtime) -> Pat
     return _build("datafiles", tmp_path_factory.mktemp("datafiles"))
 
 
+@pytest.fixture(scope="module")
+def datafiles_venv(tmp_path_factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
+    return _venv("datafiles", tmp_path_factory, runtime)
+
+
 @pytest.mark.parametrize("check", sorted(DATAFILES))
 def test_packages_reading_data_next_to_their_modules(
-    datafiles: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, check: str
+    datafiles: Path, datafiles_venv: Path, tmp_path: Path, check: str
 ) -> None:
-    monkeypatch.setenv("MPLCONFIGDIR", str(tmp_path / "mpl"))  # matplotlib's own font cache
+    env = {"FSBPYR_CACHE_DIR": str(tmp_path / "cache"), "MPLCONFIGDIR": str(tmp_path / "mpl")}
 
-    result = _run(datafiles, tmp_path / "cache", check)
+    result = assert_same(datafiles_venv, datafiles, [check], env=env)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == DATAFILES[check]
+    assert result.stdout.strip() != ""
     assert noise(result.stderr) == ""
 
 
