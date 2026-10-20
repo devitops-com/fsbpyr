@@ -18,6 +18,7 @@ from fsbpyr.payload.reader import Executable
 from fsbpyr.project import LockSource
 from fsbpyr.runtime.registry import Runtime
 
+from ..support.stderr import NO_HOSTNAME
 from .test_compat import MATRIX
 from .test_natives import EXPECTED as HEAVY
 
@@ -55,8 +56,6 @@ COMMANDS = {  # (binary, arguments) -> expected stdout; the HTTP checks need the
 _GLIBC = re.compile(r"GLIBC_(\d+)\.(\d+)")
 _REQUIRED_FROM = re.compile(r"^\s+required from (\S+):$")
 _VERSION_REF = re.compile(r"^\s+0x[0-9a-f]+ 0x[0-9a-f]+ \d+ ([A-Z]+)_(\d+(?:\.\d+)*)$")
-# onnxruntime itself runs `sh -c "echo `blkid; hostname`"`; minimal images lack either command
-_NO_HOSTNAME = re.compile(r"^sh: .*(blkid|hostname): (command )?not found\n", re.MULTILINE)
 
 
 @pytest.fixture(scope="module")
@@ -91,7 +90,7 @@ def test_apps_run_on_older_distributions(apps: Path, image: str) -> None:
         capture_output=True, text=True, timeout=900, check=False,
     )  # fmt: skip
 
-    combined = _NO_HOSTNAME.sub("", result.stdout)
+    combined = NO_HOSTNAME.sub("", result.stdout)
     sections = dict(
         (head.strip(), body.strip())
         for head, _, body in (part.partition("\n") for part in combined.split("== ")[1:])

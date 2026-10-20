@@ -50,6 +50,14 @@ def _requests(url: str | None) -> str:
     return f"requests {response.status_code} {response.text.strip()}"
 
 
+def _charset_normalizer(_: str | None) -> str:
+    from importlib.machinery import EXTENSION_SUFFIXES
+
+    from charset_normalizer import md  # compiled with mypyc in the wheels
+
+    return f"charset_normalizer {str(md.__file__).endswith(tuple(EXTENSION_SUFFIXES))}"
+
+
 def _httpx(url: str | None) -> str:
     import httpx
 
@@ -157,6 +165,7 @@ CHECKS = {
     "certifi": _certifi, "pydantic": _pydantic, "jinja2": _jinja2, "pyyaml": _yaml,
     "numpy": _numpy, "cryptography": _cryptography, "orjson": _orjson, "zoneinfo": _zoneinfo,
     "sqlalchemy": _sqlalchemy, "paths": _paths, "setuptools": _setuptools,
+    "charset_normalizer": _charset_normalizer,
 }  # fmt: skip
 
 

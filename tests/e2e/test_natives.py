@@ -6,6 +6,7 @@ Needs the cached runtime and, on the first run, network access for the fixture's
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -17,6 +18,8 @@ from fsbpyr.cli import main
 from fsbpyr.payload.format import NATIVE_KINDS, Codec
 from fsbpyr.payload.reader import Executable
 from fsbpyr.runtime.registry import Runtime
+
+from ..support.stderr import NO_HOSTNAME, TRACE_LINE, noise
 
 pytestmark = pytest.mark.slow
 
@@ -30,6 +33,8 @@ EXPECTED = {
     "model": "pydantic {'x': 1, 'y': 2}",
     "onnx": "onnxruntime [[4.0, 3.0]]",
 }
+
+_RESTORING = re.compile(r"^fsbpyr: .* was modified after extraction; restoring it\n", re.MULTILINE)
 
 
 def _build(project: Path, out: Path) -> Path:
@@ -56,10 +61,13 @@ def _start(executable: Path, cache: Path, *args: str) -> subprocess.Popen[str]:
     )
 
 
-def _run(executable: Path, cache: Path, *args: str) -> tuple[str, dict[str, object]]:
+def _run(
+    executable: Path, cache: Path, *args: str, allowed: tuple[re.Pattern[str], ...] = ()
+) -> tuple[str, dict[str, object]]:
     process = _start(executable, cache, *args)
     stdout, stderr = process.communicate(timeout=120)
     assert process.returncode == 0, stderr
+    assert noise(stderr, TRACE_LINE, NO_HOSTNAME, *allowed) == ""
     return stdout, _trace(stderr)
 
 
@@ -145,7 +153,7 @@ def test_libraries_extensions_open_by_name_are_extracted_with_them(
     _, stderr = process.communicate(timeout=120)
 
     assert process.returncode == 0, stderr
-    assert "provider bridge" not in stderr
+    assert noise(stderr, TRACE_LINE, NO_HOSTNAME) == ""
     extracted: list[str] = _trace(stderr)["extracted"]  # type: ignore[assignment]
     assert "onnxruntime/capi/libonnxruntime_providers_shared.so" in extracted
     assert not any(p.startswith("onnxruntime/capi/libonnxruntime.so") for p in extracted)
@@ -172,7 +180,7 @@ def test_damaged_cached_extension_is_repaired(heavy: Path, tmp_path: Path) -> No
     target.chmod(0o700)
     target.write_bytes(b"\0" * len(original))  # same size: the hash before loading reveals it
 
-    stdout, trace = _run(heavy, cache, "np")
+    stdout, trace = _run(heavy, cache, "np", allowed=(_RESTORING,))
 
     assert stdout.strip() == EXPECTED["np"]
     assert target.read_bytes() == original

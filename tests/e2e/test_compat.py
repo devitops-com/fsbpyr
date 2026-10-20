@@ -19,6 +19,8 @@ import pytest
 from fsbpyr.cli import main
 from fsbpyr.runtime.registry import Runtime
 
+from ..support.stderr import noise
+
 pytestmark = pytest.mark.slow
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "projects"
@@ -36,6 +38,7 @@ MATRIX = {
     "zoneinfo": "zoneinfo 2:00:00 True",
     "sqlalchemy": "sqlalchemy 3 True",
     "paths": "paths True True",
+    "charset_normalizer": "charset_normalizer True",
     "requests": "requests 200 hello",
     "httpx": "httpx 200 hello",
     "setuptools": "setuptools setuptools True",  # RT-4
@@ -97,6 +100,7 @@ def test_compatibility_matrix(compat: Path, url: str, tmp_path: Path, check: str
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == MATRIX[check]
+    assert noise(result.stderr) == ""
 
 
 def _site(cache: Path) -> Path:
@@ -249,3 +253,4 @@ def test_packages_reading_data_next_to_their_modules(
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == DATAFILES[check]
+    assert noise(result.stderr) == ""

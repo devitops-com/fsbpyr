@@ -9,6 +9,12 @@ dependencies = [
     "orjson>=3.10", "tzdata", "sqlalchemy>=2", "setuptools>=80", "jaraco.classes",
 ]
 
+[tool.uv]
+# 3.4.7 is the release whose mypyc module has a digit-leading name
+# (81d243bd2c585b0f4821__mypyc; 3.4.8 and later hash to a letter);
+# the charset_normalizer check guards the classify fix against it
+constraint-dependencies = ["charset-normalizer==3.4.7"]
+
 [project.scripts]
 compat = "compat.cli:main"
 
