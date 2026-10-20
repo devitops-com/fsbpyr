@@ -204,9 +204,9 @@ jobs:
           "$exe" --version
           "$exe" inspect --verify "$exe"
           report="$("$exe" inspect --json "$exe")"
-          grep -Eq "^    \"release_asset\": \"fsbpyr$SUFFIX\",?$" <<<"$report" \
+          printf '%s\n' "$report" | grep -Eq "^    \"release_asset\": \"fsbpyr$SUFFIX\",?$" \
             || { echo "::error::$exe does not record the asset fsbpyr$SUFFIX"; exit 1; }
-          grep -Eq "^  \"python\": \"$MATRIX_PYTHON\.[0-9]+\",?$" <<<"$report" \
+          printf '%s\n' "$report" | grep -Eq "^  \"python\": \"$MATRIX_PYTHON\.[0-9]+\",?$" \
             || { echo "::error::$exe does not run on Python $MATRIX_PYTHON"; exit 1; }
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             case "$("$exe" --version)" in
