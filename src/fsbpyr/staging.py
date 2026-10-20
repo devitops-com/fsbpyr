@@ -53,6 +53,7 @@ class StagingOptions:
     # uv's --python-platform (x86_64-manylinux_2_28): wheels for the runtime's glibc baseline
     # rather than the build host's. A dependency without such a wheel is built from its sdist.
     platform: str | None = None
+    strict: bool = False  # requirements files must pin and hash every line (uv --require-hashes)
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +167,7 @@ def staging_plan(
         lock, hashes = project.directory / LockSource.PYLOCK.value, []
     else:
         lock = project.requirements_path(options.requirements)
-        hashes = ["--require-hashes"] if "--hash=" in lock.read_text() else []
+        hashes = ["--require-hashes"] if options.strict or "--hash=" in lock.read_text() else []
     install = [venv, [*base, *hashes, "-r", str(lock)], [*base, "--no-deps", WHEEL]]
     return StagingPlan(site, build, install, wheel_dir, env, [str(uv), "cache", "clean"])
 

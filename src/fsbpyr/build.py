@@ -11,7 +11,7 @@ from pathlib import Path
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from .assemble import App, build_temporary, runtime_module_names
-from .classify import _record_path, classify
+from .classify import Uncounted, _record_path, classify
 from .closure import InstalledDist, SiteIndex, resolve_entry
 from .config import BuildConfig
 from .elf import ElfError, glibc_requirement, is_elf
@@ -20,7 +20,7 @@ from .payload.format import NATIVE_KINDS, ModuleKind
 from .payload.spec import XZ_PRESET, File
 from .payload.spill import Spill
 from .payload.writer import commit
-from .project import LockSource, Project
+from .project import LockSource, Project, unpinned_requirements
 from .runtime import pins
 from .runtime.pbs import PbsError
 from .runtime.registry import Runtime, cache_root, select_runtime
@@ -46,6 +46,10 @@ _PACKAGES = (ModuleKind.PACKAGE, ModuleKind.NAMESPACE)
 
 class BuildError(RuntimeError):
     """The executable could not be produced or failed its smoke test."""
+
+
+class StrictError(BuildError):
+    """--strict: the build has warnings about the app. The message lists them."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,8 +182,9 @@ def uv_mismatch(*, builder: str | None, current: str) -> list[str]:
     distribution, so another uv can give other bytes from identical sources."""
     if builder is None or builder == current:
         return []
-    return [f"uv {current} is not uv {builder}, which built this fsbpyr: the executable can "
-            f"differ from one built with uv {builder}, even from identical sources"]  # fmt: skip
+    return [Uncounted(f"uv {current} is not uv {builder}, which built this fsbpyr: the "
+                      f"executable can differ from one built with uv {builder}, even from "
+                      "identical sources")]  # fmt: skip
 
 
 def best_compression_unused(*, best_compression: bool, files: Iterable[File]) -> list[str]:
@@ -189,6 +194,35 @@ def best_compression_unused(*, best_compression: bool, files: Iterable[File]) ->
         return []
     return ["best-compression has nothing to compress: no extension modules or shared "
             "libraries were packaged, and it compresses nothing else"]  # fmt: skip
+
+
+def unpinned_warning(unpinned: list[str]) -> list[str]:
+    """A warning for requirements without ``==``: uv resolves them now, so the build is not
+    reproducible, whatever the file is called."""
+    if not unpinned:
+        return []
+    shown = ", ".join(unpinned[:3]) + (" ..." if len(unpinned) > 3 else "")
+    return [f"requirements not pinned with ==, so resolved now and not reproducible: {shown}"]
+
+
+def lock_warnings(project: Project, source: LockSource, requirements: str | None) -> list[str]:
+    """What is not reproducible about the lock source: no lock at all, or unpinned lines."""
+    if source is LockSource.UNLOCKED:
+        return ["unlocked build: dependencies resolved now, not reproducible"]
+    if source is LockSource.REQUIREMENTS:
+        return unpinned_warning(unpinned_requirements(project.requirements_path(requirements)))
+    return []
+
+
+def check_strict(warnings: Iterable[str]) -> None:
+    """Raise StrictError for the warnings that count. The uv mismatch and git errors describe
+    the build host, and the ctypes guess is silenced only by fs-packages, which changes how
+    the app runs: none of them counts (they are Uncounted)."""
+    counted = [warning for warning in warnings if not isinstance(warning, Uncounted)]
+    if counted:
+        raise StrictError(f"--strict: the build has {len(counted)} warning"
+                          f"{'s' * (len(counted) > 1)}; nothing was written:\n  "
+                          + "\n  ".join(counted))
 
 
 def check_output(output: Path) -> None:
@@ -239,8 +273,9 @@ def build(
         written.clear()
         return result
     except Exception as exc:
-        for warning in warnings:
-            exc.add_note(warning)
+        if not isinstance(exc, StrictError):  # its message lists them
+            for warning in warnings:
+                exc.add_note(warning)
         raise
     finally:
         for path in written:  # the build failed or was interrupted
@@ -267,15 +302,14 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
     if pin := project.python_version_mismatch(TARGET_PYTHON):
         warnings.append(f".python-version pins {pin}; building for Python {runtime.python_version}")
     source = project.lock_source(config.requirements)
-    if source is LockSource.UNLOCKED:
-        warnings.append("unlocked build: dependencies resolved now, not reproducible")
+    warnings += lock_warnings(project, source, config.requirements)
     log(f"staging {project.name or project.directory.name} from {source.value}")
     # the staged files and the spill live until the executable is written: files too large to
     # hold are streamed from them (D38)
     with tempfile.TemporaryDirectory(prefix="fsbpyr-stage-") as tmp:
         baseline = pins.sysroot_for(runtime.tag.partition("-")[2])  # the stub's glibc (D25)
         options = StagingOptions(TARGET_PYTHON, config.extras, config.offline, config.requirements,
-                                 platform=baseline.platform)  # fmt: skip
+                                 platform=baseline.platform, strict=config.strict)  # fmt: skip
         plan = staging_plan(project, source, uv, Path(tmp), options)
         wheel = run_plan(plan, project.directory, log=log, verbose=verbose)
         index = SiteIndex.scan(plan.site)
@@ -317,9 +351,8 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                     f"packaged although not required by {dist.name}: "
                     f"{', '.join(walk.unreachable)} (they come from the lock or requirements file)"
                 )
-            warnings += content.warnings
-            warnings += best_compression_unused(best_compression=config.best_compression,
-                                                files=content.files)  # fmt: skip
+            warnings += [*content.warnings, *best_compression_unused(
+                best_compression=config.best_compression, files=content.files)]  # fmt: skip
             glibc, glibc_warnings = glibc_report(runtime.stub, content.glibc,
                                                  baseline=baseline.baseline)  # fmt: skip
             libraries, system_warnings = system_report(runtime.stub, content.system)
@@ -347,11 +380,14 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                         f"xz -{XZ_PRESET}" if config.best_compression else "zstd",
                     ),
                     ("interpreter_reexec", config.interpreter_reexec),  # read at start (D23)
-                    ("git", git_state(project.directory, warn=warnings.append)),
+                    ("git", git_state(project.directory,
+                                      warn=lambda note: warnings.append(Uncounted(note)))),
                 ),
                 zstd_level=level,
             )
             _check_entry_module(entrypoint, app, runtime)
+            if config.strict:
+                check_strict(warnings)
             log(f"writing {output}")
             written.append(build_temporary(runtime, app, output))
     size = written[0].stat().st_size

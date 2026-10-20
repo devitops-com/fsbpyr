@@ -110,6 +110,10 @@ def cli(ctx: click.Context) -> None:
                    "`-c CODE` run as Python")  # fmt: skip
 @click.option("--smoke/--no-smoke", default=None,
               help="run the new executable once as a smoke test (default) or skip it")  # fmt: skip
+@click.option("--strict/--no-strict", default=None,
+              help="fail the build, leaving the output as it was, on any warning about the app "
+                   "and on an unlocked build; requirements files must pin and hash every "
+                   "line")  # fmt: skip
 @click.option("-v", "--verbose", is_flag=True,
               help="print each uv command and let uv's error output through")  # fmt: skip
 def build_command(  # noqa: PLR0913  click passes every option by name
@@ -128,6 +132,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     hints: bool | None,
     interpreter_reexec: bool | None,
     smoke: bool | None,
+    strict: bool | None,
     verbose: bool,
 ) -> int:
     if _unsupported_python():
@@ -158,6 +163,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
             offline=offline,
             include_source=include_source,
             smoke=smoke,
+            strict=strict,
             hints=hints,
             fast_compression=fast_compression,
             best_compression=best_compression,

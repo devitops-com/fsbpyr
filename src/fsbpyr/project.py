@@ -116,6 +116,20 @@ class Project:
             )
 
 
+def unpinned_requirements(requirements: Path) -> list[str]:
+    """The requirements in a pip requirements file that lack ``==`` (options such as ``-r``
+    and ``--hash`` are not requirements; a ``\\`` continues a line)."""
+    unpinned = []
+    for line in requirements.read_text().replace("\\\n", " ").splitlines():
+        requirement = line.partition(" #")[0].strip()
+        if not requirement or requirement.startswith(("#", "-")):
+            continue
+        requirement = requirement.partition(" --")[0].strip()
+        if "==" not in requirement.partition(";")[0]:
+            unpinned.append(requirement)
+    return unpinned
+
+
 def _workspace_table(pyproject: Path) -> dict[str, Any] | None:
     if not pyproject.is_file():
         return None

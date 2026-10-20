@@ -6,7 +6,7 @@ import pytest
 
 from fsbpyr.config import BuildConfig, ConfigError, load_config
 from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL
-from fsbpyr.project import LockSource, Project, ProjectError
+from fsbpyr.project import LockSource, Project, ProjectError, unpinned_requirements
 from fsbpyr.staging import (
     WHEEL,
     StagingError,
@@ -224,6 +224,28 @@ def test_interpreter_reexec_is_off_unless_the_project_or_the_command_line_asks(
 
     assert (default.interpreter_reexec, flagged.interpreter_reexec) == (False, True)
     assert configured.interpreter_reexec is True
+
+
+def test_strict_is_off_unless_the_project_or_the_command_line_asks(tmp_path: Path) -> None:
+    default = load_config(Project.load(_project(tmp_path, PYPROJECT)))
+    flagged = load_config(Project.load(_project(tmp_path, PYPROJECT)), strict=True)
+    configured = load_config(Project.load(_project(tmp_path, PYPROJECT + "strict = true\n")))
+    overridden = load_config(Project.load(_project(tmp_path, PYPROJECT + "strict = true\n")),
+                             strict=False)  # fmt: skip
+
+    assert (default.strict, flagged.strict, configured.strict) == (False, True, True)
+    assert overridden.strict is False
+
+
+def test_requirements_without_a_double_equals_are_unpinned(tmp_path: Path) -> None:
+    text = ("# comment\n-r other.txt\n--index-url https://x\n\nclick==8.1 \\\n"
+            "    --hash=sha256:ab  # via x\nrich>=13\nattrs==23; python_version>'3'\n"
+            "idna ; python_version>'3'\nurl-dep @ https://x/y.whl\n")
+    path = tmp_path / "requirements.txt"
+    path.write_text(text)
+
+    assert unpinned_requirements(path) == ["rich>=13", "idna ; python_version>'3'",
+                                           "url-dep @ https://x/y.whl"]  # fmt: skip
 
 
 # --- staging ---------------------------------------------------------------------------------
@@ -545,3 +567,16 @@ def test_verbose_prints_the_command_and_lets_uvs_stderr_through(
     err = capfd.readouterr().err
     assert f"fsbpyr: {uv} build 'a b'" in err
     assert "boom" in err
+
+
+def test_strict_requires_hashes_of_every_requirements_line(tmp_path: Path) -> None:
+    files = {"requirements.txt": "click==8.1.8\n"}
+    project = Project.load(_project(tmp_path, PYPROJECT, **files))
+    work = tmp_path / "w"
+
+    plain = staging_plan(project, LockSource.REQUIREMENTS, UV, work, StagingOptions("3.14"))
+    strict = staging_plan(project, LockSource.REQUIREMENTS, UV, work,
+                          StagingOptions("3.14", strict=True))  # fmt: skip
+
+    assert "--require-hashes" not in plain.install[1]
+    assert "--require-hashes" in strict.install[1]

@@ -38,6 +38,12 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - **`--hints` finds more.** It now also reports `X.__file__` and `__path__[0]`, subprocess and
   `os.exec*` calls, cffi `dlopen`, `configparser` `read`, `np.load` and `jinja2.PackageLoader`
   that use such a path.
+- **`fsbpyr build --strict` (`strict = true`) fails on warnings.** Once all warnings are
+  collected, and before anything is written, the build exits 1 with them in the message, so
+  a file at `-o` stays as it was. An unlocked build fails too. The uv that differs from
+  fsbpyr's, git errors and the ctypes guess do not count. Requirements files then get uv's
+  `--require-hashes`. Without `--strict`, requirements lines without `==` now get a warning.
+  The README shows `fsbpyr inspect --json app | jq -r .glibc` as a glibc gate.
 - **`fsbpyr build` shows what it is doing.** Each uv step prints a line before it runs ("uv:
   installing the locked distributions", "uv: building <project>'s wheel"), and the smoke test
   prints "smoke-testing <path>". A failed uv step names the step instead of a truncated command.

@@ -486,3 +486,55 @@ def test_a_failed_smoke_test_leaves_the_output_as_it_was(
     assert f"smoke test of the new {out.resolve()} failed" in capsys.readouterr().err
     assert out.read_bytes() == old
     assert sorted(p.name for p in out.parent.iterdir()) == ["hello"]  # no .hello.*.tmp left
+
+
+def test_strict_refuses_an_unlocked_build_and_leaves_the_output_as_it_was(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _fixture("hello", tmp_path, drop=("uv.lock",))
+    out = tmp_path / "bin" / "hello"
+    out.parent.mkdir()
+    old = b"#!/bin/sh\necho the working tool\n"
+    out.write_bytes(old)
+
+    assert main(["build", str(project), "-o", str(out), "--strict"]) == 1
+
+    assert "unlocked build" in capsys.readouterr().err
+    assert out.read_bytes() == old
+    assert sorted(p.name for p in out.parent.iterdir()) == ["hello"]
+    assert main(["build", str(project), "-o", str(out)]) == 0  # not strict
+    assert out.read_bytes()[:4] == b"\x7fELF"
+
+
+def test_strict_refuses_requirements_without_hashes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _fixture("clicky", tmp_path, drop=("uv.lock", "pylock.toml"))
+    requirements = project / "requirements.txt"
+    pinned = [line.split()[0] for line in requirements.read_text().splitlines()
+              if "==" in line and not line.startswith((" ", "#"))]  # fmt: skip
+    requirements.write_text("\n".join(pinned) + "\n")
+    out = tmp_path / "bin" / "clicky"
+
+    assert main(["build", str(project), "-o", str(out), "--strict"]) == 1
+
+    assert "all requirements must have a hash" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_a_changed_hash_in_pylock_toml_fails_the_build(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """uv checks pylock.toml's hashes on its own (uv 0.13.1), so --strict adds nothing there."""
+    project = _fixture("clicky", tmp_path, drop=("uv.lock",))
+    lock = project / "pylock.toml"
+    text = lock.read_text()
+    digest = "255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360"
+    assert digest in text
+    lock.write_text(text.replace(digest, "0" * 64))
+    out = tmp_path / "bin" / "clicky"
+
+    assert main(["build", str(project), "-o", str(out)]) == 1
+
+    assert "Hash mismatch" in capsys.readouterr().err
+    assert not out.exists()

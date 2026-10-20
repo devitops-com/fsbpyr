@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from fsbpyr.classify import ClassifyError, _digested, classify
+from fsbpyr.classify import ClassifyError, Uncounted, _digested, classify
 from fsbpyr.closure import ClosureError, SiteIndex, resolve_entry
 from fsbpyr.compiler import compile_module
 from fsbpyr.config import _package
@@ -775,6 +775,7 @@ def test_shared_objects_python_code_names_are_reported(site: Path) -> None:
     assert "tool/libplugin.so.2" in hints[0]
     assert "libcapi" not in hints[0] and "libplugin_cuda" not in hints[0]
     assert not [w for w in fs.warnings if "no extension" in w]
+    assert isinstance(hints[0], Uncounted)  # --strict does not count it
 
 
 def test_shared_objects_an_extension_names_are_extracted_with_it(site: Path) -> None:

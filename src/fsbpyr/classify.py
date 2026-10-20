@@ -88,6 +88,10 @@ class ClassifyError(RuntimeError):
     """The installed files cannot be packaged (yet)."""
 
 
+class Uncounted(str):
+    """A warning that ``--strict`` does not count: a guess that only fs-packages silences."""
+
+
 @dataclass(frozen=True, slots=True)
 class Content:
     modules: tuple[Module, ...]
@@ -519,10 +523,10 @@ class _Collector:
         for dist, paths in sorted(unused.items()):
             named = self._named_by_python(paths)
             if named:
-                self.warnings.append(
+                self.warnings.append(Uncounted(
                     f"{dist}: {', '.join(named[:3])}{' ...' if len(named) > 3 else ''} loaded by "
                     f"no extension module but named by its Python code; {self._remedy(named)}"
-                )
+                ))  # fmt: skip
 
     def _remedy(self, libraries: list[str]) -> str:
         """What to do if the code loads them itself (ctypes): fs-packages takes only regular
