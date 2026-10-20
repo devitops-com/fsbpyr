@@ -82,7 +82,6 @@ def test_finder_only_answers_for_its_own_directory(boot: ModuleType) -> None:
     root = boot.path_hook(boot.ROOT)
 
     assert root.find_spec("pkg.cli") is None
-    assert boot.path_hook(boot.ROOT + "/pkg").find_spec("cli") is None
     assert root.find_spec("missing") is None
     assert root.find_spec("\ud800") is None
 

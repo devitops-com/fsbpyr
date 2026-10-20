@@ -38,6 +38,7 @@ MATRIX = {
     "paths": "paths True True",
     "requests": "requests 200 hello",
     "httpx": "httpx 200 hello",
+    "setuptools": "setuptools setuptools True",  # RT-4
 }
 MP_LINES = [
     "{method} pool [0, 1, 4, 9, 16]",

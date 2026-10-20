@@ -139,6 +139,18 @@ class PayloadLoader(_LoaderBase):
         return reader
 
 
+class AliasLoader(PayloadLoader):
+    """Loader of a module imported under a name other than its payload name: a sys.path
+    entry below the root (``<exe>/pkg/_vendor``) makes ``vendored`` of ``pkg._vendor.vendored``."""
+
+    def __init__(self, prefix: str, public: str, payload: str) -> None:
+        super().__init__(prefix)
+        self.public, self.payload = public, payload
+
+    def _record(self, fullname: str) -> Record:
+        return super()._record(self.payload if fullname == self.public else fullname)
+
+
 LOADER = PayloadLoader()
 
 
@@ -164,24 +176,38 @@ class PayloadPathFinder:
         self._prefix = directory.replace("/", ".") + "." if directory else ""
 
     def find_spec(self, fullname: str, target: object = None) -> ModuleSpec | None:
-        if _directory(fullname.replace(".", "/")) != self.directory:
+        if _directory(fullname.replace(".", "/")) == self.directory:
+            return self._spec(fullname, fullname)
+        parts = self.directory.split("/")
+        if not self.directory or not all(part.isidentifier() for part in parts):
             return None
-        record = _fsbpyr.find_module(fullname)
+        # An entry below the root (``sys.path.append(<exe>/pkg/_vendor)``): the module is
+        # imported by its short name and lives in the payload as ``pkg._vendor.<name>``.
+        return self._spec(fullname, f"{self._prefix}{fullname.rpartition('.')[2]}")
+
+    def _spec(self, fullname: str, payload: str) -> ModuleSpec | None:
+        """Spec of module ``fullname``, whose payload record is named ``payload``."""
+        record = _fsbpyr.find_module(payload)
         if record is None:
             return None
         kind, path, location, loader = record[1], record[7], self.location, self._loader
+        where = location + payload.replace(".", "/")
         if kind == NAMESPACE:  # a portion: PathFinder assembles the namespace package
             spec = ModuleSpec(fullname, None, is_package=True)
-            spec.submodule_search_locations = [location + fullname.replace(".", "/")]
+            spec.submodule_search_locations = [where]
             return spec
         if kind == EXTENSION:
             from _fsbpyr_rt.native import extension_spec  # noqa: PLC0415
 
             native: ModuleSpec = extension_spec(fullname, record, location)
+            if native.submodule_search_locations is not None:
+                native.submodule_search_locations = [where]
             return native
         if record[2] & FS_REQUIRED_ROOT and location == _PREFIX:
             location = _fs_package_prefix(_directory(path))
             loader = PayloadLoader(location)
+        if payload != fullname:
+            loader = AliasLoader(location, fullname, payload)
         spec = ModuleSpec(
             fullname,
             loader,
@@ -191,7 +217,7 @@ class PayloadPathFinder:
         )
         spec.has_location = True
         if kind == PACKAGE:  # by name: a package below a .pth directory keeps its submodules
-            spec.submodule_search_locations = [location + fullname.replace(".", "/")]
+            spec.submodule_search_locations = [location + payload.replace(".", "/")]
         return spec
 
     def iter_modules(self, prefix: str = "") -> Iterator[tuple[str, bool]]:
@@ -252,7 +278,16 @@ class PayloadMetaFinder:
         parent = next(iter(path), "") if path else ""  # a list, or a parent's _NamespacePath
         location = next((p for p in _FS_PREFIXES if parent.startswith(p)), _PREFIX)
         finder = PathFinder._get_spec  # type: ignore[attr-defined]  # namespace recalculation
-        loader = PayloadNamespaceLoader(fullname, [location + fullname.replace(".", "/")], finder)
+        # Merge the portions as a venv does (a vendored `<exe>/pkg/_vendor/ns` joins a packaged
+        # top-level `ns`); a real package ahead of them wins.
+        found: ModuleSpec | None = finder(fullname, path or sys.path)
+        if found is not None and found.loader is not None:
+            return found
+        if found is not None and found.submodule_search_locations:
+            portions = found.submodule_search_locations
+        else:
+            portions = [location + fullname.replace(".", "/")]
+        loader = PayloadNamespaceLoader(fullname, portions, finder)
         spec = ModuleSpec(fullname, loader, is_package=True)
         spec.submodule_search_locations = loader._path  # type: ignore[attr-defined]
         return spec

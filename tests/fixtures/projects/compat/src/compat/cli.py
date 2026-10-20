@@ -145,11 +145,18 @@ def _sqlalchemy(_: str | None) -> str:
     return f"sqlalchemy {total} {has_compiled_ext()}"
 
 
+def _setuptools(_: str | None) -> str:
+    import setuptools
+    from distutils import core  # type: ignore[import-not-found]  # setuptools' own copy
+
+    return f"setuptools {setuptools.__name__} {'_distutils' in core.__file__}"
+
+
 CHECKS = {
     "click": _click, "typer": _typer, "rich": _rich, "requests": _requests, "httpx": _httpx,
     "certifi": _certifi, "pydantic": _pydantic, "jinja2": _jinja2, "pyyaml": _yaml,
     "numpy": _numpy, "cryptography": _cryptography, "orjson": _orjson, "zoneinfo": _zoneinfo,
-    "sqlalchemy": _sqlalchemy, "paths": _paths,
+    "sqlalchemy": _sqlalchemy, "paths": _paths, "setuptools": _setuptools,
 }  # fmt: skip
 
 
