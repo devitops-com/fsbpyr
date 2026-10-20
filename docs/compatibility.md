@@ -90,6 +90,7 @@ The `compat` app runs one small check per library or behaviour in each build:
 | `requests` | a GET with requests, against a local HTTP server |
 | `httpx` | a GET with httpx against a local HTTP server; it loads certifi's bundle |
 | `setuptools` | `import setuptools` and `distutils` mapped to setuptools' copy |
+| `distutils` | `import distutils` before setuptools resolves to setuptools' copy |
 
 Distributions and checks are compared with the tests in `tests/unit/test_cli_docs.py`, so this
 list cannot drift from the code. It says nothing about packages that are not in it.

@@ -47,6 +47,7 @@ MATRIX = {  # check -> its output; the differential compares with the venv's run
     "requests": "requests 200 hello",
     "httpx": "httpx 200 hello",
     "setuptools": "setuptools setuptools True",  # RT-4
+    "distutils": "distutils True",  # RT-5: imported before setuptools
 }
 MP_LINES = [
     "{method} pool [0, 1, 4, 9, 16]",
@@ -137,7 +138,7 @@ def test_every_command_of_the_compat_fixture_is_in_the_matrix() -> None:
     assert isinstance(checks, ast.Dict)
     names = [str(k.value) for k in checks.keys if isinstance(k, ast.Constant)]
 
-    assert sorted(names) == sorted(MATRIX) and len(MATRIX) == 17
+    assert sorted(names) == sorted(MATRIX) and len(MATRIX) == 18
 
 
 def _site(cache: Path) -> Path:
