@@ -32,6 +32,10 @@ class Project:
     scripts: dict[str, str] = field(default_factory=dict)
     extras: tuple[str, ...] = ()  # names in [project.optional-dependencies]
     tool: dict[str, Any] = field(default_factory=dict)  # the [tool.fsbpyr] table
+    # [project] exists and does not list scripts / optional-dependencies as dynamic: then
+    # `scripts` / `extras` are all there is, and a build can be checked before staging
+    static_scripts: bool = False
+    static_extras: bool = False
 
     @classmethod
     def load(cls, directory: Path) -> Project:
@@ -47,6 +51,8 @@ class Project:
         else:
             raise ProjectError(f"{directory} has no pyproject.toml or setup.py")
         table = data.get("project", {})
+        dynamic = table.get("dynamic", [])
+        declared = "project" in data and isinstance(dynamic, list)
         name = table.get("name")
         return cls(
             directory=directory,
@@ -55,6 +61,8 @@ class Project:
             scripts=dict(table.get("scripts", {})),
             extras=tuple(table.get("optional-dependencies", {})),
             tool=dict(data.get("tool", {}).get("fsbpyr", {})),
+            static_scripts=declared and "scripts" not in dynamic,
+            static_extras=declared and "optional-dependencies" not in dynamic,
         )
 
     @property

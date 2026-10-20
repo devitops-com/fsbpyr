@@ -3,6 +3,7 @@
 import configparser
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from email.parser import HeaderParser
 from pathlib import Path
@@ -29,6 +30,7 @@ class InstalledDist:
     record: tuple[str, ...]  # RECORD lines
     entry_points: str
     direct_url: dict[str, Any] | None
+    provides_extra: tuple[str, ...] = ()  # canonical names
 
     def console_scripts(self) -> dict[str, str]:
         parser = configparser.ConfigParser(delimiters=("=",), interpolation=None)
@@ -68,6 +70,7 @@ def _load_dist(site: Path, info: Path) -> InstalledDist | None:
         record=tuple((_read(info / "RECORD") or "").splitlines()),
         entry_points=_read(info / "entry_points.txt") or "",
         direct_url=json.loads(direct_url) if direct_url else None,
+        provides_extra=tuple(canonicalize_name(e) for e in headers.get_all("Provides-Extra") or ()),
     )
 
 
@@ -146,17 +149,34 @@ def _requirement(line: str, dist: InstalledDist) -> Requirement:
         raise ClosureError(f"{dist.name}: invalid Requires-Dist {line!r}: {exc}") from exc
 
 
+def several_scripts_error(name: str, scripts: Iterable[str]) -> ClosureError:
+    """No --entry, and the project's console scripts are not exactly one."""
+    choices = ", ".join(sorted(scripts)) or "none"
+    return ClosureError(
+        f"{name} has console scripts: {choices}; choose one with --entry "
+        "(a script name, 'module' or 'module:function')"
+    )
+
+
+def unknown_extras_error(name: str, wanted: Iterable[str], known: Iterable[str]) -> str | None:
+    """A message for the extras in ``wanted`` that ``known`` lacks, else None."""
+    have = {canonicalize_name(extra) for extra in known}
+    unknown = sorted(extra for extra in wanted if canonicalize_name(extra) not in have)
+    if not unknown:
+        return None
+    return (
+        f"{name} has no extra {', '.join(map(repr, unknown))} (--extra); its extras: "
+        f"{', '.join(sorted(have)) or 'none'}"
+    )
+
+
 def resolve_entry(dist: InstalledDist, entry: str | None) -> tuple[str, str]:
     """(application name, entry point) from --entry or the project's console scripts."""
     scripts = dist.console_scripts()
     if entry is None:
         if len(scripts) == 1:
             return next(iter(scripts.items()))
-        choices = ", ".join(sorted(scripts)) or "none"
-        raise ClosureError(
-            f"{dist.name} has console scripts: {choices}; choose one with --entry "
-            "(a script name, 'module' or 'module:function')"
-        )
+        raise several_scripts_error(dist.name, scripts)
     if entry in scripts:
         return entry, scripts[entry]
     module, _, attribute = entry.partition(":")

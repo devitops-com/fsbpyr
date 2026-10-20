@@ -202,6 +202,14 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - **LICENSE gains a runtime exception** for the launcher and the boot modules, so an app built
   with fsbpyr need not reproduce fsbpyr's MIT notice for them. The package's licence
   expression is now `LicenseRef-fsbpyr-MIT-with-runtime-exception`.
+- **A build fails sooner and completely.** Two or more static `[project.scripts]` without
+  `--entry`, and an explicit `-o` that is a directory, are reported before uv stages anything. An
+  unknown `--extra` is reported before staging when the pyproject lists the extras statically,
+  else after, against the installed project's `Provides-Extra`. All missing native libraries
+  are reported in one error, with an `allow-system-libs = [...]` line to paste. An unexpected
+  exception prints its traceback and a line saying where to report it, and exits 1. The
+  `--extra` help says that requirements and pylock files must already contain the extra's
+  dependencies.
 - **`build_info["lock"]` and `["dists"]` changed shape** (see the manifest above): `lock` was
   the lock's kind as a string, now an object with `kind`; `dists` was a list of
   `name==version` strings, now a list of objects.

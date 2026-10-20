@@ -241,9 +241,24 @@ def test_a_runpath_ends_the_inherited_search_for_its_own_object_only() -> None:
 def test_unresolved_library_is_an_error_unless_allowed() -> None:
     natives = {"p/_x.so": make_elf(needed=("libssl.so.3",))}
 
-    with pytest.raises(NativeError, match=r"libssl\.so\.3.*--allow-system-lib"):
+    with pytest.raises(NativeError, match=r"(?s)libssl\.so\.3.*--allow-system-lib"):
         closures(natives, {"p/_x.so"}, allowed=frozenset())
     assert closures(natives, {"p/_x.so"}, allowed=frozenset({"libssl.so.3"})) == {"p/_x.so": ()}
+
+
+def test_every_unresolved_library_is_in_one_error_with_the_line_to_allow_them() -> None:
+    natives = {
+        "p/_x.so": make_elf(needed=("libssl.so.3",)),
+        "p/_y.so": make_elf(needed=("libfoo.so.1", "libbar.so.2")),
+    }
+
+    with pytest.raises(NativeError) as caught:
+        closures(natives, {"p/_x.so", "p/_y.so"}, allowed=frozenset())
+
+    message = str(caught.value)
+    assert "p/_x.so needs libssl.so.3" in message
+    assert "p/_y.so needs libfoo.so.1, libbar.so.2" in message
+    assert 'allow-system-libs = ["libbar.so.2", "libfoo.so.1", "libssl.so.3"]' in message
 
 
 def test_libpython_dependencies_are_rejected() -> None:

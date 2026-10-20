@@ -13,7 +13,14 @@ from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from .assemble import App, build_temporary, runtime_module_names
 from .classify import BUILTIN_FS_PACKAGES, Uncounted, _record_path, classify
-from .closure import InstalledDist, SiteIndex, resolve_entry
+from .closure import (
+    ClosureError,
+    InstalledDist,
+    SiteIndex,
+    resolve_entry,
+    several_scripts_error,
+    unknown_extras_error,
+)
 from .config import BuildConfig
 from .elf import ElfError, glibc_requirement, is_elf
 from .manifest import SCHEMA, LockError, built_here, dist_records, lock_record
@@ -22,7 +29,7 @@ from .payload.format import NATIVE_KINDS, ModuleKind
 from .payload.spec import XZ_PRESET, Dist, File
 from .payload.spill import Spill
 from .payload.writer import commit
-from .project import LockSource, Project, unpinned_requirements
+from .project import LockSource, Project, ProjectError, unpinned_requirements
 from .runtime import pins
 from .runtime.pbs import PbsError
 from .runtime.registry import Runtime, cache_root, select_runtime
@@ -269,6 +276,34 @@ def check_output(output: Path) -> None:
         raise BuildError(f"output path {output} is a directory; pass -o with a file name")
 
 
+def _installed_project(
+    index: SiteIndex, wheel: Path, project: Project, config: BuildConfig
+) -> InstalledDist:
+    """The project as installed in the staging site; its extras are checked here when the
+    pyproject could not say them before staging."""
+    name = canonicalize_name(parse_wheel_filename(wheel.name)[0])
+    dist = index.project(name=name, directory=project.directory)
+    if not project.static_extras and (
+        message := unknown_extras_error(dist.name, config.extras, dist.provides_extra)
+    ):
+        raise ClosureError(message)
+    return dist
+
+
+def check_before_staging(project: Project, config: BuildConfig) -> None:
+    """What the project and the options already decide, before uv stages anything. Dynamic
+    scripts and extras (and setup.py projects) are decided after staging."""
+    name = project.name or project.directory.name
+    if config.entry is None and project.static_scripts and len(project.scripts) > 1:
+        raise several_scripts_error(name, project.scripts)
+    if config.output is not None:
+        check_output(config.output)
+    if project.static_extras and (
+        message := unknown_extras_error(name, config.extras, project.extras)
+    ):
+        raise ProjectError(message)
+
+
 def smoke_test(executable: Path, app_name: str, output: Path | None = None) -> None:
     """Run the executable in selftest mode: boot, import the entry module, exit. An error names
     ``output``, the path the executable is to replace, when it is given."""
@@ -358,6 +393,7 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
     """Everything up to the new executable, written beside the output: ``written`` holds it as
     soon as it exists."""
     project = Project.load(directory)
+    check_before_staging(project, config)
     uv = find_uv()  # before anything slow: a build cannot go far without it (D26)
     uv_used = uv_version(uv)
     runtime = select_runtime(TARGET_PYTHON)
@@ -386,8 +422,7 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
             warnings += failed
             if not failed:
                 index = SiteIndex.scan(plan.site)
-        name = canonicalize_name(parse_wheel_filename(wheel.name)[0])
-        dist = index.project(name=name, directory=project.directory)
+        dist = _installed_project(index, wheel, project, config)
         walk = index.walk(dist, extras=config.extras, python_version=runtime.python_version)
         app_name, entrypoint = resolve_entry(dist, config.entry)
         output = (config.output or project.directory / "dist" / app_name).resolve()

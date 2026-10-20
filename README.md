@@ -99,7 +99,7 @@ build-constraint-dependencies` (read by `uv sync`, for `uv.lock` projects) or fr
 | `--entry NAME` | console script name, `module` or `module:function` (default: the only script) |
 | `-o, --output PATH` | where to write the executable (default: `dist/` and the console script's name) |
 | `--requirements FILE` | pinned requirements file, for pip projects without `pylock.toml` |
-| `--extra NAME` | install a project extra (repeat) |
+| `--extra NAME` | install a project extra (repeat); requirements and pylock files must already contain its dependencies |
 | `--fs-package PACKAGE` | a package whose files must exist on disk (repeat) |
 | `--allow-system-lib SONAME` | let native code use this library from the host (repeat) |
 | `--offline / --no-offline` | no network access during the build |

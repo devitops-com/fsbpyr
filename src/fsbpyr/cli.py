@@ -6,6 +6,7 @@ import errno
 import functools
 import shlex
 import sys
+import traceback
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -83,7 +84,8 @@ def cli(ctx: click.Context) -> None:
 @click.option("--requirements", metavar="FILE", type=click.Path(),
               help="pinned requirements file, for pip projects without `pylock.toml`")  # fmt: skip
 @click.option("--extra", "extras", metavar="NAME", multiple=True, shell_complete=_complete_extra,
-              help="install a project extra (repeat)")  # fmt: skip
+              help="install a project extra (repeat); requirements and pylock files must "
+                   "already contain its dependencies")  # fmt: skip
 @click.option("--fs-package", "fs_packages", metavar="PACKAGE", multiple=True,
               help="a package whose files must exist on disk (repeat)")  # fmt: skip
 @click.option("--allow-system-lib", "allowed_system_libs", metavar="SONAME", multiple=True,
@@ -148,9 +150,11 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     _collect_when_due()
     from .assemble import AssemblyError  # noqa: PLC0415  keep --version fast
     from .build import BuildError, build  # noqa: PLC0415
+    from .bytecode import BytecodeError  # noqa: PLC0415
     from .classify import ClassifyError  # noqa: PLC0415
     from .closure import ClosureError  # noqa: PLC0415
     from .config import ConfigError, load_config  # noqa: PLC0415
+    from .payload.format import PayloadError  # noqa: PLC0415
     from .project import Project, ProjectError  # noqa: PLC0415
     from .runtime.registry import RuntimeCacheError  # noqa: PLC0415
     from .staging import StagingError  # noqa: PLC0415
@@ -159,8 +163,8 @@ def build_command(  # noqa: PLR0913  click passes every option by name
         smoke_args = None if smoke_args_text is None else tuple(shlex.split(smoke_args_text))
     except ValueError as exc:
         raise click.UsageError(f"--smoke-args: {exc}") from exc
-    errors = (AssemblyError, BuildError, ClassifyError, ClosureError, ConfigError, ProjectError,
-              RuntimeCacheError, StagingError, OSError)  # fmt: skip
+    errors = (AssemblyError, BuildError, BytecodeError, ClassifyError, ClosureError, ConfigError,
+              PayloadError, ProjectError, RuntimeCacheError, StagingError, OSError)  # fmt: skip
     try:
         config = load_config(
             Project.load(project),
@@ -458,6 +462,18 @@ def _collect_when_due() -> None:
             print(f"fsbpyr: collecting the cache failed: {exc}", file=sys.stderr)
 
 
+def _internal_error(exc: Exception) -> int:
+    """An unexpected exception: its traceback, then where to report it."""
+    from .selfupdate import REPO  # noqa: PLC0415  keep --version fast
+    from .vcs import own_version  # noqa: PLC0415
+
+    traceback.print_exception(exc)
+    print(f"fsbpyr: internal error (fsbpyr {own_version()}): {type(exc).__name__}: {exc}; "
+          f"please report at https://github.com/{REPO}/issues with the output above and "
+          "`fsbpyr inspect --json`", file=sys.stderr)  # fmt: skip
+    return 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         code: int = cli.main(args=argv, prog_name=PROG, complete_var=COMPLETE_VAR,
@@ -468,4 +484,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     except click.Abort:  # click's form of KeyboardInterrupt
         print("fsbpyr: interrupted", file=sys.stderr)
         return 130
+    except Exception as exc:  # the last resort: a bug, not a failure to explain
+        return _internal_error(exc)
     return code
