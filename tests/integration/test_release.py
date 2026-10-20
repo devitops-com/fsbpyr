@@ -903,6 +903,24 @@ def test_the_full_suite_runs_on_main_nightly_and_weekly_in_a_one_entry_matrix() 
     assert 'git diff --quiet "$last" HEAD -- src/fsbpyr/launcher tests/fuzz' in workflow
 
 
+def test_the_portability_job_runs_on_the_host_after_the_suite_with_nothing_skipped() -> None:
+    workflow = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
+    job = workflow.split("\n  portability:\n")[1]
+
+    assert "needs: suite" in job and "runs-on: ubuntu-24.04" in job
+    assert "container:" not in job
+    assert "tools/portability-apps.sh dist/fsbpyr" in job
+    assert "FSBPYR_TESTS_REQUIRE_ALL=portability" in job
+    assert "FSBPYR_PORTABILITY_APPS=" in job and "--junitxml=portability.xml" in job
+    assert "podman login docker.io" in job
+
+
+def test_the_portability_tests_pull_images_without_a_network_in_them() -> None:
+    source = (ROOT / "tests/e2e/test_portability.py").read_text(encoding="utf-8")
+
+    assert '"--network=none"' in source
+
+
 def test_uv_version_names_a_uv_that_the_build_backend_accepts() -> None:
     version, sha256 = (ROOT / "tools/release/uv.version").read_text(encoding="utf-8").split()
     backend = next(

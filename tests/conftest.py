@@ -2,8 +2,8 @@
 the launcher's background runs would otherwise act on the caches tests use, or the user's.
 
 pytest passes a run however many tests skip. FSBPYR_TESTS_REQUIRE_ALL names one of the lists
-below (CI's test step sets `ci`, the full-suite workflow `full`), and a skip that the list does
-not expect fails the run."""
+below (CI's test step sets `ci`, the full-suite workflow `full` and `portability`), and a
+skip that the list does not expect fails the run."""
 
 import os
 from collections.abc import Iterator
@@ -29,6 +29,8 @@ EXPECTED_SKIPS = {
     # full-suite.yml's job: the same container with rootless podman and /proc/sys opened for
     # user namespaces, as `tester` -- every test the other lists skip runs
     "full": (),
+    # full-suite.yml's portability job: podman on the runner host, and every image pulled
+    "portability": (),
 }
 _skips: list[tuple[str, str]] = []  # this run's, as (nodeid, reason)
 

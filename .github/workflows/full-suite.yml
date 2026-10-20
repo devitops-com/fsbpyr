@@ -1,7 +1,8 @@
 name: Full suite
 
 # The whole test suite but the portability tests (tests/e2e/test_portability.py, which need
-# `podman run` on the runner host), as an unprivileged user in a Debian trixie container:
+# `podman run` on the runner host: the portability job below), as an unprivileged user in a
+# Debian trixie container:
 #   - on every push to main, so that tools/release/release.sh and the publish job of release.yml
 #     can require a green run for the commit a release is made from;
 #   - nightly, and weekly with a longer fuzzing run (below);
@@ -211,4 +212,80 @@ jobs:
             /home/tester/src/full.xml
             /home/tester/src/coverage.xml
             /home/tester/launcher-coverage.txt
+          if-no-files-found: warn
+
+  # The portability matrix: the apps run on 13 distributions (glibc 2.28 to 2.44) and the
+  # objdump check of the glibc floor. On the runner host, without a container: the runner image
+  # ships Podman, and nested podman in the suite job's container failed. Needs the suite job's
+  # executable, which builds the apps (D4: no compiler); its conclusion is part of the run's,
+  # which the release gate (tools/release/green-run.sh) checks.
+  portability:
+    name: portability (Python ${{ matrix.python }})
+    needs: suite
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.14"]  # one entry; adding a Python version adds an entry here
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the executable
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: fsbpyr-${{ matrix.python }}
+          path: dist
+
+      # The uv that tools/release/uv.version names; llvm for llvm-objdump (the test skips
+      # without it, and a skip fails the run below).
+      - name: Install uv and llvm
+        run: |
+          read -r version sha256 < tools/release/uv.version
+          name=uv-x86_64-unknown-linux-gnu
+          curl -fsSL -o "$RUNNER_TEMP/uv.tar.gz" \
+            "https://github.com/astral-sh/uv/releases/download/$version/$name.tar.gz"
+          echo "$sha256  $RUNNER_TEMP/uv.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/uv.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/bin" \
+            "$name/uv" "$name/uvx"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends llvm
+
+      # Each run pulls 13 images; a read-only token avoids anonymous rate limits. A pull that
+      # fails fails the test, never skips it.
+      - name: Log in to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::warning::no DOCKERHUB_TOKEN secret: pulling anonymously"
+          else
+            printf '%s' "$DOCKERHUB_TOKEN" | podman login docker.io -u "$DOCKERHUB_USERNAME" \
+              --password-stdin
+          fi
+
+      - name: Build the apps
+        run: |
+          chmod +x dist/fsbpyr
+          uv python install "$(cat .python-version)"
+          tools/portability-apps.sh dist/fsbpyr "$RUNNER_TEMP/apps"
+
+      # FSBPYR_TESTS_REQUIRE_ALL=portability: no skip is expected.
+      - name: The portability tests
+        run: |
+          FSBPYR_PORTABILITY_APPS="$RUNNER_TEMP/apps" FSBPYR_TESTS_REQUIRE_ALL=portability \
+            uv run --locked pytest tests/e2e/test_portability.py -rf --tb=short \
+              --junitxml=portability.xml
+
+      - name: Upload the report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: portability-${{ matrix.python }}
+          path: portability.xml
           if-no-files-found: warn

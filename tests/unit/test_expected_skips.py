@@ -108,7 +108,7 @@ def test_an_unknown_list_is_a_usage_error(
 
     assert result.ret == pytest.ExitCode.USAGE_ERROR
     result.stderr.fnmatch_lines(
-        ["*FSBPYR_TESTS_REQUIRE_ALL=cl: no such list (ci, container, full)*"]
+        ["*FSBPYR_TESTS_REQUIRE_ALL=cl: no such list (ci, container, full, portability)*"]
     )
 
 
