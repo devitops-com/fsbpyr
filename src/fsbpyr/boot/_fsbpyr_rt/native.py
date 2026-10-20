@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 NATIVE_EXT = 3
 GENERATION_DIGITS = 32
+_SYSTEM_LIBRARY_ERRORS = ("version `GLIBC", "GLIBCXX_", "CXXABI_", "cannot open shared object file")
 EXTRACTED: list[str] = []  # site-relative paths this process wrote, kept for FSBPYR_TRACE
 # ImportError: the native cache cannot be used, or the payload's data for it is corrupt.
 NativeCacheError = _fsbpyr.CacheError
@@ -98,6 +99,27 @@ def resource_cache() -> NativeCache:
     return _RESOURCES[0]
 
 
+def _system_library_hint(message: str) -> str:
+    """For a load failure that names a missing glibc/libstdc++ version or shared object: what
+    the build required and what this system has (D24)."""
+    if not any(marker in message for marker in _SYSTEM_LIBRARY_ERRORS):
+        return ""
+    import json  # noqa: PLC0415  # only a failed load needs it
+
+    try:
+        needed = json.loads(_fsbpyr.info()["build_info"]).get("glibc")
+    except (ValueError, AttributeError):
+        needed = None
+    try:
+        system = os.confstr("CS_GNU_LIBC_VERSION")
+    except (ValueError, OSError):  # not glibc
+        system = None
+    return (
+        f"; the build requires glibc {needed or 'unknown'}, this system has "
+        f"{system or 'an unknown C library'}"
+    )
+
+
 def _noexec(path: str) -> bool:
     try:
         return bool(os.statvfs(path).f_flag & os.ST_NOEXEC)
@@ -128,6 +150,8 @@ class PayloadExtensionLoader(ExtensionFileLoader):
                         "set FSBPYR_CACHE_DIR to another directory",
                         name=spec.name,
                     ) from exc
+                if hint := _system_library_hint(str(exc)):
+                    raise ImportError(f"{exc}{hint}", name=exc.name, path=exc.path) from exc
                 raise
         except OSError as exc:
             raise NativeCacheError(

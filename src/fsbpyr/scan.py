@@ -2,17 +2,35 @@
 
 In an executable a module's ``__file__`` points into the payload's virtual tree, so such
 reads fail unless the package is FS_REQUIRED. This is a heuristic over the AST: a call that
-reads the file system, or a pathlib read method, whose argument or receiver mentions
-``__file__`` directly or through a name assigned from it.
+reads the file system, runs a program, loads a library or data file, or a pathlib read
+method, whose argument or receiver mentions ``__file__`` or ``__path__`` (also of another
+module, ``X.__file__``) directly or through a name assigned from it. Existence checks are a
+separate, low-confidence result: ``os.path.exists`` on such a path does not fail, it answers
+False.
 """
 
 import ast
+from collections.abc import Callable
 
 _READ_CALLS = frozenset({
     "open", "io.open", "codecs.open", "os.listdir", "os.scandir", "os.walk", "glob.glob",
     "glob.iglob", "ctypes.CDLL", "CDLL", "ctypes.cdll.LoadLibrary", "cdll.LoadLibrary",
+    "subprocess.run", "subprocess.Popen", "subprocess.call", "subprocess.check_call",
+    "subprocess.check_output", "os.execv", "os.execve", "os.execvp", "os.execvpe", "os.execl",
+    "os.execle", "os.execlp", "os.execlpe", "np.load", "numpy.load",
 })  # fmt: skip
 _READ_METHODS = frozenset({"open", "read_text", "read_bytes", "iterdir", "glob", "rglob"})
+# Methods of any receiver that read a path given as an argument: cffi's ffi.dlopen(path),
+# configparser's parser.read(path).
+_PATH_ARGUMENT_METHODS = frozenset({"dlopen", "read"})
+# jinja2's loader is flagged by the call: its arguments are plain strings (package and folder).
+_LOADER_CALLS = frozenset({"PackageLoader", "jinja2.PackageLoader"})
+_EXISTENCE_CALLS = frozenset({
+    "os.path.exists", "os.path.isfile", "os.path.isdir", "os.path.lexists", "os.access",
+})  # fmt: skip
+_EXISTENCE_METHODS = frozenset({"exists", "is_file", "is_dir"})
+_FILE_ATTRIBUTES = frozenset({"__file__", "__path__"})
+_MARKERS = (b"__file__", b"__path__", b"PackageLoader")  # a module without them is skipped
 _MAX_PASSES = 5  # name propagation reaches a fixed point within a few passes in practice
 
 
@@ -26,7 +44,7 @@ def _dotted(node: ast.expr) -> str | None:
 
 def _tainted_names(tree: ast.Module) -> set[str]:
     """``__file__`` plus every name assigned from an expression that mentions a tainted name."""
-    tainted = {"__file__"}
+    tainted = set(_FILE_ATTRIBUTES)
     assignments = [node for node in ast.walk(tree) if isinstance(node, ast.Assign | ast.AnnAssign)]
     for _ in range(_MAX_PASSES):
         before = len(tainted)
@@ -41,17 +59,38 @@ def _tainted_names(tree: ast.Module) -> set[str]:
 
 
 def _mentions(node: ast.AST, names: set[str]) -> bool:
-    return any(isinstance(n, ast.Name) and n.id in names for n in ast.walk(node))
+    return any(
+        (isinstance(n, ast.Name) and n.id in names)
+        or (isinstance(n, ast.Attribute) and n.attr in _FILE_ATTRIBUTES)  # X.__file__
+        for n in ast.walk(node)
+    )
+
+
+def _arguments_mention(call: ast.Call, tainted: set[str]) -> bool:
+    arguments = [*call.args, *(keyword.value for keyword in call.keywords)]
+    return any(_mentions(argument, tainted) for argument in arguments)
 
 
 def _reads(call: ast.Call, tainted: set[str]) -> bool:
-    if _dotted(call.func) in _READ_CALLS:
-        arguments = [*call.args, *(keyword.value for keyword in call.keywords)]
-        return any(_mentions(argument, tainted) for argument in arguments)
+    name, func = _dotted(call.func), call.func
+    if name in _LOADER_CALLS:
+        return True
+    if name in _READ_CALLS:
+        return _arguments_mention(call, tainted)
+    if not isinstance(func, ast.Attribute):
+        return False
+    if func.attr in _PATH_ARGUMENT_METHODS and _arguments_mention(call, tainted):
+        return True
+    return func.attr in _READ_METHODS and _mentions(func.value, tainted)
+
+
+def _checks_existence(call: ast.Call, tainted: set[str]) -> bool:
     func = call.func
+    if _dotted(func) in _EXISTENCE_CALLS:
+        return _arguments_mention(call, tainted)
     return (
         isinstance(func, ast.Attribute)
-        and func.attr in _READ_METHODS
+        and func.attr in _EXISTENCE_METHODS
         and _mentions(func.value, tainted)
     )
 
@@ -71,9 +110,10 @@ def _main_guarded(tree: ast.Module) -> list[range]:
     ]
 
 
-def file_relative_reads(source: bytes, filename: str) -> list[int]:
-    """Line numbers of reads relative to ``__file__`` in one module (empty if it does not parse)."""
-    if b"__file__" not in source:
+def _flagged_lines(
+    source: bytes, filename: str, test: Callable[[ast.Call, set[str]], bool]
+) -> list[int]:
+    if not any(marker in source for marker in _MARKERS):
         return []
     try:
         tree = ast.parse(source, filename)
@@ -81,5 +121,15 @@ def file_relative_reads(source: bytes, filename: str) -> list[int]:
         return []
     tainted, guarded = _tainted_names(tree), _main_guarded(tree)
     calls = (node for node in ast.walk(tree) if isinstance(node, ast.Call))
-    lines = {call.lineno for call in calls if _reads(call, tainted)}
+    lines = {call.lineno for call in calls if test(call, tainted)}
     return sorted(line for line in lines if not any(line in block for block in guarded))
+
+
+def file_relative_reads(source: bytes, filename: str) -> list[int]:
+    """Line numbers of reads relative to ``__file__`` in one module (empty if it does not parse)."""
+    return _flagged_lines(source, filename, _reads)
+
+
+def file_relative_existence_checks(source: bytes, filename: str) -> list[int]:
+    """Line numbers of existence checks on paths relative to ``__file__``: low confidence."""
+    return _flagged_lines(source, filename, _checks_existence)
