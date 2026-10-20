@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import subprocess
 import tempfile
 from collections.abc import Callable, Iterable
@@ -290,6 +291,28 @@ def smoke_test(executable: Path, app_name: str, output: Path | None = None) -> N
         )
 
 
+def smoke_run(executable: Path, output: Path, args: tuple[str, ...]) -> None:
+    """Run the new executable with ``args`` as the app, as ``output``, and require exit 0. Only
+    the user knows which arguments are safe, so this runs when smoke-args is set."""
+    shown = shlex.join(args)
+    try:
+        result = subprocess.run(  # noqa: S603  the executable we just wrote
+            [str(output), *args],
+            executable=executable,  # argv[0] is the final path; the payload is /proc/self/exe
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=_SMOKE_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise BuildError(f"smoke run of the new {output} with arguments {shown!r} failed: {exc}"
+                         ) from exc
+    if result.returncode != 0:
+        raise BuildError(f"smoke run of the new {output} with arguments {shown!r} failed "
+                         f"(exit {result.returncode}):\n{result.stderr[-3000:]}")
+
+
 def build(
     directory: Path,
     config: BuildConfig,
@@ -307,6 +330,9 @@ def build(
         if config.smoke:
             log(f"smoke-testing {written[0]}")
             smoke_test(written[0], result.app_name, result.output)
+            if config.smoke_args:
+                log(f"running the new executable with {shlex.join(config.smoke_args)}")
+                smoke_run(written[0], result.output, config.smoke_args)
         commit(written[0], result.output)
         written.clear()
         return result

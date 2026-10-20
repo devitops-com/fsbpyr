@@ -518,6 +518,39 @@ def test_a_failed_smoke_test_leaves_the_output_as_it_was(
     assert sorted(p.name for p in out.parent.iterdir()) == ["hello"]  # no .hello.*.tmp left
 
 
+def test_smoke_args_run_the_new_executable_once(tmp_path: Path) -> None:
+    project = _fixture("clicky", tmp_path)
+    pyproject = project / "pyproject.toml"
+    pyproject.write_text(pyproject.read_text() + '\n[tool.fsbpyr]\nsmoke-args = ["--help"]\n')
+    out = tmp_path / "bin" / "clicky"
+
+    assert main(["build", str(project), "-o", str(out)]) == 0
+
+    assert out.read_bytes()[:4] == b"\x7fELF"
+
+
+def test_failing_smoke_args_fail_the_build_and_leave_the_output_as_it_was(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _fixture("hello", tmp_path)
+    cli = project / "src" / "hello" / "cli.py"
+    cli.write_text(cli.read_text().replace(
+        "def main() -> int:\n",
+        "def main() -> int:\n    if sys.argv[1:] == ['--version']:\n        no_such_function()\n"))
+    out = tmp_path / "bin" / "hello"
+    out.parent.mkdir()
+    old = b"#!/bin/sh\necho the working tool\n"
+    out.write_bytes(old)
+
+    assert main(["build", str(project), "-o", str(out), "--smoke-args", "--version"]) == 1
+
+    err = capsys.readouterr().err
+    assert "arguments '--version'" in err and "no_such_function" in err
+    assert out.read_bytes() == old
+    assert sorted(p.name for p in out.parent.iterdir()) == ["hello"]
+    assert main(["build", str(project), "-o", str(out)]) == 0  # no smoke-args: not run
+
+
 def test_strict_refuses_an_unlocked_build_and_leaves_the_output_as_it_was(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
