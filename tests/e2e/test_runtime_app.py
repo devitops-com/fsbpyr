@@ -803,3 +803,43 @@ def test_inspect_finds_sources_of_cpython_frozen_stdlib_modules(build_app: Build
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().startswith('r"""OS routines for NT or Posix')
+
+
+def _counts(app: Path) -> dict[str, int]:
+    """The read counters FSBPYR_TRACE reports for one start (launcher/module.c ``stats``)."""
+    trace = json.loads(_run(app, FSBPYR_TRACE="1").stderr.rpartition("fsbpyr-trace ")[2])
+    return {key: trace[key] for key in ("reads", "stored_bytes", "decompressed_bytes")}
+
+
+def test_startup_reads_the_same_with_a_large_unused_dist(runtime: Runtime, tmp_path: Path) -> None:
+    """D37: counts, not timings. What a no-op start reads does not depend on what else the
+    executable holds."""
+    noop = {"noop.py": "def main():\n    return 0\n"}
+    modules, files = app_content(noop)
+    rng = random.Random(0)  # noqa: S311  # test data
+    unused = tuple(
+        File(f"unused/f{i:03}.bin", FileKind.RESOURCE, Blob.zstd(rng.randbytes(1 << 18)))
+        for i in range(120)  # 30 MiB, incompressible
+    )
+    small, large = tmp_path / "small", tmp_path / "large"
+    build_executable(runtime, App("app", "noop:main", modules=modules, files=files), small)
+    build_executable(
+        runtime, App("app", "noop:main", modules=modules, files=(*files, *unused)), large
+    )
+
+    assert large.stat().st_size > small.stat().st_size + (20 << 20)
+    assert _counts(large) == _counts(small)
+    assert _counts(small)["reads"] > 0
+
+
+# The no-op app's size on the pinned Python 3.14 runtime (D15 makes it deterministic).
+NOOP_SIZE = 27_695_360
+NOOP_SIZE_TOLERANCE = 0.03
+
+
+def test_noop_app_size_is_within_3_percent_of_the_recorded_size(build_app: BuildApp) -> None:
+    """A change to the stdlib selection shows here only with a freshly built runtime: the e2e
+    `runtime` fixture reuses a cached one (CI builds it fresh)."""
+    app = build_app({"noop.py": "def main():\n    return 0\n"}, "noop:main")
+
+    assert abs(app.stat().st_size / NOOP_SIZE - 1) <= NOOP_SIZE_TOLERANCE, app.stat().st_size
