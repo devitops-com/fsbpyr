@@ -15,7 +15,9 @@ resolve to the same node) and re-emits it with a policy that depends only on the
 * set/frozenset elements are sorted by their canonical standalone encoding.
 
 ``marshal.loads`` of the canonical stream yields objects equal to the original. Supported
-format: marshal version 5 as written by CPython 3.14.
+formats: marshal version 4 as written by CPython 3.12 and 3.13, version 5 (which adds the slice
+type) as written by 3.14. The code object layout is the same in all three; each fsbpyr handles
+the version it runs on.
 """
 
 import marshal
@@ -23,7 +25,7 @@ import struct
 import sys
 from types import CodeType
 
-SUPPORTED_PYTHON = (3, 14)
+SUPPORTED_PYTHON = frozenset({(3, 12), (3, 13), (3, 14)})
 FLAG_REF = 0x80
 TYPE_REF = ord("r")
 MAX_DEPTH = 100  # nesting limit; compile() output stays far below (stdlib maximum: 11)
@@ -37,6 +39,7 @@ _SHORT = frozenset(b"zZ")
 _SEQUENCES = frozenset(b"([<>")
 _SETS = frozenset(b"<>")
 _I32 = struct.Struct("<i")
+_HAS_SLICE = sys.version_info >= (3, 14)  # marshal version 5 added the slice type
 
 
 class BytecodeError(ValueError):
@@ -136,7 +139,7 @@ class _Reader:
             node.kids = [self.node(depth + 1) for _ in range(self.length())]
         elif tag == ord(")"):
             node.kids = [self.node(depth + 1) for _ in range(self.take(1)[0])]
-        elif tag == ord(":"):
+        elif tag == ord(":") and _HAS_SLICE:
             node.kids = [self.node(depth + 1) for _ in range(3)]
         elif tag == ord("c"):
             node.head = self.take(20)  # argcount, posonlyargcount, kwonlyargcount, stacksize, flags
@@ -263,7 +266,7 @@ def _count(root: _Node) -> None:
 
 
 def canonicalize(data: bytes) -> bytes:
-    """Return the canonical form of one marshalled object (marshal version 5)."""
+    """Return the canonical form of one marshalled object (the running Python's marshal version)."""
     try:
         reader = _Reader(data)
         root = reader.node()
@@ -280,6 +283,6 @@ def canonicalize(data: bytes) -> bytes:
 
 def dumps(code: CodeType) -> bytes:
     """``marshal.dumps`` followed by ``canonicalize``; only for the supported CPython version."""
-    if sys.version_info[:2] != SUPPORTED_PYTHON:  # pragma: no cover - the CLI stops other Pythons
-        raise BytecodeError(f"canonical bytecode supports CPython {SUPPORTED_PYTHON} only")
+    if sys.version_info[:2] not in SUPPORTED_PYTHON:  # pragma: no cover - the CLI stops them
+        raise BytecodeError("canonical bytecode supports CPython 3.12, 3.13 and 3.14 only")
     return canonicalize(marshal.dumps(code))
