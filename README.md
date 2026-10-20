@@ -374,6 +374,22 @@ curl -fL https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr.
 chmod +x ~/.local/bin/fsbpyr
 ```
 
+### Updating
+
+```
+fsbpyr self update
+```
+
+asks GitHub for the latest release and, when it is newer than the running executable, downloads
+its `fsbpyr.xz`, unpacks it in-process, checks it as `fsbpyr inspect --verify` does before
+anything runs it, and renames it over the executable (its real path, mode kept; a running
+fsbpyr keeps its old file). The man page and the completions that `make install` put under the
+same prefix (`<prefix>/bin/fsbpyr` and `<prefix>/share/...`) are written again; ones installed
+elsewhere get a hint. It needs write access to the executable's directory and says so when it
+has none. A developer build (`make build`, `make bootstrap`; `fsbpyr --version` starts with
+`untagged`) refuses: download the release with the `curl` commands above. The update does not
+check the release's attestation; `gh attestation verify` still does.
+
 ### Building from source
 
 A source checkout needs `make` and [uv](https://docs.astral.sh/uv/). On Debian trixie it also

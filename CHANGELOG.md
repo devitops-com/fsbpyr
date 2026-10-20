@@ -11,6 +11,13 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Added
+- **`fsbpyr self update`** replaces the running executable with the latest GitHub release when
+  that is newer. It downloads `fsbpyr.xz`, unpacks it with the standard library's lzma,
+  verifies it in-process as `inspect --verify` does before anything runs it, and renames it
+  over the executable's real path, keeping its mode. The man page and completions found under
+  the executable's prefix are written again by the new executable; ones elsewhere get a hint.
+  A developer build (`untagged-<commit>`) refuses and prints the `curl` command for the latest
+  release, and an unwritable directory is an error saying how to update instead.
 - **`fsbpyr build` shows what it is doing.** Each uv step prints a line before it runs ("uv:
   installing the locked distributions", "uv: building <project>'s wheel"), and the smoke test
   prints "smoke-testing <path>". A failed uv step names the step instead of a truncated command.
