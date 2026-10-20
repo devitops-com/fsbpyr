@@ -20,7 +20,7 @@ from fsbpyr.payload.format import NATIVE_KINDS
 from fsbpyr.payload.reader import Executable
 from fsbpyr.project import LockSource
 
-from ..support.stderr import NO_HOSTNAME
+from ..support.stderr import NO_HOSTNAME, ONNX_HOST
 from .test_compat import MATRIX
 from .test_natives import EXPECTED as HEAVY
 
@@ -96,7 +96,7 @@ def test_apps_run_on_older_distributions(apps: Path, image: str) -> None:
         capture_output=True, text=True, timeout=900, check=False,
     )  # fmt: skip
 
-    combined = NO_HOSTNAME.sub("", result.stdout)
+    combined = ONNX_HOST.sub("", NO_HOSTNAME.sub("", result.stdout))
     sections = dict(
         (head.strip(), body.strip())
         for head, _, body in (part.partition("\n") for part in combined.split("== ")[1:])

@@ -5,6 +5,10 @@ import re
 # onnxruntime itself runs `sh -c "echo `blkid; hostname`"`; minimal images lack either command
 NO_HOSTNAME = re.compile(r"^sh: .*(blkid|hostname): (command )?not found\n", re.MULTILINE)
 TRACE_LINE = re.compile(r"^fsbpyr-trace .*\n?", re.MULTILINE)
+# onnxruntime warns, with a timestamp, about the host's PCI devices on some VMs (GitHub's runners)
+ONNX_HOST = re.compile(
+    r"^\x1b\[0;93m\S+ \S+ \[W:onnxruntime:[^\]]* GetPciBusId\] .*\n?", re.MULTILINE
+)
 
 
 def noise(stderr: str, *allowed: re.Pattern[str]) -> str:
