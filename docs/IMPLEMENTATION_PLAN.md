@@ -1536,7 +1536,10 @@ write, a truncated binary.
        multiprocessing command lines (D22, with their security tests; 3.12's forkserver
        command line differs from 3.13's and 3.14's, checked 2026-10-18). D13 becomes Python
        ≥ 3.12.
-    3. Runtimes, CI and releases: `fsbpyr runtime build --python 3.X` for each version; CI
+    3. Runtimes, CI and releases (the runtimes of 3.12 and 3.13 **done 2026-10-20**: pins for
+       3.12.15 and 3.13.16 from PBS 20261009, `build/lib/libzstd.a` added to the link inputs
+       when no built-in module links it; both build and their stubs stop at the integrity
+       check; CI and releases are left): `fsbpyr runtime build --python 3.X` for each version; CI
        runs the suite once per version (the development venv through `uv run --python 3.X`,
        then that variant's end-to-end tests and its three-stage bootstrap); each release
        builds, attests and publishes every variant, and each reproduces itself.

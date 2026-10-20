@@ -21,6 +21,12 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   The new [docs/security.md](docs/security.md) is the threat model.
 
 ### Added
+- **`fsbpyr runtime build --python 3.12` and `--python 3.13` build runtimes for those
+  versions** (Phase 9, step 3): CPython 3.12.15 and 3.13.16 from python-build-standalone
+  20261009, pinned by SHA-256, linked against the same glibc 2.28 sysroot. The launcher also
+  links `build/lib/libzstd.a` when no built-in module does (3.12 and 3.13 have no `_zstd`);
+  3.14's link and runtime id are unchanged. `fsbpyr runtime list` shows each. Building apps
+  for these versions follows with the port of fsbpyr itself.
 - **Natives no extension module reaches, ELF executables and run-time library paths are
   checked at build time.** A shared object that no extension links to (a ctypes or cffi load,
   a library in an fs-package) used to be packaged unchecked. Now one that needs a library
