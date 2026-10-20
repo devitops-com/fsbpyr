@@ -5,6 +5,8 @@ pytest passes a run however many tests skip. FSBPYR_TESTS_REQUIRE_ALL names one 
 below (CI's test step sets `ci`, the full-suite workflow `full` and `portability`), and a
 skip that the list does not expect fails the run."""
 
+import functools
+import inspect
 import os
 from collections.abc import Iterator
 
@@ -61,24 +63,35 @@ def _no_collection() -> Iterator[None]:
         yield
 
 
-@pytest.fixture(autouse=True)
-def _build_for_own_python(request: pytest.FixtureRequest) -> Iterator[None]:
+@pytest.fixture(scope="session", autouse=True)
+def _build_for_own_python() -> Iterator[None]:
     """A build in a test is for the Python the tests run on, as `--python` would say: the
     fixture projects' `requires-python = ">=3.12"` would hand them to the 3.12 variant
-    (Phase 9). A test marked `version_rule` runs the rule itself."""
-    if request.node.get_closest_marker("version_rule"):
-        yield
-        return
+    (Phase 9). Session-wide, so that the builds of module-scoped fixtures follow it too."""
     from fsbpyr import pyversion  # noqa: PLC0415
 
     resolve = pyversion.resolve
 
+    @functools.wraps(resolve)
     def own_python(project: Project, requested: str | None, *, own: str) -> pyversion.Choice:
         return resolve(project, requested or own, own=own)
 
-    # not the monkeypatch fixture: using it would change the order other fixtures end in
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(pyversion, "resolve", own_python)
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _version_rule(request: pytest.FixtureRequest) -> Iterator[None]:
+    """A test marked `version_rule` runs the rule itself."""
+    if not request.node.get_closest_marker("version_rule"):
+        yield
+        return
+    from fsbpyr import pyversion  # noqa: PLC0415
+
+    # not the monkeypatch fixture: using it would change the order other fixtures end in
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(pyversion, "resolve", inspect.unwrap(pyversion.resolve))
         yield
 
 

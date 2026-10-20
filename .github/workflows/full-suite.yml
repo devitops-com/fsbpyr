@@ -182,7 +182,8 @@ jobs:
       # tests/integration/test_pbs_stdlib_versions.py compares the distributions of all three
       # versions, and the bootstrap built the runtime of this entry's only; the full suite
       # expects no skip. tests/e2e/test_dispatch.py builds fsbpyr on another Python, which
-      # needs that Python installed as well.
+      # needs that Python installed as well. Each runtime is built by fsbpyr on its own Python:
+      # an older Python cannot canonicalize a newer one's bytecode.
       - name: The other versions' runtimes
         env:
           MATRIX_PYTHON: ${{ matrix.python }}
@@ -190,7 +191,8 @@ jobs:
           for version in 3.12 3.13 3.14; do
             [ "$version" = "$MATRIX_PYTHON" ] || {
               as-tester uv python install "$version"
-              as-tester $UV_ENV $UV_RUN fsbpyr runtime build --python "$version"
+              as-tester UV_PROJECT_ENVIRONMENT=".venv-$version" \
+                uv run --python "$version" --locked fsbpyr runtime build --python "$version"
             }
           done
 

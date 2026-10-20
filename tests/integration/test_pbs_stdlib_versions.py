@@ -9,7 +9,7 @@ import pytest
 from fsbpyr.payload.format import ModuleFlag
 from fsbpyr.runtime import pbs, stdlib
 from fsbpyr.runtime.pins import pin_for
-from fsbpyr.runtime.registry import cache_root
+from fsbpyr.runtime.registry import cache_home
 
 pytestmark = pytest.mark.slow
 
@@ -28,7 +28,8 @@ BUILTINS_ONLY_IN_314 = {"_zstd", "_hmac", "_remote_debugging", "_types"}
 
 
 def _dist(version: str) -> pbs.PbsDist:
-    root = cache_root() / "pbs" / pin_for(version, TRIPLE).name / "python"
+    # the real cache: once tests/e2e has run, FSBPYR_CACHE_DIR names the session's private one
+    root = cache_home() / "fsbpyr" / "pbs" / pin_for(version, TRIPLE).name / "python"
     if not (root / "PYTHON.json").exists():
         pytest.skip(f"PBS distribution for {version} is not in the cache (fsbpyr runtime build)")
     return pbs.PbsDist.load(root)
