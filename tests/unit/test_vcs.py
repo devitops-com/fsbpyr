@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from fsbpyr.vcs import commit_time, git_state, version_string
+from fsbpyr.vcs import commit_time, git_state, release_asset, release_asset_record, version_string
 
 COMMIT = "6457a95b" + "0" * 32
 GIT = shutil.which("git") or "git"
@@ -126,3 +126,18 @@ def test_commit_time_needs_a_commit_that_contains_the_directory(tmp_path: Path, 
     (repo / "later").mkdir()  # in the work tree only: HEAD's tree does not contain it
     assert commit_time(repo / "later") is None
     assert commit_time(tmp_path.parent / "no-such-directory") is None
+
+
+@pytest.mark.parametrize(("python", "asset"), [
+    ("3.14", "fsbpyr"), ("3.13", "fsbpyr-3.13"), ("3.12", "fsbpyr-3.12"),
+])  # fmt: skip
+def test_the_newest_python_is_the_plain_asset_and_the_others_carry_their_version(
+    python: str, asset: str
+) -> None:
+    assert release_asset(python) == asset
+
+
+def test_only_fsbpyr_itself_records_the_asset_it_is_released_as() -> None:
+    assert release_asset_record("fsbpyr", "3.12") == (("release_asset", "fsbpyr-3.12"),)
+    assert release_asset_record("Fsbpyr", "3.14") == (("release_asset", "fsbpyr"),)
+    assert release_asset_record("someapp", "3.12") == ()

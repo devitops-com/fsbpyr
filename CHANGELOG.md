@@ -29,8 +29,7 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   `.venv-3.12`; `make build PYTHON=3.12` writes `dist/fsbpyr-3.12`, and `tools/bootstrap.sh
   --python 3.12` (`make bootstrap PYTHON=3.12`) runs the three stages of that variant into
   `dist/stage1-3.12` to `dist/stage3-3.12`, each verified and stage 2 identical to stage 3,
-  without installing it. Without a version nothing changes. The releases still carry the 3.14
-  variant only. Found by running the apps on 3.12: its frozen standard library modules had no
+  without installing it. Without a version nothing changes. Found by running the apps on 3.12: its frozen standard library modules had no
   `__file__` and `encodings.__path__` was empty (CPython 3.12 does not set `sys._stdlib_dir`
   from `PyConfig.stdlib_dir`), so `encodings.idna` and `inspect.getsource(os)` failed; the boot
   module now sets it. Uncaught exceptions print their source lines on 3.12 (CPython 3.12's C
@@ -47,6 +46,19 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   links `build/lib/libzstd.a` when no built-in module does (3.12 and 3.13 have no `_zstd`);
   3.14's link and runtime id are unchanged. `fsbpyr runtime list` shows each. Building apps
   for these versions follows with the port of fsbpyr itself.
+- **Each release carries one fsbpyr per Python version, and `fsbpyr self update` updates a
+  variant to the same variant** (Phase 9, step 3). `release.yml` builds, reproduces and
+  compares, and `full-suite.yml` tests, for Python 3.12, 3.13 and 3.14 (each on its own
+  environment `.venv-3.X`, with that variant's three-stage bootstrap). A release publishes
+  `fsbpyr` and `fsbpyr.xz` (the newest version's, 3.14 now: the same names as before) and
+  `fsbpyr-3.12`, `fsbpyr-3.13` with their `.xz`, each with its own
+  `THIRD_PARTY_LICENSES[-3.X].txt`, all attested and listed in `SHA256SUMS`. The executable
+  of fsbpyr itself records the asset it is released as (`release_asset` in the build
+  information; `fsbpyr inspect --json` shows it under `build_info`), and self update downloads
+  that asset's `.xz` of the latest release, so `fsbpyr-3.12` stays on 3.12. An executable
+  released before the record updates to `fsbpyr.xz`. The README's "Getting fsbpyr" and
+  "Verifying a release" cover the variants. Apps and other projects' executables record
+  nothing new.
 - **Natives no extension module reaches, ELF executables and run-time library paths are
   checked at build time.** A shared object that no extension links to (a ctypes or cffi load,
   a library in an fs-package) used to be packaged unchecked. Now one that needs a library

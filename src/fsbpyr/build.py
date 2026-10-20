@@ -47,7 +47,7 @@ from .staging import (
     uv_version,
 )
 from .system import system_info, system_report, target_needs
-from .vcs import git_state, own_version
+from .vcs import git_state, own_version, release_asset_record
 
 TARGET_PYTHON = f"{sys.version_info[0]}.{sys.version_info[1]}"  # builder and apps run alike
 _SMOKE_TIMEOUT = 120
@@ -486,6 +486,7 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                     ("interpreter_reexec", config.interpreter_reexec),  # read at start (D23)
                     ("git", git_state(project.directory,
                                       warn=lambda note: warnings.append(Uncounted(note)))),
+                    *release_asset_record(dist.name, TARGET_PYTHON),  # fsbpyr's own, self update
                 ),
                 zstd_level=level,
             )

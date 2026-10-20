@@ -11,6 +11,10 @@ name: Full suite
 # compatibility, the ASan/UBSan launcher, the fuzzer, the cache-directory and GC tests, and the
 # ownership checks that have nothing to test as root. Nothing is published from here, so the
 # fuzz corpus is kept in actions/cache (release.yml stays cache-free).
+# One fsbpyr per Python version (Phase 9): the suite and the portability matrix run once per
+# entry of the `python` matrix, the development environment on that Python and that variant's
+# executable (dist/fsbpyr for the newest version, the one .python-version pins; dist/fsbpyr-3.X
+# for the others). Adding a Python version adds an entry to both matrices.
 
 on:
   push:
@@ -36,7 +40,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.14"]  # one entry; adding a Python version adds an entry here
+        python: ["3.12", "3.13", "3.14"]  # one entry per Python version a release is built for
     # Debian trixie by digest, as release.yml. Privileged: rootless podman for the tests that map
     # a second range of user ids, strace and user namespaces inside the container.
     container:
@@ -147,30 +151,55 @@ jobs:
           echo "corpus files:  $(find /home/tester/fuzz-corpus -type f | wc -l)"
           chown -R tester: /home/tester/fuzz-corpus
 
-      - name: The Python of .python-version
+      # The newest version (the Python of .python-version) is the default: `make bootstrap`,
+      # dist/fsbpyr, installed under ~/.local. Another is a variant: `make bootstrap PYTHON=3.X`
+      # builds dist/fsbpyr-3.X in the environment .venv-3.X and installs nothing. SUFFIX,
+      # MAKE_ARGS, UV_ENV and UV_RUN tell the steps below which; the Python is installed for
+      # tester: the pinned patch release of .python-version, else the minor version's newest.
+      - name: The Python of this entry
         env:
           MATRIX_PYTHON: ${{ matrix.python }}
         run: |
-          case "$(cat .python-version)" in
-            "$MATRIX_PYTHON".*) ;;
-            *) echo "::error::.python-version names $(cat .python-version), not $MATRIX_PYTHON"; exit 1 ;;
-          esac
-          as-tester uv python install "$(cat .python-version)"
+          if [ "$MATRIX_PYTHON" = "$(cut -d. -f1,2 .python-version)" ]; then
+            echo "SUFFIX=" >> "$GITHUB_ENV"
+            echo "MAKE_ARGS=" >> "$GITHUB_ENV"
+            echo "UV_ENV=" >> "$GITHUB_ENV"
+            echo "UV_RUN=uv run --locked" >> "$GITHUB_ENV"
+            as-tester uv python install "$(cat .python-version)"
+          else
+            echo "SUFFIX=-$MATRIX_PYTHON" >> "$GITHUB_ENV"
+            echo "MAKE_ARGS=PYTHON=$MATRIX_PYTHON" >> "$GITHUB_ENV"
+            echo "UV_ENV=UV_PROJECT_ENVIRONMENT=.venv-$MATRIX_PYTHON" >> "$GITHUB_ENV"
+            echo "UV_RUN=uv run --python $MATRIX_PYTHON --locked" >> "$GITHUB_ENV"
+            as-tester uv python install "$MATRIX_PYTHON"
+          fi
 
       # The packages are present, so no sudo: the locked environment, the runtime, fsbpyr in
-      # three stages and `make install` under tester's ~/.local.
+      # three stages and, for the newest version, `make install` under tester's ~/.local.
       - name: make bootstrap
-        run: as-tester FSBPYR_UV_VERSION="$FSBPYR_UV_VERSION" make bootstrap
+        run: as-tester FSBPYR_UV_VERSION="$FSBPYR_UV_VERSION" make bootstrap $MAKE_ARGS
+
+      # tests/integration/test_pbs_stdlib_versions.py compares the distributions of all three
+      # versions, and the bootstrap built the runtime of this entry's only; the full suite
+      # expects no skip.
+      - name: The other versions' runtimes
+        env:
+          MATRIX_PYTHON: ${{ matrix.python }}
+        run: |
+          for version in 3.12 3.13 3.14; do
+            [ "$version" = "$MATRIX_PYTHON" ] \
+              || as-tester $UV_ENV $UV_RUN fsbpyr runtime build --python "$version"
+          done
 
       - name: Upload the executable
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fsbpyr-${{ matrix.python }}
-          path: /home/tester/src/dist/fsbpyr
+          path: /home/tester/src/dist/fsbpyr${{ env.SUFFIX }}
           if-no-files-found: error
 
       - name: make check
-        run: as-tester make check
+        run: as-tester make check $MAKE_ARGS
 
       # Everything but the portability tests. FSBPYR_TESTS_REQUIRE_ALL=full: no skip is
       # expected, so a test that cannot run here fails the step. Branch coverage below
@@ -178,11 +207,11 @@ jobs:
       # instrumented for llvm-cov and kept (FSBPYR_LLVM_COV_DIR), for the report below.
       - name: The whole suite
         run: |
-          as-tester FSBPYR_TESTS_REQUIRE_ALL=full \
+          as-tester $UV_ENV FSBPYR_TESTS_REQUIRE_ALL=full \
             FSBPYR_FUZZ_SECONDS="$FSBPYR_FUZZ_SECONDS" FSBPYR_FUZZ_CORPUS=/home/tester/fuzz-corpus \
             FSBPYR_LLVM_COV_DIR=/home/tester/llvm-cov/bin \
             LLVM_PROFILE_FILE=/home/tester/llvm-cov/prof/%p-%m.profraw \
-            uv run --locked pytest --ignore=tests/e2e/test_portability.py --durations=30 \
+            $UV_RUN pytest --ignore=tests/e2e/test_portability.py --durations=30 \
               --junitxml=full.xml --cov --cov-report=xml
 
       # Informational: the launcher sources (copied by each session, so listed by their temporary
@@ -226,12 +255,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.14"]  # one entry; adding a Python version adds an entry here
+        python: ["3.12", "3.13", "3.14"]  # as in the suite job
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # The newest version's executable is dist/fsbpyr, another's dist/fsbpyr-3.X.
+      - name: Which variant
+        env:
+          MATRIX_PYTHON: ${{ matrix.python }}
+        run: |
+          if [ "$MATRIX_PYTHON" = "$(cut -d. -f1,2 .python-version)" ]; then
+            echo "SUFFIX=" >> "$GITHUB_ENV"
+          else
+            echo "SUFFIX=-$MATRIX_PYTHON" >> "$GITHUB_ENV"
+          fi
 
       - name: Download the executable
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -269,11 +309,14 @@ jobs:
               --password-stdin
           fi
 
+      # The tests run on .python-version's Python; the apps are built for the variant's.
       - name: Build the apps
+        env:
+          MATRIX_PYTHON: ${{ matrix.python }}
         run: |
-          chmod +x dist/fsbpyr
-          uv python install "$(cat .python-version)"
-          tools/portability-apps.sh dist/fsbpyr "$RUNNER_TEMP/apps"
+          chmod +x dist/fsbpyr$SUFFIX
+          uv python install "$(cat .python-version)" "$MATRIX_PYTHON"
+          tools/portability-apps.sh dist/fsbpyr$SUFFIX "$RUNNER_TEMP/apps"
 
       # FSBPYR_TESTS_REQUIRE_ALL=portability: no skip is expected.
       - name: The portability tests

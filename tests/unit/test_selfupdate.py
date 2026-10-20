@@ -25,7 +25,7 @@ class FakeGitHub:
 
     def __init__(self) -> None:
         self.tag = "v1.2.0"
-        self.assets = {selfupdate.ASSET: b""}
+        self.assets = {"fsbpyr.xz": b""}
         self.api_status = 200
         self.requests: list[str] = []
         fake = self
@@ -82,6 +82,7 @@ def installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setitem(sys.modules, "_fsbpyr", types.ModuleType("_fsbpyr"))
     monkeypatch.setattr(selfupdate, "running_executable", lambda: path)
     monkeypatch.setattr(selfupdate, "own_version", lambda: "1.0.0-abcdef12")
+    monkeypatch.setattr(selfupdate, "own_asset", lambda: "fsbpyr")
     monkeypatch.setattr(selfupdate, "_render", lambda new, command: b"new " + b" ".join(
         c.encode() for c in command))  # fmt: skip
     return path
@@ -91,7 +92,7 @@ def test_updates_the_executable_in_place_keeping_its_mode(
     github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     binary = _release_binary(tmp_path)
-    github.assets[selfupdate.ASSET] = lzma.compress(binary)
+    github.assets["fsbpyr.xz"] = lzma.compress(binary)
 
     assert main(["self", "update"]) == 0
 
@@ -101,6 +102,51 @@ def test_updates_the_executable_in_place_keeping_its_mode(
     assert "updated" in capsys.readouterr().out
 
 
+def test_a_variant_updates_to_its_own_variant_of_the_newer_release(
+    github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(selfupdate, "own_asset", lambda: "fsbpyr-3.12")
+    variant, newest = _release_binary(tmp_path, "variant"), b"the newest Python's"
+    github.assets = {"fsbpyr.xz": lzma.compress(newest),
+                     "fsbpyr-3.13.xz": lzma.compress(newest),
+                     "fsbpyr-3.12.xz": lzma.compress(variant)}  # fmt: skip
+
+    assert main(["self", "update"]) == 0
+
+    assert installed.read_bytes() == variant
+    assert github.requests == ["/api", "/files/fsbpyr-3.12.xz"]
+
+
+def test_a_release_without_the_variants_asset_is_an_error_not_another_variant(
+    github: FakeGitHub, installed: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(selfupdate, "own_asset", lambda: "fsbpyr-3.12")
+    github.assets = {"fsbpyr.xz": b"", "fsbpyr-3.13.xz": b""}
+
+    assert main(["self", "update"]) == 1
+
+    assert "no fsbpyr-3.12.xz" in capsys.readouterr().err
+    assert installed.read_bytes() == b"old"
+
+
+@pytest.mark.parametrize(("recorded", "asset"), [
+    ({"release_asset": "fsbpyr-3.13"}, "fsbpyr-3.13"),
+    ({"release_asset": "fsbpyr"}, "fsbpyr"),
+    ({}, "fsbpyr"),  # released before the record: always the one asset
+    ({"release_asset": "../evil"}, "fsbpyr"),
+    ({"release_asset": 3}, "fsbpyr"),
+])  # fmt: skip
+def test_own_asset_is_what_the_build_recorded(
+    recorded: dict[str, object], asset: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = types.ModuleType("_fsbpyr")
+    fake.info = lambda: {"build_info": json.dumps(recorded)}  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "_fsbpyr", fake)
+
+    assert selfupdate.own_asset() == asset
+
+
 def test_updates_through_a_symlink_target_the_real_file(
     github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -108,7 +154,7 @@ def test_updates_through_a_symlink_target_the_real_file(
     link.symlink_to(installed)
     monkeypatch.setattr(selfupdate, "running_executable", lambda: Path(os.path.realpath(link)))
     binary = _release_binary(tmp_path)
-    github.assets[selfupdate.ASSET] = lzma.compress(binary)
+    github.assets["fsbpyr.xz"] = lzma.compress(binary)
 
     assert main(["self", "update"]) == 0
 
@@ -179,7 +225,7 @@ def test_a_damaged_download_is_never_installed(
 ) -> None:
     binary = bytearray(_release_binary(tmp_path))
     binary[len(binary) // 2] ^= 0xFF
-    github.assets[selfupdate.ASSET] = lzma.compress(bytes(binary))
+    github.assets["fsbpyr.xz"] = lzma.compress(bytes(binary))
 
     assert main(["self", "update"]) == 1
 
@@ -191,7 +237,7 @@ def test_a_damaged_download_is_never_installed(
 def test_something_that_is_not_an_fsbpyr_executable_is_never_installed(
     github: FakeGitHub, installed: Path
 ) -> None:
-    github.assets[selfupdate.ASSET] = lzma.compress(b"#!/bin/sh\necho pwned\n")
+    github.assets["fsbpyr.xz"] = lzma.compress(b"#!/bin/sh\necho pwned\n")
 
     assert main(["self", "update"]) == 1
     assert installed.read_bytes() == b"old"
@@ -201,7 +247,7 @@ def test_a_truncated_xz_stream_is_an_error(
     github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     packed = lzma.compress(_release_binary(tmp_path))
-    github.assets[selfupdate.ASSET] = packed[: len(packed) // 2]
+    github.assets["fsbpyr.xz"] = packed[: len(packed) // 2]
 
     assert main(["self", "update"]) == 1
     assert installed.read_bytes() == b"old"
@@ -247,7 +293,7 @@ def test_man_page_and_completions_under_the_prefix_are_written_again(
         path.parent.mkdir(parents=True)
         path.write_text("old")
     man.chmod(0o640)
-    github.assets[selfupdate.ASSET] = lzma.compress(_release_binary(tmp_path))
+    github.assets["fsbpyr.xz"] = lzma.compress(_release_binary(tmp_path))
 
     assert main(["self", "update"]) == 0
 
@@ -267,7 +313,7 @@ def test_an_executable_outside_a_bin_directory_gets_the_hint_only(
     elsewhere.parent.mkdir()
     elsewhere.write_bytes(b"old")
     monkeypatch.setattr(selfupdate, "running_executable", lambda: elsewhere)
-    github.assets[selfupdate.ASSET] = lzma.compress(_release_binary(tmp_path))
+    github.assets["fsbpyr.xz"] = lzma.compress(_release_binary(tmp_path))
 
     assert main(["self", "update"]) == 0
 
@@ -286,7 +332,7 @@ def test_a_failing_new_executable_stops_before_anything_is_replaced(
         raise selfupdate.UpdateError("it crashed")
 
     monkeypatch.setattr(selfupdate, "_render", broken)
-    github.assets[selfupdate.ASSET] = lzma.compress(_release_binary(tmp_path))
+    github.assets["fsbpyr.xz"] = lzma.compress(_release_binary(tmp_path))
 
     assert main(["self", "update"]) == 1
 

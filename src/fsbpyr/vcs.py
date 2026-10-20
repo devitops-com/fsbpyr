@@ -13,6 +13,8 @@ import subprocess
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from .bytecode import SUPPORTED_PYTHON
+
 _RELEASE = re.compile(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 _HASH_DIGITS = 8
 _TIMEOUT = 10
@@ -98,3 +100,16 @@ def own_version() -> str:
     import json  # noqa: PLC0415
 
     return version_string(json.loads(_fsbpyr.info()["build_info"]).get("git"))
+
+
+def release_asset(python: str) -> str:
+    """The release asset (without ``.xz``) of the fsbpyr that runs on ``python`` ("3.12"): the
+    newest supported Python's is plain ``fsbpyr``, the others' are ``fsbpyr-3.12`` (Phase 9)."""
+    newest = "{}.{}".format(*max(SUPPORTED_PYTHON))
+    return "fsbpyr" if python == newest else f"fsbpyr-{python}"
+
+
+def release_asset_record(project: str, python: str) -> tuple[tuple[str, str], ...]:
+    """build_info's ``release_asset``, for fsbpyr's own executable only: the asset it is
+    released as, which ``fsbpyr self update`` fetches the same variant of."""
+    return (("release_asset", release_asset(python)),) if project.lower() == "fsbpyr" else ()

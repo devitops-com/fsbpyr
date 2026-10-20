@@ -425,11 +425,14 @@ Before 1.0 only the following is kept stable; everything else may change in any 
   covered: they can change before 1.0, and a change that breaks them is marked **Breaking:**
   in the [changelog](CHANGELOG.md).
 - What `fsbpyr self update` and an installer rely on across releases: the release assets
-  `fsbpyr` and `fsbpyr.xz` and their `releases/latest/download/` URLs. The planned target- and
-  version-named assets (`fsbpyr-3.12`, `fsbpyr-x86_64-linux-gnu`, `fsbpyr-3.12-aarch64-linux-musl`,
-  each with its `.xz`), `install.sh` and the record of which asset an executable was released
-  as come under the same promise when they ship, and `fsbpyr` and `fsbpyr.xz` then stay copies
-  of the default executable.
+  `fsbpyr` and `fsbpyr.xz` and their `releases/latest/download/` URLs, the version-named
+  assets `fsbpyr-3.12` and `fsbpyr-3.13` with their `.xz` (and the `fsbpyr-3.14` that appears
+  when a newer Python takes over the plain name), and the `release_asset` key of `build_info`
+  that records which asset an executable was released as, which a variant's self-update
+  reads. The planned target-named assets (`fsbpyr-x86_64-linux-gnu`,
+  `fsbpyr-3.12-aarch64-linux-musl`, each with its `.xz`) and `install.sh` come under the same
+  promise when they ship, and `fsbpyr` and `fsbpyr.xz` then stay copies of the default
+  executable.
 - The trailer and the whole-file digest layout (`docs/format.md`) that `inspect --verify`
   reads: an older fsbpyr checks its download of a newer release in-process, so a later format
   version must keep that check working.
@@ -441,9 +444,12 @@ The design, its decisions and the progress of each phase are in
 ## Getting fsbpyr
 
 fsbpyr builds itself into a single executable, and that executable is the easiest way to run
-it: it carries its own runtime (CPython 3.14 and the launcher), so building apps with it needs
-no compiler. Each [release](https://github.com/devitops-com/fsbpyr/releases) carries it,
-built and attested by GitHub Actions:
+it: it carries its own runtime (CPython and the launcher), so building apps with it needs
+no compiler. There is one fsbpyr per Python version, 3.12, 3.13 and 3.14, each built with and
+carrying that version's runtime only; the apps it builds run on that Python. Each
+[release](https://github.com/devitops-com/fsbpyr/releases) carries all of them, built and
+attested by GitHub Actions. `fsbpyr` is the newest version's (Python 3.14 now), and the
+commands below fetch it:
 
 ```
 mkdir -p ~/.local/bin
@@ -464,6 +470,12 @@ curl -fL https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr.
 chmod +x ~/.local/bin/fsbpyr
 ```
 
+The other versions are the assets `fsbpyr-3.12` and `fsbpyr-3.13`, each with its `.xz`, at the
+same URLs (`.../releases/latest/download/fsbpyr-3.12`). When a newer Python becomes the
+newest, `fsbpyr` moves to it and `fsbpyr-3.14` appears. A release also carries
+`THIRD_PARTY_LICENSES.txt` for `fsbpyr` and `THIRD_PARTY_LICENSES-3.12.txt` and so on for the
+others, and `SHA256SUMS` lists every file.
+
 ### Updating
 
 ```
@@ -471,7 +483,9 @@ fsbpyr self update
 ```
 
 asks GitHub for the latest release and, when it is newer than the running executable, downloads
-its `fsbpyr.xz`, unpacks it in-process, checks it as `fsbpyr inspect --verify` does before
+its own asset of it (`fsbpyr.xz`, or `fsbpyr-3.12.xz` for the 3.12 variant: an executable
+records which asset it was released as, and updates to the same one; one released before that
+record updates to `fsbpyr.xz`), unpacks it in-process, checks it as `fsbpyr inspect --verify` does before
 anything runs it, and renames it over the executable (its real path, mode kept; a running
 fsbpyr keeps its old file). The man page and the completions that `make install` put under the
 same prefix (`<prefix>/bin/fsbpyr` and `<prefix>/share/...`) are written again; ones installed
@@ -556,7 +570,9 @@ release binary, which carries its own.
 
 ### Verifying a release
 
-Each release's `fsbpyr` is built by GitHub Actions from its `vX.Y.Z` tag and attested there.
+Each release's `fsbpyr` (and `fsbpyr-3.12` and `fsbpyr-3.13`; the steps below name `fsbpyr`,
+and a variant's differ where said) is built by GitHub Actions from its `vX.Y.Z` tag and
+attested there.
 Every release from 0.19.0 on stays published as it is: a version whose release fails is
 burned, and the fix comes as the next version, never in its place.
 
@@ -571,22 +587,26 @@ The attestation comes first, before anything runs the file. It shows that this r
 release workflow built the file from the latest release's tag:
 
 ```
+asset=fsbpyr   # or fsbpyr-3.12, fsbpyr-3.13: the variant to check
 tag="$(gh release view --repo devitops-com/fsbpyr --json tagName --jq .tagName)"
-curl -fLo fsbpyr "https://github.com/devitops-com/fsbpyr/releases/download/$tag/fsbpyr"
-gh attestation verify fsbpyr --repo devitops-com/fsbpyr \
+curl -fLo "$asset" "https://github.com/devitops-com/fsbpyr/releases/download/$tag/$asset"
+gh attestation verify "$asset" --repo devitops-com/fsbpyr \
   --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml --source-ref "refs/tags/$tag"
 ```
 
 If it fails, stop there. Otherwise rebuild the file from that tag, with the uv it records:
 
 ```
-chmod +x fsbpyr
-want="$(./fsbpyr inspect fsbpyr | awk '$1 == "uv" { print $2; exit }')"
+chmod +x "$asset"
+want="$(./"$asset" inspect "$asset" | awk '$1 == "uv" { print $2; exit }')"
 [ "$(uv --version | cut -d' ' -f2)" = "$want" ] || echo "install uv $want first: this uv differs"
 git clone --branch "$tag" https://github.com/devitops-com/fsbpyr.git src
-(cd src && ../fsbpyr build . -o ../rebuilt)
-cmp fsbpyr rebuilt && echo identical
+(cd src && ../"$asset" build . -o ../rebuilt)
+cmp "$asset" rebuilt && echo identical
 ```
+
+A variant rebuilds itself like the newest: each executable carries its own Python's runtime
+and builds with it. Its Python must be installed with uv (`uv python install 3.12`).
 
 A rebuild checks the bytes themselves, at two levels:
 
@@ -618,10 +638,10 @@ A rebuild checks the bytes themselves, at two levels:
   so run fsbpyr from source directly in the checkout above: it builds the runtime, then `stage1`,
   and `stage1` builds the file to compare. A runtime already in the cache under the same id is
   reused, not built again; an empty cache (`XDG_CACHE_HOME` set to a new directory) builds it
-  afresh. (b) is checked on every tag by the `reproduce` job of the release workflow, which
-  rebuilds from a second checkout (another path and user, other caches, umask 077) and whose
-  stage 3 the `compare` job checks against the release build byte for byte; the release is
-  published only if they are identical. The same two jobs run on every push to main and pull
+  afresh. (b) is checked on every tag, for each of the three variants, by the `reproduce` job of
+  the release workflow, which rebuilds from a second checkout (another path and user, other
+  caches, umask 077) and whose stage 3 the `compare` job checks against the release build byte
+  for byte; the release is published only if all are identical. The same two jobs run on every push to main and pull
   request, with the live mirror instead of the snapshot.
 
 ```
@@ -631,6 +651,10 @@ uv run --locked fsbpyr build . -o ../stage1
 ../stage1 build . -o ../from-source
 cd .. && cmp fsbpyr from-source && echo identical
 ```
+
+For `fsbpyr-3.12` or `fsbpyr-3.13`, `bash tools/bootstrap.sh --from-source --python 3.12` in
+the checkout runs the same stages in `.venv-3.12` (`dist/stage1-3.12` to `dist/stage3-3.12`,
+the last being the file to compare); the Python must be installed with uv.
 
 An executable also records the version of the fsbpyr that built it (`fsbpyr inspect` shows it
 as "built with"), so an fsbpyr of another version, or of an untagged commit, gives a different
