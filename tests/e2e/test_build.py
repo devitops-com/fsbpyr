@@ -51,7 +51,9 @@ def _fixture(name: str, tmp_path: Path, *, drop: tuple[str, ...] = ()) -> Path:
 
 
 def _run(executable: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([executable, *args], capture_output=True, text=True, check=False)
+    return subprocess.run(
+        [executable, *args], capture_output=True, text=True, check=False, timeout=60
+    )
 
 
 def _tree(directory: Path) -> dict[str, float]:

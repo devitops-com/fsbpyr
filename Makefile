@@ -85,6 +85,7 @@ test: ## Run the test suite
 test-ci: ## Run the core of the test suite, as CI does
 	$(UV) run --locked pytest tests/unit tests/integration tests/e2e/test_build.py \
 		tests/e2e/test_runtime_app.py tests/e2e/test_imports.py \
+		tests/e2e/test_stub_hardening.py \
 		-k "not (sanitized and not release)" --cov --cov-report=term --cov-report=xml
 
 check: ## Static checks: ruff + mypy

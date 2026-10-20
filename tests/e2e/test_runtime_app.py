@@ -55,7 +55,8 @@ def main():
 
 def _run(app: Path, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [app, *args], capture_output=True, text=True, env={**os.environ, **env}, check=False
+        [app, *args], capture_output=True, text=True, env={**os.environ, **env}, check=False,
+        timeout=60,
     )
 
 
