@@ -228,3 +228,63 @@ link differs from 3.14.
 Consequence for the plan: step 3's runtime build needs `libzstd.a` added to the link inputs
 for 3.12 and 3.13 (for 3.14 `_zstd` already pulls it in); the rest of the link, the HACL
 objects included, follows from `PYTHON.json` unchanged.
+
+---
+
+## SEC-4 — clang/lld 23 for PBS 20261013 and later
+
+Date: 2026-10-20. Host: Debian 13, x86-64. Input: PBS `20261013`,
+`cpython-3.14.8+20261013-x86_64-unknown-linux-gnu-pgo+lto-full` (SHA-256
+`6ea47477c59736c51914214a1608cc4fceb37a238e5b0ba6bb351bb665d6aca6`, from the release's
+`SHA256SUMS`). `src/fsbpyr/runtime/pins.py` was edited to this release for the spike only and
+restored; it stays on 20261009 (SEC-2).
+
+1. **Source tried: LLVM's release tarball (candidate (c)).**
+   `LLVM-23.1.3-Linux-X64.tar.zst`, 1,188,398,549 bytes, SHA-256
+   `14d2f701eb68fb799001bdea6231048f3990690fa2f406d563555ff8f744daba`. The value matches the
+   digest GitHub lists for the asset and the `sha256sum` of the file downloaded at
+   `https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.3/LLVM-23.1.3-Linux-X64.tar.zst`
+   (about 7 minutes here). Candidate (b), sid's clang-23 from snapshot.debian.org in a sid image,
+   was **not tried**.
+2. **Unpacking.**
+   - `tar --zstd -xf` fails: "Window size larger than maximum: 1073741824 > 134217728. Use
+     --long=30". `zstd -dc --long=30 FILE | tar -xf -` works (6 s).
+   - The whole tree is 12 GB. Linking needs only `bin/clang`, `bin/clang-23`, `bin/lld`,
+     `bin/ld.lld` and `lib/clang` (clang's resource directory): 575 MB. The binaries have no
+     missing shared libraries on trixie (`ldd bin/clang`).
+   - `clang --version`: `clang version 23.1.3 (... 0d261d1ca552c95a8f007e061c787ac7132fbcbc)`;
+     `ld.lld --version`: `LLD 23.1.3`.
+3. **Runtime build.** `fsbpyr runtime build --clang <unpacked>/bin/clang` on PBS 20261013:
+   "runtime cp314-x86_64-unknown-linux-gnu-817e3649db9b ready", 1 min 33 s, with an empty
+   cache (PBS and sysroot fetched).
+4. **Three stages.** With the pin on 20261013, `FSBPYR_LLVM23=1 bash tools/bootstrap.sh
+   --from-source` (the new switch, see below) built stages 1-3; each `inspect --verify`
+   passed, and **stage 2 == stage 3**, sha256
+   `33c220671b14524ad9998e1926886259fd0e8e35ea19eb23847086fe159dac8e`. `strings` on
+   `dist/fsbpyr` shows `clang version 23.1.3` and `Linker: LLD 23.1.3` in the stub's
+   `.comment`. 1 min 35 s in all with the runtime uncached.
+5. **Launcher reproducibility.** With the unpacked `bin/` first on `PATH` (so that
+   `find_toolchain(23)` takes it) and the pin on 20261013,
+   `pytest tests/e2e/test_launcher_build.py::test_the_launcher_links_reproducibly` passed
+   (213 s).
+6. **What is in the repository.**
+   - `tools/release/llvm23`: the version and the tarball's sha256.
+   - `tools/bootstrap.sh`: `FSBPYR_LLVM23=1` makes `--from-source` fetch the tarball (into
+     `${XDG_CACHE_HOME:-~/.cache}/fsbpyr/toolchains/llvm-<version>-<sha12>`, once), fail on a
+     sha256 mismatch, unpack what linking needs and pass its clang to `fsbpyr runtime build
+     --clang`. `--llvm23` does only the fetch and prints the clang. Without the switch the
+     runtime is linked with the clang on `PATH`, as before (clang 22 on trixie). Needs `curl`
+     and `zstd`, which the Containerfile's `build` stage and the CI test setup now install.
+   - Tests in `tests/integration/test_release.py` use a small tarball laid out like LLVM's:
+     only what linking needs is unpacked, the second run fetches nothing, a wrong sha256 fails
+     and keeps nothing, and the call to `runtime build` has `--clang` only with the switch.
+7. **How the release container uses it (to be done at the switch; not in release.yml yet).**
+   - `make bootstrap` step: `env: FSBPYR_LLVM23: 1`.
+   - Test steps: `echo "$(dirname "$(bash tools/bootstrap.sh --llvm23)")" >> "$GITHUB_PATH"`, so
+     that the tests' own `fsbpyr runtime build` finds clang 23 first.
+   - The same two lines in the Containerfile's `test` stage run (`make test-container`).
+   - Together with moving `pins.py` to the newest PBS, when upstream-watch reports the first
+     security-relevant release after 20261009 or trixie gets clang-23.
+8. **Not checked here.** `make test-container` with the switch on and the pin moved (the run
+   in step 4-5 used the host, not the container); a release.yml run; candidate (b).
+

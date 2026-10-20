@@ -5,6 +5,7 @@
 #     bash tools/bootstrap.sh               the whole bootstrap, on this host
 #     bash tools/bootstrap.sh --from-source only steps 1-3 (what the podman container runs)
 #     bash tools/bootstrap.sh --uv          only the check for uv (what `make build` needs)
+#     bash tools/bootstrap.sh --llvm23      only the fetch of clang/lld 23, printing its clang
 #
 # Nothing here installs or updates a tool on the host: a missing one is named, and installing
 # it is the user's.
@@ -25,6 +26,12 @@
 # Environment: FSBPYR_UV_VERSION=X.Y.Z (release CI sets it from tools/release/uv.version;
 # a verifier sets the uv a release records) makes the check for uv fail unless uv on PATH is
 # exactly that version. Without it any uv is accepted: user builds keep the user's own uv (D26).
+# FSBPYR_LLVM23=1 links the runtime with clang/lld 23 instead of the Debian clang/lld 22, for
+# python-build-standalone releases from 20261013 on, whose objects are LLVM 23 bitcode (SEC-4).
+# The toolchain is LLVM's release tarball named in tools/release/llvm23 (version and sha256);
+# it is downloaded once into fsbpyr's cache, ${XDG_CACHE_HOME:-~/.cache}/fsbpyr/toolchains,
+# and the bootstrap fails if its sha256 differs. Needs curl and zstd. FSBPYR_LLVM23_URL
+# replaces the download URL (tests).
 # FSBPYR_BOOTSTRAP=podman builds in the container on Debian trixie too.
 # PREFIX etc. pass through to `make install`. FSBPYR_BOOTSTRAP_IMAGE names the
 # podman image (default fsbpyr-build); FSBPYR_BOOTSTRAP_VOLUME the volume that keeps uv's
@@ -78,13 +85,61 @@ verify() {
     say "$1: $(grep -E '^digest' <<<"$report" | tr -s ' ')"
 }
 
+# llvm23: sets CLANG23 to the clang of LLVM's pinned release tarball, fetching it into fsbpyr's
+# cache on the first use. Only what linking the launcher needs is unpacked (about 575 MB of
+# 12 GB): clang, lld and clang's resource directory. The tarball is zstd with a 1 GiB window.
+llvm23() {
+    local version sha256 url name cache dir tmp
+    read -r version sha256 _ < tools/release/llvm23 || die "tools/release/llvm23 is empty"
+    [[ "$sha256" =~ ^[0-9a-f]{64}$ ]] || die "tools/release/llvm23 has no sha256"
+    name="LLVM-$version-Linux-X64"
+    url="${FSBPYR_LLVM23_URL:-https://github.com/llvm/llvm-project/releases/download/llvmorg-$version/$name.tar.zst}"
+    case "${XDG_CACHE_HOME:-}" in
+        /*) cache="$XDG_CACHE_HOME/fsbpyr/toolchains" ;;
+        *) cache="$HOME/.cache/fsbpyr/toolchains" ;;
+    esac
+    dir="$cache/llvm-$version-${sha256:0:12}"
+    if [ ! -x "$dir/bin/clang" ]; then
+        local tool
+        for tool in curl zstd tar sha256sum; do
+            command -v "$tool" >/dev/null \
+                || die "$tool is not on PATH; install it and run this again (FSBPYR_LLVM23 needs it)"
+        done
+        mkdir -p "$cache"
+        tmp="$(mktemp -d "$cache/.fetch.XXXXXX")"
+        say "Fetching clang/lld $version ($url)"
+        curl -fsSL --retry 3 -o "$tmp/llvm.tar.zst" "$url" \
+            || { rm -rf "$tmp"; die "cannot download $url"; }
+        echo "$sha256  $tmp/llvm.tar.zst" | sha256sum -c --status - \
+            || { rm -rf "$tmp"; die "sha256 of $url is not the $sha256 of tools/release/llvm23"; }
+        mkdir "$tmp/tree"
+        zstd -dc --long=30 "$tmp/llvm.tar.zst" \
+            | tar -xf - -C "$tmp/tree" --strip-components=1 --wildcards \
+                "$name/bin/clang" "$name/bin/clang-[0-9]*" "$name/bin/lld" "$name/bin/ld.lld" \
+                "$name/lib/clang" \
+            || { rm -rf "$tmp"; die "cannot unpack $url"; }
+        [ -x "$tmp/tree/bin/clang" ] && [ -x "$tmp/tree/bin/ld.lld" ] \
+            || { rm -rf "$tmp"; die "$url holds no bin/clang and bin/ld.lld"; }
+        rm -rf "$dir"
+        mv "$tmp/tree" "$dir"
+        rm -rf "$tmp"
+    fi
+    CLANG23="$dir/bin/clang"
+}
+
 from_source() {
     need_uv
     need_python
+    local clang_args=() linker=22
+    if [ "${FSBPYR_LLVM23:-}" = 1 ]; then
+        llvm23
+        clang_args=(--clang "$CLANG23")
+        linker=23
+    fi
     say "Locked environment on Python $(cat .python-version)"
     uv sync --locked
-    say "Runtime (links with clang/lld 22; cached after the first run)"
-    uv run --locked fsbpyr runtime build
+    say "Runtime (links with clang/lld $linker; cached after the first run)"
+    uv run --locked fsbpyr runtime build "${clang_args[@]}"
     rm -rf dist/stage1 dist/stage2 dist/stage3
     mkdir -p dist/stage1 dist/stage2 dist/stage3
     say "Stage 1: fsbpyr from source builds dist/stage1/fsbpyr"
@@ -114,7 +169,7 @@ in_podman() {
     # download host time out; on pasta's IPv4-only network they complete.
     podman build --target build -t "$IMAGE" -f Containerfile .
     # The container is its own environment: uv installs the pinned Python there, on the volume.
-    podman run --rm --network pasta:-4 \
+    podman run --rm --network pasta:-4 -e FSBPYR_LLVM23 \
         -v "$ROOT":/src:Z -v "$VOLUME":/root/.cache "$IMAGE" \
         bash -c 'uv python install "$(cat .python-version)" && bash tools/bootstrap.sh --from-source'
 }
@@ -122,8 +177,9 @@ in_podman() {
 case "${1:-}" in
     --from-source) from_source; exit 0 ;;
     --uv) need_uv; exit 0 ;;
+    --llvm23) llvm23; echo "$CLANG23"; exit 0 ;;
     "") ;;
-    *) echo "usage: bootstrap.sh [--from-source | --uv]" >&2; exit 2 ;;
+    *) echo "usage: bootstrap.sh [--from-source | --uv | --llvm23]" >&2; exit 2 ;;
 esac
 
 [ "$(uname -m)" = x86_64 ] || die "fsbpyr builds for Linux x86-64 only (this is $(uname -m))"

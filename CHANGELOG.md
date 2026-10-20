@@ -21,6 +21,15 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   (informational). `make release` refuses a commit without a green `release.yml` and
   `full-suite.yml` run on main, waiting for one in progress; the publish job checks the same for
   the release commit's parent and adds the suite run's URL to the release notes.
+- **`FSBPYR_LLVM23=1 bash tools/bootstrap.sh` links the runtime with clang and lld 23.** Python
+  build standalone releases from 20261013 on are LLVM 23 bitcode, which Debian trixie's clang 22
+  cannot link. With the switch set, bootstrap downloads LLVM's release tarball named in
+  `tools/release/llvm23` (version and sha256) into `~/.cache/fsbpyr/toolchains` once, fails if
+  its sha256 differs, unpacks only clang, lld and clang's resource directory, and passes that
+  clang to `fsbpyr runtime build --clang`. `bash tools/bootstrap.sh --llvm23` does only the
+  fetch and prints the clang. Without the switch nothing changes: Debian's clang 22 links, and
+  the pin stays on PBS 20261009. The release workflow and the Containerfile do not turn it on
+  yet (SEC-4; the spike is in docs/spikes.md).
 - **`make test-container` runs the whole test suite but the portability tests in a container.**
   The Containerfile's new `test` stage (its first stage is now named `build`, which `make
   bootstrap` selects) adds what the suite needs beyond a build: the sanitizer runtimes,

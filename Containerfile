@@ -4,9 +4,10 @@
 # between runs.
 FROM docker.io/library/debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5 AS build
 
-# Everything but uv and Python from Debian's own packages (trixie ships clang and lld 22 since 13.7).
+# Everything but uv and Python from Debian's own packages (trixie ships clang and lld 22 since 13.7;
+# zstd is for bootstrap.sh's opt-in clang 23, FSBPYR_LLVM23=1).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl git make clang-22 lld-22 \
+    && apt-get install -y --no-install-recommends ca-certificates curl git make clang-22 lld-22 zstd \
     && rm -rf /var/lib/apt/lists/*
 
 # The newest uv, from astral.sh; it installs the Python pinned in .python-version.
