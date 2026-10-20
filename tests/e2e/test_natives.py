@@ -168,6 +168,17 @@ def test_best_compression_stores_natives_as_xz_and_they_run(
     assert trace["extracted"]
 
 
+def test_the_system_report_covers_libraries_no_extension_loads(heavy: Path) -> None:
+    """NAT-3: onnxruntime's C API library is loaded by no extension (ctypes users may open it),
+    and still counts for the target's needs."""
+    with Executable.open(heavy) as exe:
+        libraries = json.loads(exe.payload.build_info)["system"]["libraries"]
+
+    needing = {path for entry in libraries.values() for path in entry["needed_by"]}
+    assert any(p.startswith("onnxruntime/capi/libonnxruntime.so.") for p in needing)
+    assert {"libstdc++.so.6", "libgcc_s.so.1", "libc.so.6"} <= set(libraries)
+
+
 def test_libraries_extensions_open_by_name_are_extracted_with_them(
     heavy: Path, tmp_path: Path
 ) -> None:

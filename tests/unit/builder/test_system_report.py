@@ -6,7 +6,7 @@ import pytest
 
 from fsbpyr.elf import VersionNeed, version_requirements
 from fsbpyr.natives import SystemUse, closures
-from fsbpyr.system import STUB, system_report, target_needs
+from fsbpyr.system import STUB, system_info, system_report, target_needs
 
 from ...support.elf import make_elf
 
@@ -157,3 +157,13 @@ def test_allowlist_entries_nothing_needs_get_a_warning() -> None:
 @pytest.mark.parametrize("stub", [b"\x7fELF-fake", b""])
 def test_an_unreadable_stub_adds_no_libraries(stub: bytes) -> None:
     assert system_report(stub, SystemUse()) == ({}, [])
+
+
+def test_build_information_lists_guessed_libraries_apart_from_needs() -> None:
+    use = SystemUse(may_load={"libmagic": {"b.py", "a.py"}})
+
+    assert system_info({"libc.so.6": {}}, use) == {
+        "libraries": {"libc.so.6": {}},
+        "may_load": {"libmagic": ["a.py", "b.py"]},
+    }
+    assert system_info({}, SystemUse()) == {"libraries": {}}  # nothing guessed: no key

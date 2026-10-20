@@ -18,7 +18,7 @@ from pathlib import Path
 from . import bytecode
 from .payload.format import THREADS, pooled_thread, tree_digest
 from .payload.spec import ZSTD_LEVEL, Blob
-from .scan import file_relative_reads
+from .scan import file_relative_reads, loaded_libraries
 
 POOL_MODULES = 256  # fewer modules compile in the build's own process
 _AHEAD = 4  # jobs in flight per worker: read ahead, never all at once (D38: bounded memory)
@@ -36,14 +36,15 @@ def compile_module(source: bytes, rel: str) -> bytes:
 @dataclass(frozen=True, slots=True)
 class Compiled:
     """A module's code and source blobs and their contents' digests (``tree_digest``), the
-    lines that read next to ``__file__``; or why it does not compile (a SyntaxError's message
-    and line)."""
+    lines that read next to ``__file__``, the system libraries it opens by name
+    (``loaded_libraries``); or why it does not compile (a SyntaxError's message and line)."""
 
     code: Blob | None
     code_digest: bytes = b""
     source: Blob | None = None
     source_digest: bytes = b""
     reads: tuple[int, ...] = ()
+    libraries: tuple[str, ...] = ()
     error: tuple[str, int | None] | None = None
 
 
@@ -54,8 +55,9 @@ def compiled(data: bytes, rel: str, level: int, include_source: bool, hints: boo
         return Compiled(None, error=(exc.msg, exc.lineno))
     source = Blob.zstd(data, level=level) if include_source else None
     reads = tuple(file_relative_reads(data, rel)) if hints else ()
+    libraries = tuple(loaded_libraries(data, rel)) if hints else ()
     return Compiled(Blob.code(code, level=level), tree_digest(code), source,
-                    tree_digest(data) if include_source else b"", reads)  # fmt: skip
+                    tree_digest(data) if include_source else b"", reads, libraries)  # fmt: skip
 
 
 def worker_pool() -> ProcessPoolExecutor:

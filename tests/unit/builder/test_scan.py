@@ -2,7 +2,7 @@
 
 import pytest
 
-from fsbpyr.scan import file_relative_existence_checks, file_relative_reads
+from fsbpyr.scan import file_relative_existence_checks, file_relative_reads, loaded_libraries
 
 
 @pytest.mark.parametrize(
@@ -71,3 +71,23 @@ def test_other_code_is_not_reported(source: str) -> None:
 def test_existence_checks_are_a_separate_result(source: str) -> None:
     assert file_relative_existence_checks(source.encode(), "m.py") == [source.count("\n")]
     assert file_relative_reads(source.encode(), "m.py") == []
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("import ctypes.util\nctypes.util.find_library('magic')\n", ["libmagic"]),
+        ("import ctypes\nctypes.CDLL('libmagic.so.1')\n", ["libmagic.so.1"]),
+        ("from ctypes import cdll\ncdll.LoadLibrary('libz.so.1')\n", ["libz.so.1"]),
+        ("import ctypes\nctypes.CDLL(name='libz.so.1')\n", ["libz.so.1"]),
+        ("import cffi\ncffi.FFI().dlopen('libpng16.so.16')\n", ["libpng16.so.16"]),
+        ("import ctypes\nctypes.CDLL('/opt/lib/libx.so')\n", []),
+        ("import ctypes\nctypes.CDLL(None)\nctypes.CDLL(name)\n", []),
+        ("def f(:\n  CDLL('libx.so')\n", []),
+        ("x = 1\n", []),
+    ],
+    ids=["find-library", "cdll", "load-library", "keyword", "cffi", "path", "not-literal",
+         "syntax-error", "nothing"],
+)
+def test_libraries_opened_by_a_literal_name_are_found(source: str, expected: list[str]) -> None:
+    assert loaded_libraries(source.encode(), "m.py") == expected

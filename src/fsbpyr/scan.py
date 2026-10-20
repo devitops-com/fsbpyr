@@ -29,6 +29,12 @@ _EXISTENCE_CALLS = frozenset({
     "os.path.exists", "os.path.isfile", "os.path.isdir", "os.path.lexists", "os.access",
 })  # fmt: skip
 _EXISTENCE_METHODS = frozenset({"exists", "is_file", "is_dir"})
+# Calls that open a library by name (the first argument, or ``name=``): ctypes, cffi's dlopen.
+_LOAD_CALLS = frozenset({
+    "ctypes.CDLL", "CDLL", "ctypes.PyDLL", "PyDLL", "ctypes.cdll.LoadLibrary", "cdll.LoadLibrary",
+})  # fmt: skip
+_FIND_CALLS = frozenset({"ctypes.util.find_library", "util.find_library", "find_library"})
+_LIBRARY_MARKERS = (b"CDLL", b"LoadLibrary", b"dlopen", b"find_library")
 _FILE_ATTRIBUTES = frozenset({"__file__", "__path__"})
 _MARKERS = (b"__file__", b"__path__", b"PackageLoader")  # a module without them is skipped
 _MAX_PASSES = 5  # name propagation reaches a fixed point within a few passes in practice
@@ -133,3 +139,38 @@ def file_relative_reads(source: bytes, filename: str) -> list[int]:
 def file_relative_existence_checks(source: bytes, filename: str) -> list[int]:
     """Line numbers of existence checks on paths relative to ``__file__``: low confidence."""
     return _flagged_lines(source, filename, _checks_existence)
+
+
+def _literal_argument(call: ast.Call) -> str | None:
+    """The call's first argument (or ``name=``) when it is a string literal."""
+    argument = (
+        call.args[0]
+        if call.args
+        else next((k.value for k in call.keywords if k.arg == "name"), None)
+    )
+    if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+        return argument.value
+    return None
+
+
+def loaded_libraries(source: bytes, filename: str) -> list[str]:
+    """System libraries a module opens by a literal name, sorted: ``CDLL("libmagic.so.1")``
+    and cffi's ``dlopen`` give the name, ``find_library("magic")`` gives ``libmagic``. A path
+    names a file, not a system library, and is left out. A heuristic: names built at run time
+    are not seen (empty if the module does not parse)."""
+    if not any(marker in source for marker in _LIBRARY_MARKERS):
+        return []
+    try:
+        tree = ast.parse(source, filename)
+    except SyntaxError, ValueError:
+        return []
+    found = set()
+    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+        name = _dotted(call.func)
+        is_dlopen = isinstance(call.func, ast.Attribute) and call.func.attr == "dlopen"
+        opens = name in _LOAD_CALLS or name in _FIND_CALLS or is_dlopen
+        literal = _literal_argument(call) if opens else None
+        if not literal or "/" in literal:
+            continue
+        found.add(f"lib{literal}" if name in _FIND_CALLS else literal)
+    return sorted(found)

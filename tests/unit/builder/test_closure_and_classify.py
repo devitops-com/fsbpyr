@@ -927,3 +927,96 @@ def test_best_compression_stores_large_natives_as_pieces(site: Path) -> None:
     blob = files[big].blob
     assert blob.codec is Codec.PIECES and len(blob.pieces) == 3
     assert blob == Blob.xz(data, digest=True) and blob.content() == data
+
+
+# --- NAT-3: natives no extension reaches, executables, search paths, dlopen -------------------
+
+
+def _classify_fast(site: Path, files: dict[str, bytes], *, hints: bool = False,
+                   fs_packages: frozenset[str] = frozenset()) -> object:  # fmt: skip
+    _dist(site, "fast", "1.0", {"fast/__init__.py": b"", **files})
+    return classify([SiteIndex.scan(site).dists["fast"]], extension_suffixes=SUFFIXES,
+                    include_source=True, hints=hints, fs_packages=fs_packages)  # fmt: skip
+
+
+def test_an_unreached_library_that_needs_a_missing_one_warns(site: Path) -> None:
+    content = _classify_fast(site, {"fast/libplugin.so.1": make_elf(needed=("libmissing.so.1",))})
+
+    assert any("fast/libplugin.so.1 needs libmissing.so.1" in w for w in content.warnings)  # type: ignore[attr-defined]
+
+
+def test_an_unreached_library_s_system_needs_feed_the_report(site: Path) -> None:
+    content = _classify_fast(site, {"fast/libplugin.so.1": make_elf(needed=("libz.so.1",))})
+
+    assert content.system.needed_by["libz.so.1"] == {"fast/libplugin.so.1"}  # type: ignore[attr-defined]
+
+
+def test_a_runpath_outside_the_payload_warns(site: Path) -> None:
+    files = {"fast/libplugin.so.1": make_elf(runpath="lib:/opt/x:$ORIGIN/../fast.libs")}
+
+    warnings = _classify_fast(site, files).warnings  # type: ignore[attr-defined]
+
+    relative = [w for w in warnings if "RUNPATH entry lib " in w]
+    absolute = [w for w in warnings if "RUNPATH entry /opt/x " in w]
+    assert len(relative) == len(absolute) == 1
+    assert "working directory" in relative[0] and "on the target" in absolute[0]
+    assert not any("$ORIGIN" in w for w in warnings)
+
+
+@pytest.mark.parametrize(
+    ("executable", "interp"), [(True, False), (False, True)], ids=["ET_EXEC", "PIE"]
+)
+def test_an_elf_executable_in_the_resources_warns(
+    site: Path, executable: bool, interp: bool
+) -> None:
+    program = make_elf(executable=executable, interp=interp)
+    _dist(site, "fast", "1.0", {"fast/__init__.py": b"", "fast/bin/tool": program,
+                                "fast/bin/data": make_elf()})  # fmt: skip
+    for tool in ("tool", "data"):
+        (site / "fast/bin" / tool).chmod(0o755)
+    content = classify([SiteIndex.scan(site).dists["fast"]], extension_suffixes=SUFFIXES,
+                       include_source=True)  # fmt: skip
+
+    hint = next(w for w in content.warnings if "fast/bin/tool is an executable" in w)
+    assert isinstance(hint, Uncounted) and 'add "fast" to fs-packages' in hint
+    assert "__file__" in hint
+    assert not any("fast/bin/data" in w for w in content.warnings)  # a plain ELF library
+
+
+def test_an_executable_in_an_fs_package_is_not_warned_about(site: Path) -> None:
+    tool = make_elf(executable=True)
+    _dist(site, "fast", "1.0", {"fast/__init__.py": b"", "fast/bin/tool": tool})
+    (site / "fast/bin/tool").chmod(0o755)
+
+    content = classify([SiteIndex.scan(site).dists["fast"]], extension_suffixes=SUFFIXES,
+                       include_source=True, fs_packages=frozenset({"fast"}))  # fmt: skip
+
+    assert not any("is an executable" in w for w in content.warnings)
+
+
+def test_an_executable_s_missing_library_warns(site: Path) -> None:
+    tool = make_elf(executable=True, needed=("libgone.so.2",))
+    _dist(site, "fast", "1.0", {"fast/__init__.py": b"", "fast/bin/tool": tool})
+    (site / "fast/bin/tool").chmod(0o755)
+
+    content = classify([SiteIndex.scan(site).dists["fast"]], extension_suffixes=SUFFIXES,
+                       include_source=True)  # fmt: skip
+
+    assert any("fast/bin/tool needs libgone.so.2" in w for w in content.warnings)
+
+
+def test_libraries_code_opens_by_name_are_listed_under_hints(site: Path) -> None:
+    code = (b"import ctypes, ctypes.util\nfrom cffi import FFI\n"
+            b"a = ctypes.util.find_library('magic')\nb = ctypes.CDLL('libz.so.1')\n"
+            b"c = FFI().dlopen('libpng16.so.16')\nd = ctypes.CDLL('/abs/libx.so')\n"
+            b"e = ctypes.CDLL(name)\n")  # fmt: skip
+
+    hinted = _classify_fast(site, {"fast/loader.py": code}, hints=True)
+    plain = _classify_fast(site, {"fast/loader.py": code})
+
+    assert hinted.system.may_load == {  # type: ignore[attr-defined]
+        "libmagic": {"fast/loader.py"}, "libz.so.1": {"fast/loader.py"},
+        "libpng16.so.16": {"fast/loader.py"},
+    }  # fmt: skip
+    assert plain.system.may_load == {}  # type: ignore[attr-defined]
+    assert not any("libmagic" in w for w in hinted.warnings)  # type: ignore[attr-defined]

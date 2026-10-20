@@ -74,6 +74,7 @@ class SystemUse:
     versions: dict[str, dict[str, dict[str, VersionNeed]]] = field(default_factory=dict)
     allowed_used: set[str] = field(default_factory=set)
     unreadable: dict[str, str] = field(default_factory=dict)  # file -> why its table is lost
+    may_load: dict[str, set[str]] = field(default_factory=dict)  # library -> Python files (guess)
 
     def record(
         self, path: str, data: Native, libraries: list[str], allowed: frozenset[str]
@@ -231,13 +232,14 @@ def _direct_dependencies(  # noqa: PLR0913  the object, the payload, and inherit
     return dependencies, passed_on
 
 
-def closures(
+def closures(  # noqa: PLR0913  the payload's natives and executables, keyword-only options
     natives: Mapping[str, bytes | Path],
     extensions: set[str],
     *,
     allowed: frozenset[str],
     warn: Callable[[str], None] = lambda _: None,
     system: SystemUse | None = None,
+    executables: Mapping[str, bytes | Path] | None = None,
 ) -> dict[str, tuple[str, ...]]:
     """Bundled shared objects each extension module loads, transitively (excluding itself):
     NEEDED ones, and libraries opened by name. A library opened by name whose own needs cannot
@@ -245,7 +247,10 @@ def closures(
     load anyway, and the build must not fail over a guess. A native given as a Path is mapped
     from its file while it is looked into (``opened``). ``system`` collects what the objects
     reached take from the system (``SystemUse``); entries of ``allowed`` it never saw, and
-    version tables it could not read, are warned about."""
+    version tables it could not read, are warned about. Shared objects no extension reaches,
+    and ``executables`` (ELF programs among the resources), are checked as far as their needs
+    go, with warnings (``_check_unreached``); every RPATH/RUNPATH entry the loader would search
+    outside the payload is warned about (``_warn_search_paths``)."""
     payload = set(natives)
     libraries: dict[str, list[str]] = {}  # directory -> shared libraries (not extensions) in it
     for path in sorted(payload):
@@ -309,9 +314,62 @@ def closures(
         raise NativeError(_unmet_message(unmet))
     for message in left_out.values():
         warn(message)
+    reached = {member for members in result.values() for member in members}
+    unreached = [
+        lib
+        for libs in libraries.values()
+        for lib in libs
+        if lib not in reached and lib not in left_out
+    ]
+    checked = {path: natives[path] for path in unreached} | dict(executables or {})
+    _check_unreached(checked, payload, libraries, allowed=allowed, warn=warn, system=system)
+    _warn_search_paths({**natives, **(executables or {})}, warn)
     if system is not None:
         _warn_system(system, allowed, warn)
     return result
+
+
+def _check_unreached(  # noqa: PLR0913  what is checked, and what it is checked against
+    files: Mapping[str, bytes | Path],
+    payload: set[str],
+    libraries: dict[str, list[str]],
+    *,
+    allowed: frozenset[str],
+    warn: Callable[[str], None],
+    system: SystemUse | None,
+) -> None:
+    """Libraries no extension module reaches (ctypes and cffi loads, fs-package libraries) and
+    executables are packaged unchecked otherwise: what they need that nothing provides is warned
+    about, not raised (nothing may load them), and what they take from the system is recorded."""
+    for path in sorted(files):
+        with opened(files[path]) as data:
+            try:
+                _direct_dependencies(path, data, payload, libraries, allowed, inherited=(),
+                                     system=system)  # fmt: skip
+            except NativeError as exc:
+                warn(f"{exc}; no extension module loads it, so this matters only if the "
+                     "application opens it")  # fmt: skip
+
+
+def _warn_search_paths(files: Mapping[str, bytes | Path], warn: Callable[[str], None]) -> None:
+    """RPATH/RUNPATH entries the loader uses that are not based on ``$ORIGIN`` point outside
+    the payload: ld.so searches them on the target (no patching, D9)."""
+    for path in sorted(files):
+        with opened(files[path]) as data:
+            try:
+                info = dynamic_info(data)
+            except ElfError:
+                continue  # reported where its needs are read
+        kind = "RUNPATH" if info.runpath else "RPATH"
+        for entry in info.runpath or info.rpath:
+            if _ORIGIN.match(entry):
+                continue
+            if entry.startswith(("/", "$")):
+                warn(f"{path}: {kind} entry {entry} is outside the executable; ld.so searches "
+                     "it on the target")  # fmt: skip
+            else:
+                warn(f"{path}: {kind} entry {entry} is relative to the working directory; "
+                     "ld.so searches it there on the target, whatever the build found")  # fmt: skip
 
 
 def _unmet_message(unmet: Mapping[str, tuple[str, ...]]) -> str:
@@ -327,8 +385,7 @@ def _unmet_message(unmet: Mapping[str, tuple[str, ...]]) -> str:
 
 def _warn_system(system: SystemUse, allowed: frozenset[str], warn: Callable[[str], None]) -> None:
     for library in sorted(allowed - system.allowed_used):
-        warn(f"--allow-system-lib {library}: no native file reached by an extension module "
-             "needs it")  # fmt: skip
+        warn(f"--allow-system-lib {library}: no native file in the payload needs it")  # fmt: skip
     for path, reason in sorted(system.unreadable.items()):
         warn(f"{path}: symbol versions unreadable ({reason}); the system libraries it needs "
              "are listed without versions")  # fmt: skip

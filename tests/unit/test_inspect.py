@@ -139,6 +139,18 @@ def test_inspect_lists_the_entry_point_and_what_the_target_must_provide(
     assert "system libraries: 2" in lines
 
 
+def test_inspect_lists_what_code_may_load_from_the_system(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    system = {"libraries": {}, "may_load": {"libmagic": ["app/mime.py"], "libz.so.1": []}}
+    executable = _executable(tmp_path, ("system", system))
+
+    lines = _inspect(executable, capsys)
+
+    assert "may load from the system (heuristic): 2" in lines
+    assert any("libmagic" in line for line in lines)
+
+
 def test_builds_before_the_system_report_show_no_libraries(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

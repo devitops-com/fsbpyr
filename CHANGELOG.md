@@ -21,6 +21,19 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   The new [docs/security.md](docs/security.md) is the threat model.
 
 ### Added
+- **Natives no extension module reaches, ELF executables and run-time library paths are
+  checked at build time.** A shared object that no extension links to (a ctypes or cffi load,
+  a library in an fs-package) used to be packaged unchecked. Now one that needs a library
+  nothing provides gives a warning, and its system needs count in the target's needs
+  (`fsbpyr inspect`). An ELF executable kept as data (owner-executable, ET_EXEC or a PIE)
+  gets the same check and a hint to add its package to fs-packages if the package runs it
+  from a path built from `__file__` (paths from `importlib.resources` need none). RPATH and
+  RUNPATH entries not based on `$ORIGIN` warn: ld.so searches them on the target, and relative
+  ones relative to the working directory (nothing is patched). With `--hints`, literal names
+  given to `ctypes.CDLL`, `cdll.LoadLibrary`, cffi's `dlopen` and `ctypes.util.find_library`
+  (`find_library("magic")` gives `libmagic`) are listed in `fsbpyr inspect` under "may load
+  from the system (heuristic)" and in the build information (`system.may_load`), with no
+  warning. The build information gains the key only when something was found.
 - **A corpus of real applications is built and compared with their venvs.** `tests/corpus`
   holds 11 small projects, one per risk class (black, pytest with a pluggy plugin, alembic,
   pandas, Pillow, lxml, scipy, Flask, setuptools' vendored packages, gnureadline, psycopg), and
