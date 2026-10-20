@@ -44,6 +44,13 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   fsbpyr's, git errors and the ctypes guess do not count. Requirements files then get uv's
   `--require-hashes`. Without `--strict`, requirements lines without `==` now get a warning.
   The README shows `fsbpyr inspect --json app | jq -r .glibc` as a glibc gate.
+- **The release workflow rebuilds every build independently.** A `reproduce` job runs beside
+  `build` on a fresh runner (the same image, uv and, on tags, Debian snapshot), builds from a
+  second checkout at another path as another user, with other cache directories and umask 077,
+  and a `compare` job checks its executable against `build`'s byte for byte; on a difference it
+  prints both digests and a diff of `inspect --json`. `publish` now needs `compare`. The
+  build test also builds a copy of a project at another path with another umask, other caches
+  and one core.
 - **`fsbpyr build` shows what it is doing.** Each uv step prints a line before it runs ("uv:
   installing the locked distributions", "uv: building <project>'s wheel"), and the smoke test
   prints "smoke-testing <path>". A failed uv step names the step instead of a truncated command.

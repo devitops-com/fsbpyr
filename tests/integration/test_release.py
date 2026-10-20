@@ -787,8 +787,9 @@ def test_the_image_is_pinned_by_digest_in_the_workflow_and_the_containerfile() -
         for path in (".github/workflows/release.yml", "Containerfile")
     }
 
-    assert all(len(found) == 1 for found in pins.values()), pins
-    assert len({found[0] for found in pins.values()}) == 1  # the same digest in both
+    # build and reproduce (REP-2) use the image, the Containerfile once
+    assert [len(found) for found in pins.values()] == [2, 1], pins
+    assert len({digest for found in pins.values() for digest in found}) == 1  # the same digest
     for path in pins:
         text = (ROOT / path).read_text(encoding="utf-8")
         assert not re.search(r"debian:trixie$", text, re.MULTILINE), path
@@ -904,3 +905,14 @@ def test_toolchain_watch_is_silent_when_the_pins_are_current(tmp_path: Path) -> 
     assert result.returncode == 0, result.stderr
     assert "Up to date" in result.stdout
     assert "issue" not in (tmp_path / "gh.log").read_text(encoding="utf-8")
+
+
+def test_publish_waits_for_the_independent_rebuild_to_match() -> None:
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    jobs = dict(re.findall(r"^  ([a-z]+):\n(.*?)(?=^  [a-z]+:\n|\Z)", workflow, re.M | re.S))
+
+    assert "    needs:" not in jobs["reproduce"]  # in parallel with build
+    assert "needs: [build, reproduce]" in jobs["compare"]
+    assert "needs: [build, compare]" in jobs["publish"]
+    assert 'python: ["3.14"]' in jobs["reproduce"] and 'python: ["3.14"]' in jobs["compare"]
+    assert IMAGE_PIN.search(jobs["reproduce"])  # REP-1's pinned image

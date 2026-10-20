@@ -546,7 +546,11 @@ A rebuild checks the bytes themselves, at two levels:
   so run fsbpyr from source directly in the checkout above: it builds the runtime, then `stage1`,
   and `stage1` builds the file to compare. A runtime already in the cache under the same id is
   reused, not built again; an empty cache (`XDG_CACHE_HOME` set to a new directory) builds it
-  afresh. (b) is not yet checked in CI.
+  afresh. (b) is checked on every tag by the `reproduce` job of the release workflow, which
+  rebuilds from a second checkout (another path and user, other caches, umask 077) and whose
+  stage 3 the `compare` job checks against the release build byte for byte; the release is
+  published only if they are identical. The same two jobs run on every push to main and pull
+  request, with the live mirror instead of the snapshot.
 
 ```
 cd src
