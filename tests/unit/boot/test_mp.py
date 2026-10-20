@@ -4,7 +4,7 @@ import importlib.util
 import subprocess
 import sys
 from multiprocessing import spawn, util
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -137,6 +137,54 @@ def test_a_child_of_the_same_executable_is_recognized(mp: ModuleType) -> None:
 
     # the child runs sys.executable, as this process does
     assert subprocess.run([sys.executable, "-c", probe], check=False).returncode == 0
+
+
+def _status(uid: tuple[int, int], gid: tuple[int, int]) -> str:
+    """A /proc/<pid>/status file with the credential lines (real, effective, saved, fs)."""
+    return (
+        "Name:\ttool\nUmask:\t0022\n"
+        f"Uid:\t{uid[0]}\t{uid[1]}\t{uid[1]}\t{uid[1]}\n"
+        f"Gid:\t{gid[0]}\t{gid[1]}\t{gid[1]}\t{gid[1]}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("uid_shift", "gid_shift", "expected"),
+    [(0, 0, True), (1, 0, False), (0, 1, False)],
+)
+def test_the_parent_needs_our_real_and_effective_ids(
+    mp: ModuleType, monkeypatch: pytest.MonkeyPatch, uid_shift: int, gid_shift: int, expected: bool
+) -> None:
+    same = SimpleNamespace(st_dev=1, st_ino=2)  # the parent runs this very executable
+    monkeypatch.setattr(mp.os, "stat", lambda path: same)
+    uid, gid = mp.os.getresuid()[:2], mp.os.getresgid()[:2]
+    status = _status((uid[0] + uid_shift, uid[1]), (gid[0] + gid_shift, gid[1]))
+    monkeypatch.setattr(mp, "_read_parent_status", lambda: status)
+
+    assert mp._parent_runs_this_executable() is expected
+
+
+@pytest.mark.parametrize("status", ["", "Uid:\t1000\n", "Uid:\tx\ty\nGid:\t0\t0\n"])
+def test_an_unreadable_status_counts_as_no(
+    mp: ModuleType, monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    same = SimpleNamespace(st_dev=1, st_ino=2)
+    monkeypatch.setattr(mp.os, "stat", lambda path: same)
+    monkeypatch.setattr(mp, "_read_parent_status", lambda: status)
+
+    assert mp._parent_runs_this_executable() is False
+
+
+def test_a_parent_with_other_ids_gets_no_child_run(
+    mp: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    same = SimpleNamespace(st_dev=1, st_ino=2)
+    monkeypatch.setattr(mp.os, "stat", lambda path: same)
+    uid, gid = mp.os.getresuid()[:2], mp.os.getresgid()[:2]
+    monkeypatch.setattr(mp, "_read_parent_status", lambda: _status((uid[0] + 1, uid[1]), gid))
+
+    with pytest.raises(SystemExit, match="refusing"):
+        mp.run_child([EXE, "-c", "from multiprocessing.resource_tracker import main;main(6)"])
 
 
 def test_argv_is_never_evaluated_as_code() -> None:

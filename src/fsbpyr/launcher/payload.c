@@ -109,14 +109,14 @@ bool fsb_payload_open(struct fsb_payload *p, const char **error) {
     memset(p, 0, sizeof *p);
     ssize_t n = readlink("/proc/self/exe", p->executable, sizeof p->executable - 1);
     if (n <= 0 || (size_t)n >= sizeof p->executable - 1) {
-        *error = "cannot resolve own executable path";
+        *error = "cannot resolve own executable path (an executable needs /proc)";
         return false;
     }
     p->executable[n] = '\0';
     int fd = open("/proc/self/exe", O_RDONLY | O_CLOEXEC);
     struct stat st;
     if (fd < 0 || fstat(fd, &st) != 0) {
-        *error = "cannot read own executable";
+        *error = "cannot read own executable (an executable needs /proc)";
         if (fd >= 0) close(fd);
         return false;
     }
@@ -125,7 +125,7 @@ bool fsb_payload_open(struct fsb_payload *p, const char **error) {
     *error = fsb_check_integrity(fd, (uint64_t)st.st_size); /* before any byte is believed */
     struct fsb_trailer trailer;
     if (*error == NULL && !read_trailer(fd, (uint64_t)st.st_size, &trailer))
-        *error = "cannot read own executable";
+        *error = "cannot read own executable (an executable needs /proc)";
     if (*error == NULL) *error = check_trailer(&trailer, (uint64_t)st.st_size);
     void *map = MAP_FAILED;
     if (*error == NULL) {

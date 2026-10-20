@@ -102,15 +102,36 @@ def child_command(argv: list[str]) -> Command | None:
     return None
 
 
+def _read_parent_status() -> str:
+    with open(f"/proc/{os.getppid()}/status", encoding="ascii", errors="replace") as status:
+        return status.read()
+
+
+def _first_two_ids(status: str, field: str) -> tuple[int, int] | None:
+    """The real and effective ids of the ``Uid:`` or ``Gid:`` line of a /proc status file."""
+    for line in status.splitlines():
+        if line.startswith(field + ":"):
+            ids = line.split()[1:3]
+            return (int(ids[0]), int(ids[1])) if len(ids) == 2 else None
+    return None
+
+
 def _parent_runs_this_executable() -> bool:
     """multiprocessing starts its children from the app itself; a shell or sudo is a caller
-    pretending to be multiprocessing. Any doubt counts as no."""
+    pretending to be multiprocessing. The parent must run this executable with the real and
+    effective ids this process has (the saved ids differ: execve sets the child's to its
+    effective id). Any doubt counts as no."""
     try:
         parent = os.stat(f"/proc/{os.getppid()}/exe")
         own = os.stat("/proc/self/exe")
-    except OSError:
+        status = _read_parent_status()
+        uids = _first_two_ids(status, "Uid")
+        gids = _first_two_ids(status, "Gid")
+    except (OSError, ValueError):
         return False
-    return (parent.st_dev, parent.st_ino) == (own.st_dev, own.st_ino)
+    if (parent.st_dev, parent.st_ino) != (own.st_dev, own.st_ino):
+        return False
+    return uids == os.getresuid()[:2] and gids == os.getresgid()[:2]
 
 
 def run_child(argv: list[str]) -> bool:
