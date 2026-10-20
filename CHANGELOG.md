@@ -10,6 +10,16 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Security
+- **A privileged start is refused, and the multiprocessing and re-exec parent check compares
+  credentials.** An executable run set-uid, set-gid or with file capabilities (the kernel sets
+  AT_SECURE) exits 70 with "refusing a privileged start", because the cache location would
+  still come from the caller's environment. This stops set-gid deployments and uses such as
+  `setcap cap_net_bind_service+ep app`, which ran before. The D22/D23 check of a
+  multiprocessing or `-m`/`-c` child's parent now also needs the parent's real and effective
+  user and group ids to equal the child's. The launcher changed, so the runtime id changes.
+  The new [docs/security.md](docs/security.md) is the threat model.
+
 ### Added
 - **A corpus of real applications is built and compared with their venvs.** `tests/corpus`
   holds 11 small projects, one per risk class (black, pytest with a pluggy plugin, alembic,

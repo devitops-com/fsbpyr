@@ -369,6 +369,10 @@ directory anyone may add to, such as `/tmp`.) Environment variables the executab
 | `FSBPYR_SELFTEST` | when set, import the entry point and check it instead of running the app (what `--smoke` does) |
 | `FSBPYR_IMPORTTIME` | when set, print CPython's import-time table |
 
+An executable needs `/proc` (it finds itself through `/proc/self/exe`), and refuses to start
+set-uid, set-gid or with file capabilities (exit 70): the cache location comes from the
+caller's environment. See [docs/security.md](docs/security.md).
+
 ### Helper interpreters
 
 In an executable, `sys.executable` is the app. multiprocessing works with every start method:

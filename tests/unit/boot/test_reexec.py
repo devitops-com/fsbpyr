@@ -81,6 +81,22 @@ def test_a_caller_other_than_the_app_gets_the_app(
     assert not hasattr(child, "ran") and sys.argv == argv
 
 
+def test_a_parent_with_another_uid_gets_the_app(
+    reexec: ModuleType, child: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mp = sys.modules["_fsbpyr_rt.mp"]
+    same = types.SimpleNamespace(st_dev=1, st_ino=2)  # the same executable, other credentials
+    monkeypatch.setattr(mp.os, "stat", lambda path: same)
+    uid, gid = mp.os.getresuid()[:2], mp.os.getresgid()[:2]
+    fake = f"Uid:\t{uid[0] + 1}\t{uid[1]}\t{uid[1]}\t{uid[1]}\nGid:\t{gid[0]}\t{gid[1]}\n"
+    monkeypatch.setattr(mp, "_read_parent_status", lambda: fake)
+    monkeypatch.setattr(reexec, "_parent_runs_this_executable", mp._parent_runs_this_executable)
+    argv = [EXE, "-c", "ran = True"]
+
+    assert reexec.run_child(argv, ON) is False
+    assert not hasattr(child, "ran")
+
+
 def test_code_runs_in_main_with_the_argv_cpython_leaves(
     reexec: ModuleType, child: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:

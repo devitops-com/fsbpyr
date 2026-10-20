@@ -22,10 +22,12 @@ EXPECTED_SKIPS = {
         "tests/unit/boot/test_way.py::test_in_a_user_namespace_owners_outside_it_count_as_roots",
         "needs unshare, /tmp/.X",
         "needs podman",
+        "needs a mount that allows set-id bits",
+        "needs set-id bits",
     ),
     # `make test-container`: the Containerfile's `test` stage, as `tester` (uid 1000, one
     # supplementary group) with no podman
-    "container": ("needs podman",),
+    "container": ("needs podman", "needs a mount that allows set-id bits", "needs set-id bits"),
     # full-suite.yml's job: the same container with rootless podman and /proc/sys opened for
     # user namespaces, as `tester` -- every test the other lists skip runs
     "full": (),

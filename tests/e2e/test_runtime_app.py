@@ -1,11 +1,13 @@
 """Phase 2 exit criteria, exercised on real executables built from the cached runtime."""
 
+import grp
 import hashlib
 import json
 import os
 import random
 import shutil
 import signal
+import stat
 import statistics
 import struct
 import subprocess
@@ -74,6 +76,34 @@ def test_app_runs_stdlib_from_payload_and_returns_exit_code(build_app: BuildApp)
         "latin-1 b'\\xe9' idna b'xn--bcher-kva'",
         "path True True",
     ]
+
+
+def _setgid_group() -> int | None:
+    """A group to give the app so that its egid differs from the caller's gid: nogroup for
+    root, a supplementary group otherwise (only those can be set on a file)."""
+    if os.geteuid() == 0:
+        return grp.getgrnam("nogroup").gr_gid
+    others = [g for g in os.getgroups() if g != os.getegid()]
+    return others[0] if others else None
+
+
+def test_a_set_gid_start_is_refused(build_app: BuildApp) -> None:
+    """The kernel sets AT_SECURE when the egid differs from the real gid (SEC-3)."""
+    app = build_app(HELLO, "hello:main")
+    group = _setgid_group()
+    if group is None:
+        pytest.skip("needs a supplementary group")
+    if os.statvfs(app).f_flag & os.ST_NOSUID:
+        pytest.skip("needs a mount that allows set-id bits, not nosuid")
+    if "NoNewPrivs:\t1" in Path("/proc/self/status").read_text():
+        pytest.skip("needs set-id bits, which no_new_privs disables")
+    os.chown(app, -1, group)
+    app.chmod(app.stat().st_mode | stat.S_ISGID)
+
+    result = _run(app)
+
+    assert result.returncode == 70, result.stderr
+    assert "refusing a privileged start" in result.stderr
 
 
 @pytest.mark.sanitized

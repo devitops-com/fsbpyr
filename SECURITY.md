@@ -9,6 +9,9 @@ acknowledged within 7 days. Say which fsbpyr is affected (`fsbpyr --version`) an
 reproduce the problem; for a built executable, the output of `fsbpyr inspect --json` on it
 helps too.
 
+The assets, the attackers in and out of scope, what each defence stops and the known limits are
+in [docs/security.md](docs/security.md).
+
 ## Supported versions
 
 Only the latest [release](https://github.com/devitops-com/fsbpyr/releases) is supported: fixes

@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/auxv.h>
 
 #ifndef FSBPYR_BYTECODE_MAGIC
 #error "define FSBPYR_BYTECODE_MAGIC: importlib.util.MAGIC_NUMBER as a little-endian u32"
@@ -115,6 +116,12 @@ static void pin_prefixes(PyConfig *config) {
 int main(int argc, char **argv) {
     const char *error, *app;
     if (!fsb_payload_open(&fsb_self, &error)) fatal(error);
+    /* set-uid, set-gid or file capabilities: the cache would still come from the caller's
+     * environment (FSBPYR_CACHE_DIR, XDG, HOME), and a set-gid or capable start keeps a cache the
+     * invoking user owns */
+    if (getauxval(AT_SECURE))
+        fatal("refusing a privileged start (set-uid, set-gid or file capabilities): the cache "
+              "location comes from the caller's environment");
     check_versions();
     if (fsb_str(&fsb_self, fsb_self.header.app_name, &app)) /* before Python: no threads yet */
         fsb_collect_when_due(app, fsb_self.header.app_name.length, argc > 0 ? argv[0] : app);
