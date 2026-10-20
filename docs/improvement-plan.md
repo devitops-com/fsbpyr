@@ -20,9 +20,9 @@ versions, platforms, self-update and the installer belong to Phase 9 of
 docs/IMPLEMENTATION_PLAN.md, signed releases (D31) come after the MVP on their own, and the
 comparison with other tools is done (Phase 10); this plan schedules none of them. Stage 0 comes
 before Phase 9, and Stages 1-2 run alongside it (owner, 2026-10-19); Stage 0 was done the same
-day. §5 records the four decisions taken (#2, #3, #12 and #13) and lists 9 open ones. eval.md's
-hook API, hidden-import discovery, module pruning and dashboard service are rejected as
-inapplicable to this design or as over-engineering.
+day. §5 records the owner's decisions: all 13 were taken by 2026-10-20. eval.md's hook API,
+hidden-import discovery, module pruning and dashboard service are rejected as inapplicable to
+this design or as over-engineering.
 
 **How this was made.** Separate agents assessed fsbpyr independently in 8 areas (dependencies,
 reproducibility, native libraries, tests, performance, developer experience, security,
@@ -650,7 +650,7 @@ settings of §5 #2 are switched on.
   - full.xml shows no skip outside the `full` allowlist, and shows that the 5 root-only tests skipped in v0.20.0's run executed, as did test_way.py:184 and test_cache_root.py:164, :187.
   - A launcher change on main produces a run whose log shows `FSBPYR_FUZZ_SECONDS=600` and a restored corpus.
   - The measured duration is recorded in CONTRIBUTING.md.
-- Effort: L. The roughly 12 e2e items that run 38624936426 did not reach, and the unit and integration tiers, have not run as `tester` in CI. Depends on: CI-1, CI-4, CI-8. Owner decision: OWNER DECISION NEEDED (no D-number; partly reverses 84feb09): a release requires a green full-suite run of its parent commit (§5 #1).
+- Effort: L. The roughly 12 e2e items that run 38624936426 did not reach, and the unit and integration tiers, have not run as `tester` in CI. Depends on: CI-1, CI-4, CI-8. Owner decision: decided (owner, 2026-10-20; no D-number; partly reverses 84feb09): a release requires a green full-suite run of its parent commit (§5 #1).
 
 ### CI-6 Run the 13-distribution portability matrix on the runner host
 - Why: tests/e2e/test_portability.py never runs in CI and gates no release. It covers 13 images with glibc 2.28-2.44, and its objdump cross-check compares the reported glibc floor with the binaries. In run 38624936426 (rootless podman as `tester` in a privileged container), its 13 `podman run` items failed and its 4 objdump checks passed; pytest never printed why. The containers also get outbound network access, since `podman run` (test_portability.py:86) sets no `--network`, although the HTTP checks are already left out of its COMMANDS. eval.md missed that. Gaps: native/portability-matrix-not-in-ci (medium), tests/ci-runs-only-core-subset (high, portability part). eval:197-198, 361-363, 387, 441.
@@ -772,7 +772,7 @@ settings of §5 #2 are switched on.
   - tests/unit/boot/test_native.py: a fake GLIBCXX dlopen error carries the hint.
   - tests/unit/builder/test_scan.py detects each of the eight patterns, one parametrized case each: `X.__file__`, `__path__[0]`, subprocess/os.exec*, ctypes/cffi dlopen, configparser.read, np.load, jinja2.PackageLoader and existence checks. The existing negative cases are unchanged.
   - The startup-budget test is unchanged.
-- Effort: M. Depends on: none. Owner decision: OWNER DECISION NEEDED (D24). Three options (§5 #4):
+- Effort: M. Depends on: none. Owner decision: decided (owner, 2026-10-20; D24). Three options (§5 #4):
   - (a) the zero-cost excepthook note. It meets D24's 1% gate but fires only for uncaught exceptions while fsbpyr's hook is installed. Apps that replace sys.excepthook (typer, rich) or catch the error get no note.
   - (b) measuring a C-level open hook in the launcher against D24's 1% gate.
   - (c) no runtime hint, only the wider scan and docs.
@@ -828,7 +828,7 @@ settings of §5 #2 are switched on.
   - An e2e test in tests/e2e/test_runtime_app.py (in test-ci, which CI runs as root) does `chgrp nogroup app && chmod g+s app` and asserts exit 70 and the message. The egid then differs from the real gid, so the kernel sets AT_SECURE. It skips with an allowlisted reason on a nosuid mount (such as /tmp on the dev host) and under `NoNewPrivs: 1`, which disables set-id bits.
   - CI-3's `tester` user (CI-4) runs the same test with its supplementary group.
   - The mp fixture's e2e tests still pass.
-- Effort: M. Depends on: CI-3 and CI-4, for the `tester` variant only. Owner decision: OWNER DECISION NEEDED (D22, D23, and a new D-number for the AT_SECURE refusal) (§5 #5).
+- Effort: M. Depends on: CI-3 and CI-4, for the `tester` variant only. Owner decision: decided (owner, 2026-10-20; D22, D23, and a new D-number for the AT_SECURE refusal) (§5 #5).
   - The credentials condition changes nothing that works today, because legitimate multiprocessing and re-exec children share their parent's credentials.
   - The refusal closes the escalation in about 5 lines of C. But it stops set-gid deployments and file-capability uses such as `setcap cap_net_bind_service+ep app`, which run today.
   - The alternative is an opt-in mode with a fixed root-owned cache that ignores FSBPYR_*, XDG and HOME. It keeps those uses working, at the cost of a second cache policy.
@@ -997,7 +997,7 @@ settings of §5 #2 are switched on.
   - `fsbpyr inspect dist/fsbpyr` shows an OpenSSL 3.x version.
   - tests/unit/test_inspect.py covers the schema.
   - stage2 == stage3.
-- Effort: M. Depends on: NAT-2, REP-1. Owner decision: none for these fields. OWNER DECISION NEEDED (D28) only for a `git.dirty` flag, because D28 says uncommitted changes are not marked (§5 #7). If the flag is added, it counts tracked files only, with `git --no-optional-locks -c core.fsmonitor=false diff --quiet HEAD --`, so no fsmonitor hook runs, the index is not rewritten, and an untracked eval.md does not mark builds dirty.
+- Effort: M. Depends on: NAT-2, REP-1. Owner decision: none for these fields. Decided (owner, 2026-10-20; D28) only for a `git.dirty` flag, because D28 says uncommitted changes are not marked (§5 #7). If the flag is added, it counts tracked files only, with `git --no-optional-locks -c core.fsmonitor=false diff --quiet HEAD --`, so no fsmonitor hook runs, the index is not rewritten, and an untracked eval.md does not mark builds dirty.
 
 ### REP-4 Ship third-party licence notices with releases and apps
 - Why: fsbpyr's release and every app statically link OpenSSL (Apache-2.0), libffi, libedit, ncurses, expat, mpdecimal, SQLite, zlib, liblzma, zstd, bzip2, libuuid, HACL* and fsbpyr's MIT launcher, and every app holds fsbpyr's MIT boot modules. Yet they ship none of those notices, only CPython's LICENSE and the dist-info licences. Gaps: repro/third-party-license-notices-missing, maturity/third-party-license-notices (missed, medium). Not in eval.md.
@@ -1013,7 +1013,7 @@ settings of §5 #2 are switched on.
   - An integration test in tests/integration/test_pbs_distribution.py, which runs in CI after bootstrap (`make test-ci`), finds a text, PBS's or fsbpyr's, for each static library `link_inputs` links, and names those PBS lists but does not ship.
   - The release carries the asset.
   - stage2 == stage3.
-- Effort: M. Depends on: REP-3 (shared layout bump). Owner decision: OWNER DECISION NEEDED (no D-number): whether LICENSE gains a runtime-exception clause covering the launcher and the boot modules (assemble.py `boot_modules`; pyproject.toml's `license = "MIT"` then needs a LicenseRef), so that apps need not reproduce fsbpyr's MIT notice, one of about 15 they ship (§5 #10).
+- Effort: M. Depends on: REP-3 (shared layout bump). Owner decision: decided (owner, 2026-10-20; no D-number): whether LICENSE gains a runtime-exception clause covering the launcher and the boot modules (assemble.py `boot_modules`; pyproject.toml's `license = "MIT"` then needs a LicenseRef), so that apps need not reproduce fsbpyr's MIT notice, one of about 15 they ship (§5 #10).
 
 ### REP-6 Give app builders a provenance recipe, and print the hash attestations use
 - Why: D31 leaves the outside-key signature for after the MVP (IMPLEMENTATION_PLAN.md:123, :1726). fsbpyr's releases carry GitHub attestations since 0.18.1, but apps get no provenance option. `inspect` shows only the tree digest, which no attestation, checksum file or SBOM uses. Gaps: repro/no-app-provenance-or-signing, security/built-app-signing-and-provenance, maturity/d31-app-signing-untracked (medium); repro/digest-forms-and-integrity-docs (low). eval:200, 283, 455.
@@ -1057,7 +1057,7 @@ settings of §5 #2 are switched on.
 - Done when:
   - tests/unit/builder/test_closure_and_classify.py: an executable data file keeps 0o755, under and over 16 MiB.
   - In an e2e test, `os.access(str(files(pkg) / "bin/tool"), os.X_OK)` is true and the tool runs; a generated executable resource over 16 MiB extracts as 0500.
-- Effort: S. Depends on: none (if it lands first, NAT-3 writes the narrowed text). Owner decision: OWNER DECISION NEEDED (D27): extracted files that were executable in the wheel would become 0500 (owner-exec, still read-only) instead of 0400 (§5 #6).
+- Effort: S. Depends on: none (if it lands first, NAT-3 writes the narrowed text). Owner decision: decided (owner, 2026-10-20; D27): extracted files that were executable in the wheel would become 0500 (owner-exec, still read-only) instead of 0400 (§5 #6).
 
 ### RT-5 Map distutils to setuptools' copy, and warn about pkg_resources
 - Why: `distutils-precedence.pth` is treated as redundant (classify.py:40 `_REDUNDANT_PTH`). So in executables that package setuptools, `import distutils` before `import setuptools` fails, while `_distutils_hack` makes it work in the venv. After RT-4, an import after setuptools works through sys.modules. setuptools 84.0.0 ships no pkg_resources; with older pins, pkg_resources finds no distributions (inferred from the code, not run). Gaps: deps/distutils-precedence-pth-not-redundant (missed, low), deps/pkg-resources-unsupported (low).
@@ -1084,7 +1084,7 @@ settings of §5 #2 are switched on.
   - a `../../../share/x` entry warns, and `../../../bin/x` does not;
   - a top-level legacy .pyc warns;
   - the foo-libs hint names a value that config.py accepts.
-- Effort: S. Depends on: none. Owner decision: OWNER DECISION NEEDED (D38) for the 16 MiB compile cut-off (§5 #9): record it in D38 as a consequence of (2) that limits (1), with no code change. Compiling such modules from one whole read would break (2).
+- Effort: S. Depends on: none. Owner decision: decided (owner, 2026-10-20; D38) for the 16 MiB compile cut-off (§5 #9): record it in D38 as a consequence of (2) that limits (1), with no code change. Compiling such modules from one whole read would break (2).
 
 ### PERF-1 Guard the startup properties with counts in CI
 - Why: src/fsbpyr/launcher/module.c `stats()` reports the read counters (`reads`, `stored_bytes`, `decompressed_bytes`) through `FSBPYR_TRACE`, but no test asserts them. test_launcher_block_cache_rereads_evicted_blocks checks only the bytes read back, so a decoder block cache that thrashes passes every test. Size, deterministic under D15, has no guard. Gaps: perf/read-counters-never-asserted (missed), perf/no-size-regression-guard (missed, low). eval:201.
@@ -1198,7 +1198,7 @@ settings of §5 #2 are switched on.
   - the doc-lint test passes;
   - D1 carries the dated note, and `grep -n '1\.2×' docs/IMPLEMENTATION_PLAN.md` shows 1.2× only as dated history;
   - README "Versions" matches the owner's choice in §5 #8.
-- Effort: S. Depends on: REP-3 (the schema that the stability statement names). Owner decision: OWNER DECISION NEEDED (D28 extension): what is stable before 1.0, including what self-update and install.sh rely on, and the 1.0 criteria (§5 #8). The 1.5x note copies a recorded owner decision and needs no new one.
+- Effort: S. Depends on: REP-3 (the schema that the stability statement names). Owner decision: decided (owner, 2026-10-20; D28 extension): what is stable before 1.0, including what self-update and install.sh rely on, and the 1.0 criteria (§5 #8). The 1.5x note copies a recorded owner decision and needs no new one.
 
 ## 3.3 Below the cut line: specified, not scheduled
 
@@ -1303,7 +1303,7 @@ waits.
    - (c) The tag job runs the full suite inline. Estimated at about 20-25 minutes, about 10 more when the 600 s fuzz applies: about 430
      of the 445 e2e items had run when run 38624936426 was cancelled at 17m53s, and the unit
      and integration tiers had not started.
-   - **Recommend (b).** Until CI-3 lands, CI-8's main push run is the gate.
+   - **Decided (owner, 2026-10-20): (b).** Until CI-3 lands, CI-8's main push run is the gate.
 2. **Repository settings and burned versions (REL-1, SEC-1).**
    - Immutable releases, a `v*` tag ruleset that blocks updates and deletion, and private
      vulnerability reporting.
@@ -1329,22 +1329,22 @@ waits.
    - (b) A C-level open hook in the launcher, measured against D24's 1% gate and shipped only
      if it stays under it.
    - (c) No runtime hint; widen the scan and the docs only.
-   - **Recommend (a) now, and (b) only if TST-3 finds failures that (a) misses.**
+   - **Decided (owner, 2026-10-20): (a) now, and (b) only if TST-3 finds failures that (a) misses.**
 5. **D22/D23 and a new D-number (SEC-3).**
    - The credentials condition on the parent check (real and effective uid and gid; saved ids
      are not compared).
-     **Recommend it;** nothing that works today breaks.
+     **Decided (owner, 2026-10-20);** nothing that works today breaks.
    - Privileged starts, three options:
      - (a) refuse every AT_SECURE start (about 5 lines of C; stops set-gid and `setcap`
        deployments such as `cap_net_bind_service`);
      - (b) an opt-in mode with a fixed root-owned cache that ignores FSBPYR_*, XDG and HOME
        (keeps those uses, adds a second cache policy);
      - (c) leave it as today.
-   - **Recommend (a), recording (b) as the rejected alternative.**
+   - **Decided (owner, 2026-10-20): (a), recording (b) as the rejected alternative.**
 6. **D27 (RT-3).** Files that were executable in the wheel extract as 0500. The alternative is
-   to keep 0400 everywhere and only warn. **Recommend 0500.**
+   to keep 0400 everywhere and only warn. **Decided (owner, 2026-10-20): 0500.**
 7. **D28 (REP-3).** A `git.dirty` flag: none, tracked files only, or tracked plus untracked.
-   **Recommend tracked files only,** read with `git --no-optional-locks -c core.fsmonitor=false
+   **Decided (owner, 2026-10-20): tracked files only,** read with `git --no-optional-locks -c core.fsmonitor=false
    diff --quiet HEAD --`.
 8. **D28 extension (DOC-2): what is stable before 1.0.**
    - (a) State stability only for the `inspect --json` schema (versioned by REP-3), and leave
@@ -1354,17 +1354,17 @@ waits.
      asset names and URLs (which Phase 9 already keeps), and that an older fsbpyr's in-process
      `inspect --verify` can still check a newer release, so a format_version bump must keep
      that check working.
-   - **Recommend (a) plus the self-update guarantees.** The 1.0 criteria in DOC-2 are a
+   - **Decided (owner, 2026-10-20): (a) plus the self-update guarantees.** The 1.0 criteria in DOC-2 are a
      proposal for the owner to accept or change.
 9. **D38 (RT-6).** The 16 MiB compile cut-off limits, but does not meet, D38(2): compiling takes
    about 100-165 times the source size in memory, so a module just under the cut-off already
    needs 1.6-2.75 GB in one compile worker (RT-6), and compiling larger modules from one whole
-   read would need more. **Recommend recording the cut-off in D38** as a consequence of D38(2)
+   read would need more. **Decided (owner, 2026-10-20): record the cut-off in D38** as a consequence of D38(2)
    and an exception to D38(1)'s "no size limits of ours".
 10. **Launcher licence notice (REP-4; no D-number).** Either LICENSE gains a runtime-exception
     clause covering the launcher and the boot modules (the SPDX expression then needs a
     LicenseRef), or every app reproduces fsbpyr's MIT notice. Apps ship about 15 third-party
-    notices anyway, so the exception saves one. **Recommend the exception.**
+    notices anyway, so the exception saves one. **Decided (owner, 2026-10-20): the exception.**
 11. **Source of the clang-23 toolchain (SEC-4; D2 itself is unchanged).**
     - (a) Stay on PBS 20261009 until the first security-relevant PBS release, then switch.
     - (b) sid's clang-23 from snapshot.debian.org at a fixed timestamp, in a sid image used
@@ -1372,7 +1372,7 @@ waits.
     - (c) LLVM's release tarball, pinned by sha256.
     - apt.llvm.org, which §11 of docs/IMPLEMENTATION_PLAN.md first chose, can be pinned by
       signing key but not by version: it keeps one rolling build per branch.
-    - **Recommend (a), with (b) or (c) made ready by SEC-4's spike.**
+    - **Decided (owner, 2026-10-20): (a), with (b) or (c) made ready by SEC-4's spike.**
 12. **D13 (SCOPE-1).** Cap fsbpyr's own requires-python at `<3.15` now. pip then refuses
     3.15; uv installs anyway, so fsbpyr also stops early with a clear error on any Python but
     3.14. Phase 9's port to 3.12 widens it to `>=3.12,<3.15`, and the cap rises whenever `fsbpyr`
