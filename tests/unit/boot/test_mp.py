@@ -1,9 +1,13 @@
 """_fsbpyr_rt.mp: recognizing the command lines multiprocessing re-executes the app with."""
 
+import contextlib
 import importlib.util
+import os
+import re
 import subprocess
 import sys
-from multiprocessing import spawn, util
+from collections.abc import Callable
+from multiprocessing import forkserver, resource_tracker, spawn, util
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -13,10 +17,17 @@ from .conftest import BOOT_DIR
 EXE = "/opt/app/bin/tool"
 FLAGS = ["-B", "-S", "-I"]
 MP_SOURCE = BOOT_DIR / "_fsbpyr_rt" / "mp.py"
-FORKSERVER = (
-    "import sys; from multiprocessing.forkserver import main; "
-    "main(%d, %d, %r, sys_argv=sys.argv[1:], **%r)"
-)  # the template of multiprocessing/forkserver.py (3.14)
+# the templates of multiprocessing/forkserver.py: 3.12 has no sys_argv, 3.13 and 3.14 do
+if sys.version_info < (3, 13):
+    FORKSERVER = "from multiprocessing.forkserver import main; main(%d, %d, %r, **%r)"
+    SYS_ARGV = False
+else:
+    FORKSERVER = (
+        "import sys; from multiprocessing.forkserver import main; "
+        "main(%d, %d, %r, sys_argv=sys.argv[1:], **%r)"
+    )
+    SYS_ARGV = True
+AUTHKEY = sys.version_info >= (3, 14)  # only 3.14's forkserver authenticates with authkey_r
 
 
 @pytest.fixture(scope="module")
@@ -37,14 +48,95 @@ def test_spawn_command_from_cpython_is_recognized(mp: ModuleType) -> None:
     )  # fmt: skip
 
 
+def _captured_command(monkeypatch: pytest.MonkeyPatch, start: Callable[[], object]) -> list[str]:
+    """The argv CPython's own code passes to spawnv_passfds when it runs ``start``."""
+    captured: list[list[str]] = []
+
+    def spawnv_passfds(path: str, args: list[str], passfds: list[int]) -> int:
+        captured.append(args)
+        return 0
+
+    monkeypatch.setattr(util, "spawnv_passfds", spawnv_passfds)
+    monkeypatch.setattr(spawn, "get_executable", lambda: EXE)
+    with contextlib.suppress(OSError):  # the pretend child holds no pipe ends: later writes fail
+        start()
+    return captured[0]
+
+
+def test_forkserver_command_from_cpython_is_recognized(
+    mp: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(resource_tracker, "ensure_running", lambda: None)
+    # an fsbpyr app's __main__ has no file, so its parent sends no main_path (pytest's has one)
+    monkeypatch.setattr(spawn, "get_preparation_data", lambda name: {"sys_path": [EXE]})
+    server = forkserver.ForkServer()
+    server.set_forkserver_preload(["__main__"])
+    argv = _captured_command(monkeypatch, server.ensure_running)
+    code = argv[argv.index("-c") + 1]
+    listener, alive = (int(n) for n in re.search(r"main\((\d+), (\d+),", code).groups())  # type: ignore[union-attr]
+
+    command = mp.child_command(argv)
+
+    assert command is not None
+    assert command[:2] == ("multiprocessing.forkserver", "main")
+    assert command[2] == (listener, alive, ["__main__"])
+    assert code.startswith(FORKSERVER.split("%d")[0])  # the template is CPython's text
+    assert ("authkey_r" in command[3]) is AUTHKEY
+    assert ("sys_argv" in command[3]) is SYS_ARGV
+
+
 def test_forkserver_command_is_recognized(mp: ModuleType) -> None:
-    keywords = {"sys_path": [EXE], "authkey_r": 9}
-    argv = [EXE, *FLAGS, "-X", "dev", "-c", FORKSERVER % (3, 4, ["__main__"], keywords), "app"]
+    keywords = {"sys_path": [EXE], **({"authkey_r": 9} if AUTHKEY else {})}
+    argv = [EXE, *FLAGS, "-X", "dev", "-c", FORKSERVER % (3, 4, ["__main__"], keywords)]
+    expected_keywords = {
+        **({"authkey_r": 9} if AUTHKEY else {}),
+        **({"sys_argv": []} if SYS_ARGV else {}),
+    }
 
     assert mp.child_command(argv) == (
-        "multiprocessing.forkserver", "main", (3, 4, ["__main__"]),
-        {"authkey_r": 9, "sys_argv": ["app"]}, ["-c", "app"],
+        "multiprocessing.forkserver", "main", (3, 4, ["__main__"]), expected_keywords, ["-c"],
     )  # fmt: skip  # sys_path is dropped: the payload-only sys.path stays
+
+
+def test_forkserver_arguments_become_sys_argv_where_cpython_sends_them(mp: ModuleType) -> None:
+    argv = [EXE, "-c", FORKSERVER % (3, 4, ["__main__"], {}), "app"]
+
+    assert mp.child_command(argv) == (
+        (
+            "multiprocessing.forkserver", "main", (3, 4, ["__main__"]),
+            {"sys_argv": ["app"]}, ["-c", "app"],
+        )
+        if SYS_ARGV
+        else None  # 3.12's forkserver takes no arguments
+    )  # fmt: skip
+
+
+def test_forkserver_command_lines_of_other_versions_are_refused(mp: ModuleType) -> None:
+    others = [
+        "from multiprocessing.forkserver import main; main(3, 4, [], **{})",  # 3.12
+        "import sys; from multiprocessing.forkserver import main; "
+        "main(3, 4, [], sys_argv=sys.argv[1:], **{})",  # 3.13 and 3.14
+    ]
+    other = others[1] if sys.version_info < (3, 13) else others[0]
+
+    assert mp.child_command([EXE, "-c", other]) is None
+    assert (mp.child_command([EXE, "-c", FORKSERVER % (3, 4, [], {"authkey_r": 9})]) is None) is (
+        not AUTHKEY
+    )  # only 3.14's forkserver sends authkey_r
+
+
+def test_resource_tracker_command_from_cpython_is_recognized(
+    mp: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tracker = resource_tracker.ResourceTracker()
+    argv = _captured_command(monkeypatch, tracker.ensure_running)
+    os.close(tracker._fd)  # type: ignore[attr-defined]
+    tracker._fd = tracker._pid = None  # type: ignore[attr-defined]  # nothing to stop in __del__
+    descriptor = int(argv[-1].rsplit("main(", 1)[1].rstrip(")"))
+
+    assert mp.child_command(argv) == (
+        "multiprocessing.resource_tracker", "main", (descriptor,), {}, ["-c"],
+    )  # fmt: skip
 
 
 def test_resource_tracker_command_is_recognized(mp: ModuleType) -> None:

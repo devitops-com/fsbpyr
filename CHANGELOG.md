@@ -21,6 +21,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   The new [docs/security.md](docs/security.md) is the threat model.
 
 ### Added
+- **The multiprocessing child recognition knows each version's command lines** (Phase 9,
+  step 2, D22): spawn and the resource tracker read the same on 3.12 to 3.14; the forkserver
+  command line of 3.12 has no `sys_argv` and no `authkey_r`, 3.13's adds `sys_argv`, 3.14's
+  adds `authkey_r`, and each runtime accepts only its own. The tests take the forkserver and
+  resource tracker command lines from the running Python's own code. Nothing changes on 3.14.
 - **`fsbpyr runtime build --python 3.12` and `--python 3.13` build runtimes for those
   versions** (Phase 9, step 3): CPython 3.12.15 and 3.13.16 from python-build-standalone
   20261009, pinned by SHA-256, linked against the same glibc 2.28 sysroot. The launcher also
