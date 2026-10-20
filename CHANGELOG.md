@@ -68,6 +68,14 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   container, as before, and the README's release check no longer runs `uv self update`.
 
 ### Fixed
+- **A `sys.path` entry inside the executable now resolves its modules.** An app that
+  runs `sys.path.insert(0, dirname(__file__) + "/_vendor")` found nothing in the executable
+  although it works in the venv, and an app that packages setuptools could not
+  `import setuptools`: it reaches `distutils` through `setuptools/_distutils` and `jaraco.text`
+  through `setuptools/_vendor`. A path entry `<exe>/pkg/_vendor` now serves `pkg._vendor.x` as
+  `x`, with the right `__file__`, source and resources. A namespace package that has a
+  portion there and a packaged top-level portion (a vendored `jaraco` next to jaraco.classes)
+  now merges them as it does in a venv.
 - **`exit()`, `quit()` and `help` work in built apps.** Python's `site` module defines them,
   and built apps never import it, so each raised NameError there while working in the venv.
   The executable now defines them itself, as `site` does, also for the `-c` and `-m` children
