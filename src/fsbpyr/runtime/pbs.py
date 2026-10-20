@@ -21,6 +21,7 @@ from .pins import PbsPin
 _INITTAB_ENTRY = re.compile(r'\{"([A-Za-z0-9_.]+)",\s*PyInit_')
 _LLVM_BITCODE = re.compile(r"llvm-bitcode:(\d+)\.")
 _CHUNK = 1 << 20
+_LIBZSTD = "build/lib/libzstd.a"
 
 
 class PbsError(RuntimeError):
@@ -121,6 +122,11 @@ def link_inputs(dist: PbsDist, archive_members: set[str]) -> LinkInputs:
                 static.append(dist.root / link["path_static"])
             elif link.get("system") and link["name"] not in system:
                 system.append(link["name"])
+    # The launcher decodes zstd itself. 3.14's _zstd links libzstd.a; 3.12 and 3.13 have no
+    # _zstd, so no entry names the archive that PBS still ships (Phase 9 spike).
+    zstd = dist.root / _LIBZSTD
+    if zstd.is_file() and zstd not in static:
+        static.append(zstd)
     return LinkInputs(
         libpython=dist.root / build["core"]["static_lib"],
         extra_objects=tuple(extra),

@@ -182,6 +182,36 @@ def test_pin_lookup() -> None:
         pin_for("3.9", "x86_64-unknown-linux-gnu")
 
 
+@pytest.mark.parametrize(
+    ("python", "version", "sha256"),
+    [
+        ("3.12", "3.12.15", "36a23ba5776ede9db3dfbb1b1f84c74b18939331c75e1e70760f12ad61aa96d5"),
+        ("3.13", "3.13.16", "b4fd36646765e6b8387ace2fd5a152d10028a84deb0d1f173f7299429129d202"),
+        ("3.14", "3.14.8", "d4d83a2dbb9b7ee12373219113e9aa59ad943b8d381a43837209945bb5596e66"),
+    ],
+)
+def test_every_version_is_pinned_to_release_20261009(
+    python: str, version: str, sha256: str
+) -> None:
+    pin = pin_for(python, "x86_64-unknown-linux-gnu")
+
+    assert (pin.version, pin.release, pin.flavor, pin.sha256) == (
+        version, "20261009", "pgo+lto-full", sha256,
+    )  # fmt: skip
+    assert pin.url == (
+        "https://github.com/astral-sh/python-build-standalone/releases/download/20261009/"
+        f"cpython-{version}%2B20261009-x86_64-unknown-linux-gnu-pgo%2Blto-full.tar.zst"
+    )
+
+
+def test_runtime_ids_differ_by_version_and_name_it() -> None:
+    ids = {p: registry.runtime_id(pin_for(p, "x86_64-unknown-linux-gnu"))
+           for p in ("3.12", "3.13", "3.14")}  # fmt: skip
+
+    assert len(set(ids.values())) == 3
+    assert all(i.startswith(f"cp{p.replace('.', '')}-") for p, i in ids.items())
+
+
 def test_build_runtime_orchestrates_and_caches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

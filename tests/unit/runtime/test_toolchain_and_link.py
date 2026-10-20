@@ -207,6 +207,55 @@ def test_link_inputs_cover_builtin_modules_only(tmp_path: Path) -> None:
     assert inputs.system_libs == ("pthread", "m")
 
 
+def _with_zstd_archive(dist: PbsDist) -> Path:
+    archive = dist.root / "build" / "lib" / "libzstd.a"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    archive.write_bytes(b"!<arch>\n")
+    return archive
+
+
+def _link_zstd_from(dist: PbsDist, module: str) -> PbsDist:
+    """``dist`` with ``module`` linking libzstd.a, as 3.14's ``_zstd`` does."""
+    info = json.loads((dist.root / "PYTHON.json").read_text())
+    info["build_info"]["extensions"][module][0]["links"].append(
+        {"name": "zstd", "path_static": "build/lib/libzstd.a"}
+    )
+    (dist.root / "PYTHON.json").write_text(json.dumps(info))
+    return PbsDist.load(dist.root)
+
+
+def test_link_inputs_add_libzstd_when_no_builtin_module_links_it(tmp_path: Path) -> None:
+    dist = _fake_dist(tmp_path)  # 3.12 and 3.13 have no _zstd; the launcher decodes zstd itself
+    archive = _with_zstd_archive(dist)
+
+    inputs = link_inputs(dist, {"_ssl.o", "sha2module.o", "mathmodule.o"})
+
+    assert inputs.static_libs == (
+        dist.root / "build/lib/libcrypto.a", dist.root / "build/lib/libssl.a", archive,
+    )  # fmt: skip
+
+
+def test_link_inputs_keep_libzstd_once_when_a_builtin_module_links_it(tmp_path: Path) -> None:
+    dist = _fake_dist(tmp_path)
+    archive = _with_zstd_archive(dist)
+    dist = _link_zstd_from(dist, "math")  # stands for 3.14's _zstd
+
+    inputs = link_inputs(dist, {"_ssl.o", "sha2module.o", "mathmodule.o"})
+
+    assert inputs.static_libs == (
+        dist.root / "build/lib/libcrypto.a", dist.root / "build/lib/libssl.a", archive,
+    )  # fmt: skip
+    assert inputs.static_libs.count(archive) == 1
+
+
+def test_link_inputs_leave_out_libzstd_when_the_archive_is_missing(tmp_path: Path) -> None:
+    dist = _fake_dist(tmp_path)
+
+    inputs = link_inputs(dist, {"_ssl.o", "sha2module.o", "mathmodule.o"})
+
+    assert all(lib.name != "libzstd.a" for lib in inputs.static_libs)
+
+
 def test_stub_command_links_statically_as_pie(tmp_path: Path) -> None:
     dist = _fake_dist(tmp_path)
     inputs = link_inputs(dist, {"_ssl.o", "sha2module.o", "mathmodule.o"})

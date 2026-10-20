@@ -27,6 +27,22 @@ class PbsPin:
 
 PINS = (
     PbsPin(
+        python="3.12",
+        version="3.12.15",
+        release="20261009",
+        triple="x86_64-unknown-linux-gnu",
+        flavor="pgo+lto-full",
+        sha256="36a23ba5776ede9db3dfbb1b1f84c74b18939331c75e1e70760f12ad61aa96d5",
+    ),
+    PbsPin(
+        python="3.13",
+        version="3.13.16",
+        release="20261009",
+        triple="x86_64-unknown-linux-gnu",
+        flavor="pgo+lto-full",
+        sha256="b4fd36646765e6b8387ace2fd5a152d10028a84deb0d1f173f7299429129d202",
+    ),
+    PbsPin(
         python="3.14",
         version="3.14.8",
         release="20261009",
