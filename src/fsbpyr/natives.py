@@ -51,6 +51,16 @@ class NativeError(ValueError):
     """A native dependency cannot be satisfied inside the executable or by the system."""
 
 
+class MissingLibraries(NativeError):
+    """Libraries one native file needs that are neither bundled nor allowed system ones;
+    ``closures`` gathers them for all files and reports them at once."""
+
+    def __init__(self, path: str, sonames: list[str]) -> None:
+        super().__init__(f"{path} needs {', '.join(sonames)}")
+        self.path = path
+        self.sonames = tuple(sonames)
+
+
 type Native = bytes | mmap.mmap  # a native file's content: in memory, or mapped from its file
 _WINDOW = 64 << 20  # searches go a window at a time; a mapping's pages are dropped after each
 
@@ -197,6 +207,7 @@ def _direct_dependencies(  # noqa: PLR0913  the object, the payload, and inherit
     passed_on = inherited if info.runpath else tuple(directories)
     dependencies = [(lib, True) for lib in _opened_by_name(path, data, libraries, directories)]
     from_system = []
+    missing = []
     for needed in info.needed:
         if _LIBPYTHON.match(needed):
             raise NativeError(
@@ -210,12 +221,11 @@ def _direct_dependencies(  # noqa: PLR0913  the object, the payload, and inherit
         if found is not None:
             dependencies.append((found, False))
         elif needed not in SYSTEM_LIBRARIES and needed not in allowed:
-            raise NativeError(
-                f"{path} needs {needed}, which is neither bundled nor a standard system library; "
-                f"bundle it (auditwheel repair) or pass --allow-system-lib {needed}"
-            )
+            missing.append(needed)
         else:
             from_system.append(needed)
+    if missing:
+        raise MissingLibraries(path, missing)
     if system is not None and from_system:
         system.record(path, data, from_system, allowed)
     return dependencies, passed_on
@@ -245,6 +255,7 @@ def closures(
     # (object, RPATHs it inherits) -> (its dependencies, the RPATHs they inherit)
     direct: dict[tuple[str, tuple[str, ...]], tuple[list[tuple[str, bool]], tuple[str, ...]]] = {}
     left_out: dict[str, str] = {}
+    unmet: dict[str, tuple[str, ...]] = {}  # object -> libraries it needs and nothing provides
 
     def dependencies(
         path: str, inherited: tuple[str, ...]
@@ -257,10 +268,24 @@ def closures(
         found, passed_on = direct[path, inherited]
         return [(library, by_name, passed_on) for library, by_name in found]
 
+    def tolerated(
+        path: str, inherited: tuple[str, ...], *, strict: bool
+    ) -> list[tuple[str, bool, tuple[str, ...]]]:
+        """``dependencies``; for a NEEDED chain (``strict``) the libraries nothing provides are
+        noted, not raised, so that all of them are reported together. Such an object has no
+        dependencies as far as the walk goes."""
+        try:
+            return dependencies(path, inherited)
+        except MissingLibraries as exc:
+            if not strict:
+                raise
+            unmet[exc.path] = exc.sonames
+            return []
+
     result = {}
     for extension in sorted(extensions):
         seen: dict[str, bool] = {}  # object -> expanded through NEEDED edges only (strictly)
-        pending = dependencies(extension, ())
+        pending = tolerated(extension, (), strict=True)
         while pending:
             dependency, by_name, inherited = pending.pop()
             if dependency == extension or (by_name and dependency in left_out):
@@ -268,7 +293,7 @@ def closures(
             if dependency in seen and (by_name or seen[dependency]):
                 continue  # a NEEDED visit re-expands what a by-name visit tolerated
             try:
-                following = dependencies(dependency, inherited)
+                following = tolerated(dependency, inherited, strict=not by_name)
             except NativeError as exc:
                 if not by_name:
                     raise
@@ -280,11 +305,24 @@ def closures(
             pending.extend((library, by_name or named, passed_on)
                            for library, named, passed_on in following)  # fmt: skip
         result[extension] = tuple(sorted(seen))
+    if unmet:
+        raise NativeError(_unmet_message(unmet))
     for message in left_out.values():
         warn(message)
     if system is not None:
         _warn_system(system, allowed, warn)
     return result
+
+
+def _unmet_message(unmet: Mapping[str, tuple[str, ...]]) -> str:
+    """Every missing library, by the file that needs it, with the config line that allows them."""
+    lines = [f"  {path} needs {', '.join(sonames)}" for path, sonames in sorted(unmet.items())]
+    names = sorted({soname for sonames in unmet.values() for soname in sonames})
+    allow = ", ".join(f'"{name}"' for name in names)
+    return ("native files need libraries that are neither bundled nor standard system "
+            "libraries:\n" + "\n".join(lines) + "\nbundle them (auditwheel repair), or allow "
+            "the host's with --allow-system-lib NAME (repeat), or in [tool.fsbpyr]:\n"
+            f"  allow-system-libs = [{allow}]")  # fmt: skip
 
 
 def _warn_system(system: SystemUse, allowed: frozenset[str], warn: Callable[[str], None]) -> None:

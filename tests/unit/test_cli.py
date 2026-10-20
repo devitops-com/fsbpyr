@@ -242,6 +242,23 @@ def test_runtime_build_reports_errors_without_traceback(
     )
 
 
+def test_an_unexpected_exception_prints_its_traceback_and_where_to_report_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail(python: str, **kwargs: object) -> None:
+        raise ZeroDivisionError("boom")
+
+    monkeypatch.setattr(registry, "build_runtime", fail)
+
+    assert main(["runtime", "build", "--python", "3.14"]) == 1
+    err = capsys.readouterr().err
+    assert "Traceback (most recent call last)" in err
+    assert "ZeroDivisionError: boom" in err
+    assert "fsbpyr: internal error (fsbpyr " in err
+    assert "please report at https://github.com/devitops-com/fsbpyr/issues" in err
+    assert "`fsbpyr inspect --json`" in err
+
+
 @pytest.mark.parametrize("argv", [["build"], ["runtime", "build"]])
 def test_build_commands_stop_first_on_any_python_but_3_14(
     argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
