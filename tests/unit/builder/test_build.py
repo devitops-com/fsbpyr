@@ -95,7 +95,7 @@ def test_an_error_carries_the_warnings_collected_before_it(
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
     _stand_ins(monkeypatch)
 
-    def run_plan(plan: StagingPlan, project_dir: Path) -> Path:
+    def run_plan(plan: StagingPlan, project_dir: Path, **_: object) -> Path:
         raise StagingError("uv build failed")
 
     monkeypatch.setattr("fsbpyr.build.run_plan", run_plan)
@@ -116,7 +116,7 @@ def _staged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sources: dict[str, 
     (project / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
     _stand_ins(monkeypatch)
 
-    def run_plan(plan: StagingPlan, project_dir: Path) -> Path:
+    def run_plan(plan: StagingPlan, project_dir: Path, **_: object) -> Path:
         for rel in sources:
             (plan.site / rel).parent.mkdir(parents=True, exist_ok=True)
         _installed(plan.site, "app", "py3-none-any",
@@ -291,7 +291,7 @@ def _rebuild(tmp_path: Path, *, offline: bool = False) -> list[str]:
 def test_a_failed_rebuild_keeps_the_hosts_build_with_a_warning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def failed(*_: object) -> None:
+    def failed(*_: object, **__: object) -> None:
         raise StagingError("uv pip install ... failed:\n  error: command 'g++' failed\n\n")
 
     monkeypatch.setattr("fsbpyr.build.fetch_sysroot", lambda pin, cache: tmp_path)
@@ -315,12 +315,13 @@ def test_the_projects_own_extension_is_rebuilt_with_the_sysroot_flags(
     built: list[tuple[Path, dict[str, str]]] = []
     installed: list[tuple[Path, list[str], dict[str, str]]] = []
 
-    def rebuild_wheel(plan: StagingPlan, project_dir: Path, env: dict[str, str]) -> Path:
+    def rebuild_wheel(plan: StagingPlan, project_dir: Path, env: dict[str, str],
+                      **_: object) -> Path:  # fmt: skip
         built.append((project_dir, env))
         return again
 
     def rebuild(plan: StagingPlan, project_dir: Path, wheel: Path, names: list[str],
-                env: dict[str, str]) -> None:  # fmt: skip
+                env: dict[str, str], **_: object) -> None:  # fmt: skip
         installed.append((wheel, names, env))
 
     monkeypatch.setattr("fsbpyr.build.fetch_sysroot", lambda pin, cache: tmp_path / "sysroot")

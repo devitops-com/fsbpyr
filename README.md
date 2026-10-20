@@ -99,6 +99,7 @@ offline, the host's build is packaged and the build warns which glibc it needs.
 | `--hints / --no-hints` | also list packages that may read files next to `__file__` (a guess) |
 | `--interpreter-reexec / --no-interpreter-reexec` | let the app's own children started as `sys.executable -m MODULE` or `-c CODE` run as Python |
 | `--smoke / --no-smoke` | run the new executable once as a smoke test (default) or skip it |
+| `-v, --verbose` | print each uv command and let uv's error output through |
 
 `fsbpyr build -h` shows the same list. [Leaving out sources](#leaving-out-sources) explains
 `--no-source`, [At run time](#at-run-time) `--fs-package` and the cache that
