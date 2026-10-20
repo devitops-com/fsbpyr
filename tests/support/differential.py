@@ -15,6 +15,8 @@ from pathlib import Path
 
 from fsbpyr.staging import find_uv
 
+from .stderr import ONNX_HOST
+
 TIMEOUT = 300  # the first sync of a project builds and downloads its wheels
 
 
@@ -75,7 +77,10 @@ def _normalized(outcome: Outcome, venv: Path, executable: Path) -> Outcome:
     def clean(text: str) -> str:
         return text.replace(str(venv), "<venv>").replace(str(executable), "<executable>")
 
-    return Outcome(outcome.returncode, clean(outcome.stdout), clean(outcome.stderr))
+    # onnxruntime's host warning carries a timestamp, so the two runs' lines never match
+    return Outcome(
+        outcome.returncode, clean(outcome.stdout), clean(ONNX_HOST.sub("", outcome.stderr))
+    )
 
 
 def assert_same(

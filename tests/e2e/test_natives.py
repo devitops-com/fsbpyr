@@ -20,7 +20,7 @@ from fsbpyr.payload.reader import Executable
 from fsbpyr.runtime.registry import Runtime
 
 from ..support.differential import assert_same, make_venv
-from ..support.stderr import NO_HOSTNAME, TRACE_LINE, noise
+from ..support.stderr import NO_HOSTNAME, ONNX_HOST, TRACE_LINE, noise
 
 pytestmark = pytest.mark.slow
 
@@ -80,7 +80,7 @@ def _run(
     process = _start(executable, cache, *args)
     stdout, stderr = process.communicate(timeout=120)
     assert process.returncode == 0, stderr
-    assert noise(stderr, TRACE_LINE, NO_HOSTNAME, *allowed) == ""
+    assert noise(stderr, TRACE_LINE, NO_HOSTNAME, ONNX_HOST, *allowed) == ""
     return stdout, _trace(stderr)
 
 
@@ -187,7 +187,7 @@ def test_libraries_extensions_open_by_name_are_extracted_with_them(
     _, stderr = process.communicate(timeout=120)
 
     assert process.returncode == 0, stderr
-    assert noise(stderr, TRACE_LINE, NO_HOSTNAME) == ""
+    assert noise(stderr, TRACE_LINE, NO_HOSTNAME, ONNX_HOST) == ""
     extracted: list[str] = _trace(stderr)["extracted"]  # type: ignore[assignment]
     assert "onnxruntime/capi/libonnxruntime_providers_shared.so" in extracted
     assert not any(p.startswith("onnxruntime/capi/libonnxruntime.so") for p in extracted)

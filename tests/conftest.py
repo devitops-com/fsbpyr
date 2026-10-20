@@ -34,6 +34,8 @@ EXPECTED_SKIPS = {
     # full-suite.yml's portability job: podman on the runner host, and every image pulled
     "portability": (),
 }
+# The corpus projects (TST-3) carry test files of their own, which their built apps run
+collect_ignore_glob = ["corpus/*"]
 _skips: list[tuple[str, str]] = []  # this run's, as (nodeid, reason)
 
 
