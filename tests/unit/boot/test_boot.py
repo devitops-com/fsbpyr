@@ -402,3 +402,33 @@ def test_excepthook_hides_only_leading_boot_frames(
         boot._excepthook(ValueError, exc, exc.__traceback__)
     err = capsys.readouterr().err
     assert "failing" in err and err.rstrip().endswith("ValueError: bad input")
+
+
+def test_excepthook_names_the_package_that_reads_next_to_its_file(
+    boot: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = f"{boot.ROOT}/pkg/data.txt"
+    try:
+        try:
+            raise NotADirectoryError(20, "Not a directory", path)
+        except OSError as inner:
+            raise RuntimeError("cannot load the data") from inner
+    except RuntimeError as exc:
+        boot._excepthook(RuntimeError, exc, exc.__traceback__)
+
+    err = capsys.readouterr().err
+    assert f"fsbpyr: {path} is inside the executable; pkg reads files next to its __file__" in err
+    assert "rebuild with --fs-package pkg" in err
+
+
+def test_excepthook_adds_no_note_for_other_failures(
+    boot: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for exc in (
+        FileNotFoundError(2, "No such file", "/etc/nothing"),
+        FileNotFoundError(2, "No such file", f"{boot.ROOT}/nothing/x"),  # not in the payload
+        ValueError("bad"),
+    ):
+        boot._excepthook(type(exc), exc, None)
+
+    assert "fs-package" not in capsys.readouterr().err

@@ -322,6 +322,27 @@ def _excepthook(
     if head is not None:  # the default hook prints exc.__traceback__, not the tb argument
         exc = exc.with_traceback(head)
     sys.__excepthook__(exc_type, exc, head or tb)
+    if (note := _inside_executable_note(exc)) is not None:
+        sys.stderr.write(note)
+
+
+def _inside_executable_note(exc: BaseException | None) -> str | None:
+    """D24: the hint for an OSError (anywhere in the chain) on a path below the executable,
+    which a package reading files next to its ``__file__`` provokes. Costs nothing until an
+    exception goes uncaught."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        filename = exc.filename if isinstance(exc, OSError) else None
+        if isinstance(filename, str) and filename.startswith(_PREFIX):
+            package = filename[len(_PREFIX) :].partition("/")[0]
+            if _fsbpyr.find_module(package) is not None:
+                return (
+                    f"fsbpyr: {filename} is inside the executable; {package} reads files next "
+                    f"to its __file__: rebuild with --fs-package {package}\n"
+                )
+        exc = exc.__cause__ or exc.__context__
+    return None
 
 
 def _resolve(entrypoint: str) -> object:

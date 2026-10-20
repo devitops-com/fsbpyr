@@ -18,6 +18,16 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   the executable's prefix are written again by the new executable; ones elsewhere get a hint.
   A developer build (`untagged-<commit>`) refuses and prints the `curl` command for the latest
   release, and an unwritable directory is an error saying how to update instead.
+- **A run-time note for files read next to `__file__`.** When an app ends on an `OSError` for a
+  path inside the executable and the first path component is a package in it, the traceback is
+  followed by "fsbpyr: <path> is inside the executable; <pkg> reads files next to its
+  `__file__`: rebuild with --fs-package <pkg>". Only an uncaught error prints it, and not when
+  the app replaces `sys.excepthook`. An extension that fails to load with a missing
+  `GLIBC`, `GLIBCXX_` or `CXXABI_` version or "cannot open shared object file" now also
+  reports the glibc the build required and the one in this system.
+- **`--hints` finds more.** It now also reports `X.__file__` and `__path__[0]`, subprocess and
+  `os.exec*` calls, cffi `dlopen`, `configparser` `read`, `np.load` and `jinja2.PackageLoader`
+  that use such a path.
 - **`fsbpyr build` shows what it is doing.** Each uv step prints a line before it runs ("uv:
   installing the locked distributions", "uv: building <project>'s wheel"), and the smoke test
   prints "smoke-testing <path>". A failed uv step names the step instead of a truncated command.

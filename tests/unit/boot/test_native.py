@@ -318,3 +318,36 @@ def test_cache_hits_are_rehashed_before_loading(
     factory(spec.name, spec.origin, _files(spec)).create_module(spec)
 
     assert (Path(native.native_cache().site) / LIB).read_bytes() == CONTENT[LIB]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "/lib/x86_64-linux-gnu/libstdc++.so.6: version `GLIBCXX_3.4.32' not found",
+        "libc.so.6: version `GLIBC_2.38' not found (required by x.so)",
+        "libfoo.so.1: cannot open shared object file: No such file or directory",
+    ],
+)
+def test_a_system_library_failure_carries_the_build_requirement(
+    boot: types.ModuleType, native: types.ModuleType, message: str
+) -> None:
+    spec = _speed_spec(boot)
+
+    class Dlopen(ExtensionFileLoader):
+        def create_module(self, spec: importlib.machinery.ModuleSpec) -> types.ModuleType:
+            raise ImportError(message, name=spec.name, path=spec.origin)
+
+    class Loader(native.PayloadExtensionLoader, Dlopen):  # type: ignore[misc,name-defined]
+        pass
+
+    factory: Any = Loader
+    loader = factory(spec.name, spec.origin, _files(spec))
+
+    with pytest.raises(ImportError) as caught:
+        loader.create_module(spec)
+
+    text = str(caught.value)
+    assert text.startswith(message) and "the build requires glibc" in text
+    version = os.confstr("CS_GNU_LIBC_VERSION")
+    assert version is not None and version in text
+    assert caught.value.name == spec.name
