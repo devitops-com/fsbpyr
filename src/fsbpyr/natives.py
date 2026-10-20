@@ -17,9 +17,10 @@ import mmap
 import posixpath
 import re
 from collections.abc import Callable, Iterable, Iterator, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from .elf import ElfError, dynamic_info
+from .elf import ElfError, VersionNeed, dynamic_info, version_requirements
 
 # Libraries manylinux wheels may take from the system (auditwheel policy, manylinux_2_17 and
 # later for x86-64, plus the dynamic loader and libz which current policies also allow).
@@ -30,6 +31,18 @@ SYSTEM_LIBRARIES = frozenset({
     "libICE.so.6", "libSM.so.6", "libGL.so.1", "libgobject-2.0.so.0", "libgthread-2.0.so.0",
     "libglib-2.0.so.0",
 })  # fmt: skip
+# The libraries of glibc itself: their versions are glibc's, reported as "glibc >= X".
+GLIBC_LIBRARIES = frozenset({
+    "ld-linux-x86-64.so.2", "libc.so.6", "libm.so.6", "libdl.so.2", "librt.so.1",
+    "libpthread.so.0", "libutil.so.1", "libnsl.so.1", "libresolv.so.2",
+})  # fmt: skip
+# The newest symbol version per namespace that auditwheel's manylinux_2_28 x86_64 policy
+# allows (libstdc++ 8.x, libgcc_s, libz), and the non-numeric CXXABI versions it allows.
+# Taken from the improvement plan's reading of auditwheel's policy file (NAT-2); not re-read.
+MANYLINUX_2_28_LIMITS = {
+    "GLIBCXX": (3, 4, 24), "CXXABI": (1, 3, 11), "GCC": (7, 0, 0), "ZLIB": (1, 2, 9),
+}  # fmt: skip
+MANYLINUX_2_28_MARKERS = frozenset({"CXXABI_TM_1", "CXXABI_FLOAT128"})
 _LIBPYTHON = re.compile(r"^libpython3")
 _ORIGIN = re.compile(r"\$(ORIGIN(?![A-Za-z0-9_])|\{ORIGIN\})")  # as ld.so tokenizes it
 
@@ -40,6 +53,35 @@ class NativeError(ValueError):
 
 type Native = bytes | mmap.mmap  # a native file's content: in memory, or mapped from its file
 _WINDOW = 64 << 20  # searches go a window at a time; a mapping's pages are dropped after each
+
+
+@dataclass(slots=True)
+class SystemUse:
+    """What the payload takes from the system: which files need each library the system
+    satisfies, the symbol versions they need of it, and the allowlist entries that were used."""
+
+    needed_by: dict[str, set[str]] = field(default_factory=dict)  # library -> payload files
+    versions: dict[str, dict[str, dict[str, VersionNeed]]] = field(default_factory=dict)
+    allowed_used: set[str] = field(default_factory=set)
+    unreadable: dict[str, str] = field(default_factory=dict)  # file -> why its table is lost
+
+    def record(
+        self, path: str, data: Native, libraries: list[str], allowed: frozenset[str]
+    ) -> None:
+        """``path`` needs ``libraries`` from the system; their versions are read from ``data``.
+        A version table that cannot be read loses the versions, not the build."""
+        if path in self.versions or path in self.unreadable:
+            return
+        for library in libraries:
+            self.needed_by.setdefault(library, set()).add(path)
+            if library in allowed:
+                self.allowed_used.add(library)
+        try:
+            found = version_requirements(data)
+        except ElfError as exc:
+            self.unreadable[path] = str(exc)
+            return
+        self.versions[path] = {lib: found[lib] for lib in libraries if lib in found}
 
 
 @contextlib.contextmanager
@@ -140,6 +182,7 @@ def _direct_dependencies(  # noqa: PLR0913  the object, the payload, and inherit
     allowed: frozenset[str],
     *,
     inherited: tuple[str, ...],
+    system: SystemUse | None = None,
 ) -> tuple[list[tuple[str, bool]], tuple[str, ...]]:
     """Bundled objects ``path`` loads, each with whether it is opened by name (not NEEDED), and
     the RPATH directories they inherit. ``inherited`` are those of the objects that loaded
@@ -153,6 +196,7 @@ def _direct_dependencies(  # noqa: PLR0913  the object, the payload, and inherit
     directories = own if info.runpath else list(dict.fromkeys([*own, *inherited]))
     passed_on = inherited if info.runpath else tuple(directories)
     dependencies = [(lib, True) for lib in _opened_by_name(path, data, libraries, directories)]
+    from_system = []
     for needed in info.needed:
         if _LIBPYTHON.match(needed):
             raise NativeError(
@@ -170,6 +214,10 @@ def _direct_dependencies(  # noqa: PLR0913  the object, the payload, and inherit
                 f"{path} needs {needed}, which is neither bundled nor a standard system library; "
                 f"bundle it (auditwheel repair) or pass --allow-system-lib {needed}"
             )
+        else:
+            from_system.append(needed)
+    if system is not None and from_system:
+        system.record(path, data, from_system, allowed)
     return dependencies, passed_on
 
 
@@ -179,12 +227,15 @@ def closures(
     *,
     allowed: frozenset[str],
     warn: Callable[[str], None] = lambda _: None,
+    system: SystemUse | None = None,
 ) -> dict[str, tuple[str, ...]]:
     """Bundled shared objects each extension module loads, transitively (excluding itself):
     NEEDED ones, and libraries opened by name. A library opened by name whose own needs cannot
     be met (a CUDA provider without the CUDA runtime) is left out with a warning; it would not
     load anyway, and the build must not fail over a guess. A native given as a Path is mapped
-    from its file while it is looked into (``opened``)."""
+    from its file while it is looked into (``opened``). ``system`` collects what the objects
+    reached take from the system (``SystemUse``); entries of ``allowed`` it never saw, and
+    version tables it could not read, are warned about."""
     payload = set(natives)
     libraries: dict[str, list[str]] = {}  # directory -> shared libraries (not extensions) in it
     for path in sorted(payload):
@@ -201,7 +252,7 @@ def closures(
         if (path, inherited) not in direct:
             with opened(natives[path]) as data:
                 direct[path, inherited] = _direct_dependencies(
-                    path, data, payload, libraries, allowed, inherited=inherited
+                    path, data, payload, libraries, allowed, inherited=inherited, system=system
                 )
         found, passed_on = direct[path, inherited]
         return [(library, by_name, passed_on) for library, by_name in found]
@@ -231,4 +282,15 @@ def closures(
         result[extension] = tuple(sorted(seen))
     for message in left_out.values():
         warn(message)
+    if system is not None:
+        _warn_system(system, allowed, warn)
     return result
+
+
+def _warn_system(system: SystemUse, allowed: frozenset[str], warn: Callable[[str], None]) -> None:
+    for library in sorted(allowed - system.allowed_used):
+        warn(f"--allow-system-lib {library}: no native file reached by an extension module "
+             "needs it")  # fmt: skip
+    for path, reason in sorted(system.unreadable.items()):
+        warn(f"{path}: symbol versions unreadable ({reason}); the system libraries it needs "
+             "are listed without versions")  # fmt: skip

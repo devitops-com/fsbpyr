@@ -80,6 +80,18 @@ def test_inspect_shows_the_app_and_the_fsbpyr_it_was_built_with(
         ("git", {"commit": COMMIT, "tag": "v0.8.1"}),
         ("fsbpyr_version", "0.1.1-6d7ca726"),
         ("glibc", "2.28"),
+        (
+            "system",
+            {
+                "libraries": {
+                    "libc.so.6": {"needed_by": ["(stub)"], "versions": {"GLIBC": "2.28"}},
+                    "libstdc++.so.6": {
+                        "needed_by": [EXT],
+                        "versions": {"CXXABI": "1.3.9", "GLIBCXX": "3.4.22"},
+                    },
+                }
+            },
+        ),
         ("uv", "0.13.1"),
         ("zstd_level", 9),
         ("native_compression", "xz -6"),
@@ -96,6 +108,43 @@ def test_inspect_shows_the_app_and_the_fsbpyr_it_was_built_with(
         f"size       {size:.1f} MB, 3 distributions",
         "compressed zstd 9, native files xz -6",
     ]
+
+
+def test_inspect_lists_the_entry_point_and_what_the_target_must_provide(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    system = {"libraries": {
+        "libc.so.6": {"needed_by": ["(stub)"], "versions": {"GLIBC": "2.28"}},
+        "libstdc++.so.6": {"needed_by": [EXT], "versions": {"CXXABI": "1.3.9",
+                                                             "GLIBCXX": "3.4.22"}},
+    }}  # fmt: skip
+    executable = _executable(tmp_path, ("glibc", "2.28"), ("system", system))
+
+    lines = _inspect(executable, capsys)
+
+    assert "entry      aiagent.cli:main" in lines
+    assert "needs      glibc >= 2.28; libstdc++.so.6 (CXXABI_1.3.9, GLIBCXX_3.4.22)" in lines
+    assert "system libraries: 2" in lines
+
+
+def test_builds_before_the_system_report_show_no_libraries(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lines = _inspect(_executable(tmp_path), capsys)
+
+    assert "system libraries: 0" in lines and not any(x.startswith("needs") for x in lines)
+
+
+@pytest.mark.parametrize("system", [None, "x", {"libraries": []}, {"libraries": {"a": 1}},
+                                    {"libraries": {"a": {"versions": 1}}}])  # fmt: skip
+def test_unexpected_system_report_shapes_are_tolerated(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], system: object
+) -> None:
+    text = json.dumps({"glibc": "2.28", "system": system})
+
+    lines = _inspect(_with_build_info(_executable(tmp_path), text), capsys)
+
+    assert lines[0] == "app        aiagent"
 
 
 @pytest.mark.parametrize(
@@ -197,7 +246,9 @@ def test_json_describes_everything(tmp_path: Path, capsys: pytest.CaptureFixture
     executable = _executable(
         tmp_path, ("project", {"name": "aiagent", "version": "0.8.1"}),
         ("git", {"commit": COMMIT, "tag": "v0.8.1"}), ("fsbpyr_version", "0.3.0-1a2b3c4d"),
-        ("uv", "0.13.1"),
+        ("uv", "0.13.1"), ("glibc", "2.28"),
+        ("system", {"libraries": {"libstdc++.so.6": {"needed_by": [EXT],
+                                                      "versions": {"GLIBCXX": "3.4.22"}}}}),
     )  # fmt: skip
 
     assert main(["inspect", "--json", "--verify", str(executable)]) == 0
@@ -207,6 +258,9 @@ def test_json_describes_everything(tmp_path: Path, capsys: pytest.CaptureFixture
     assert report["built_with"] == "0.3.0-1a2b3c4d"
     assert report["python"] == "3.14.8" and report["verified"] is True
     assert report["uv"] == "0.13.1"
+    assert report["entry"] == "aiagent.cli:main"
+    assert report["system_libraries"] == report["build_info"]["system"]["libraries"]
+    assert list(report["system_libraries"]) == ["libstdc++.so.6"]
     assert report["size"] == executable.stat().st_size
     assert report["distributions"][2] == {"name": "pyyaml", "version": "6.0.2"}
     assert report["shared_libraries"] == [LIB, PLAIN] and report["extension_modules"] == [EXT]

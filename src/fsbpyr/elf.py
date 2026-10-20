@@ -13,6 +13,7 @@ _SHDR = struct.Struct("<IIQQQQIIQQ")  # name, type, flags, addr, offset, size, l
 _VERNEED = struct.Struct("<HHIII")  # vn_version, vn_cnt, vn_file, vn_aux, vn_next
 _VERNAUX = struct.Struct("<IHHII")  # vna_hash, vna_flags, vna_other, vna_name, vna_next
 _GLIBC = re.compile(r"GLIBC_(\d+)\.(\d+)")
+_NUMERIC = re.compile(r"([A-Z]+)_(\d+(?:\.\d+)*)")  # GLIBCXX_3.4.22, CXXABI_1.3.9, GCC_7.0.0
 _GLIBC_ABI = {"GLIBC_ABI_DT_RELR": (2, 36)}  # version markers that are not release numbers
 _MAX_NAME = 4096
 PT_LOAD, PT_DYNAMIC = 1, 2
@@ -160,23 +161,33 @@ def dynamic_info(data: ElfData) -> DynamicInfo:
     )
 
 
-def needed_versions(data: ElfData) -> frozenset[str]:
-    """Symbol versions an object requires from its libraries (DT_VERNEED): GLIBC_2.17, ..."""
+@dataclass(frozen=True, slots=True)
+class VersionNeed:
+    """What an object needs from one version namespace (GLIBCXX, CXXABI, ...) of one library."""
+
+    highest: tuple[int, ...] | None  # the newest numeric version, GLIBCXX_3.4.22 as (3, 4, 22)
+    markers: tuple[str, ...]  # the others, sorted: CXXABI_TM_1, GLIBC_PRIVATE
+
+
+def needed_versions(data: ElfData) -> frozenset[tuple[str, str]]:
+    """Symbol versions an object requires from its libraries (DT_VERNEED), each with the
+    library: ("libc.so.6", "GLIBC_2.17"), ..."""
     section = _dynamic(data)
     if section is None or DT_VERNEED not in section.values:
         return frozenset()
-    versions: set[str] = set()
+    versions: set[tuple[str, str]] = set()
     budget = _MAX_ENTRIES  # shared by all entries: overlapping chains cannot multiply the work
     offset = _file_offset(section.loads, section.values[DT_VERNEED])
     for _ in range(min(section.values.get(DT_VERNEEDNUM, 0), _MAX_ENTRIES)):
-        _, count, _, aux, following = _unpack(_VERNEED, data, offset)
+        _, count, file, aux, following = _unpack(_VERNEED, data, offset)
+        library = section.string(file)
         entry = offset + aux
         for _ in range(count):
             budget -= 1
             if budget < 0:
                 raise ElfError("too many symbol version entries")
             _, _, _, name, next_entry = _unpack(_VERNAUX, data, entry)
-            versions.add(section.string(name))
+            versions.add((library, section.string(name)))
             if not next_entry:
                 break
             entry += next_entry
@@ -189,7 +200,32 @@ def needed_versions(data: ElfData) -> frozenset[str]:
 def glibc_requirement(data: ElfData) -> tuple[int, int] | None:
     """The newest glibc an object needs (GLIBC_2.2.5 counts as 2.2; ABI markers as the release
     that introduced them)."""
-    versions = needed_versions(data)
+    versions = [version for _, version in needed_versions(data)]
     found = [(int(m[1]), int(m[2])) for v in versions if (m := _GLIBC.match(v))]
     found += [_GLIBC_ABI[v] for v in versions if v in _GLIBC_ABI]
     return max(found, default=None)
+
+
+def version_requirements(data: ElfData) -> dict[str, dict[str, VersionNeed]]:
+    """What an object needs per library and version namespace: libstdc++.so.6 ->
+    GLIBCXX (3, 4, 22), CXXABI (1, 3, 11), ... A name that is not NAME_1.2.3 is a marker."""
+    numeric: dict[str, dict[str, list[tuple[int, ...]]]] = {}
+    markers: dict[str, dict[str, set[str]]] = {}
+    for library, version in needed_versions(data):
+        found = _NUMERIC.fullmatch(version)
+        namespace = found[1] if found else version.partition("_")[0]
+        numeric.setdefault(library, {}).setdefault(namespace, [])
+        markers.setdefault(library, {}).setdefault(namespace, set())
+        if found:
+            numeric[library][namespace].append(tuple(int(part) for part in found[2].split(".")))
+        else:
+            markers[library][namespace].add(version)
+    return {
+        library: {
+            namespace: VersionNeed(
+                max(found, default=None), tuple(sorted(markers[library][namespace]))
+            )
+            for namespace, found in sorted(namespaces.items())
+        }
+        for library, namespaces in sorted(numeric.items())
+    }

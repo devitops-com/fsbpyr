@@ -5,7 +5,8 @@ executable that carries CPython 3.14, the project and its locked dependencies. T
 needs nothing on the target machine but Linux x86-64 with glibc 2.28 or newer (the baseline
 every build targets and the tests run on; `fsbpyr inspect` shows the glibc an executable
 actually needs, which can be older), plus the system libraries its native dependencies link
-(often libstdc++ and libgcc_s): no Python, no virtual environment, no installation step.
+(often libstdc++ and libgcc_s; `fsbpyr inspect` lists them): no Python, no virtual
+environment, no installation step.
 Modules are imported straight from the file, so startup stays close to plain CPython.
 
 ## Quickstart
@@ -172,13 +173,20 @@ fsbpyr inspect BINARY [--json] [--verify] [--all-modules]
 ```
 
 Shows the app and its version, the fsbpyr that built it (`fsbpyr --version` prints the same form:
-`0.4.0-1a2b3c4d`), Python and glibc, the uv that built it, how its content is compressed (the
-zstd level and, with native files, `xz -6` after `--best-compression`), the file's digest, the
-bundled shared libraries and extension modules, and the top-level modules of each distribution,
-in as many columns as the terminal fits. `--all-modules` lists every module, `--json` prints
+`0.4.0-1a2b3c4d`), Python and glibc, the entry point, the system libraries the executable
+needs from the target with the newest symbol version it uses of each (libstdc++'s `GLIBCXX`
+and `CXXABI`, libgcc_s's `GCC`, libz's `ZLIB`), the uv that built it, how its content is
+compressed (the zstd level and, with native files, `xz -6` after `--best-compression`), the
+file's digest, the bundled shared libraries and extension modules, and the top-level modules
+of each distribution, in as many columns as the terminal fits. `--all-modules` lists every module, `--json` prints
 everything as JSON, and `--verify` recomputes the digest and also prints the file's plain
 SHA-256 (`sha256` in the text and in `--json`), the hash a GitHub attestation or `sha256sum`
 names. Without `--verify` it is left out, so plain `inspect` stays fast.
+
+A build warns when a native file needs a `GLIBCXX`, `CXXABI`, `GCC` or `ZLIB` version newer
+than the manylinux_2_28 policy allows, since such a library fails to import on a target with
+an older libstdc++ (Debian 10, RHEL 8); the warning names the file and the version. The list
+covers the native files an extension module loads, and the launcher.
 
 The glibc shown (`glibc >= X.Y`) is the newest glibc symbol version the launcher and the
 bundled native files use, so the oldest glibc this executable starts on. It can be older

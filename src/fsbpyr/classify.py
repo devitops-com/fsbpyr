@@ -6,13 +6,13 @@ import re
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 
 from .closure import InstalledDist
 from .compiler import Compiled, Compiler, Job, compiled, compressed
 from .elf import ElfError, glibc_requirement, is_elf
-from .natives import NativeError, closures, is_extension_module, opened
+from .natives import NativeError, SystemUse, closures, is_extension_module, opened
 from .payload.format import (
     NATIVE_KINDS,
     THREADS,
@@ -95,6 +95,7 @@ class Content:
     dists: tuple[Dist, ...]
     warnings: tuple[str, ...]
     glibc: tuple[tuple[int, int], str] | None = None  # newest need of a native file, and the file
+    system: SystemUse = field(default_factory=SystemUse)  # what the natives take from the system
 
 
 def module_name(rel: str) -> tuple[str, bool] | None:
@@ -184,6 +185,7 @@ class _Collector:
         self.files: dict[str, File] = {}
         self.owners: dict[str, str] = {}  # path -> dist
         self.natives: dict[str, Path] = {}  # ELF shared objects, path -> their file
+        self.system = SystemUse()
         # Directories that top-level .pth files add to sys.path, in site.py's order.
         self.roots: list[str] = []
         # CPython's order: sys.path entry (site-packages, then .pth directories), then within a
@@ -413,7 +415,7 @@ class _Collector:
         extensions = {m.path for m in self.modules.values() if m.kind is ModuleKind.EXTENSION}
         try:
             needs = closures(self.natives, extensions, allowed=allowed,
-                             warn=self.warnings.append)  # fmt: skip
+                             warn=self.warnings.append, system=self.system)  # fmt: skip
         except NativeError as exc:
             raise ClassifyError(str(exc)) from exc
         self.reached = {member for members in needs.values() for member in members}
@@ -633,4 +635,5 @@ def classify(  # noqa: PLR0913  the build options, keyword-only
         ),
         warnings=tuple(collector.warnings),
         glibc=collector.glibc(),
+        system=collector.system,
     )

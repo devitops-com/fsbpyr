@@ -295,7 +295,11 @@ def test_required_symbol_versions_are_read() -> None:
                     versions=(("libc.so.6", ("GLIBC_2.2.5", "GLIBC_2.17")),
                               ("libm.so.6", ("GLIBC_2.29",))))  # fmt: skip
 
-    assert needed_versions(data) == {"GLIBC_2.2.5", "GLIBC_2.17", "GLIBC_2.29"}
+    assert needed_versions(data) == {
+        ("libc.so.6", "GLIBC_2.2.5"),
+        ("libc.so.6", "GLIBC_2.17"),
+        ("libm.so.6", "GLIBC_2.29"),
+    }
     assert glibc_requirement(data) == (2, 29)
     assert glibc_requirement(make_elf()) is None
 

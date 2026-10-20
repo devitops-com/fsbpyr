@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.cli import main
+from fsbpyr.natives import GLIBC_LIBRARIES
 from fsbpyr.payload.format import NATIVE_KINDS
 from fsbpyr.payload.reader import Executable
 from fsbpyr.project import LockSource
@@ -52,6 +53,8 @@ COMMANDS = {  # (binary, arguments) -> expected stdout; the HTTP checks need the
     },
 }
 _GLIBC = re.compile(r"GLIBC_(\d+)\.(\d+)")
+_REQUIRED_FROM = re.compile(r"^\s+required from (\S+):$")
+_VERSION_REF = re.compile(r"^\s+0x[0-9a-f]+ 0x[0-9a-f]+ \d+ ([A-Z]+)_(\d+(?:\.\d+)*)$")
 # onnxruntime itself runs `sh -c "echo `blkid; hostname`"`; minimal images lack either command
 _NO_HOSTNAME = re.compile(r"^sh: .*(blkid|hostname): (command )?not found\n", re.MULTILINE)
 
@@ -104,6 +107,54 @@ def _objdump_glibc(data: bytes, scratch: Path) -> tuple[int, int] | None:
     listing = subprocess.run([OBJDUMP or "llvm-objdump", "-T", str(scratch)],
                              capture_output=True, text=True, check=True).stdout  # fmt: skip
     return max(((int(a), int(b)) for a, b in _GLIBC.findall(listing)), default=None)
+
+
+def _objdump_versions(data: bytes, scratch: Path) -> dict[str, dict[str, str]]:
+    """The newest numeric symbol version per library and namespace, as objdump lists them."""
+    scratch.write_bytes(data)
+    listing = subprocess.run([OBJDUMP or "llvm-objdump", "-p", str(scratch)],
+                             capture_output=True, text=True, check=True).stdout  # fmt: skip
+    found: dict[str, dict[str, tuple[int, ...]]] = {}
+    library = ""
+    for line in listing.splitlines():
+        if match := _REQUIRED_FROM.match(line):
+            library = match[1]
+        elif (match := _VERSION_REF.match(line)) and library:
+            version = tuple(int(part) for part in match[2].split("."))
+            namespaces = found.setdefault(library, {})
+            namespaces[match[1]] = max(namespaces.get(match[1], version), version)
+    return {lib: {ns: ".".join(map(str, v)) for ns, v in sorted(table.items())}
+            for lib, table in sorted(found.items())}  # fmt: skip
+
+
+@pytest.mark.skipif(OBJDUMP is None, reason="needs llvm-objdump")
+@pytest.mark.parametrize("name", ["hello", "heavy", "heavy-pip", "compat"])
+def test_reported_system_libraries_match_the_binary(apps: Path, tmp_path: Path, name: str) -> None:
+    """Every library and version namespace the build reports is one the objects need, with the
+    newest version among them; hello needs nothing beyond glibc's libraries."""
+    with Executable.open(apps / name) as executable:
+        payload = executable.payload
+        reported = json.loads(payload.build_info)["system"]["libraries"]
+        objects = [executable.stub_prefix()] + [
+            payload.read_blob(f.blob) for f in payload.files() if f.kind in NATIVE_KINDS
+        ]
+
+    seen: dict[str, dict[str, str]] = {}
+    for data in objects:
+        for library, table in _objdump_versions(data, tmp_path / "object").items():
+            merged = seen.setdefault(library, {})
+            for namespace, version in table.items():
+                old = tuple(map(int, merged.get(namespace, version).split(".")))
+                merged[namespace] = ".".join(
+                    map(str, max(old, tuple(map(int, version.split(".")))))
+                )
+    for library, entry in reported.items():
+        for namespace, version in entry.get("versions", {}).items():
+            assert seen[library][namespace] == version, f"{library} {namespace}"
+    if name == "hello":
+        assert set(reported) <= GLIBC_LIBRARIES
+    if name.startswith("heavy"):
+        assert {"libstdc++.so.6", "libgcc_s.so.1"} <= set(reported)
 
 
 @pytest.mark.skipif(OBJDUMP is None, reason="needs llvm-objdump")
