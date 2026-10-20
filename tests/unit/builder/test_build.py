@@ -12,15 +12,18 @@ import pytest
 
 from fsbpyr.build import (
     BuildError,
+    StrictError,
     best_compression_unused,
     build,
     builder_uv,
     built_here_above,
+    check_strict,
     glibc_report,
     rebuild_on_baseline,
     smoke_test,
     uv_mismatch,
 )
+from fsbpyr.classify import Uncounted
 from fsbpyr.cli import main
 from fsbpyr.closure import SiteIndex
 from fsbpyr.config import BuildConfig
@@ -389,3 +392,59 @@ def test_best_compression_of_native_files_or_none_asked_is_no_warning(
     files = [_file(FileKind.RESOURCE), _file(kind)]
 
     assert best_compression_unused(best_compression=best, files=files) == []
+
+
+def _locked(project: Path) -> None:
+    (project / "requirements.txt").write_text("dep==1 --hash=sha256:00\n")
+
+
+def test_strict_refuses_an_unlocked_build_and_leaves_the_output_as_it_was(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _staged(tmp_path, monkeypatch, APP)
+    out = _existing(tmp_path / "bin" / "app")
+
+    with pytest.raises(StrictError, match=r"has 1 warning; .*\n  unlocked build") as caught:
+        build(project, BuildConfig(entry="app.cli:main", output=out, strict=True))
+
+    assert not getattr(caught.value, "__notes__", [])  # the message lists them
+    assert out.read_bytes() == b"the working tool"
+    assert sorted(p.name for p in out.parent.iterdir()) == ["app"]
+    build(project, BuildConfig(entry="app.cli:main", output=out, smoke=False))  # not strict
+    assert out.read_bytes()[:4] == b"\x7fELF"
+
+
+def test_strict_does_not_count_the_build_hosts_uv_or_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _staged(tmp_path, monkeypatch, APP)
+    _locked(project)
+    monkeypatch.setattr("fsbpyr.build.builder_uv", lambda: "0.12.0")  # staged uv is 0.13.1
+    monkeypatch.setattr("fsbpyr.build.git_state",
+                        lambda directory, warn: warn("git: boom; no commit recorded"))  # fmt: skip
+
+    result = build(project, BuildConfig(entry="app.cli:main", output=tmp_path / "app",
+                                        strict=True, smoke=False))  # fmt: skip
+
+    assert any(w.startswith("uv 0.13.1 is not uv 0.12.0") for w in result.warnings)
+    assert any(w.startswith("git: boom") for w in result.warnings)
+
+
+def test_strict_counts_every_other_warning() -> None:
+    host = [Uncounted("git: boom"), Uncounted("libx loaded by no extension")]
+
+    check_strict(host)  # nothing counts
+    with pytest.raises(StrictError, match=r"has 2 warnings; [^\n]*\n  a\n  b$"):
+        check_strict(["a", host[0], "b"])
+
+
+def test_requirements_without_pins_are_a_warning_even_when_not_strict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _staged(tmp_path, monkeypatch, APP)
+    (project / "requirements.txt").write_text("dep>=1\n")
+
+    result = build(project, BuildConfig(entry="app.cli:main", output=tmp_path / "app",
+                                        smoke=False))  # fmt: skip
+
+    assert any("not pinned with ==" in w and "dep>=1" in w for w in result.warnings)

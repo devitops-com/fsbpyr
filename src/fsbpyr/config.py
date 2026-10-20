@@ -28,6 +28,7 @@ class BuildConfig:
     fast_compression: bool = False  # zstd level 3 instead of 9 for app content (D29)
     best_compression: bool = False  # native files as xz -6 (D33): smaller, slower to build
     interpreter_reexec: bool = False  # -m/-c from the app's own children run as Python (D23)
+    strict: bool = False  # a warning about the app, or an unlocked build, fails the build
 
     def __post_init__(self) -> None:
         if self.fast_compression and self.best_compression:
@@ -119,6 +120,8 @@ CONFIG_KEYS = (
     ConfigKey("fs-packages", "fs_packages", _packages,
               "List of package names. Packages whose files must exist on disk; "
               "as `--fs-package`."),
+    ConfigKey("strict", "strict", _flag,
+              "Boolean. Fail the build on warnings; as `--strict`."),
     ConfigKey("interpreter-reexec", "interpreter_reexec", _flag,
               "Boolean. Children the app starts with `-m` or `-c` run as Python; "
               "as `--interpreter-reexec`."),

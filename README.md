@@ -100,6 +100,7 @@ offline, the host's build is packaged and the build warns which glibc it needs.
 | `--hints / --no-hints` | also list packages that may read files next to `__file__` (a guess) |
 | `--interpreter-reexec / --no-interpreter-reexec` | let the app's own children started as `sys.executable -m MODULE` or `-c CODE` run as Python |
 | `--smoke / --no-smoke` | run the new executable once as a smoke test (default) or skip it |
+| `--strict / --no-strict` | fail the build, leaving the output as it was, on any warning about the app and on an unlocked build; requirements files must pin and hash every line |
 | `-v, --verbose` | print each uv command and let uv's error output through |
 
 `fsbpyr build -h` shows the same list. [Leaving out sources](#leaving-out-sources) explains
@@ -127,6 +128,30 @@ fast-compression = true      # same as --fast-compression
 fs-packages = ["mypkg.templates"]
 allow-system-libs = ["libcuda.so.1"]
 interpreter-reexec = true    # same as --interpreter-reexec
+strict = true                # same as --strict
+```
+
+## Failing a build on warnings
+
+Without `--strict`, every warning leaves the exit status at 0. With it, `build` stops after
+all warnings are collected and before it writes anything, so a file at `-o` stays as it was,
+and exits 1 with the warnings in the message. This includes the "unlocked build" warning, so
+a project without `uv.lock`, `pylock.toml` or `requirements.txt` fails. Three kinds of
+warning do not count: the uv that differs from the one that built fsbpyr and git errors,
+which describe the build host, and the ctypes guess about libraries no extension module
+loads, which only `fs-packages` silences, and that changes how the app runs.
+
+A `requirements.txt` counts as locked even when it is not pinned. Without `--strict`, a
+line without `==` gets a warning. With it, uv also gets `--require-hashes`, so every line
+needs `==` and a `--hash`. uv checks the hashes in a `pylock.toml` on its own,
+`--strict` or not (a changed hash in a `pylock.toml` fails the build; verified with uv 0.13.1).
+
+`--strict` does not check the glibc the executable needs. To fail unless it is 2.28 or
+older (`jq -e` exits 1 on `false`):
+
+```sh
+fsbpyr build -o dist/mytool --strict
+fsbpyr inspect --json dist/mytool | jq -e '.glibc | split(".") | map(tonumber) <= [2, 28]'
 ```
 
 ## Leaving out sources
