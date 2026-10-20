@@ -243,12 +243,17 @@ def runtime_build(*, python: str, clang: Path | None) -> int:
     return 0
 
 
-@runtime_group.command("list", help="list runtimes in the cache")
+@runtime_group.command("list", help="list the embedded runtime and the runtimes in the cache")
 def runtime_list() -> int:
     _collect_when_due()
     from .runtime import registry  # noqa: PLC0415  keep --version fast
 
-    for runtime_id, version in registry.list_runtimes():
+    try:
+        runtimes = registry.list_runtimes()
+    except registry.RuntimeCacheError as exc:
+        print(f"fsbpyr: error: {exc}", file=sys.stderr)
+        return 1
+    for runtime_id, version in runtimes:
         print(f"{runtime_id}  Python {version}")
     return 0
 

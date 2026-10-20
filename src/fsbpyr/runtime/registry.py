@@ -269,7 +269,8 @@ def find_runtime(python: str, cache: Path | None = None, *, sanitize: bool = Fal
         if sanitize:  # a test variant (D38): the test run builds it
             raise RuntimeCacheError(f"no sanitized runtime for Python {python}")
         raise RuntimeCacheError(
-            f"no runtime for Python {python}; run `fsbpyr runtime build --python {python}`"
+            f"no runtime for Python {python}; run `fsbpyr runtime build --python {python}`, "
+            "or use the release binary, which carries its own"
         )
     return Runtime.load(directory)
 
@@ -323,8 +324,13 @@ def build_runtime(
 
 
 def list_runtimes(cache: Path | None = None) -> list[tuple[str, str]]:
-    """(runtime id, Python version) of every complete runtime in the cache."""
+    """(runtime id, Python version) of the runtime embedded in the running executable, if any,
+    then of every complete runtime in the cache."""
     found = []
+    own = running_executable()
+    if own is not None:
+        embedded = Runtime.from_executable(own)
+        found.append((embedded.runtime_id, embedded.python_version))
     for meta in sorted(((cache or cache_root()) / "runtimes").glob(f"*/{_META}")):
         data = json.loads(meta.read_text())
         found.append((data["runtime_id"], data["python_version"]))
