@@ -170,13 +170,13 @@ from_source() {
     rm -rf "$s1" "$s2" "$s3"
     mkdir -p "$s1" "$s2" "$s3"
     say "Stage 1: fsbpyr from source builds $s1/fsbpyr"
-    uv run "${py[@]}" --locked fsbpyr build . -o "$s1/fsbpyr"
+    uv run "${py[@]}" --locked fsbpyr build . "${py[@]}" -o "$s1/fsbpyr"
     verify "$s1/fsbpyr"
     say "Stage 2: $s1/fsbpyr builds $s2/fsbpyr"
-    "$s1/fsbpyr" build . -o "$s2/fsbpyr"
+    "$s1/fsbpyr" build . "${py[@]}" -o "$s2/fsbpyr"
     verify "$s2/fsbpyr"
     say "Stage 3: $s2/fsbpyr builds $s3/fsbpyr"
-    "$s2/fsbpyr" build . -o "$s3/fsbpyr"
+    "$s2/fsbpyr" build . "${py[@]}" -o "$s3/fsbpyr"
     verify "$s3/fsbpyr"
     # Builds are reproducible: two executables built from the same checkout by builders of the
     # same version are the same bytes. Stage 2 and 3 differ only if building changes fsbpyr.

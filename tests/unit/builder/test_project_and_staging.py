@@ -116,11 +116,12 @@ def test_directory_without_project_files_is_rejected(tmp_path: Path) -> None:
         Project.load(tmp_path)
 
 
-def test_python_version_file_disagreement_is_reported(tmp_path: Path) -> None:
-    project = Project.load(_project(tmp_path, PYPROJECT, **{".python-version": "3.12\n"}))
+def test_python_pin_is_the_first_word_of_the_python_version_file(tmp_path: Path) -> None:
+    assert Project.load(_project(tmp_path, PYPROJECT)).python_pin() is None
+    for text, pin in [("3.12\n", "3.12"), ("cpython@3.13.2 # note\n", "3.13.2"), ("\n", None)]:
+        (tmp_path / ".python-version").write_text(text)
 
-    assert project.python_version_mismatch("3.14") == "3.12"
-    assert project.python_version_mismatch("3.12") is None
+        assert Project.load(tmp_path).python_pin() == pin
 
 
 def test_requires_python_is_checked(tmp_path: Path) -> None:

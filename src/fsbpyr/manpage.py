@@ -43,7 +43,9 @@ ENVIRONMENT = (
 FILES = (
     ("pyproject.toml", "The project's metadata and the `[tool.fsbpyr]` table (CONFIGURATION)."),
     ("${XDG_CACHE_HOME:-~/.cache}/fsbpyr", "fsbpyr's own cache: runtimes, Python "
-                                           "distributions, sysroots and downloads."),
+                                           "distributions, sysroots and downloads, among them "
+                                           "the fsbpyr variants that a build for another "
+                                           "Python fetches."),
     ("${XDG_CACHE_HOME:-~/.cache}/<app>", "What a built executable extracted on first use."),
     (".fsbpyr-cache", "The marker in a cache root: only a root that has it is collected."),
 )

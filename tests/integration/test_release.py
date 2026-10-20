@@ -1190,7 +1190,8 @@ def test_bootstrap_python_runs_one_variants_stages_in_its_own_environment(tmp_pa
     assert "Locked environment on Python 3.12" in result.stdout
     assert "uv sync --python 3.12 --locked" in calls
     assert "uv run --python 3.12 --locked fsbpyr runtime build --python 3.12" in calls
-    assert "uv run --python 3.12 --locked fsbpyr build . -o dist/stage1-3.12/fsbpyr" in calls
+    assert ("uv run --python 3.12 --locked fsbpyr build . --python 3.12 "
+            "-o dist/stage1-3.12/fsbpyr") in calls
     assert not (root / "dist/stage1").exists()  # the default's directories stay untouched
 
 
@@ -1216,7 +1217,7 @@ def test_make_runs_on_the_python_given_on_its_command_line_only() -> None:
 
     assert "uv run --python 3.12 --locked pytest" in dry_run("test-ci", "PYTHON=3.12")
     assert "uv run --locked ruff check" in dry_run("check", PYTHON="3.12")  # the environment's
-    assert "--python 3.13 --locked fsbpyr build . -o dist/fsbpyr-3.13" in dry_run(
+    assert "--python 3.13 --locked fsbpyr build . --python 3.13 -o dist/fsbpyr-3.13" in dry_run(
         "build", "PYTHON=3.13"
     )
     assert "bootstrap.sh --python 3.14" in dry_run("bootstrap", "PYTHON=3.14")

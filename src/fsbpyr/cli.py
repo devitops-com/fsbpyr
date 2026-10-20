@@ -71,10 +71,20 @@ def cli(ctx: click.Context) -> None:
     "build",
     help="build a single-file executable from a project\n\nPROJECT is the project's directory "
     "(default: the current one). Options given here win over `[tool.fsbpyr]` in its "
-    "`pyproject.toml`.",
+    "`pyproject.toml`.\n\n"
+    "The app runs on the Python that `--python`, `python` in `[tool.fsbpyr]`, a supported "
+    "`.python-version` pin or `requires-python` choose, in that order (the lowest supported "
+    "version `requires-python` allows, the highest below an upper-only bound). Each Python "
+    "has its own fsbpyr: when this one is not it, the matching variant of this release is "
+    "fetched into the cache once and run with the same arguments. A developer build never "
+    "fetches one; it says how to build it.",
 )
 @click.argument("project", required=False, default=".",
                 type=click.Path(file_okay=False, path_type=Path))  # fmt: skip
+@click.option("--python", metavar="X.Y",
+              help="the Python to build for, 3.12 to 3.14, inside `requires-python` "
+                   "(default: `python` in `[tool.fsbpyr]`, else `.python-version`, else "
+                   "`requires-python` decides)")  # fmt: skip
 @click.option("--entry", metavar="NAME", shell_complete=_complete_entry,
               help="console script name, `module` or `module:function` "
                    "(default: the only script)")  # fmt: skip
@@ -126,6 +136,7 @@ def cli(ctx: click.Context) -> None:
 def build_command(  # noqa: PLR0913  click passes every option by name
     *,
     project: Path,
+    python: str | None,
     entry: str | None,
     output: Path | None,
     requirements: str | None,
@@ -154,8 +165,10 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     from .classify import ClassifyError  # noqa: PLC0415
     from .closure import ClosureError  # noqa: PLC0415
     from .config import ConfigError, load_config  # noqa: PLC0415
+    from .dispatch import DispatchError, run  # noqa: PLC0415
     from .payload.format import PayloadError  # noqa: PLC0415
     from .project import Project, ProjectError  # noqa: PLC0415
+    from .pyversion import resolve  # noqa: PLC0415
     from .runtime.registry import RuntimeCacheError  # noqa: PLC0415
     from .staging import StagingError  # noqa: PLC0415
 
@@ -164,10 +177,13 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     except ValueError as exc:
         raise click.UsageError(f"--smoke-args: {exc}") from exc
     errors = (AssemblyError, BuildError, BytecodeError, ClassifyError, ClosureError, ConfigError,
-              PayloadError, ProjectError, RuntimeCacheError, StagingError, OSError)  # fmt: skip
+              DispatchError, PayloadError, ProjectError, RuntimeCacheError, StagingError,
+              OSError)  # fmt: skip
     try:
+        loaded = Project.load(project)
         config = load_config(
-            Project.load(project),
+            loaded,
+            python=python,
             entry=entry,
             output=output.resolve() if output else None,
             requirements=requirements,
@@ -184,6 +200,10 @@ def build_command(  # noqa: PLR0913  click passes every option by name
             best_compression=best_compression,
             interpreter_reexec=interpreter_reexec,
         )
+        chosen = resolve(loaded, config.python, own=DEFAULT_PYTHON).version
+        if chosen != DEFAULT_PYTHON:  # another fsbpyr builds it, given this command line
+            args = click.get_current_context().obj  # main() put it there
+            return run(chosen, args, lambda message: print(f"fsbpyr: {message}"))
         result = build(project, config, verbose=verbose,
                        log=lambda message: print(f"fsbpyr: {message}"))
     except errors as exc:
@@ -391,6 +411,10 @@ EXAMPLES = (
      "script."),
     ("fsbpyr build ~/src/mytool -o ~/.local/bin/mytool",
      "Build another project, straight into a directory on `PATH`."),
+    ("fsbpyr build --python 3.12",
+     "Build for Python 3.12, whatever `requires-python` and `.python-version` say. This fsbpyr "
+     "hands the build to its 3.12 variant, which it fetches from its own release the first "
+     "time."),
     ("fsbpyr build --entry mytool --extra fancy",
      "Pick one of the project's console scripts, and install the project's extra `fancy` "
      "with it."),
@@ -478,7 +502,8 @@ def _internal_error(exc: Exception) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     try:
         code: int = cli.main(args=argv, prog_name=PROG, complete_var=COMPLETE_VAR,
-                             standalone_mode=False)  # fmt: skip
+                             standalone_mode=False,
+                             obj=list(sys.argv[1:] if argv is None else argv))  # fmt: skip
     except click.ClickException as exc:  # usage errors: 2, as before
         exc.show()
         return exc.exit_code

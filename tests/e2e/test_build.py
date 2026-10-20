@@ -97,6 +97,8 @@ def test_readme_quickstart_works_on_a_new_account(tmp_path: Path) -> None:
     Pythons; the runtime is in FSBPYR_CACHE_DIR (conftest)."""
     assert UV is not None
     project = _fixture("hello", tmp_path)
+    with (project / "pyproject.toml").open("a") as pyproject:  # builds for the Python tests run on
+        pyproject.write(f'\n[tool.fsbpyr]\npython = "{TARGET_PYTHON}"\n')
     home, tools, fsbpyr = tmp_path / "home", tmp_path / "tools", tmp_path / "fsbpyr"
     home.mkdir()
     tools.mkdir()
@@ -263,7 +265,7 @@ def test_self_hosting_reaches_a_fixed_point(tmp_path: Path) -> None:
     assert main(["build", str(ROOT), "-o", str(stages[0])]) == 0
     for builder, target in itertools.pairwise(stages):
         result = subprocess.run(
-            [builder, "build", ROOT, "-o", target],
+            [builder, "build", ROOT, "--python", TARGET_PYTHON, "-o", target],
             env=env,
             capture_output=True,
             text=True,
@@ -295,7 +297,8 @@ def test_self_hosted_binary_builds_offline_without_clang(tmp_path: Path) -> None
     env = {**os.environ, "PATH": str(Path(UV).parent), "FSBPYR_CACHE_DIR": str(tmp_path / "c")}
 
     result = subprocess.run(
-        [builder, "build", project, "--offline", "-o", tmp_path / "offline"],
+        [builder, "build", project, "--python", TARGET_PYTHON, "--offline", "-o",
+         tmp_path / "offline"],
         env=env, capture_output=True, text=True, check=False,
     )  # fmt: skip
 
@@ -444,8 +447,9 @@ def test_build_interpreter_optimization_does_not_change_the_output(tmp_path: Pat
     for optimize in ("", "2"):
         out = tmp_path / f"hello-{optimize or 'plain'}"
         env = {**os.environ, "PYTHONOPTIMIZE": optimize} if optimize else dict(os.environ)
-        subprocess.run([fsbpyr, "build", project, "-o", out, "--no-smoke"], env=env, check=True,
-                       capture_output=True)  # fmt: skip
+        command = [str(fsbpyr), "build", str(project), "--python", TARGET_PYTHON, "-o", str(out),
+                   "--no-smoke"]
+        subprocess.run(command, env=env, check=True, capture_output=True)
         outputs.append(out.read_bytes())
 
     assert outputs[0] == outputs[1]

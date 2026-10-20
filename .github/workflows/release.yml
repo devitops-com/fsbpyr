@@ -189,7 +189,7 @@ jobs:
       - name: The variant builds itself
         if: ${{ env.SUFFIX != '' }}
         run: |
-          dist/fsbpyr$SUFFIX build . -o dist/rebuilt$SUFFIX
+          dist/fsbpyr$SUFFIX build . --python "${SUFFIX#-}" -o dist/rebuilt$SUFFIX
           cmp dist/stage3$SUFFIX/fsbpyr dist/rebuilt$SUFFIX
           cmp dist/stage3$SUFFIX/fsbpyr dist/fsbpyr$SUFFIX
           rm dist/rebuilt$SUFFIX
