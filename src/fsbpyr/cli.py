@@ -13,9 +13,8 @@ from pathlib import Path
 import click
 from click.shell_completion import BashComplete, FishComplete, ShellComplete, ZshComplete
 
-DEFAULT_PYTHON = "3.14"
+DEFAULT_PYTHON = f"{sys.version_info[0]}.{sys.version_info[1]}"  # the runtime of this fsbpyr
 PROG = "fsbpyr"
-CLI_PYTHON = (3, 14)  # the one Python the CLI accepts until Phase 9 turns on 3.12 and 3.13
 COMPLETE_VAR = "_FSBPYR_COMPLETE"  # set by the completion scripts when they call fsbpyr
 COMPLETERS: dict[str, type[ShellComplete]] = {
     "bash": BashComplete,
@@ -433,15 +432,17 @@ def man() -> int:
 
 
 def _unsupported_python() -> bool:
-    """True, with the error printed, on any Python but CLI_PYTHON (D13, D16; the canonical
-    bytecode already handles 3.12 and 3.13, the rest of the port is not done). pip refuses to
-    install fsbpyr there, but `uv pip install` and `uv tool install` ignore the upper bound of
-    its requires-python, and the build would fail only after staging."""
-    major, minor = CLI_PYTHON
-    if sys.version_info[:2] == (major, minor):
+    """True, with the error printed, on any Python but 3.12 to 3.14 (D13, D16: the canonical
+    bytecode knows their marshal formats). pip refuses to install fsbpyr on others, but
+    `uv pip install` and `uv tool install` ignore the upper bound of its requires-python, and
+    the build would fail only after staging."""
+    from .bytecode import SUPPORTED_PYTHON  # noqa: PLC0415  keep --version fast
+
+    if sys.version_info[:2] in SUPPORTED_PYTHON:
         return False
-    print(f"fsbpyr: error: fsbpyr runs on CPython {major}.{minor} only, not "
-          f"{sys.version_info[0]}.{sys.version_info[1]}", file=sys.stderr)  # fmt: skip
+    names = [f"{major}.{minor}" for major, minor in sorted(SUPPORTED_PYTHON)]
+    print(f"fsbpyr: error: fsbpyr runs on CPython {', '.join(names[:-1])} and {names[-1]} only, "
+          f"not {sys.version_info[0]}.{sys.version_info[1]}", file=sys.stderr)  # fmt: skip
     return True
 
 

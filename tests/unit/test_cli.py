@@ -260,7 +260,7 @@ def test_an_unexpected_exception_prints_its_traceback_and_where_to_report_it(
 
 
 @pytest.mark.parametrize("argv", [["build"], ["runtime", "build"]])
-def test_build_commands_stop_first_on_any_python_but_3_14(
+def test_build_commands_stop_first_on_any_python_but_3_12_to_3_14(
     argv: list[str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """`uv pip install` and `uv tool install` ignore requires-python's upper bound."""
@@ -272,5 +272,5 @@ def test_build_commands_stop_first_on_any_python_but_3_14(
     assert main(argv) == 1
     assert capsys.readouterr() == (
         "",
-        "fsbpyr: error: fsbpyr runs on CPython 3.14 only, not 3.15\n",
+        "fsbpyr: error: fsbpyr runs on CPython 3.12, 3.13 and 3.14 only, not 3.15\n",
     )

@@ -49,7 +49,8 @@ attestation check and building fsbpyr from source are in [Getting fsbpyr](#getti
   projects too.
 - **Project:** a console script (`[project.scripts]`, or the build backend's own table such as
   setuptools' `entry_points`), or `--entry` with a script's name, a module or
-  `module:function`; and a `requires-python`, if it sets one, that admits 3.14.
+  `module:function`; and a `requires-python`, if it sets one, that admits the Python of the
+  fsbpyr that builds (3.14 for a release; see "Supported targets").
 - **Lock sources,** the first one found: a requirements file that `--requirements` or
   `requirements` names, `uv.lock` (the project's or its uv workspace's), `pylock.toml`,
   `requirements.txt`. With none, the build resolves the dependencies itself and warns that it
@@ -57,15 +58,17 @@ attestation check and building fsbpyr from source are in [Getting fsbpyr](#getti
 
 ## Supported targets
 
-- **Python:** apps run CPython 3.14.8, the version every executable embeds, so a project's
-  `requires-python` must admit 3.14.
+- **Python:** apps run the CPython of the fsbpyr that built them: 3.12.15, 3.13.16 or 3.14.8,
+  the version that fsbpyr embeds, so a project's `requires-python` must admit it. fsbpyr itself
+  needs Python 3.12 to 3.14 (D13) and one checkout builds all three variants (`make build
+  PYTHON=3.12`, see "Building from source"). The releases carry the 3.14 variant only so far.
 - **Platform:** Linux x86-64 with glibc only. On a musl system such as Alpine the glibc loader
   the executable names does not exist, and the shell reports the executable as "not found"
   although the file is there.
 - **Interpreter build:** CPython with the GIL only; the launcher refuses to build for a
   free-threaded CPython ([D35](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)).
-- **Planned** in [Phase 9](docs/IMPLEMENTATION_PLAN.md), after the MVP: Python 3.12 and 3.13
-  (one fsbpyr per Python version), then Linux aarch64, musl and macOS arm64.
+- **Planned** in [Phase 9](docs/IMPLEMENTATION_PLAN.md), after the MVP: releases of the 3.12
+  and 3.13 variants (one fsbpyr per Python version), then Linux aarch64, musl and macOS arm64.
 
 How an executable differs from a venv, what the target must provide, which distributions and
 packages are tested, and what to do when an app fails: [docs/compatibility.md](docs/compatibility.md).
@@ -491,6 +494,13 @@ make bootstrap   # once: from source to an installed fsbpyr
 make build       # dist/fsbpyr, built by the installed fsbpyr
 make install     # dist/fsbpyr, its man page and completions under ~/.local
 ```
+
+**Other Python versions.** `PYTHON=3.12` (or `3.13`, `3.14`) on the `make` command line makes
+`make test`, `make test-ci`, `make check` and `make build` run on that Python, in the locked
+environment `.venv-3.12`; the Python must be installed with uv (`uv python install 3.12`).
+`make build PYTHON=3.12` builds `dist/fsbpyr-3.12` from source with its own runtime, and
+`make bootstrap PYTHON=3.12` does the three stages (`tools/bootstrap.sh --python 3.12`) into
+`dist/stage1-3.12` to `dist/stage3-3.12` and `dist/fsbpyr-3.12`, without installing it.
 
 **`make bootstrap`** takes a checkout to an installed fsbpyr. On **Debian trixie** it runs on
 the host:

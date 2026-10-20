@@ -11,6 +11,7 @@ import pytest
 
 from fsbpyr import bytecode
 from fsbpyr.assemble import App, build_executable
+from fsbpyr.build import TARGET_PYTHON
 from fsbpyr.payload.format import FileKind, ModuleKind
 from fsbpyr.payload.spec import Blob, File, Module
 from fsbpyr.runtime import pbs, pins, registry, stub
@@ -51,16 +52,16 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
 def runtime(request: pytest.FixtureRequest) -> registry.Runtime:
     sanitize = getattr(request, "param", "release") == "sanitized"
     try:
-        return registry.find_runtime("3.14", sanitize=sanitize)
+        return registry.find_runtime(TARGET_PYTHON, sanitize=sanitize)
     except registry.RuntimeCacheError:
         pass
-    pinned = downloads.pinned("3.14")
+    pinned = downloads.pinned(TARGET_PYTHON)
     kept = Path(os.environ[DOWNLOADS_VARIABLE]) if os.environ.get(DOWNLOADS_VARIABLE) else None
     seeded = downloads.seed(pinned, kept, registry.cache_root())
     for name, how in seeded.items():
         _download_status.setdefault(name, how)
     try:
-        built = registry.build_runtime("3.14", log=lambda _: None, sanitize=sanitize)
+        built = registry.build_runtime(TARGET_PYTHON, log=lambda _: None, sanitize=sanitize)
     except ToolchainError as exc:  # pragma: no cover - depends on the host
         pytest.skip(f"cannot build a runtime here: {exc}")
     downloads.keep(pinned, kept, registry.cache_root())

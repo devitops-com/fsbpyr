@@ -20,6 +20,7 @@ import pytest
 
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.boot._fsbpyr_rt import gc
+from fsbpyr.build import TARGET_PYTHON
 from fsbpyr.payload.format import (
     BLOB,
     DIGEST_LEAF,
@@ -894,8 +895,8 @@ def test_startup_reads_the_same_with_a_large_unused_dist(runtime: Runtime, tmp_p
     assert _counts(small)["reads"] > 0
 
 
-# The no-op app's size on the pinned Python 3.14 runtime (D15 makes it deterministic).
-NOOP_SIZE = 27_695_360
+# The no-op app's size on each version's pinned runtime (D15 makes it deterministic).
+NOOP_SIZES = {"3.12": 27_409_138, "3.13": 26_664_561, "3.14": 27_695_360}
 NOOP_SIZE_TOLERANCE = 0.03
 
 
@@ -904,4 +905,5 @@ def test_noop_app_size_is_within_3_percent_of_the_recorded_size(build_app: Build
     `runtime` fixture reuses a cached one (CI builds it fresh)."""
     app = build_app({"noop.py": "def main():\n    return 0\n"}, "noop:main")
 
-    assert abs(app.stat().st_size / NOOP_SIZE - 1) <= NOOP_SIZE_TOLERANCE, app.stat().st_size
+    size = app.stat().st_size
+    assert abs(size / NOOP_SIZES[TARGET_PYTHON] - 1) <= NOOP_SIZE_TOLERANCE, size

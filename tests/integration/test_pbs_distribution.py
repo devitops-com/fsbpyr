@@ -8,6 +8,7 @@ from typing import cast
 
 import pytest
 
+from fsbpyr.build import TARGET_PYTHON
 from fsbpyr.runtime import ar, notices, pbs, stdlib
 from fsbpyr.runtime.pins import pin_for
 from fsbpyr.runtime.registry import cache_root
@@ -17,7 +18,7 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture(scope="module")
 def dist() -> pbs.PbsDist:
-    pin = pin_for("3.14", "x86_64-unknown-linux-gnu")
+    pin = pin_for(TARGET_PYTHON, "x86_64-unknown-linux-gnu")
     root = cache_root() / "pbs" / pin.name / "python"
     if not (root / "PYTHON.json").exists():
         pytest.skip("pinned PBS distribution is not in the cache (run fsbpyr runtime build)")
@@ -27,7 +28,8 @@ def dist() -> pbs.PbsDist:
 def test_startup_set_matches_spike_s2(dist: pbs.PbsDist) -> None:
     names = stdlib.startup_names(dist.interpreter)
 
-    assert set(names) == {"encodings", "encodings.aliases", "encodings.utf_8", "linecache"}
+    expected = {"encodings", "encodings.aliases", "encodings.utf_8"}
+    assert set(names) == expected | ({"linecache"} if TARGET_PYTHON != "3.12" else set())  # 3.13+
 
 
 def test_compile_worker_uses_the_target_interpreter(dist: pbs.PbsDist) -> None:
@@ -75,14 +77,18 @@ def test_a_stdlib_module_that_does_not_compile_is_named(dist: pbs.PbsDist, tmp_p
     ]
 
 
+HACL_OBJECTS = {"3.12": 1, "3.13": 1, "3.14": 11}  # the objects of HACL*'s hashes PBS leaves out
+
+
 def test_link_plan_adds_only_hacl_objects(dist: pbs.PbsDist) -> None:
     libpython = dist.root / dist.info["build_info"]["core"]["static_lib"]
     inputs = pbs.link_inputs(dist, set(ar.members(libpython)))
 
     assert {Path(p).parent.name for p in inputs.extra_objects} == {"_hacl"}
-    assert len(inputs.extra_objects) == 11
+    assert len(inputs.extra_objects) == HACL_OBJECTS[TARGET_PYTHON]
     assert "_tkinter" not in dist.builtin_modules()
-    assert {"_ssl", "_sqlite3", "_zstd", "_ctypes"} <= set(dist.builtin_modules())
+    assert {"_ssl", "_sqlite3", "_ctypes"} <= set(dist.builtin_modules())
+    assert ("_zstd" in dist.builtin_modules()) == (TARGET_PYTHON == "3.14")
     assert {p.name for p in inputs.static_libs} >= {"libssl.a", "libcrypto.a", "libzstd.a"}
 
 
@@ -100,7 +106,11 @@ def test_every_linked_static_library_has_a_licence_text(dist: pbs.PbsDist) -> No
                     Path(path).name for path in variant.get("license_paths", ())
                 )
 
-    assert {dist.root / lib for lib in wanted} == set(inputs.static_libs)
+    # no module of 3.12 and 3.13 links libzstd.a: the link plan adds it for the launcher
+    added = {"libzstd.a"} if "_zstd" not in dist.builtin_modules() else set()
+    assert {dist.root / lib for lib in wanted} == {
+        lib for lib in inputs.static_libs if lib.name not in added
+    }
     for lib, names in wanted.items():
         assert names - notices.NOT_LINKED, f"PBS lists no licence text for {lib}"
         assert (names - notices.NOT_LINKED) <= found.texts.keys(), lib
@@ -110,4 +120,7 @@ def test_every_linked_static_library_has_a_licence_text(dist: pbs.PbsDist) -> No
 
 def test_the_texts_pbs_lists_but_does_not_ship_are_known(dist: pbs.PbsDist) -> None:
     # a newer PBS that ships zstd's or HACL*'s text, or drops zlib-ng's, needs a look at notices.py
-    assert notices.collect(dist).unshipped == {"LICENSE.zstd.txt", "LICENSE.zlib-ng.txt"}
+    expected = {"LICENSE.zlib-ng.txt"}
+    if TARGET_PYTHON == "3.14":
+        expected.add("LICENSE.zstd.txt")
+    assert notices.collect(dist).unshipped == expected

@@ -176,6 +176,7 @@ def test_resources_traversal(boot: ModuleType) -> None:
     assert cast(Any, table).read_text(encoding="ascii", errors="strict") == '{"k": 1}'
 
 
+@pytest.mark.skipif(sys.version_info < (3, 13), reason="3.12's takes one resource name")
 def test_functional_resources_api(boot: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "pkg", _load(boot, "pkg"))
 

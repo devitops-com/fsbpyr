@@ -23,8 +23,7 @@ MANIFEST
 .env
 requirements.txt
 .venv
-.venv-3.12
-.venv-3.13
+.venv-*
 env/
 venv/
 ENV/

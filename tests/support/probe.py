@@ -21,7 +21,10 @@ def _resources(out: dict[str, Any]) -> None:
     ]
     with res.as_file(files / "data" / "table.json") as path, open(path) as handle:
         out["as_file"] = handle.read()
-    out["read_text_api"] = res.read_text("pkg", "data", "table.json", encoding="utf-8")  # type: ignore[misc]  # 3.13+
+    if sys.version_info >= (3, 13):  # the functional API takes path parts from 3.13 on
+        out["read_text_api"] = res.read_text("pkg", "data", "table.json", encoding="utf-8")  # type: ignore[misc]
+    else:
+        out["read_text_api"] = res.read_text("pkg.data", "table.json", encoding="utf-8")
     out["module_anchor"] = sorted(p.name for p in res.files("pkg.cli").iterdir())
     out["res_namespace"] = sorted(p.name for p in res.files("ns").iterdir())
     out["res_data_package"] = res.files("pkg.data").joinpath("table.json").read_text()

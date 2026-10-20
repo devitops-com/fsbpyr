@@ -17,10 +17,11 @@ from fsbpyr.payload.spec import Blob, File, Module
 
 from .conftest import FAKE_RUNTIME
 
-EXT = "fast/_speed.cpython-314-x86_64-linux-gnu.so"
+SUFFIX = next(s for s in importlib.machinery.EXTENSION_SUFFIXES if s.startswith(".cpython-"))
+EXT = f"fast/_speed{SUFFIX}"
 LIB = "fast.libs/libhelper.so"
-CY = "cy/__init__.cpython-314-x86_64-linux-gnu.so"
-RCY = "vendored/rcy/__init__.cpython-314-x86_64-linux-gnu.so"  # below a .pth root, named rcy
+CY = f"cy/__init__{SUFFIX}"
+RCY = f"vendored/rcy/__init__{SUFFIX}"  # below a .pth root, named rcy
 CONTENT = {EXT: b"\x7fELF speed" * 50, LIB: b"\x7fELF helper" * 50, CY: b"\x7fELF cy",
            RCY: b"\x7fELF rcy"}  # fmt: skip
 
