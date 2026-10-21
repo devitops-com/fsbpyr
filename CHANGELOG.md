@@ -10,6 +10,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-21
+
 ### Security
 - **A privileged start is refused, and the multiprocessing and re-exec parent check compares
   credentials.** An executable run set-uid, set-gid or with file capabilities (the kernel sets
