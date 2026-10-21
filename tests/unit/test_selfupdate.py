@@ -16,6 +16,7 @@ import pytest
 from fsbpyr import selfupdate
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.cli import main
+from fsbpyr.targets import target_named
 
 from .boot.conftest import FAKE_RUNTIME
 
@@ -117,6 +118,30 @@ def test_a_variant_updates_to_its_own_variant_of_the_newer_release(
     assert github.requests == ["/api", "/files/fsbpyr-3.12.xz"]
 
 
+def test_a_long_name_updates_to_the_long_name_and_not_the_short_one(
+    github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(selfupdate, "own_asset", lambda: "fsbpyr-3.12-x86_64-linux-gnu")
+    variant = _release_binary(tmp_path, "variant")
+    github.assets = {"fsbpyr.xz": lzma.compress(b"short"),
+                     "fsbpyr-x86_64-linux-gnu.xz": lzma.compress(b"newest"),
+                     "fsbpyr-3.12.xz": lzma.compress(b"short variant"),
+                     "fsbpyr-3.12-x86_64-linux-gnu.xz": lzma.compress(variant)}  # fmt: skip
+
+    assert main(["self", "update"]) == 0
+
+    assert installed.read_bytes() == variant
+    assert github.requests == ["/api", "/files/fsbpyr-3.12-x86_64-linux-gnu.xz"]
+
+
+def test_the_curl_hint_names_the_long_asset_of_the_host(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(selfupdate, "host_target", lambda: target_named("aarch64-linux-musl"))
+
+    assert "/releases/latest/download/fsbpyr-aarch64-linux-musl\n" in selfupdate.curl_hint()
+
+
 def test_a_release_without_the_variants_asset_is_an_error_not_another_variant(
     github: FakeGitHub, installed: Path, monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str]
@@ -131,8 +156,11 @@ def test_a_release_without_the_variants_asset_is_an_error_not_another_variant(
 
 
 @pytest.mark.parametrize(("recorded", "asset"), [
-    ({"release_asset": "fsbpyr-3.13"}, "fsbpyr-3.13"),
+    ({"release_asset": "fsbpyr-3.13"}, "fsbpyr-3.13"),  # a short name stays short
     ({"release_asset": "fsbpyr"}, "fsbpyr"),
+    ({"release_asset": "fsbpyr-x86_64-linux-gnu"}, "fsbpyr-x86_64-linux-gnu"),
+    ({"release_asset": "fsbpyr-3.12-aarch64-macos"}, "fsbpyr-3.12-aarch64-macos"),
+    ({"release_asset": "fsbpyr-sparc-linux-gnu"}, "fsbpyr"),  # not a target
     ({}, "fsbpyr"),  # released before the record: always the one asset
     ({"release_asset": "../evil"}, "fsbpyr"),
     ({"release_asset": 3}, "fsbpyr"),

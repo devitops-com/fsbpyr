@@ -9,9 +9,11 @@ name: Release
 #   - a pushed version tag (tools/release/release.sh pushes it): the same, then attest and
 #     publish the GitHub release. Nothing is released unless the tests pass.
 # One fsbpyr per Python version (Phase 9): build, reproduce and compare run once per entry of
-# their `python` matrix, and the release carries every variant. The newest version's (the one
-# .python-version pins) is `fsbpyr` and `fsbpyr.xz`; the others are `fsbpyr-3.12` and so on,
-# with their `.xz`. Adding a Python version adds an entry to the three matrices.
+# their `python` matrix, and the release carries every variant. An asset is named with its
+# target: the newest version's (the one .python-version pins) is `fsbpyr-x86_64-linux-gnu`, the
+# others are `fsbpyr-3.12-x86_64-linux-gnu` and so on, each with its `.xz`. The x86-64 glibc
+# ones are also published under the short names `fsbpyr`, `fsbpyr-3.12`, ... (copies). Adding a
+# Python version adds an entry to the three matrices.
 # GitHub artifact attestations can only be made inside GitHub Actions, so releases are built
 # here and not on the maintainer's machine.
 
@@ -29,6 +31,9 @@ concurrency:
 
 permissions:
   contents: read
+
+env:
+  TARGET: x86_64-linux-gnu  # what the release assets are named with (vcs.release_asset)
 
 jobs:
   build:
@@ -194,7 +199,7 @@ jobs:
           cmp dist/stage3$SUFFIX/fsbpyr dist/fsbpyr$SUFFIX
           rm dist/rebuilt$SUFFIX
 
-      # The executable records the asset it is released as and the Python it runs on: what
+      # The executable records the (long) asset it is released as and the Python it runs on: what
       # `fsbpyr self update` reads to update a variant to its own variant.
       - name: Smoke test
         env:
@@ -204,8 +209,8 @@ jobs:
           "$exe" --version
           "$exe" inspect --verify "$exe"
           report="$("$exe" inspect --json "$exe")"
-          printf '%s\n' "$report" | grep -Eq "^    \"release_asset\": \"fsbpyr$SUFFIX\",?$" \
-            || { echo "::error::$exe does not record the asset fsbpyr$SUFFIX"; exit 1; }
+          printf '%s\n' "$report" | grep -Eq "^    \"release_asset\": \"fsbpyr$SUFFIX-$TARGET\",?$" \
+            || { echo "::error::$exe does not record the asset fsbpyr$SUFFIX-$TARGET"; exit 1; }
           printf '%s\n' "$report" | grep -Eq "^  \"python\": \"$MATRIX_PYTHON\.[0-9]+\",?$" \
             || { echo "::error::$exe does not run on Python $MATRIX_PYTHON"; exit 1; }
           if [ "$GITHUB_REF_TYPE" = tag ]; then
@@ -235,7 +240,16 @@ jobs:
       - name: Collect the licence notices
         run: |
           dist/fsbpyr$SUFFIX inspect --licenses dist/fsbpyr$SUFFIX \
-            > dist/THIRD_PARTY_LICENSES$SUFFIX.txt
+            > dist/THIRD_PARTY_LICENSES$SUFFIX-$TARGET.txt
+
+      # Every file under its long name, the target in it; the x86-64 glibc ones stay under the
+      # short names too (dist/fsbpyr$SUFFIX is what the build made), as copies.
+      - name: Name the release assets
+        run: |
+          for ext in "" .xz; do
+            cp "dist/fsbpyr$SUFFIX$ext" "dist/fsbpyr$SUFFIX-$TARGET$ext"
+          done
+          cp "dist/THIRD_PARTY_LICENSES$SUFFIX-$TARGET.txt" "dist/THIRD_PARTY_LICENSES$SUFFIX.txt"
 
       # Uploaded before the checks and tests, which run dev dependencies with write access to
       # dist/: the release is the executable compared above. publish needs this job, so
@@ -247,7 +261,10 @@ jobs:
           path: |
             dist/fsbpyr${{ env.SUFFIX }}
             dist/fsbpyr${{ env.SUFFIX }}.xz
+            dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}
+            dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}.xz
             dist/THIRD_PARTY_LICENSES${{ env.SUFFIX }}.txt
+            dist/THIRD_PARTY_LICENSES${{ env.SUFFIX }}-${{ env.TARGET }}.txt
           if-no-files-found: error
 
       # Static checks and the core of the suite, on the environment `make bootstrap` left (the
@@ -414,11 +431,10 @@ jobs:
           path: rebuilt
 
       # Artifacts do not keep file modes. The executable is the one file of built/ named
-      # fsbpyr or fsbpyr-3.X (the others end in .xz or .txt).
+      # fsbpyr-TARGET or fsbpyr-3.X-TARGET (the others end in .xz or .txt, or lack the target).
       - name: Compare byte for byte
         run: |
-          built="$(find built -maxdepth 1 -type f \( -name fsbpyr -o -name 'fsbpyr-3.*' \) \
-            ! -name '*.xz')"
+          built="$(find built -maxdepth 1 -type f -name "fsbpyr*-$TARGET" ! -name '*.xz')"
           case "$built" in
             ""|*$'\n'*) echo "::error::expected one executable in built/, found: $built"; exit 1 ;;
           esac
@@ -490,7 +506,7 @@ jobs:
       # Verify with: gh attestation verify fsbpyr --repo devitops-com/fsbpyr \
       #   --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml \
       #   --source-ref "refs/tags/$tag"
-      # (or fsbpyr.xz, fsbpyr-3.12 and the other assets)
+      # (or fsbpyr-x86_64-linux-gnu, fsbpyr-3.12-x86_64-linux-gnu, fsbpyr.xz and the other assets)
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -499,8 +515,8 @@ jobs:
             dist/THIRD_PARTY_LICENSES*.txt
 
       # `sha256sum -c --ignore-missing SHA256SUMS` checks a download against the digests the
-      # attestation signs. The globs take every variant that build made: fsbpyr, fsbpyr.xz,
-      # fsbpyr-3.X, fsbpyr-3.X.xz and THIRD_PARTY_LICENSES[-3.X].txt.
+      # attestation signs. The globs take every variant that build made: fsbpyr[-3.X][-TARGET]
+      # and its .xz, and THIRD_PARTY_LICENSES[-3.X][-TARGET].txt.
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
