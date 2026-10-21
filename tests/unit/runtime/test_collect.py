@@ -243,6 +243,7 @@ def test_a_collection_is_due_a_day_after_the_last(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("FSBPYR_GC")
+    monkeypatch.setattr(gc, "short_of_space", lambda where: False)  # whatever this disk holds
     (root / collect.STAMP).write_bytes(b"")
     os.utime(root / collect.STAMP, (NOW - 2 * 3600,) * 2)
     assert collect.collect_when_due(root) is None  # two hours ago, with room to spare
