@@ -24,13 +24,14 @@ from .format import (
     HEADER,
     HEADER_MAGIC,
     HEADER_SIZE,
+    LEGACY_PAYLOAD_ALIGN,
     MAX_BLOB_SIZE,
     MAX_BLOCK_SIZE,
     MAX_MODE,
     MODULE,
     NATIVE_KINDS,
     NONE,
-    PAGE_SIZE,
+    PAYLOAD_ALIGN,
     PIECES_OF,
     READABLE_VERSIONS,
     RECORD_SIZE,
@@ -662,8 +663,8 @@ class Executable:
             raise PayloadError(f"unsupported format version {version}")
         if flags:
             raise PayloadError(f"unknown trailer flags {flags:#x}")
-        if offset % PAGE_SIZE:
-            raise PayloadError("payload offset is not page aligned")
+        if offset % (PAYLOAD_ALIGN if version >= 7 else LEGACY_PAYLOAD_ALIGN):
+            raise PayloadError("payload offset is not aligned")
         if offset + payload_size + TRAILER_SIZE != size:
             raise PayloadError("payload size does not match file size")
         self.payload_offset: int = offset

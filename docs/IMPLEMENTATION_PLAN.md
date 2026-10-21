@@ -159,7 +159,8 @@ too.
 ### 3.2 Executable layout (format v1)
 
 Status (v0.19.0): format v6 since 0.15.0 (v2 blocks, 0.5.0; v3 whole-file digest, 0.6.0; v4
-cache digests, 0.7.0; v5 xz, 0.8.0; v6 zstd pieces, 0.15.0); `docs/format.md` is authoritative.
+cache digests, 0.7.0; v5 xz, 0.8.0; v6 zstd pieces, 0.15.0); format v7 (payload aligned to
+64 KiB, Phase 9) is unreleased, 2026-10-21; `docs/format.md` is authoritative.
 Changed below: the trailer's last 32 bytes are the integrity digest of everything before them
 (D31), not `payload_sha256`; blob codecs are 0–5 (none, zstd, block, xz, xz pieces, zstd
 pieces); a STARTUP section lists the startup modules (Phase 2).
@@ -1671,6 +1672,9 @@ write, a truncated binary.
      keyed by (Python, triple); the 64 KiB alignment (a format version bump); asset names
      with the target and the short names as copies, and self-update and dispatch with them.
      Done when x86-64 CI stays green and every target-specific value comes from the table.
+     Progress 2026-10-21: the 64 KiB alignment is done (format v7: `PAYLOAD_ALIGN` in
+     `format.py` and `format.h`; the launcher accepts only v7 and refuses an offset that is not
+     a multiple of 64 KiB, `inspect` reads 1 to 6; the hello app grows by less than 64 KiB).
   1. `install.sh` (S, alongside step 0), as settled below.
   2. Linux aarch64 glibc (M). Spike: the launcher cross-linked on x86-64 against the aarch64
      archive and Debian 10's arm64 packages, run on GitHub's `ubuntu-24.04-arm`. Work:

@@ -15,8 +15,8 @@
 #error "fsbpyr format readers assume a little-endian host"
 #endif
 
-#define FSB_FORMAT_VERSION 6u
-#define FSB_PAGE_SIZE 4096u
+#define FSB_FORMAT_VERSION 7u
+#define FSB_PAYLOAD_ALIGN 65536u /* a multiple of every page size up to 64K (v7) */
 #define FSB_BLOB_ALIGN 16u
 #define FSB_TABLE_ALIGN 8u
 #define FSB_NONE 0xFFFFFFFFu

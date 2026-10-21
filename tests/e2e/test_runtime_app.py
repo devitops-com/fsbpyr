@@ -896,7 +896,7 @@ def test_startup_reads_the_same_with_a_large_unused_dist(runtime: Runtime, tmp_p
 
 
 # The no-op app's size on each version's pinned runtime (D15 makes it deterministic).
-NOOP_SIZES = {"3.12": 27_409_138, "3.13": 26_664_561, "3.14": 27_695_360}
+NOOP_SIZES = {"3.12": 27_454_194, "3.13": 26_668_657, "3.14": 27_773_792}
 NOOP_SIZE_TOLERANCE = 0.03
 
 
@@ -907,3 +907,13 @@ def test_noop_app_size_is_within_3_percent_of_the_recorded_size(build_app: Build
 
     size = app.stat().st_size
     assert abs(size / NOOP_SIZES[TARGET_PYTHON] - 1) <= NOOP_SIZE_TOLERANCE, size
+
+
+def test_payload_starts_on_a_64_kib_boundary(build_app: BuildApp) -> None:
+    """One file serves kernels with 4K, 16K and 64K pages: the offset is a multiple of 64 KiB,
+    so it is a multiple of the running page size (the launcher refuses any other offset:
+    tests/e2e/test_edges.py)."""
+    app = build_app({"noop.py": "def main():\n    return 0\n"}, "noop:main")
+
+    with Executable.open(app) as exe:
+        assert exe.payload_offset % 65536 == 0 and exe.payload_offset > 0
