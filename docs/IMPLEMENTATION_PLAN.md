@@ -1670,6 +1670,9 @@ write, a truncated binary.
     with step 2's CI); `main` goes to GitHub through a pull request only, a feature fully
     tested first, so the full suite runs on a push to main, weekly and on request, with no
     nightly run (it would test the same commit night after night).
+  - the 64 KiB alignment stays untested on 16K- and 64K-page kernels (no such kernel at hand;
+    a `qemu-system-aarch64` VM with a 64K kernel would show it): the docs say it was tested on
+    4K-page kernels only.
 
   **Steps** (a target is done when, on its own runner, the full suite passes with that
   target's skip list, the three-stage bootstrap is byte-identical and an independent rebuild
