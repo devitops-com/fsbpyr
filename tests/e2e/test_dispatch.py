@@ -20,6 +20,7 @@ from fsbpyr.build import TARGET_PYTHON
 from fsbpyr.cli import main
 from fsbpyr.pyversion import supported
 from fsbpyr.runtime import registry
+from fsbpyr.targets import host_target
 from fsbpyr.vcs import release_asset
 
 from ..support.releases import FakeReleases
@@ -29,7 +30,7 @@ pytestmark = [pytest.mark.slow, pytest.mark.version_rule]
 ROOT = Path(__file__).parents[2]
 UV = shutil.which("uv")
 OTHER = next(version for version in reversed(supported()) if version != TARGET_PYTHON)
-PATH = f"/v1.2.0/{release_asset(OTHER)}.xz"
+PATH = f"/v1.2.0/{release_asset(OTHER, host_target().name)}.xz"
 BUILD_TIMEOUT_S = 1800
 
 

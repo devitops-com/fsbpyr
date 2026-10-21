@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import os
 import re
 import shutil
 import subprocess
+import textwrap
 import tomllib
 from pathlib import Path
 
@@ -1039,8 +1041,9 @@ def test_toolchain_watch_is_silent_when_the_pins_are_current(tmp_path: Path) -> 
 def test_the_workflows_build_every_supported_python_and_the_release_publishes_each_variant(
 ) -> None:
     """The matrices list the Pythons fsbpyr supports (bytecode.SUPPORTED_PYTHON); the newest is
-    the plain asset (`fsbpyr`), the others carry their version (`fsbpyr-3.12`), each with its
-    .xz and licence notices, all in SHA256SUMS and attested."""
+    the plain asset (`fsbpyr-x86_64-linux-gnu`), the others carry their version
+    (`fsbpyr-3.12-x86_64-linux-gnu`), each with its .xz and licence notices, also published
+    under the short names (`fsbpyr`, `fsbpyr-3.12`), all in SHA256SUMS and attested."""
     supported = sorted("{}.{}".format(*version) for version in SUPPORTED_PYTHON)
     newest = (ROOT / ".python-version").read_text(encoding="utf-8").strip().rpartition(".")[0]
     assert newest == supported[-1]
@@ -1057,13 +1060,63 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
     assert "make bootstrap $MAKE_ARGS" in build
     assert 'echo "MAKE_ARGS=PYTHON=$MATRIX_PYTHON"' in build
     assert "xz --x86 --lzma2=preset=9e --threads=1 --keep dist/fsbpyr$SUFFIX" in build
-    assert "dist/THIRD_PARTY_LICENSES$SUFFIX.txt" in build
+    assert "TARGET: x86_64-linux-gnu" in workflow
+    assert "> dist/THIRD_PARTY_LICENSES$SUFFIX-$TARGET.txt" in build
+    assert 'cp "dist/fsbpyr$SUFFIX$ext" "dist/fsbpyr$SUFFIX-$TARGET$ext"' in build  # long names
+    assert ('cp "dist/THIRD_PARTY_LICENSES$SUFFIX-$TARGET.txt" '
+            '"dist/THIRD_PARTY_LICENSES$SUFFIX.txt"') in build
+    uploaded = re.search(r"path: \|\n((?:            dist/.*\n)+)", build)
+    assert uploaded is not None
+    assert [line.strip() for line in uploaded.group(1).splitlines()] == [
+        "dist/fsbpyr${{ env.SUFFIX }}",  # the short names, copies of the long ones
+        "dist/fsbpyr${{ env.SUFFIX }}.xz",
+        "dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}",
+        "dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}.xz",
+        "dist/THIRD_PARTY_LICENSES${{ env.SUFFIX }}.txt",
+        "dist/THIRD_PARTY_LICENSES${{ env.SUFFIX }}-${{ env.TARGET }}.txt",
+    ]
     assert "name: built-${{ matrix.python }}" in build
-    assert 'release_asset\\": \\"fsbpyr$SUFFIX' in build  # each records the asset it ships as
+    assert 'release_asset\\": \\"fsbpyr$SUFFIX-$TARGET' in build  # each records its long asset
+    assert "-name \"fsbpyr*-$TARGET\" ! -name '*.xz'" in jobs["compare"]
     assert "pattern: built-*" in publish and "merge-multiple: true" in publish
     assert "sha256sum fsbpyr* THIRD_PARTY_LICENSES*.txt > SHA256SUMS" in publish
     assert "dist/fsbpyr*\n            dist/THIRD_PARTY_LICENSES*.txt" in publish  # attested
     assert "dist/fsbpyr* dist/THIRD_PARTY_LICENSES*.txt dist/SHA256SUMS" in publish  # published
+
+
+@pytest.mark.parametrize(("suffix", "long_name"), [
+    ("", "fsbpyr-x86_64-linux-gnu"), ("-3.12", "fsbpyr-3.12-x86_64-linux-gnu"),
+])  # fmt: skip
+def test_the_release_assets_are_named_with_the_target_and_the_short_names_are_copies(
+    suffix: str, long_name: str, tmp_path: Path
+) -> None:
+    """The workflow's naming step and the compare job's selection, run under sh."""
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    naming = re.search(r"- name: Name the release assets\n\s+run: \|\n((?:          .*\n)+)",
+                       workflow)
+    assert naming is not None
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    for name, content in ((f"fsbpyr{suffix}", "exe"), (f"fsbpyr{suffix}.xz", "xz"),
+                          (f"THIRD_PARTY_LICENSES{suffix}-x86_64-linux-gnu.txt", "notices")):
+        (dist / name).write_text(content)
+    env = {"PATH": os.environ["PATH"], "SUFFIX": suffix, "TARGET": "x86_64-linux-gnu"}
+
+    sh, find = shutil.which("sh") or "sh", shutil.which("find") or "find"
+    done = subprocess.run([sh, "-ec", textwrap.dedent(naming.group(1))], cwd=tmp_path, env=env,
+                          capture_output=True, text=True, check=False)
+
+    assert done.returncode == 0, done.stderr
+    assert sorted(p.name for p in dist.iterdir()) == sorted([
+        f"fsbpyr{suffix}", f"fsbpyr{suffix}.xz", long_name, f"{long_name}.xz",
+        f"THIRD_PARTY_LICENSES{suffix}.txt", f"THIRD_PARTY_LICENSES{suffix}-x86_64-linux-gnu.txt",
+    ])
+    assert (dist / long_name).read_text() == (dist / f"fsbpyr{suffix}").read_text() == "exe"
+    assert (dist / f"{long_name}.xz").read_text() == "xz"
+    selected = subprocess.run(
+        [find, str(dist), "-maxdepth", "1", "-type", "f", "-name", "fsbpyr*-x86_64-linux-gnu",
+         "!", "-name", "*.xz"], capture_output=True, text=True, check=True)
+    assert selected.stdout.split() == [str(dist / long_name)]  # compare's one executable
 
 
 def test_publish_waits_for_the_independent_rebuild_to_match() -> None:

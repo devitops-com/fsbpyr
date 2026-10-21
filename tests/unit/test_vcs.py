@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from fsbpyr.targets import TARGETS
 from fsbpyr.vcs import commit_time, git_state, release_asset, release_asset_record, version_string
 
 COMMIT = "6457a95b" + "0" * 32
@@ -128,16 +129,25 @@ def test_commit_time_needs_a_commit_that_contains_the_directory(tmp_path: Path, 
     assert commit_time(tmp_path.parent / "no-such-directory") is None
 
 
-@pytest.mark.parametrize(("python", "asset"), [
+@pytest.mark.parametrize("target", [t.name for t in TARGETS])
+@pytest.mark.parametrize(("python", "prefix"), [
     ("3.14", "fsbpyr"), ("3.13", "fsbpyr-3.13"), ("3.12", "fsbpyr-3.12"),
 ])  # fmt: skip
-def test_the_newest_python_is_the_plain_asset_and_the_others_carry_their_version(
-    python: str, asset: str
+def test_the_asset_names_the_target_and_the_older_pythons_their_version(
+    python: str, prefix: str, target: str
 ) -> None:
-    assert release_asset(python) == asset
+    assert release_asset(python, target) == f"{prefix}-{target}"
+
+
+def test_the_assets_of_x86_64_glibc_are_spelled_out() -> None:
+    assert release_asset("3.14", "x86_64-linux-gnu") == "fsbpyr-x86_64-linux-gnu"
+    assert release_asset("3.12", "x86_64-linux-gnu") == "fsbpyr-3.12-x86_64-linux-gnu"
 
 
 def test_only_fsbpyr_itself_records_the_asset_it_is_released_as() -> None:
-    assert release_asset_record("fsbpyr", "3.12") == (("release_asset", "fsbpyr-3.12"),)
-    assert release_asset_record("Fsbpyr", "3.14") == (("release_asset", "fsbpyr"),)
-    assert release_asset_record("someapp", "3.12") == ()
+    gnu = "x86_64-linux-gnu"
+    assert release_asset_record("fsbpyr", "3.12", gnu) == (
+        ("release_asset", "fsbpyr-3.12-x86_64-linux-gnu"),)
+    assert release_asset_record("Fsbpyr", "3.14", "aarch64-macos") == (
+        ("release_asset", "fsbpyr-aarch64-macos"),)
+    assert release_asset_record("someapp", "3.12", gnu) == ()

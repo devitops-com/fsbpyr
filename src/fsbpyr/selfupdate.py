@@ -1,7 +1,9 @@
 """``fsbpyr self update``: replace the running executable with the latest GitHub release.
 
-Settled with the owner on 2026-10-18 (plan, Phase 9): the release's ``fsbpyr.xz`` (a variant's
-own ``fsbpyr-3.X.xz``, the asset its build_info says it was released as) is unpacked
+Settled with the owner on 2026-10-18 (plan, Phase 9): the release's ``fsbpyr-<target>.xz`` (a
+variant's own ``fsbpyr-3.X-<target>.xz``, the asset its build_info says it was released as; an
+executable that recorded a short name such as ``fsbpyr`` or none follows ``fsbpyr.xz``, which
+the release still carries for x86-64 glibc) is unpacked
 in-process with the standard library's lzma into the executable's own directory, verified
 in-process (``inspect --verify``, so no byte of it runs before it passes) and renamed over the
 executable's real path, keeping its mode. A man page and completions found under the
@@ -25,17 +27,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .inspection import InspectError, read
+from .targets import TARGETS, host_target
 from .vcs import own_version
 
 REPO = "devitops-com/fsbpyr"
 API_VARIABLE = "FSBPYR_RELEASE_API"  # the release document's URL; tests serve their own
 DEFAULT_API = f"https://api.github.com/repos/{REPO}/releases/latest"
-ASSET = "fsbpyr"  # the newest Python's; a variant is released as fsbpyr-3.X (Phase 9)
-_ASSET_NAME = re.compile(r"fsbpyr(-3\.\d+)?")
-CURL_HINT = (
-    f"curl -fLo ~/.local/bin/fsbpyr https://github.com/{REPO}/releases/latest/download/fsbpyr\n"
-    "chmod +x ~/.local/bin/fsbpyr"
-)
+ASSET = "fsbpyr"  # the short name: the newest Python's on x86-64 glibc (Phase 9)
+_TARGETS = "|".join(re.escape(t.name) for t in TARGETS)
+_ASSET_NAME = re.compile(rf"fsbpyr(-3\.\d+)?(-({_TARGETS}))?")  # short and long names
 _TIMEOUT_S = 60
 _CHUNK = 1 << 20
 _RELEASE = re.compile(r"v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
@@ -61,6 +61,13 @@ class Release:
     asset_url: str
 
 
+def curl_hint() -> str:
+    """The command that downloads the latest release of the newest Python for this host."""
+    asset = f"fsbpyr-{host_target().name}"
+    url = f"https://github.com/{REPO}/releases/latest/download/{asset}"
+    return f"curl -fLo ~/.local/bin/fsbpyr {url}\nchmod +x ~/.local/bin/fsbpyr"
+
+
 def running_executable() -> Path:
     """The real path of the running fsbpyr executable (it may be renamed or reached through a
     symlink); an error when fsbpyr runs from a checkout or a wheel."""
@@ -69,7 +76,7 @@ def running_executable() -> Path:
     except ImportError:
         raise UpdateError(
             "fsbpyr self update works on the fsbpyr executable only, not on a checkout or a "
-            f"wheel; to get the latest release:\n{CURL_HINT}"
+            f"wheel; to get the latest release:\n{curl_hint()}"
         ) from None
     return Path(os.path.realpath("/proc/self/exe"))
 
@@ -85,14 +92,15 @@ def own_release() -> tuple[int, int, int]:
     if numbers is None:
         raise UpdateError(
             f"this is a developer build ({own_version()}); only released executables update "
-            f"themselves. To get the latest release:\n{CURL_HINT}"
+            f"themselves. To get the latest release:\n{curl_hint()}"
         )
     return numbers
 
 
 def own_asset() -> str:
     """The asset (without ``.xz``) this executable was released as, from its build_info;
-    ``fsbpyr`` for one built before the record existed, which were all the one asset."""
+    ``fsbpyr`` for one built before the record existed, which were all the one asset. A short
+    name (``fsbpyr``, ``fsbpyr-3.12``) stays the short name."""
     import _fsbpyr  # noqa: PLC0415  # only in executables
 
     asset = json.loads(_fsbpyr.info()["build_info"]).get("release_asset")
@@ -190,7 +198,7 @@ def update(
     directory = executable.parent
     if not os.access(directory, os.W_OK | os.X_OK):
         raise UpdateError(f"cannot write to {directory}; update with the owner's rights, or "
-                          f"download the latest release there:\n{CURL_HINT}")  # fmt: skip
+                          f"download the latest release there:\n{curl_hint()}")  # fmt: skip
     release = latest_release(own_asset())
     if release.numbers <= own:
         log(f"fsbpyr is up to date ({own_version()}; latest release {release.tag})")

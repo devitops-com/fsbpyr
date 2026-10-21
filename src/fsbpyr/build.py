@@ -500,7 +500,8 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                     ("interpreter_reexec", config.interpreter_reexec),  # read at start (D23)
                     ("git", git_state(project.directory,
                                       warn=lambda note: warnings.append(Uncounted(note)))),
-                    *release_asset_record(dist.name, TARGET_PYTHON),  # fsbpyr's own, self update
+                    # fsbpyr's own, self update
+                    *release_asset_record(dist.name, TARGET_PYTHON, target_named(triple).name),
                 ),
                 zstd_level=level,
             )

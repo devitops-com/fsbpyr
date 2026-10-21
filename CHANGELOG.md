@@ -21,6 +21,17 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   The new [docs/security.md](docs/security.md) is the threat model.
 
 ### Added
+- **Release assets are named with the target** (Phase 9, step 0). Every executable is
+  published as `fsbpyr-x86_64-linux-gnu` (the newest Python) or
+  `fsbpyr-3.12-x86_64-linux-gnu` (the others), each with its `.xz`, attestation and
+  `THIRD_PARTY_LICENSES-<...>.txt`. The old names `fsbpyr`, `fsbpyr-3.12`, `fsbpyr-3.13` and
+  `THIRD_PARTY_LICENSES[-3.X].txt` stay as copies of the x86-64 glibc assets, so URLs,
+  scripts and executables already released keep working. An fsbpyr built from now on records
+  the long name as `release_asset` and `fsbpyr self update` follows it; one that recorded a
+  short name or nothing keeps following the short name. A build for another Python fetches
+  `fsbpyr-3.X-x86_64-linux-gnu.xz` and keeps it as
+  `downloads/fsbpyr-3.X-x86_64-linux-gnu-vX.Y.Z` in the cache (it was
+  `downloads/fsbpyr-3.X-vX.Y.Z`; the old file stays until deleted by hand).
 - **Format version 7: the payload starts at a multiple of 64 KiB, not 4 KiB** (Phase 9,
   step 0). One executable format now serves kernels with 4K, 16K and 64K pages (aarch64
   Linux, macOS arm64), because the payload's file offset is a multiple of every running page
