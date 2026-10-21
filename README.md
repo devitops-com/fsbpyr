@@ -405,7 +405,7 @@ directory anyone may add to, such as `/tmp`.) Environment variables the executab
 | `FSBPYR_CACHE_DIR` | cache directory |
 | `FSBPYR_GC=1` | collect the app's cache instead of running the app (see below); `0`: never collect it in the background |
 | `FSBPYR_TRACE=1` | print what the run loaded and extracted, and how long the integrity check took, as JSON on stderr |
-| `FSBPYR_SELFTEST` | when set, import the entry point and check it instead of running the app (what `--smoke` does) |
+| `FSBPYR_SELFTEST` | `natives`: check that this machine provides every library and symbol version the native extensions need, one line per missing one, exit 1 if any (glibc targets); any other value: import the entry point and check it instead of running the app (what `--smoke` does) |
 | `FSBPYR_IMPORTTIME` | when set, print CPython's import-time table |
 
 An executable needs `/proc` (it finds itself through `/proc/self/exe`), and refuses to start

@@ -485,6 +485,11 @@ def run() -> None:
 
         collect(quiet=collection == b"background")
         return
+    if posix.environ.get(b"FSBPYR_SELFTEST") == b"natives":  # NAT-4: before anything imports
+        from _fsbpyr_rt.selftest import natives  # type: ignore[import-not-found]  # noqa: PLC0415
+
+        natives()
+        return
     entrypoint = INFO["entrypoint"]
     if posix.environ.get(b"FSBPYR_SELFTEST"):
         _resolve(entrypoint)  # import the module and look the attribute up, without calling

@@ -95,6 +95,32 @@ def test_apps_run_on_older_distributions(apps: Path, image: str) -> None:
         assert output == f"{expected}\nrc={rc}", f"{image}: {binary} {args}"
 
 
+def _podman(apps: Path, image: str, script: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [PODMAN or "podman", "run", "--rm", "--network=none", "-v", f"{apps}:/apps:ro,Z",
+         image, "sh", "-c", script],
+        capture_output=True, text=True, timeout=900, check=False,
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize("image", IMAGES)
+def test_selftest_natives_passes_on_older_distributions(apps: Path, image: str) -> None:
+    """NAT-4: every extension of heavy finds its libraries and versions on each image."""
+    result = _podman(apps, image, "FSBPYR_CACHE_DIR=/tmp/cache FSBPYR_SELFTEST=natives /apps/heavy")
+
+    assert result.returncode == 0, f"{image}: {result.stdout}{result.stderr}"
+    assert "all natives load" in result.stdout
+
+
+def test_selftest_natives_names_a_library_the_machine_lacks(apps: Path) -> None:
+    script = ("rm -f /usr/lib/*-linux-gnu/libstdc++.so.6* /lib/*-linux-gnu/libstdc++.so.6*; "
+              "FSBPYR_CACHE_DIR=/tmp/cache FSBPYR_SELFTEST=natives /apps/heavy")  # fmt: skip
+    result = _podman(apps, IMAGES[0], script)  # debian:10
+
+    assert result.returncode != 0
+    assert "fsbpyr selftest: missing libstdc++.so.6 (needed by " in result.stderr
+
+
 def _objdump_glibc(data: bytes, scratch: Path) -> tuple[int, int] | None:
     scratch.write_bytes(data)
     listing = subprocess.run([OBJDUMP or "llvm-objdump", "-T", str(scratch)],

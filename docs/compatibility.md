@@ -33,6 +33,14 @@ these from the machine:
   `fsbpyr inspect` shows it again. Install those libraries on the target. A build warns when a
   native file needs a `GLIBCXX`, `CXXABI`, `GCC` or `ZLIB` version newer than manylinux_2_28
   systems provide.
+- **To check a target before deploying,** run the app there with `FSBPYR_SELFTEST=natives`. It
+  extracts every native extension into the cache and runs the dynamic loader of the target the
+  app was built for in trace mode on each, which resolves libraries and symbol versions
+  without running the extension. It prints `fsbpyr selftest: missing libstdc++.so.6 (needed by
+  <extension>, ...)` or `missing version `GLIBCXX_3.4.32' of libstdc++.so.6 (needed by ...)`
+  for each, and exits 1 if any (0 and `all natives load` otherwise). It needs the cache
+  directory as a run does, and checks only what extensions load at startup: libraries they
+  open later by name (`dlopen`) are not seen. glibc targets only.
 - **A mounted `/proc`.** The launcher reads its own executable through `/proc/self/exe`, and
   multiprocessing children are authenticated through `/proc/<ppid>/exe`.
 - **A cache on a file system that allows execution.** Native code is extracted there and
