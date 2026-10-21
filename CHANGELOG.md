@@ -334,6 +334,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   test-ci` and `make test-portability` set `TMPDIR` to `TESTTMP` (default `~/tmp`, created if
   missing): `/tmp` is often a tmpfs mounted nosuid, where the set-gid start test skipped. The
   long-symlink test of the cache root uses a 999-byte target, which XFS takes.
+- **The full suite runs weekly, no longer nightly.** `main` changes for a release only, so the
+  nightly run tested the same commit again; it still runs on every push to main, weekly (with
+  the longer fuzzing) and on request. `make test-container` takes `PYTHON=3.X` and runs in
+  `JOBS` processes like `make test`.
 - **`make test` runs the suite in 8 processes** (pytest-xdist, `JOBS=` to change it, each test
   file in one process): about 2.5 minutes instead of 10.5 on a 24-core host. Before the workers
   start, the runtime's pinned downloads are fetched and its release and sanitized runtimes

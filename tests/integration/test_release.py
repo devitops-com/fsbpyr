@@ -893,13 +893,12 @@ def test_the_publish_job_checks_the_parent_commits_runs_and_names_the_suite_run(
     assert "Full suite: %s" in publish
 
 
-def test_the_full_suite_runs_on_main_nightly_and_weekly_once_per_python_version() -> None:
+def test_the_full_suite_runs_on_main_and_weekly_once_per_python_version() -> None:
     workflow = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
-    weekly = re.findall(r'^\s+- cron: "(.+)"$', workflow, re.MULTILINE)[1]
+    [weekly] = re.findall(r'^\s+- cron: "(.+)"$', workflow, re.MULTILINE)  # no nightly run
 
     assert "push:\n    branches: [main]" in workflow
     assert "workflow_dispatch:" in workflow
-    assert len(re.findall(r"^\s+- cron:", workflow, re.MULTILINE)) == 2
     assert f'WEEKLY="{weekly}"' in workflow  # the fuzzing time reads the weekly schedule
     # the suite and the portability matrix
     assert len(re.findall(r'python: \["3.12", "3.13", "3.14"\]', workflow)) == 2
@@ -1392,7 +1391,7 @@ def test_a_run_needs_every_job_to_pass_for_the_commit_to_be_released() -> None:
 
 def test_every_trigger_of_the_full_suite_runs_every_target_and_python() -> None:
     """A push to main is the run before a release (main goes to GitHub for a release only), so
-    no job is conditional on the event: nightly, push and manual runs are the same matrix."""
+    no job is conditional on the event: scheduled, push and manual runs are the same matrix."""
     jobs = workflow_jobs("full-suite.yml")
 
     for job in ("suite", "portability"):

@@ -6,7 +6,8 @@ name: Full suite
 #   - on every push to main (main goes to GitHub for a release only, so this is the run before
 #     a release), so that tools/release/release.sh and the publish job of release.yml can
 #     require a green run for the commit a release is made from;
-#   - nightly, and weekly with a longer fuzzing run (below);
+#   - weekly, with a longer fuzzing run (below); no nightly run: main changes for a release only,
+#     so one would test the same commit night after night (owner, 2026-10-21);
 #   - on request.
 # release.yml runs the core of the suite as root before a release; this runs the rest: natives,
 # compatibility, the ASan/UBSan launcher, the fuzzer, the cache-directory and GC tests, and the
@@ -26,12 +27,11 @@ on:
   push:
     branches: [main]
   schedule:
-    # Nightly. Keep the weekly one's string equal to WEEKLY in "Choose the fuzzing time".
-    - cron: "17 2 * * *"
+    # Weekly. Keep the string equal to WEEKLY in "Choose the fuzzing time".
     - cron: "43 3 * * 0"
   workflow_dispatch:
 
-# A push to main replaces its predecessor's run; a nightly or manual run is never cancelled.
+# A push to main replaces its predecessor's run; a scheduled or manual run is never cancelled.
 concurrency:
   group: full-suite-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
