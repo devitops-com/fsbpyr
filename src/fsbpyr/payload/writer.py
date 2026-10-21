@@ -32,7 +32,7 @@ from .format import (
     MODULE,
     NATIVE_KINDS,
     NONE,
-    PAGE_SIZE,
+    PAYLOAD_ALIGN,
     PIECES_OF,
     TABLE_ALIGN,
     THREADS,
@@ -570,9 +570,9 @@ def encode_payload(spec: PayloadSpec) -> bytes:
 
 
 def assemble(stub: bytes, payload: bytes) -> bytes:
-    """Executable image: stub, zero padding to a page boundary, payload, trailer; the trailer
+    """Executable image: stub, zero padding to a 64 KiB boundary, payload, trailer; the trailer
     ends with the digest of everything before it (D31)."""
-    offset = align(len(stub), PAGE_SIZE)
+    offset = align(len(stub), PAYLOAD_ALIGN)
     trailer = TRAILER.pack(
         TRAILER_MAGIC, FORMAT_VERSION, 0, offset, len(payload), bytes(DIGEST_SIZE)
     )
@@ -594,7 +594,7 @@ def write_temporary(path: Path, stub: bytes, spec: PayloadSpec) -> Path:
     try:
         with os.fdopen(fd, "w+b") as out:
             out.write(stub)
-            offset = align(len(stub), PAGE_SIZE)
+            offset = align(len(stub), PAYLOAD_ALIGN)
             size = write_payload(spec, out, offset)
             trailer = TRAILER.pack(TRAILER_MAGIC, FORMAT_VERSION, 0, offset, size,
                                    bytes(DIGEST_SIZE))  # fmt: skip

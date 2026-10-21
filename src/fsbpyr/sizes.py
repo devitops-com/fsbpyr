@@ -1,6 +1,6 @@
 """Where an executable's bytes go (DX-5), from the reader's records alone: no format change.
 
-The file is the stub, zero padding to a page boundary, the payload and the trailer
+The file is the stub, zero padding to a 64 KiB boundary, the payload and the trailer
 (``payload.writer.assemble``). The payload is the header, the tables, then the blob data, each
 blob 16-byte aligned. The rows below cover everything but the trailer, so they add up to the
 file's size minus ``TRAILER_SIZE``.
@@ -27,7 +27,7 @@ class Sizes:
     """Stored bytes of each part of the file, less the trailer."""
 
     stub: int
-    stub_padding: int  # zeros up to the page boundary where the payload starts
+    stub_padding: int  # zeros up to the 64 KiB boundary where the payload starts
     payload_header: int
     tables: int  # the index tables and the string table
     blob_padding: int  # BLOB_ALIGN gaps between the blobs

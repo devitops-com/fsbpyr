@@ -21,6 +21,14 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   The new [docs/security.md](docs/security.md) is the threat model.
 
 ### Added
+- **Format version 7: the payload starts at a multiple of 64 KiB, not 4 KiB** (Phase 9,
+  step 0). One executable format now serves kernels with 4K, 16K and 64K pages (aarch64
+  Linux, macOS arm64), because the payload's file offset is a multiple of every running page
+  size. An executable is up to 64 KiB larger (the zero padding after the stub); `fsbpyr
+  inspect` names it "zero padding to the 64 KiB boundary". The launcher accepts only version 7
+  and refuses an offset that is not a multiple of 64 KiB; `inspect` still reads versions 1 to
+  6. Each executable carries its own launcher, so executables built before this change still
+  run; they are not rebuilt.
 - **`fsbpyr build` chooses the Python of the app and hands the build to the fsbpyr of that
   Python** (Phase 9, step 4). The version comes from, strongest first, the new `--python X.Y`
   (or `python = "X.Y"` in `[tool.fsbpyr]`), a `.python-version` pin that names a supported

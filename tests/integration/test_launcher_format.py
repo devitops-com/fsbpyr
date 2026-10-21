@@ -21,8 +21,8 @@ int main(void) {
            sizeof(struct fsb_trailer), sizeof(struct fsb_header), sizeof(struct fsb_blob));
     printf("sizeof module %zu\nsizeof file %zu\nsizeof dist %zu\n",
            sizeof(struct fsb_module), sizeof(struct fsb_file), sizeof(struct fsb_dist));
-    printf("const version %u\nconst page %u\nconst blob_align %u\nconst none %u\n",
-           FSB_FORMAT_VERSION, FSB_PAGE_SIZE, FSB_BLOB_ALIGN, FSB_NONE);
+    printf("const version %u\nconst align %u\nconst blob_align %u\nconst none %u\n",
+           FSB_FORMAT_VERSION, FSB_PAYLOAD_ALIGN, FSB_BLOB_ALIGN, FSB_NONE);
     printf("const sections %d\nconst max_blob %llu\n", FSB_SECTION_COUNT,
            (unsigned long long)FSB_MAX_BLOB_SIZE);
     printf("const codec_block %d\nconst max_block %llu\n", FSB_CODEC_BLOCK,
@@ -74,7 +74,7 @@ def test_record_sizes_match(probe: dict[str, tuple[int, ...]]) -> None:
 
 def test_constants_match(probe: dict[str, tuple[int, ...]]) -> None:
     assert probe["const version"] == (fmt.FORMAT_VERSION,)
-    assert probe["const page"] == (fmt.PAGE_SIZE,)
+    assert probe["const align"] == (fmt.PAYLOAD_ALIGN,)
     assert probe["const blob_align"] == (fmt.BLOB_ALIGN,)
     assert probe["const none"] == (fmt.NONE,)
     assert probe["const sections"] == (len(fmt.Section),)

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import __version__, bytecode
 from .compat import zstd
-from .payload.format import PAGE_SIZE, ModuleFlag, ModuleKind, align, extractable
+from .payload.format import PAYLOAD_ALIGN, ModuleFlag, ModuleKind, align, extractable
 from .payload.spec import ZSTD_LEVEL, Blob, Dist, File, Module, PayloadSpec
 from .payload.writer import commit, write_temporary
 from .runtime.registry import BOOT_PACKAGES, Runtime
@@ -83,7 +83,7 @@ def stub_digest(stub: bytes) -> str:
     every executable that has the same stub, however it was handed on (the raw stub of a
     source build, the padded prefix of a self-hosted one), so it links an app to the fsbpyr
     release that built it."""
-    padding = bytes(align(len(stub), PAGE_SIZE) - len(stub))
+    padding = bytes(align(len(stub), PAYLOAD_ALIGN) - len(stub))
     return hashlib.sha256(stub + padding).hexdigest()
 
 

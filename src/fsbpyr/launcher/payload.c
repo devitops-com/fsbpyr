@@ -40,7 +40,7 @@ static const char *check_trailer(const struct fsb_trailer *t, uint64_t file_size
     if (memcmp(t->magic, FSB_TRAILER_MAGIC, FSB_MAGIC_SIZE) != 0) return "no fsbpyr payload";
     if (t->format_version != FSB_FORMAT_VERSION) return "unsupported payload format version";
     if (t->flags != 0) return "unknown trailer flags";
-    if (t->payload_offset % FSB_PAGE_SIZE != 0) return "payload offset not page aligned";
+    if (t->payload_offset % FSB_PAYLOAD_ALIGN != 0) return "payload offset not 64 KiB aligned";
     if (!fits(t->payload_offset, t->payload_size, file_size - sizeof *t) ||
         t->payload_offset + t->payload_size + sizeof *t != file_size)
         return "payload size does not match file size";

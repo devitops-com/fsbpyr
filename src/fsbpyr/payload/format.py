@@ -1,4 +1,4 @@
-"""Binary layout of the fsbpyr executable format, version 6 (normative spec: docs/format.md)."""
+"""Binary layout of the fsbpyr executable format, version 7 (normative spec: docs/format.md)."""
 
 from __future__ import annotations
 
@@ -14,9 +14,10 @@ from enum import IntEnum, IntFlag
 
 from ..compat import process_cpu_count
 
-FORMAT_VERSION = 6
-READABLE_VERSIONS = (1, 2, 3, 4, 5, 6)  # the Python reader (inspect) also reads older executables
-PAGE_SIZE = 4096
+FORMAT_VERSION = 7
+READABLE_VERSIONS = (1, 2, 3, 4, 5, 6, 7)  # the Python reader (inspect) reads older ones too
+PAYLOAD_ALIGN = 65536  # v7: one file serves kernels with 4K, 16K and 64K pages
+LEGACY_PAYLOAD_ALIGN = 4096  # versions 1 to 6
 BLOB_ALIGN = 16
 TABLE_ALIGN = 8
 NONE = 0xFFFFFFFF

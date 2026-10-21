@@ -10,7 +10,7 @@ import pytest
 from fsbpyr.payload.format import (
     HEADER,
     NONE,
-    PAGE_SIZE,
+    PAYLOAD_ALIGN,
     TRAILER_SIZE,
     Codec,
     FileFlag,
@@ -192,7 +192,7 @@ def test_assemble_pads_stub_and_appends_trailer() -> None:
     image = assemble(stub, payload)
 
     exe = Executable.parse(image)
-    assert exe.payload_offset == 2 * PAGE_SIZE
+    assert exe.payload_offset == PAYLOAD_ALIGN
     assert exe.stub_prefix().startswith(stub)
     assert len(image) == exe.payload_offset + len(payload) + TRAILER_SIZE
     assert exe.payload.app_name == "demo"
