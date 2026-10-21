@@ -10,10 +10,10 @@ from collections.abc import Mapping
 
 from .elf import ElfError, VersionNeed, dynamic_info, version_requirements
 from .natives import (
-    GLIBC_LIBRARIES,
     MANYLINUX_2_28_LIMITS,
     MANYLINUX_2_28_MARKERS,
     SystemUse,
+    glibc_libraries,
 )
 
 STUB = "(stub)"  # the launcher, in "needed by"
@@ -62,7 +62,7 @@ def target_needs(libraries: Mapping[str, Mapping[str, object]], glibc: str | Non
     """The glibc and the other system libraries (with versions) the target must have, in a line."""
     parts = [f"glibc >= {glibc}"] if glibc else []
     for library, entry in libraries.items():
-        if library in GLIBC_LIBRARIES:
+        if library in glibc_libraries():
             continue
         versions = entry.get("versions")
         shown = (

@@ -270,6 +270,15 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   `runtime.json`, for information; they are not part of the runtime id.
 
 ### Changed
+- **One table holds the platforms fsbpyr knows** (Phase 9, step 0): `src/fsbpyr/targets.py`
+  has x86_64-linux-gnu, aarch64-linux-gnu, x86_64-linux-musl, aarch64-linux-musl and
+  aarch64-macos, each with its python-build-standalone triple and flavour, ELF machine,
+  dynamic loader, C library, xz filter for native files, sysroot directory and uv's
+  `--python-platform`. The host's target comes from `sys.platform`, the machine and the C
+  library; the ELF check, the system libraries, the payload's xz filter, the sysroot flags,
+  the cache collector and staging take their values from it. A recognized host without pins
+  (anything but x86-64 glibc) stops with "fsbpyr does not support the ... target yet" before
+  any download; an unknown host keeps "unsupported host". Nothing changes on x86-64 glibc.
 - **fsbpyr's code imports and runs on Python 3.12 and 3.13** (Phase 9, the base of the port):
   `requires-python` is now `>=3.12,<3.15`, with `backports.zstd` (the official backport of
   3.14's `compression.zstd`) as a dependency below 3.14. The CLI still refuses 3.12 and 3.13:

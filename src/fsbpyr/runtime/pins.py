@@ -25,6 +25,8 @@ class PbsPin:
         return f"{_RELEASES}/{self.release}/{quote(self.name)}.tar.zst"
 
 
+# The triples and flavours below are those of targets.py (a test compares them); they stay
+# literal here because tools/upstream-watch.sh reads them from this file.
 PINS = (
     PbsPin(
         python="3.12",
@@ -54,6 +56,8 @@ PINS = (
 
 
 def pin_for(python: str, triple: str) -> PbsPin:
+    if all(pin.triple != triple for pin in PINS):  # a target of targets.py, not supported yet
+        raise LookupError(f"fsbpyr does not support the {triple} target yet")
     for pin in PINS:
         if (pin.python, pin.triple) == (python, triple):
             return pin
@@ -70,7 +74,6 @@ class SysrootPin:
 
     name: str  # part of the runtime id
     glibc: str  # version of the headers and libraries
-    platform: str  # wheels compatible with it, in uv's --python-platform spelling
     packages: tuple[tuple[str, str], ...]  # (url, sha256)
 
     @property
@@ -90,7 +93,6 @@ SYSROOTS = {
     "x86_64-unknown-linux-gnu": SysrootPin(
         name="debian10-glibc2.28-x86_64",
         glibc="2.28",
-        platform="x86_64-manylinux_2_28",
         packages=tuple((f"{_DEBIAN}/{path}", sha256) for path, sha256 in (
             ("g/glibc/libc6_2.28-10+deb10u1_amd64.deb",
              "0ee0f0bfcd7b59ffda1dbc76ef58fa79512913204f2a336206467bfbf45bc69f"),

@@ -14,13 +14,13 @@ import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
+from .. import targets
 from . import ar
 from .hold import hold
 from .pbs import PbsError, download
 from .pins import SysrootPin
 
 _DONE = ".fsbpyr-sysroot"  # written last: a sysroot without it is incomplete
-_MULTIARCH = "x86_64-linux-gnu"  # Debian's layout of the pinned packages (x86-64 only)
 
 
 class SysrootError(RuntimeError):
@@ -91,11 +91,14 @@ def build_flags(root: Path, env: Mapping[str, str]) -> dict[str, str]:
     ``root``, for extensions built from source; ``env``'s own flags follow. Not CC itself: build
     probes run it as a bare command (posix_ipc's prober). Not C++: the sysroot has no
     libstdc++, so a C++ extension fails, and the caller keeps the host's build."""
-    lib = root / "usr" / "lib" / _MULTIARCH
-    gcc = sorted((root / "usr" / "lib" / "gcc" / _MULTIARCH).glob("*"))[-1:]  # crtbeginS.o, libgcc
-    cflags = [f"--sysroot={root}", "-isystem", f"{root / 'usr' / 'include' / _MULTIARCH}"]
+    multiarch = targets.host_target().multiarch  # Debian's layout of the pinned packages
+    if multiarch is None:
+        raise SysrootError("this host has no sysroot")
+    lib = root / "usr" / "lib" / multiarch
+    gcc = sorted((root / "usr" / "lib" / "gcc" / multiarch).glob("*"))[-1:]  # crtbeginS.o, libgcc
+    cflags = [f"--sysroot={root}", "-isystem", f"{root / 'usr' / 'include' / multiarch}"]
     ldflags = [f"--sysroot={root}", f"-B{lib}", *(f"-B{d}" for d in gcc), f"-L{lib}",
-               f"-L{root / 'lib' / _MULTIARCH}"]  # fmt: skip
+               f"-L{root / 'lib' / multiarch}"]  # fmt: skip
     return {
         "CFLAGS": " ".join([*cflags, env.get("CFLAGS", "")]).strip(),
         "LDFLAGS": " ".join([*ldflags, env.get("LDFLAGS", "")]).strip(),
