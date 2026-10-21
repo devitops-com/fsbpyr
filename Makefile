@@ -95,8 +95,13 @@ uninstall: ## Remove what `make install` installed
 
 # --- Checks ---
 
-test: ## Run the test suite
-	$(UVRUN) pytest
+# The tests' temporary files (gigabytes of builds) go under TESTTMP, on a regular file system:
+# /tmp is often a tmpfs mounted nosuid, where a set-gid start cannot be tested.
+TESTTMP ?= $(HOME)/tmp
+TESTENV := mkdir -p "$(TESTTMP)" && TMPDIR="$(TESTTMP)"
+
+test: ## Run the test suite (temporary files under TESTTMP, default ~/tmp)
+	$(TESTENV) $(UVRUN) pytest
 
 # What CI runs before a release: unit and integration tests, real builds, executables run
 # with the release launcher, and a real executable's boot imports and cache-sync contract
@@ -105,7 +110,7 @@ test: ## Run the test suite
 # the tests marked `sanitized`. Branch coverage below pyproject.toml's fail_under fails the run;
 # coverage.xml is the report CI keeps.
 test-ci: ## Run the core of the test suite, as CI does
-	$(UVRUN) pytest tests/unit tests/integration tests/e2e/test_build.py \
+	$(TESTENV) $(UVRUN) pytest tests/unit tests/integration tests/e2e/test_build.py \
 		tests/e2e/test_runtime_app.py tests/e2e/test_imports.py \
 		tests/e2e/test_stub_hardening.py \
 		-k "not (sanitized and not release)" --cov --cov-report=term --cov-report=xml
@@ -134,7 +139,7 @@ test-container: ## Run the whole suite but the portability tests in a Debian tri
 test-portability: ## Run the portability matrix on 13 distributions (podman, dist/fsbpyr)
 	rm -rf dist/portability-apps
 	tools/portability-apps.sh $(BIN) dist/portability-apps $(PYTHON_MINOR)
-	FSBPYR_PORTABILITY_APPS="$(CURDIR)/dist/portability-apps" FSBPYR_TESTS_REQUIRE_ALL=portability \
+	$(TESTENV) FSBPYR_PORTABILITY_APPS="$(CURDIR)/dist/portability-apps" FSBPYR_TESTS_REQUIRE_ALL=portability \
 		$(UVRUN) pytest tests/e2e/test_portability.py
 
 check: ## Static checks: ruff + mypy

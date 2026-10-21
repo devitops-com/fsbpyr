@@ -296,6 +296,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   `runtime.json`, for information; they are not part of the runtime id.
 
 ### Changed
+- **The tests keep their temporary files under `~/tmp`, not `/tmp`.** `make test`, `make
+  test-ci` and `make test-portability` set `TMPDIR` to `TESTTMP` (default `~/tmp`, created if
+  missing): `/tmp` is often a tmpfs mounted nosuid, where the set-gid start test skipped. The
+  long-symlink test of the cache root uses a 999-byte target, which XFS takes.
 - **One table holds the platforms fsbpyr knows** (Phase 9, step 0): `src/fsbpyr/targets.py`
   has x86_64-linux-gnu, aarch64-linux-gnu, x86_64-linux-musl, aarch64-linux-musl and
   aarch64-macos, each with its python-build-standalone triple and flavour, ELF machine,
