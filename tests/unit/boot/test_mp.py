@@ -30,6 +30,11 @@ else:
 AUTHKEY = sys.version_info >= (3, 14)  # only 3.14's forkserver authenticates with authkey_r
 
 
+# Under user-mode QEMU (the development host's basic aarch64 checks) /proc/<pid>/exe names the
+# emulator for every process, so every parent "runs the same executable".
+EMULATED = os.stat("/proc/self/exe").st_ino != os.stat(sys.executable).st_ino
+
+
 @pytest.fixture(scope="module")
 def mp() -> ModuleType:
     spec = importlib.util.spec_from_file_location("_fsbpyr_rt_mp", MP_SOURCE)
@@ -211,6 +216,7 @@ def test_run_child_calls_the_function_with_cpythons_argv(
     assert mp.run_child([EXE, "--help"]) is False
 
 
+@pytest.mark.skipif(EMULATED, reason="/proc/<pid>/exe is the emulator's under user-mode QEMU")
 def test_children_of_any_other_program_are_refused(mp: ModuleType) -> None:
     argv = [EXE, "-c", "from multiprocessing.resource_tracker import main;main(6)"]
 

@@ -21,6 +21,24 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   The new [docs/security.md](docs/security.md) is the threat model.
 
 ### Added
+- **Linux aarch64 with glibc** (Phase 9, platforms step 2). An fsbpyr on an aarch64 host builds
+  its runtime and its apps for aarch64, as the x86-64 one does for x86-64 (no cross builds).
+  `runtime/pins.py` pins the python-build-standalone 20261009 `pgo+lto-full` archives for
+  3.12.15, 3.13.16 and 3.14.8 (SHA-256s from the release's checksums and the downloads) and a
+  glibc 2.28 sysroot from the same Debian 10 package versions as x86-64's, for arm64. The
+  aarch64 objects call outlined atomics that Debian 10's libgcc 8 lacks, so the launcher links
+  clang's compiler-rt builtins too (`libclang-rt-22-dev`; the link stops and says so when
+  they are missing); the x86-64 link is unchanged. The native analysis takes the aarch64
+  ELF machine and loader (`ld-linux-aarch64.so.1`) from the target table and the same
+  manylinux_2_28 limits; the payload's xz natives use no BCJ filter there. `tools/bootstrap.sh`
+  accepts aarch64 hosts, and the `Containerfile` builds for amd64 and arm64
+  (`podman build --arch arm64`) with the pinned uv of each architecture, checked against a
+  SHA-256, instead of the newest from astral.sh. Checked under QEMU emulation only (no arm64
+  hardware yet; the full suite, the three-stage bootstrap and the portability images are for
+  GitHub's arm runners): the 3.14 runtime built (of the 3.12 and 3.13 pins only the downloads'
+  SHA-256s were checked), two fixture apps (`hello`, and `heavy` with numpy,
+  onnxruntime, cryptography, orjson and pydantic) built, verified and ran, and the unit tests
+  pass. No release has aarch64 executables yet.
 - **`install.sh`, an installer modelled on uv's** (Phase 9, platforms step 1). The release
   workflow builds it from `tools/release/install.sh.in` with `tools/release/make-install.sh`,
   which writes in the release's version and the SHA-256 and glibc of every executable, then

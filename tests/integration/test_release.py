@@ -967,6 +967,44 @@ def test_bootstrap_accepts_only_the_uv_that_fsbpyr_uv_version_names(tmp_path: Pa
     assert (right.returncode, unset.returncode) == (0, 0)  # a user's own uv is accepted (D26)
 
 
+def _bootstrap_on(tmp_path: Path, machine: str) -> subprocess.CompletedProcess[str]:
+    """bootstrap.sh as a fake `uname -m` says, with podman and make that only say they ran."""
+    bin_dir = tmp_path / "bin"
+    write_program(bin_dir / "uname", f'echo {machine}\n')
+    write_program(bin_dir / "podman", 'echo "podman $*"\n')
+    write_program(bin_dir / "make", 'echo "make $*"\n')
+    env = {"PATH": f"{bin_dir}:{SYSTEM_PATH}", "FSBPYR_BOOTSTRAP": "podman"}
+    return run_script(["bash", str(BOOTSTRAP_SH)], env)
+
+
+@pytest.mark.parametrize("machine", ["x86_64", "aarch64"])
+def test_bootstrap_builds_on_both_architectures_in_the_hosts_container(
+    tmp_path: Path, machine: str
+) -> None:
+    result = _bootstrap_on(tmp_path, machine)
+
+    assert result.returncode == 0, result.stderr
+    assert "podman build --target build" in result.stdout  # no --arch: the host's own
+    assert "--arch" not in result.stdout
+
+
+def test_bootstrap_refuses_other_architectures(tmp_path: Path) -> None:
+    result = _bootstrap_on(tmp_path, "riscv64")
+
+    assert result.returncode == 1
+    assert "x86-64 and aarch64 only (this is riscv64)" in result.stderr
+
+
+def test_the_containerfile_installs_the_pinned_uv_for_both_architectures() -> None:
+    version, sha256 = (ROOT / "tools/release/uv.version").read_text(encoding="utf-8").split()
+    containerfile = (ROOT / "Containerfile").read_text(encoding="utf-8")
+
+    assert f"ARG UV_VERSION={version}\n" in containerfile
+    assert f"ARG UV_SHA256_AMD64={sha256}\n" in containerfile
+    assert re.search(r"^ARG UV_SHA256_ARM64=[0-9a-f]{64}$", containerfile, re.MULTILINE)
+    assert "uv-aarch64-unknown-linux-gnu" in containerfile and "sha256sum -c" in containerfile
+
+
 def _watch_env(
     tmp_path: Path, *, uv: str, snapshot: str, image: str
 ) -> tuple[Path, dict[str, str]]:

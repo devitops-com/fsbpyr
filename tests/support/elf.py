@@ -2,6 +2,8 @@
 
 import struct
 
+from fsbpyr.targets import host_target
+
 DT_NULL, DT_NEEDED, DT_STRTAB, DT_STRSZ, DT_SONAME, DT_RPATH, DT_RUNPATH = 0, 1, 5, 10, 14, 15, 29
 DT_VERNEED, DT_VERNEEDNUM = 0x6FFFFFFE, 0x6FFFFFFF
 
@@ -12,7 +14,7 @@ def make_elf(
     rpath: str | None = None,
     runpath: str | None = None,
     soname: str | None = None,
-    machine: int = 62,
+    machine: int | None = None,  # the host's: the readers refuse any other machine
     dynamic: bool = True,
     versions: tuple[tuple[str, tuple[str, ...]], ...] = (),
     comment: bytes | None = None,
@@ -52,6 +54,8 @@ def make_elf(
     size = dyn_off + len(dyn)
     header = b"\x7fELF" + bytes([2, 1, 1]) + bytes(9)
     e_type = 2 if executable else 3
+    if machine is None:
+        machine = host_target().elf_machine
     header += struct.pack("<HHIQQQIHHHHHH", e_type, machine, 1, 0, phoff, 0, 0, 64, 56, phnum,
                           64, 0, 0)  # fmt: skip
     load = struct.pack("<IIQQQQQQ", 1, 5, 0, base, base, size, size, 0x1000)

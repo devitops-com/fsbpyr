@@ -3,6 +3,7 @@
 import lzma
 import os
 import platform
+import re
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from tests.support.elf import make_elf
 X86_GNU = Target("x86_64-linux-gnu", "x86_64-unknown-linux-gnu", "pgo+lto-full", "x86-64",
                  62, "ld-linux-x86-64.so.2", "glibc", lzma.FILTER_X86,
                  "x86_64-linux-gnu", "x86_64-manylinux_2_28")  # fmt: skip
+DEB_ARCH = {"x86-64": "amd64", "aarch64": "arm64"}  # Debian's names of the machines
 EXPECTED = (
     X86_GNU,
     Target("aarch64-linux-gnu", "aarch64-unknown-linux-gnu", "pgo+lto-full", "aarch64",
@@ -125,7 +127,41 @@ def test_the_pins_agree_with_the_table() -> None:
     assert set(pins.SYSROOTS) <= {t.triple for t in targets.TARGETS}
 
 
-@pytest.mark.parametrize("target", EXPECTED[1:], ids=lambda t: t.name)
+PINNED = [t for t in EXPECTED if t.libc == "glibc"]
+UNPINNED = [t for t in EXPECTED if t.libc != "glibc"]
+
+
+@pytest.mark.parametrize("target", PINNED, ids=lambda t: t.name)
+def test_a_glibc_target_has_pins_for_every_python_and_a_sysroot(target: Target) -> None:
+    for python in ("3.12", "3.13", "3.14"):
+        pin = pins.pin_for(python, target.triple)
+        assert (pin.triple, pin.flavor, pin.release) == (target.triple, target.flavor, "20261009")
+        assert pin.version.startswith(f"{python}.")
+        assert re.fullmatch(r"[0-9a-f]{64}", pin.sha256)
+        assert pin.url.endswith(f"-{target.triple}-{target.flavor.replace('+', '%2B')}.tar.zst")
+    sysroot = pins.sysroot_for(target.triple)
+    assert sysroot.baseline == (2, 28)
+    assert all(url.endswith(f"_{DEB_ARCH[target.arch]}.deb") for url, _ in sysroot.packages)
+
+
+def test_the_aarch64_sysroot_is_the_x86_64_ones_packages_for_arm64() -> None:
+    def versions(pin: pins.SysrootPin) -> list[str]:
+        return [url.rpartition("/")[2].rpartition("_")[0] for url, _ in pin.packages]
+
+    x86, arm = (pins.sysroot_for(t.triple) for t in PINNED)
+    assert versions(x86) == versions(arm)
+    assert x86.identity != arm.identity
+    assert not {sha for _, sha in arm.packages} & {sha for _, sha in x86.packages}
+
+
+def test_the_pins_of_each_python_differ_per_target() -> None:
+    for python in ("3.12", "3.13", "3.14"):
+        first, second = (pins.pin_for(python, t.triple) for t in PINNED)
+        assert first.version == second.version
+        assert first.sha256 != second.sha256
+
+
+@pytest.mark.parametrize("target", UNPINNED, ids=lambda t: t.name)
 def test_a_target_without_pins_stops_before_any_download(
     target: Target, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

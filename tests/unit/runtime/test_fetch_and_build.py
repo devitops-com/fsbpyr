@@ -183,24 +183,33 @@ def test_pin_lookup() -> None:
 
 
 @pytest.mark.parametrize(
-    ("python", "version", "sha256"),
+    ("triple", "python", "version", "sha256"),
     [
-        ("3.12", "3.12.15", "36a23ba5776ede9db3dfbb1b1f84c74b18939331c75e1e70760f12ad61aa96d5"),
-        ("3.13", "3.13.16", "b4fd36646765e6b8387ace2fd5a152d10028a84deb0d1f173f7299429129d202"),
-        ("3.14", "3.14.8", "d4d83a2dbb9b7ee12373219113e9aa59ad943b8d381a43837209945bb5596e66"),
+        ("x86_64", "3.12", "3.12.15",
+         "36a23ba5776ede9db3dfbb1b1f84c74b18939331c75e1e70760f12ad61aa96d5"),
+        ("x86_64", "3.13", "3.13.16",
+         "b4fd36646765e6b8387ace2fd5a152d10028a84deb0d1f173f7299429129d202"),
+        ("x86_64", "3.14", "3.14.8",
+         "d4d83a2dbb9b7ee12373219113e9aa59ad943b8d381a43837209945bb5596e66"),
+        ("aarch64", "3.12", "3.12.15",
+         "1f92ec1ede8ed1b08cc783b4e000a20c332ed3288bc7f7a2781bc5af0e655db3"),
+        ("aarch64", "3.13", "3.13.16",
+         "8907ec2f181f0fc5cd08b9d897d36159432405af78f68f8faca728f48940e0ca"),
+        ("aarch64", "3.14", "3.14.8",
+         "e8b3b7186d7a11335f3d1f05ee1b19b469cd5bcaeabd6293afa3713f24ff7bf0"),
     ],
-)
+)  # fmt: skip
 def test_every_version_is_pinned_to_release_20261009(
-    python: str, version: str, sha256: str
+    triple: str, python: str, version: str, sha256: str
 ) -> None:
-    pin = pin_for(python, "x86_64-unknown-linux-gnu")
+    pin = pin_for(python, f"{triple}-unknown-linux-gnu")
 
     assert (pin.version, pin.release, pin.flavor, pin.sha256) == (
         version, "20261009", "pgo+lto-full", sha256,
     )  # fmt: skip
     assert pin.url == (
         "https://github.com/astral-sh/python-build-standalone/releases/download/20261009/"
-        f"cpython-{version}%2B20261009-x86_64-unknown-linux-gnu-pgo%2Blto-full.tar.zst"
+        f"cpython-{version}%2B20261009-{triple}-unknown-linux-gnu-pgo%2Blto-full.tar.zst"
     )
 
 
@@ -217,7 +226,7 @@ def test_build_runtime_orchestrates_and_caches(
 ) -> None:
     fake = pbs.PbsDist(tmp_path / "python", {
         "python_version": "3.14.8", "python_tag": "cp314",
-        "target_triple": "x86_64-unknown-linux-gnu",
+        "target_triple": registry.host_triple(),
         "python_implementation_hex_version": 0x030E08F0, "python_bytecode_magic_number": "2b0e0d0a",
         "python_suffixes": {"extension": [".so"]},
         "build_info": {"object_file_format": "llvm-bitcode:22.1.3"},
@@ -263,7 +272,7 @@ def test_build_runtime_orchestrates_and_caches(
 
     assert (runtime.stub, runtime.tag, runtime.modules) == (
         b"STUB",
-        "cp314-x86_64-unknown-linux-gnu",
+        f"cp314-{registry.host_triple()}",
         (boot,),
     )
     assert runtime.files == (notice,)  # the licence notices travel with the runtime (REP-4)
@@ -277,7 +286,7 @@ def test_build_runtime_orchestrates_and_caches(
     }
     assert (tmp_path / "runtimes" / runtime.runtime_id / ".lock").is_file()  # held (D38)
     assert registry.list_runtimes(tmp_path) == [(runtime.runtime_id, "3.14.8")]
-    assert linked_against == [tmp_path / "sysroots" / "debian10-glibc2.28-x86_64"]  # stubbed
+    assert linked_against == [tmp_path / "sysroots" / pins.sysroot_for(pin.triple).name]  # stubbed
     # every warning of the build is shown, not only its failures
     assert {"ld.lld-22: warning: from the link", "x.py: SyntaxWarning: from the stdlib"} <= set(
         messages

@@ -9,11 +9,11 @@ import pytest
 from fsbpyr.payload.format import ModuleFlag
 from fsbpyr.runtime import pbs, stdlib
 from fsbpyr.runtime.pins import pin_for
-from fsbpyr.runtime.registry import cache_home
+from fsbpyr.runtime.registry import cache_home, host_triple
 
 pytestmark = pytest.mark.slow
 
-TRIPLE = "x86_64-unknown-linux-gnu"
+TRIPLE = host_triple()
 ENCODINGS = {"encodings", "encodings.aliases", "encodings.utf_8"}
 # version -> (built-in extension modules, startup modules, selected modules, unselected ones)
 EXPECTED = {
