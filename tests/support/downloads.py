@@ -42,8 +42,17 @@ def build_kept_runtime(python: str, kept: Path, *, sanitize: bool) -> None:
     seed(files, kept, cache)
     built = registry.build_runtime(python, cache=cache, log=lambda _: None, sanitize=sanitize)
     keep(files, kept, cache)
-    for old in (cache / "runtimes").glob(f"{built.tag}-*"):
-        if old.name != built.runtime_id and old.name.endswith("-sanitized") == sanitize:
+    prune_runtimes(cache, built.runtime_id)
+
+
+def prune_runtimes(cache: Path, current: str) -> None:
+    """Remove the runtimes in ``cache`` that ``current`` replaces: same Python, target and
+    variant (release or sanitized), another id."""
+    tag = current.rsplit("-", 2 if current.endswith("-sanitized") else 1)[0]
+    for old in (cache / "runtimes").glob(f"{tag}-*"):
+        if old.name != current and old.name.endswith("-sanitized") == current.endswith(
+            "-sanitized"
+        ):
             shutil.rmtree(old)
 
 
