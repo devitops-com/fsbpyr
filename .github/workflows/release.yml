@@ -148,7 +148,9 @@ jobs:
       - name: Install clang, lld and the test tools
         run: |
           for try in 1 2 3; do apt-get update -q && break; [ "$try" -lt 3 ] || exit 1; sleep 15; done
-          apt-get install -y -q --no-install-recommends make clang-22 lld-22 gcc strace groff-base zstd
+          # libclang-rt-22-dev: compiler-rt's builtins, which the aarch64 launcher links
+          apt-get install -y -q --no-install-recommends make clang-22 lld-22 libclang-rt-22-dev \
+            gcc strace groff-base zstd
 
       # The uv that tools/release/uv.version names, for this runner's architecture, from its
       # release tarball and checked against the sha256 recorded there, and the Python of this
@@ -169,7 +171,7 @@ jobs:
           echo "image:    $(grep -o 'debian:trixie@sha256:[0-9a-f]*' .github/workflows/release.yml | head -n1)"
           echo "snapshot: ${FSBPYR_APT_SNAPSHOT:-none (live mirror)}"
           echo "uv:       $(uv --version)"
-          dpkg-query -W clang-22 lld-22 xz-utils
+          dpkg-query -W clang-22 lld-22 libclang-rt-22-dev xz-utils
           apt-cache policy clang-22 lld-22
 
       # The locked environment, the runtime, fsbpyr in three stages
@@ -294,12 +296,14 @@ jobs:
 
       # pytest alone passes a run however many tests skip: here a skip that tests/conftest.py's
       # `ci` list does not expect (this container runs the tests as root) fails the step, and so
-      # does a branch coverage below pyproject.toml's fail_under.
+      # does a branch coverage below pyproject.toml's fail_under. The tests' files go to /tmp,
+      # not the Makefile's ~/tmp: $HOME here is /github/home, the runner user's, and a cache
+      # under it is refused as owned by another user. The container's /tmp is no tmpfs.
       - name: make test-ci
         id: test-ci
         env:
           FSBPYR_TESTS_REQUIRE_ALL: ci
-        run: make test-ci $MAKE_ARGS
+        run: make test-ci TESTTMP=/tmp $MAKE_ARGS
 
       # IMPLEMENTATION_PLAN.md §7 sets 90% for payload/ and elf.py, above the 80% overall; this
       # reads the data make test-ci left in .coverage.
@@ -382,7 +386,8 @@ jobs:
       - name: Install clang, lld and the test tools
         run: |
           for try in 1 2 3; do apt-get update -q && break; [ "$try" -lt 3 ] || exit 1; sleep 15; done
-          apt-get install -y -q --no-install-recommends make clang-22 lld-22 gcc strace groff-base
+          apt-get install -y -q --no-install-recommends make clang-22 lld-22 libclang-rt-22-dev \
+            gcc strace groff-base
 
       # The Python of this entry as build installs it: .python-version's for the newest version
       # (bootstrap.sh looks for that very patch release), else the minor version's newest.
@@ -407,7 +412,7 @@ jobs:
         run: |
           echo "snapshot: ${FSBPYR_APT_SNAPSHOT:-none (live mirror)}"
           echo "uv:       $(uv --version)"
-          dpkg-query -W clang-22 lld-22 xz-utils
+          dpkg-query -W clang-22 lld-22 libclang-rt-22-dev xz-utils
 
       # Stage 1 to 3 as build does (a variant's with --python X.Y: dist/stage3-X.Y), as another
       # user with other caches and umask 077.
