@@ -1780,7 +1780,9 @@ write, a truncated binary.
      lld bound them to the shared libgcc although libgcc 8's `libgcc.a` has them. The link now
      has `-static-libgcc` on every target (checked under QEMU: the aarch64 launcher needs
      glibc's libraries only; the x86-64 one is byte-identical, its runtime id new), and
-     `test_stub_hardening` checks that the host's launcher needs nothing else.
+     `test_stub_hardening` checks that the host's launcher needs nothing else. Run
+     39650979783 (`544150e`): every suite and portability job is green, x86-64 and aarch64,
+     3.12 to 3.14. Left for the PR: `release.yml`'s aarch64 build, reproduction and compare.
   3. Linux musl, x86-64 and aarch64 (M–L). Spike: a musl 1.2.2 sysroot from pinned packages
      (Alpine 3.14's, to confirm), the `lto-full` archive linked into a dynamic musl PIE, a
      musllinux numpy wheel loaded, an Alpine release with clang/lld 22 for the bootstrap.
