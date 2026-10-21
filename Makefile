@@ -96,12 +96,17 @@ uninstall: ## Remove what `make install` installed
 # --- Checks ---
 
 # The tests' temporary files (gigabytes of builds) go under TESTTMP, on a regular file system:
-# /tmp is often a tmpfs mounted nosuid, where a set-gid start cannot be tested.
+# /tmp is often a tmpfs mounted nosuid, where a set-gid start cannot be tested. The runtime's
+# pinned downloads are kept there between runs (tests/support/downloads.py), unless
+# FSBPYR_TEST_DOWNLOADS names another place.
 TESTTMP ?= $(HOME)/tmp
-TESTENV := mkdir -p "$(TESTTMP)" && TMPDIR="$(TESTTMP)"
+TESTENV := mkdir -p "$(TESTTMP)" && TMPDIR="$(TESTTMP)" \
+	FSBPYR_TEST_DOWNLOADS="$${FSBPYR_TEST_DOWNLOADS:-$(TESTTMP)/fsbpyr-test-downloads}"
+# `make test` runs the tests in JOBS processes (pytest-xdist), each test file in one of them.
+JOBS ?= 8
 
-test: ## Run the test suite (temporary files under TESTTMP, default ~/tmp)
-	$(TESTENV) $(UVRUN) pytest
+test: ## Run the test suite in JOBS processes (default 8; temporary files under TESTTMP, ~/tmp)
+	$(TESTENV) $(UVRUN) pytest -n $(JOBS) --dist loadfile
 
 # What CI runs before a release: unit and integration tests, real builds, executables run
 # with the release launcher, and a real executable's boot imports and cache-sync contract

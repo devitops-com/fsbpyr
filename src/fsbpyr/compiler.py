@@ -8,6 +8,7 @@ modules compiles them in its own process: starting workers would cost more. Work
 main module must then do nothing more on import (``if __name__ == "__main__":``)."""
 
 import multiprocessing
+import os
 import threading
 import warnings
 from collections import deque
@@ -67,9 +68,18 @@ def worker_pool() -> ProcessPoolExecutor:
     """Up to THREADS worker processes (D39): forked while the process runs one thread, so that
     no main module is imported again (a script read from stdin has none) and no other thread
     holds a lock; else started by a fork server, which imports the main module."""
-    method = "fork" if threading.active_count() == 1 else "forkserver"
+    method = "fork" if _one_thread() else "forkserver"
     context = multiprocessing.get_context(method)
     return ProcessPoolExecutor(THREADS, mp_context=context, initializer=pooled_thread)
+
+
+def _one_thread() -> bool:
+    """Whether this process runs one thread. /proc counts the threads `threading` does not
+    know (started by C code, or pytest-xdist's), as CPython's own fork warning does."""
+    try:
+        return len(os.listdir("/proc/self/task")) == 1
+    except OSError:  # no /proc
+        return threading.active_count() == 1
 
 
 def _work(job: tuple[bytes, str, int, bool, bool]) -> Compiled:

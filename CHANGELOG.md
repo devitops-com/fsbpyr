@@ -80,12 +80,14 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   runs the 12 images that have an arm64 variant (`archlinux:latest` has none). `tools/release/
   uv.version` holds a checksum per architecture and `tools/release/install-uv.sh` installs the
   uv of the machine's. A release still needs every job of both workflows to have passed. The
-  workflows have not run on GitHub's arm64 runners yet.
+  workflows passed on GitHub's arm64 runners (the full suite, and release CI on PR #21).
 - **Format version 7: the payload starts at a multiple of 64 KiB, not 4 KiB** (Phase 9,
-  step 0). One executable format now serves kernels with 4K, 16K and 64K pages (aarch64
-  Linux, macOS arm64), because the payload's file offset is a multiple of every running page
-  size. An executable is up to 64 KiB larger (the zero padding after the stub); `fsbpyr
-  inspect` names it "zero padding to the 64 KiB boundary". The launcher accepts only version 7
+  step 0). One executable format is meant for kernels with 4K, 16K and 64K pages (aarch64
+  Linux, macOS arm64): the payload's file offset is a multiple of each of those page sizes.
+  It has run on 4K-page kernels only (x86-64, and aarch64 on GitHub's arm64 runners); no
+  16K or 64K kernel has been tried. An executable is up to 64 KiB larger (the zero padding
+  after the stub); `fsbpyr inspect` names it "zero padding to the 64 KiB boundary". The
+  launcher accepts only version 7
   and refuses an offset that is not a multiple of 64 KiB; `inspect` still reads versions 1 to
   6. Each executable carries its own launcher, so executables built before this change still
   run; they are not rebuilt.
@@ -334,6 +336,12 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   test-ci` and `make test-portability` set `TMPDIR` to `TESTTMP` (default `~/tmp`, created if
   missing): `/tmp` is often a tmpfs mounted nosuid, where the set-gid start test skipped. The
   long-symlink test of the cache root uses a 999-byte target, which XFS takes.
+- **`make test` runs the suite in 8 processes** (pytest-xdist, `JOBS=` to change it, each test
+  file in one process): about 2.5 minutes instead of 10.5 on a 24-core host. Before the workers
+  start, the runtime's pinned downloads are fetched and its release and sanitized runtimes
+  built, once, into `FSBPYR_TEST_DOWNLOADS` (`make test*` default to `~/tmp/fsbpyr-test-downloads`);
+  every session copies the runtime from there instead of building its own, and a kept runtime
+  is rebuilt only when its id changes.
 - **A test run removes the builds of local projects it made from uv's cache.** The tests build
   their fixture projects (and fsbpyr) from new temporary copies every time, and uv kept every
   build and its unpacked wheel: thousands of entries a run. At the end of a run, the entries
@@ -426,6 +434,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   container, as before, and the README's release check no longer runs `uv self update`.
 
 ### Fixed
+- **The build's compile pool forks only when the process runs one thread.** It counted the
+  threads `threading` knows; one started by C code (or pytest-xdist's) did not count, and the
+  pool forked a multi-threaded process, which may deadlock. It now counts `/proc/self/task`, as
+  CPython's own warning does, and starts a fork server otherwise.
 - **A bundled library whose version ends in a letter is a native library.** A file named like
   `libcrypto-02bae65c.so.1.1.1k` (OpenSSL 1.1) was kept as data, so the libraries that need it
   failed the build as "neither bundled nor standard system libraries"; psycopg-binary's

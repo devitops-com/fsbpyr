@@ -1,6 +1,7 @@
 """Facts about the pinned PBS distribution that the runtime build relies on (needs the cache)."""
 
 import marshal
+import os
 import shutil
 import types
 from pathlib import Path
@@ -20,10 +21,14 @@ pytestmark = pytest.mark.slow
 @pytest.fixture(scope="module")
 def dist() -> pbs.PbsDist:
     pin = pin_for(TARGET_PYTHON, host_triple())
-    root = cache_root() / "pbs" / pin.name / "python"
-    if not (root / "PYTHON.json").exists():
-        pytest.skip("pinned PBS distribution is not in the cache (run fsbpyr runtime build)")
-    return pbs.PbsDist.load(root)
+    caches = [cache_root()]
+    if kept := os.environ.get("FSBPYR_TEST_DOWNLOADS"):  # the runtimes' (tests/support)
+        caches.append(Path(kept) / "cache")
+    for cache in caches:
+        root = cache / "pbs" / pin.name / "python"
+        if (root / "PYTHON.json").exists():
+            return pbs.PbsDist.load(root)
+    pytest.skip("pinned PBS distribution is not in the cache (run fsbpyr runtime build)")
 
 
 def test_startup_set_matches_spike_s2(dist: pbs.PbsDist) -> None:

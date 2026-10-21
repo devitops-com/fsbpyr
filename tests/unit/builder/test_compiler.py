@@ -2,6 +2,8 @@
 in the build's own process, given in the classifier's order; jobs it passes over are dropped,
 modules it asks for that were not ahead are compiled on the spot."""
 
+import _thread
+import multiprocessing
 from pathlib import Path
 
 import pytest
@@ -121,3 +123,25 @@ def test_a_build_classifies_alike_on_one_core_and_on_workers(
     assert classified() == pooled
     assert any("m7.py kept as data" in warning for warning in pooled.warnings)
     assert any("data_reader.py" in warning for warning in pooled.warnings)
+
+
+def test_a_thread_threading_does_not_know_keeps_the_pool_from_forking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    methods: list[str] = []
+    get_context = multiprocessing.get_context
+
+    def recorded(method: str) -> multiprocessing.context.BaseContext:
+        methods.append(method)
+        return get_context(method)
+
+    monkeypatch.setattr(multiprocessing, "get_context", recorded)
+    release = _thread.allocate_lock()
+    release.acquire()
+    _thread.start_new_thread(release.acquire, ())  # not in threading.enumerate()
+    try:
+        compiler.worker_pool().shutdown()
+    finally:
+        release.release()
+
+    assert methods == ["forkserver"]

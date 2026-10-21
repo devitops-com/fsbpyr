@@ -217,12 +217,20 @@ def test_run_child_calls_the_function_with_cpythons_argv(
 
 
 @pytest.mark.skipif(EMULATED, reason="/proc/<pid>/exe is the emulator's under user-mode QEMU")
-def test_children_of_any_other_program_are_refused(mp: ModuleType) -> None:
+def test_children_of_any_other_program_are_refused(
+    mp: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
     argv = [EXE, "-c", "from multiprocessing.resource_tracker import main;main(6)"]
-
-    assert mp._parent_runs_this_executable() is False  # pytest was not started by pytest
-    with pytest.raises(SystemExit, match="refusing"):
-        mp.run_child(argv)
+    other = subprocess.Popen(["/bin/sleep", "60"])  # ours, our ids: only the program differs
+    # not pytest's own parent: under pytest-xdist that is pytest, this executable
+    monkeypatch.setattr(os, "getppid", lambda: other.pid)
+    try:
+        assert mp._parent_runs_this_executable() is False
+        with pytest.raises(SystemExit, match="refusing"):
+            mp.run_child(argv)
+    finally:
+        other.kill()
+        other.wait()
 
 
 def test_a_child_of_the_same_executable_is_recognized(mp: ModuleType) -> None:

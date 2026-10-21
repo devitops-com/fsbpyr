@@ -35,8 +35,9 @@ The tiers, from fastest to most complete:
   build are instrumented for llvm-cov (`FSBPYR_LLVM_COV_DIR`), and the run's summary shows the
   report; it is informational. A run's duration has not been measured yet; the job's limit is
   60 minutes.
-- `make test`: everything, on your machine. The tests that need what it lacks skip: root's
-  own directories, a second user, a supplementary group, strace, groff, podman.
+- `make test`: everything, on your machine, in 8 processes (`JOBS=` to change it; about 2.5
+  minutes on 24 cores). The tests that need what it lacks skip: root's own directories, a
+  second user, a supplementary group, strace, groff, podman.
 - `make test-container`: everything but `tests/e2e/test_portability.py` in the Containerfile's
   `test` stage, a Debian trixie container where `tools/test-setup.sh` has added those things
   and the suite runs as the user `tester`. It needs only podman, make and uv on the host;
