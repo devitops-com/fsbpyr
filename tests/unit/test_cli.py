@@ -1,6 +1,7 @@
 """Minimal CLI surface available in Phase 1."""
 
 import json
+import signal
 import subprocess
 import sys
 import tomllib
@@ -34,6 +35,23 @@ def test_main_prints_the_version_of_the_checkout(
 
     assert main(["--version"]) == 0
     assert capsys.readouterr().out == "0.1.0-6457a95b\n"
+
+
+def test_sigterm_ends_a_command_like_sigint_and_the_handler_is_restored(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = signal.getsignal(signal.SIGTERM)
+
+    def killed(*_: object) -> None:  # SIGTERM arrives: what its handler does is the command's end
+        handler = signal.getsignal(signal.SIGTERM)
+        assert callable(handler)
+        handler(signal.SIGTERM, None)
+
+    monkeypatch.setattr("fsbpyr.vcs.own_version", killed)
+
+    assert main(["--version"]) == 130
+    assert "interrupted" in capsys.readouterr().err
+    assert signal.getsignal(signal.SIGTERM) is before
 
 
 def test_executables_print_the_version_recorded_by_their_build(

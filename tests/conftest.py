@@ -19,6 +19,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from hypothesis import settings
 
 from fsbpyr.project import Project
 
@@ -68,6 +69,11 @@ EXPECTED_SKIPS = {
 }
 # The corpus projects (TST-3) carry test files of their own, which their built apps run
 collect_ignore_glob = ["corpus/*"]
+# Hypothesis in CI (GitHub sets CI): the same examples every run, so a failure there repeats
+# and a red run is never a new example's luck. The default profile stays random locally.
+settings.register_profile("ci", derandomize=True, deadline=None)
+if os.environ.get("CI"):
+    settings.load_profile("ci")
 _skips: list[tuple[str, str]] = []  # this run's, as (nodeid, reason)
 _STARTED = time.time()
 
