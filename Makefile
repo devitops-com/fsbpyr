@@ -32,7 +32,7 @@ BIN   := dist/fsbpyr
 PYTHON_MINOR := $(shell cut -d. -f1,2 .python-version)
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-container test-portability check release clean
+.PHONY: help bootstrap build install uninstall test test-ci test-container test-portability check check-c release clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -150,6 +150,12 @@ test-portability: ## Run the portability matrix on 13 distributions (podman, dis
 check: ## Static checks: ruff + mypy
 	$(UVRUN) ruff check
 	$(UVRUN) mypy
+
+# clang's static analyzer over the launcher, compiled with its flags against the cached PBS
+# headers (a runtime that is not cached is fetched). Informational: full-suite.yml runs it
+# with continue-on-error; it exits 1 when the analyzer has findings.
+check-c: ## Static analysis of the launcher's C sources (clang --analyze; informational)
+	$(UVRUN) python tools/check-c.py
 
 # --- Release ---
 

@@ -1246,6 +1246,11 @@ waits.
   - Each test exists and runs: in test-ci where cheap, otherwise in full-suite.
   - The analyzer report appears in the nightly log.
 - Effort: M. Depends on: CI-3. Owner decision: none.
+- Done 2026-10-21:
+  - tests/conftest.py registers the derandomized Hypothesis profile `ci`, loaded when CI is set. tests/unit/test_elf_mutation.py mutates the bytes of four small ELFs and requires every elf.py reader to return or raise ElfError (test-ci).
+  - cli.py's `main` handles SIGTERM as SIGINT (exit 130), restoring the old handler on return. A unit test in test_cli.py (test-ci) and tests/e2e/test_interrupted_build.py, which kills a real `fsbpyr build` with SIGTERM while the new executable's smoke run waits (full-suite).
+  - The same file runs a build under RLIMIT_FSIZE (1 MiB, SIGXFSZ ignored): exit 1 with "File too large", the old output kept, no temporary.
+  - `make check-c` (tools/check-c.py) runs `clang --analyze` over the eight launcher sources with the launcher's flags and the cached PBS headers; full-suite.yml's suite job runs it informationally (continue-on-error), so its report goes to that job's log, not a nightly run's. First local run: four findings (cache.c:471 null argument, cache.c:915 fstatat on a negative descriptor, way.c:66 possible leak, way.c:141 dead store), not yet triaged.
 
 ---
 

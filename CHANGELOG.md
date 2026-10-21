@@ -432,6 +432,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   container, as before, and the README's release check no longer runs `uv self update`.
 
 ### Fixed
+- **A build killed with SIGTERM cleans up like one interrupted with Ctrl-C.** `fsbpyr` handles
+  SIGTERM as SIGINT: the build removes the executable it was writing and keeps an existing
+  output, prints "interrupted" and exits 130, where it used to die at once and leave a
+  `.NAME.XXXX.tmp` beside the output.
 - **The build's compile pool forks only when the process runs one thread.** It counted the
   threads `threading` knows; one started by C code (or pytest-xdist's) did not count, and the
   pool forked a multi-threaded process, which may deadlock. It now counts `/proc/self/task`, as

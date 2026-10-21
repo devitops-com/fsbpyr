@@ -5,6 +5,7 @@ help text, the shell completions and the man page (D40)."""
 import errno
 import functools
 import shlex
+import signal
 import sys
 import traceback
 from collections.abc import Sequence
@@ -499,7 +500,20 @@ def _internal_error(exc: Exception) -> int:
     return 1
 
 
+def _terminate(signum: int, frame: object) -> None:
+    """SIGTERM, like SIGINT: the unwinding removes what a build was writing."""
+    raise KeyboardInterrupt
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    previous = signal.signal(signal.SIGTERM, _terminate)
+    try:
+        return _run(argv)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def _run(argv: Sequence[str] | None) -> int:
     try:
         code: int = cli.main(args=argv, prog_name=PROG, complete_var=COMPLETE_VAR,
                              standalone_mode=False,

@@ -210,6 +210,12 @@ jobs:
       - name: make check
         run: as-tester make check $MAKE_ARGS
 
+      # Informational: clang's static analyzer over the launcher sources; its findings are in
+      # the log, and a finding does not fail the run.
+      - name: make check-c (clang --analyze)
+        continue-on-error: true
+        run: as-tester make check-c $MAKE_ARGS
+
       # Everything but the portability tests. FSBPYR_TESTS_REQUIRE_ALL=full: no skip is
       # expected, so a test that cannot run here fails the step. Branch coverage below
       # pyproject.toml's fail_under fails it too. The launcher programs the tests build are
