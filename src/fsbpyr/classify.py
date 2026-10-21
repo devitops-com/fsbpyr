@@ -461,7 +461,7 @@ class _Collector:
                 try:
                     program = is_executable(data)
                 except ElfError:
-                    continue  # not an x86-64 ELF64 file: data to us
+                    continue  # not an ELF64 file of this host's machine: data to us
             if program:
                 found[rel] = path
         return found

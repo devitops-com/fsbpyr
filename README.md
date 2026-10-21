@@ -44,7 +44,7 @@ attestation check and building fsbpyr from source are in [Getting fsbpyr](#getti
 
 ## Requirements
 
-- **Build host:** Linux x86-64, with [uv](https://docs.astral.sh/uv/) on `PATH`
+- **Build host:** Linux x86-64, or Linux aarch64 with glibc (see "Supported targets"), with [uv](https://docs.astral.sh/uv/) on `PATH`
   ([D26](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)): uv installs every project, pip
   projects too.
 - **Project:** a console script (`[project.scripts]`, or the build backend's own table such as
@@ -62,13 +62,18 @@ attestation check and building fsbpyr from source are in [Getting fsbpyr](#getti
   the version that fsbpyr embeds, which "Which Python" says how a build chooses. fsbpyr itself
   needs Python 3.12 to 3.14 (D13) and one checkout builds all three variants (`make build
   PYTHON=3.12`, see "Building from source"). The releases carry the 3.14 variant only so far.
-- **Platform:** Linux x86-64 with glibc only. On a musl system such as Alpine the glibc loader
+- **Platform:** Linux x86-64 with glibc. On a musl system such as Alpine the glibc loader
   the executable names does not exist, and the shell reports the executable as "not found"
-  although the file is there.
+  although the file is there. Linux aarch64 with glibc builds from a checkout, on an aarch64
+  host: each fsbpyr builds apps for the platform it runs on, and there are no cross builds.
+  No release has an aarch64 executable yet, and it was checked under QEMU emulation only
+  (the 3.14 runtime and two fixture apps built, verified and ran in the arm64 podman image;
+  the unit tests passed), not on arm64 hardware and not through `make bootstrap`.
 - **Interpreter build:** CPython with the GIL only; the launcher refuses to build for a
   free-threaded CPython ([D35](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)).
 - **Planned** in [Phase 9](docs/IMPLEMENTATION_PLAN.md), after the MVP: releases of the 3.12
-  and 3.13 variants (one fsbpyr per Python version), then Linux aarch64, musl and macOS arm64.
+  and 3.13 variants (one fsbpyr per Python version) and of Linux aarch64, then musl and macOS
+  arm64.
 
 How an executable differs from a venv, what the target must provide, which distributions and
 packages are tested, and what to do when an app fails: [docs/compatibility.md](docs/compatibility.md).
@@ -606,7 +611,8 @@ the host:
 3. builds the runtime (`fsbpyr runtime build`: the pinned CPython from python-build-standalone
    and a glibc 2.28 sysroot are downloaded, the launcher linked with clang and lld 22, the
    standard library compiled; a minute or two, cached in `~/.cache/fsbpyr`). Without clang and
-   lld 22 it stops and says so;
+   lld 22 it stops and says so; on aarch64 the link also needs `libclang-rt-22-dev` (clang's
+   compiler-rt builtins, which have the atomics that CPython's aarch64 objects call);
 4. builds fsbpyr in three stages: fsbpyr run from source builds `dist/stage1/fsbpyr`, that
    executable builds `dist/stage2/fsbpyr`, and that one builds `dist/stage3/fsbpyr`. Each
    stage must pass `fsbpyr inspect --verify` (its digest is recomputed over the whole file),
@@ -614,9 +620,10 @@ the host:
    fsbpyr does not build itself faithfully, and bootstrap stops there;
 5. copies stage 3 to `dist/fsbpyr` and runs `make install`.
 
-On **any other Linux x86-64** steps 1 to 4 run in a Debian trixie podman image
-(`Containerfile`: clang and lld 22 from Debian and uv from astral.sh, which installs the
-pinned Python there), on the checkout mounted into it, and `make install` runs on the host. The
+On **any other Linux x86-64 or aarch64** host steps 1 to 4 run in a Debian trixie podman image
+of the host's architecture (`Containerfile`: clang, lld and compiler-rt 22 from Debian and the
+pinned uv from its release tarball, checked against a SHA-256 per architecture, which installs
+the pinned Python there), on the checkout mounted into it, and `make install` runs on the host. The
 container is IPv4-only: on podman's default network, TLS handshakes from Python with GitHub's
 download host time out. A podman volume, `fsbpyr-cache`, keeps uv's cache, its Python and the
 runtime between runs. `FSBPYR_BOOTSTRAP=podman make bootstrap` uses the container on trixie too.

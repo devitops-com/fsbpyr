@@ -91,7 +91,7 @@ PROJECT defaults to `.`; `build.py`: `dist/<app name>` unless `-o`).
 | # | Decision | Rationale | Rejected alternatives |
 |---|----------|-----------|-----------------------|
 | D1 | The native launcher is written in **C** (about 800 LOC; 2026-10-20 note: the launcher's .c and .h files outside vendor/ now have 3,971 lines) | libpython is C and needs clang anyway (D2). This gives minimal native work at startup | Rust: adds cargo for code that mostly calls C APIs |
-| D2 | **CPython is statically linked into the launcher** from PBS `pgo+lto-full` (clang/lld ≥ 22, `--target=x86_64-unknown-linux-gnu`, `-flto=full`; only `Py*`/`_Py*` are exported (`--export-dynamic-symbol`, Phase 5) so manylinux wheels resolve the C API from the executable but never bind to the stub's static zlib, OpenSSL or libffi). Link inputs: libpython.a, the HACL objects of modules registered in `config.c`, and the static libraries listed in `PYTHON.json` (S1) | Runtime is directly loadable (manifest Fig. 1). PGO+LTO speed. PBS already handles the static dependencies and the glibc 2.17 baseline | Shared libpython extracted to the cache (extracts the runtime on first run). memfd + dlopen (copies MBs on every start). Building CPython and its dependencies ourselves (large effort) |
+| D2 | **CPython is statically linked into the launcher** from PBS `pgo+lto-full` (clang/lld ≥ 22, `--target=` the host's triple (x86_64 or, since 2026-10-21, aarch64-unknown-linux-gnu; the aarch64 link adds clang's compiler-rt builtins for the outlined atomics), `-flto=full`; only `Py*`/`_Py*` are exported (`--export-dynamic-symbol`, Phase 5) so manylinux wheels resolve the C API from the executable but never bind to the stub's static zlib, OpenSSL or libffi). Link inputs: libpython.a, the HACL objects of modules registered in `config.c`, and the static libraries listed in `PYTHON.json` (S1) | Runtime is directly loadable (manifest Fig. 1). PGO+LTO speed. PBS already handles the static dependencies and the glibc 2.17 baseline | Shared libpython extracted to the cache (extracts the runtime on first run). memfd + dlopen (copies MBs on every start). Building CPython and its dependencies ourselves (large effort) |
 | D3 | A **runtime** is: the *stub* (launcher + static CPython, an ELF) + a precompiled *stdlib payload fragment* + `runtime.json`. It is built once per (Python minor, platform, launcher version) and cached | App builds become concatenation: no compiler and no network needed | Compile per app |
 | D4 | **Every fsbpyr binary carries its own runtime.** When `fsbpyr build` targets the same Python minor, it reuses its own stub bytes and the already-compressed stdlib frames from its own executable (`Runtime.from_self()`) | Makes R2/R3 work without a toolchain. Fast builds | — |
 | D5 | **Inputs come from a fresh staging install driven by the project's lock** (§3.6). uv projects: `uv sync --frozen --no-dev --no-editable` (`--locked` since Phase 4) into a throwaway staging venv. pip projects (installed by uv, D26): `uv venv` plus `uv pip install` into a throwaway venv from `pylock.toml`, then a pinned requirements file, then `[project.dependencies]` (unlocked, with a warning), plus the project itself installed `--no-deps`. The developer's venv is never read or modified | Reproducible from the lock. No dev dependencies. The project is installed non-editable, so its package data is correct. uv does all resolving and building (D26) | Reading the developer's venv (not reproducible, editable installs, dev deps). Our own resolver |
@@ -1662,6 +1662,9 @@ write, a truncated binary.
   - the short asset names stay: `fsbpyr`, `fsbpyr-3.12` and `fsbpyr-3.13` (each with its
     `.xz`) are copies of the x86-64 glibc builds, so executables already released keep
     updating.
+  - aarch64 is tested on the development host only with basic checks under user-mode QEMU
+    (`podman --arch arm64`); the full suite, the three-stage bootstrap and the portability
+    images run on GitHub's `ubuntu-24.04-arm` runners.
 
   **Steps** (a target is done when, on its own runner, the full suite passes with that
   target's skip list, the three-stage bootstrap is byte-identical and an independent rebuild
@@ -1690,8 +1693,7 @@ write, a truncated binary.
      and caches `downloads/<asset>-<tag>` by the host's target; `release.yml` publishes every
      file under its long name and the x86-64 glibc ones also under `fsbpyr`, `fsbpyr-3.12` and
      `fsbpyr-3.13` (copies, with their `.xz` and licence notices). Not checked here: the
-     workflow on GitHub Actions. Still open: `install.sh` (step 1).
-  1. `install.sh` (S, alongside step 0), as settled below.
+     workflow on GitHub Actions.
   1. `install.sh` (S, alongside step 0), as settled below. **Done 2026-10-21** (not yet in a
      release): the template `tools/release/install.sh.in`, the generator
      `tools/release/make-install.sh VERSION ASSET_DIR OUTPUT [INSPECTOR]` (version, targets, and
@@ -1715,6 +1717,36 @@ write, a truncated binary.
      `EM_AARCH64` and `ld-linux-aarch64.so.1`, the manylinux_2_28 aarch64 policy, no BCJ
      filter for the payload's natives and `xz --arm64` for the release's `.xz`, CI's target
      dimension (arm runners, the trixie arm64 container), arm64 portability images.
+     Progress 2026-10-21 (A64-CORE, everything but the CI workflows and the portability
+     images): the spike's result is that the launcher and PBS 20261009's aarch64 archives link
+     against Debian 10's arm64 sysroot with clang/lld 22 once clang's compiler-rt builtins are
+     added: the objects call outlined atomics (`__aarch64_cas4_acq_rel` and the like) that
+     libgcc 8 lacks (GCC 10 added them), so `stub.outlined_atomics` appends
+     `libclang_rt.builtins-aarch64.a` (Debian's `libclang-rt-22-dev`) to the aarch64 link
+     only. Pins: the three Pythons' `aarch64-unknown-linux-gnu` `pgo+lto-full` archives
+     (SHA-256s from the release's `SHA256SUMS`, equal to the downloads') and a sysroot
+     `debian10-glibc2.28-aarch64` from the same package versions as x86-64's, arm64 builds,
+     SHA-256s equal to buster's `binary-arm64/Packages` and the downloads'. The launcher needs
+     no other change: `parallel.c`'s spin pause stays empty off x86 (the portable fallback;
+     adding `yield` would change x86-64's launcher digest and so its runtime id), and
+     `-Wall -Wextra` is silent for aarch64. The native analysis' lists and limits are x86-64's:
+     auditwheel's manylinux_2_28 aarch64 policy has the same GLIBCXX, CXXABI, GCC and ZLIB
+     limits (it lists `CXXABI_TM_1` but not `CXXABI_FLOAT128`, which we allow on both). The
+     bootstrap accepts aarch64 and the Containerfile builds for amd64 and arm64 with uv
+     0.13.1 and a SHA-256 per architecture (the trixie digest is an index with both). Tests
+     follow the host's target (ELF machine, multiarch directory, PBS counts: 3.14's aarch64
+     archive has 9 HACL objects to link where x86-64's has 11) and one skips under QEMU
+     (`/proc/<pid>/exe` names the emulator). x86-64 is unchanged: 3.14's runtime id and stub
+     hash equal `phase9-platforms`'s. Checked on this x86-64 host under QEMU (`podman --arch
+     arm64`, Debian trixie) only: `fsbpyr runtime build` for 3.14 (9 min 36 s), `hello` and
+     `heavy` (numpy, onnxruntime, cryptography, orjson, pydantic) built with it, `inspect
+     --verify` passes, they run (`heavy np`, `json`, `crypto`, `model`, `onnx` too), and
+     `pytest tests/unit` passes (about 4 min). Not checked: real arm64 hardware, the 3.12 and
+     3.13 runtimes, `make bootstrap` and its three stages, the full suite, other page sizes.
+     `tools/upstream-watch.sh` watches the x86-64 3.14 pin (the PBS releases carry all
+     targets together); `tools/toolchain-watch.sh` keeps comparing uv's version and the
+     trixie digest. Still open: CI's target dimension, the `xz --arm64` of the release's
+     `.xz`, the arm64 portability images and a reproduction on a real runner (A64-CI).
   3. Linux musl, x86-64 and aarch64 (M–L). Spike: a musl 1.2.2 sysroot from pinned packages
      (Alpine 3.14's, to confirm), the `lto-full` archive linked into a dynamic musl PIE, a
      musllinux numpy wheel loaded, an Alpine release with clang/lld 22 for the bootstrap.

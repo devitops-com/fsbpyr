@@ -35,7 +35,8 @@
 # it is downloaded once into fsbpyr's cache, ${XDG_CACHE_HOME:-~/.cache}/fsbpyr/toolchains,
 # and the bootstrap fails if its sha256 differs. Needs curl and zstd. FSBPYR_LLVM23_URL
 # replaces the download URL (tests).
-# FSBPYR_BOOTSTRAP=podman builds in the container on Debian trixie too.
+# FSBPYR_BOOTSTRAP=podman builds in the container on Debian trixie too. Linux x86-64 and
+# aarch64 hosts build for themselves (no cross builds); FSBPYR_LLVM23 is x86-64 only.
 # PREFIX etc. pass through to `make install`. FSBPYR_BOOTSTRAP_IMAGE names the
 # podman image (default fsbpyr-build); FSBPYR_BOOTSTRAP_VOLUME the volume that keeps uv's
 # cache, its Python and the runtime between container runs (default fsbpyr-cache).
@@ -115,6 +116,8 @@ verify() {
 # 12 GB): clang, lld and clang's resource directory. The tarball is zstd with a 1 GiB window.
 llvm23() {
     local version sha256 url name cache dir tmp
+    [ "$(uname -m)" = x86_64 ] \
+        || die "FSBPYR_LLVM23 is for x86-64 only: tools/release/llvm23 names LLVM's x86-64 tarball"
     read -r version sha256 _ < tools/release/llvm23 || die "tools/release/llvm23 is empty"
     [[ "$sha256" =~ ^[0-9a-f]{64}$ ]] || die "tools/release/llvm23 has no sha256"
     name="LLVM-$version-Linux-X64"
@@ -190,6 +193,7 @@ $(sha256sum "$s2/fsbpyr" "$s3/fsbpyr")"
 in_podman() {
     command -v podman >/dev/null \
         || die "this is not Debian trixie: bootstrap builds in a podman container, and podman is not installed (install it with your OS's package manager)"
+    # The image is built for the host's architecture (amd64 or arm64), the Containerfile's.
     say "Building in podman image $IMAGE (Debian trixie)"
     # IPv4 only. On podman's default network the TLS handshakes of Python's OpenSSL (a
     # ClientHello with a post-quantum key share, larger than one segment) with GitHub's
@@ -211,7 +215,10 @@ case "${1:-}" in
     *) echo "usage: bootstrap.sh [--python X.Y] [--from-source | --uv | --llvm23]" >&2; exit 2 ;;
 esac
 
-[ "$(uname -m)" = x86_64 ] || die "fsbpyr builds for Linux x86-64 only (this is $(uname -m))"
+case "$(uname -m)" in
+    x86_64 | aarch64) ;;
+    *) die "fsbpyr builds for Linux x86-64 and aarch64 only (this is $(uname -m))" ;;
+esac
 if [ "${FSBPYR_BOOTSTRAP:-}" != podman ] && is_trixie; then
     say "Debian trixie: building on this host"
     from_source

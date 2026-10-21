@@ -327,6 +327,54 @@ def test_sanitized_stub_command_checks_memory_and_undefined_behaviour(tmp_path: 
     assert not {"-flto=full", "-s", "-D_FORTIFY_SOURCE=2", "-O2"} & set(cmd)
 
 
+def test_stub_command_ends_with_the_outlined_atomics_when_given_them(tmp_path: Path) -> None:
+    dist = _fake_dist(tmp_path)
+    inputs = link_inputs(dist, set())
+    toolchain = Toolchain(clang=Path("/x/clang-22"), lld=Path("/x/ld.lld-22"), major=22,
+                          sysroot=Path("/s/sysroot"))  # fmt: skip
+    plain = stub_command(dist, inputs, toolchain, [Path("main.c")], Path("stub"))
+
+    withatomics = stub_command(dist, inputs, toolchain, [Path("main.c")], Path("stub"),
+                               atomics=Path("/rt/libclang_rt.builtins-aarch64.a"))  # fmt: skip
+
+    assert withatomics == [*plain, "/rt/libclang_rt.builtins-aarch64.a"]
+
+
+def _clang_printing(tmp_path: Path, library: Path, status: int = 0) -> Toolchain:
+    clang = tmp_path / "clang-22"
+    clang.write_text(f'#!/bin/sh\necho "$@" > "{tmp_path}/args"\necho {library}\nexit {status}\n')
+    clang.chmod(0o755)
+    return Toolchain(clang=clang, lld=tmp_path / "ld.lld-22", major=22)
+
+
+def test_x86_64_links_no_outlined_atomics(tmp_path: Path) -> None:
+    toolchain = _clang_printing(tmp_path, tmp_path / "x")
+
+    assert stub.outlined_atomics(toolchain, "x86_64-unknown-linux-gnu") is None
+    assert not (tmp_path / "args").exists()  # clang is not even asked
+
+
+def test_aarch64_links_the_compiler_rt_builtins_clang_names(tmp_path: Path) -> None:
+    library = tmp_path / "libclang_rt.builtins-aarch64.a"
+    library.write_bytes(b"!<arch>\n")
+    toolchain = _clang_printing(tmp_path, library)
+
+    assert stub.outlined_atomics(toolchain, "aarch64-unknown-linux-gnu") == library
+    assert (tmp_path / "args").read_text().split() == [
+        "--target=aarch64-unknown-linux-gnu", "-rtlib=compiler-rt", "--print-libgcc-file-name",
+    ]
+
+
+@pytest.mark.parametrize("status", [0, 1])
+def test_aarch64_without_the_builtins_names_the_package_to_install(
+    tmp_path: Path, status: int
+) -> None:
+    toolchain = _clang_printing(tmp_path, tmp_path / "missing.a", status)
+
+    with pytest.raises(StubBuildError, match="install libclang-rt-22-dev"):
+        stub.outlined_atomics(toolchain, "aarch64-unknown-linux-gnu")
+
+
 def test_stub_command_maps_the_cache_paths_out_of_the_launcher(tmp_path: Path) -> None:
     """Where the cache lives (~/.cache of whoever builds) must not reach the launcher's bytes."""
     dist = _fake_dist(tmp_path)

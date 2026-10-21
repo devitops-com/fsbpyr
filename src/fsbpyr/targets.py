@@ -2,7 +2,7 @@
 
 Each fsbpyr builds apps for the platform it runs on, so the host's target is detected from
 sys.platform, the machine and the C library. Knowing a target is not supporting it: only
-x86_64-linux-gnu has pins (``runtime.pins``) so far.
+the glibc ones (x86_64-linux-gnu, aarch64-linux-gnu) have pins (``runtime.pins``) so far.
 """
 
 import lzma

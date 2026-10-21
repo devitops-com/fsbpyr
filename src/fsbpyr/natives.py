@@ -24,7 +24,8 @@ from .elf import ElfError, VersionNeed, dynamic_info, version_requirements
 from .targets import host_target
 
 # Libraries manylinux wheels may take from the system (auditwheel policy, manylinux_2_17 and
-# later for x86-64, plus the dynamic loader and libz which current policies also allow).
+# later for x86-64 and aarch64, plus the dynamic loader and libz which current policies also
+# allow).
 _SYSTEM_LIBRARIES = frozenset({
     "libc.so.6", "libm.so.6", "libdl.so.2", "librt.so.1",
     "libpthread.so.0", "libutil.so.1", "libnsl.so.1", "libresolv.so.2", "libgcc_s.so.1",
@@ -55,7 +56,9 @@ def glibc_libraries() -> frozenset[str]:
 
 # The newest symbol version per namespace that auditwheel's manylinux_2_28 x86_64 policy
 # allows (libstdc++ 8.x, libgcc_s, libz), and the non-numeric CXXABI versions it allows.
-# Taken from the improvement plan's reading of auditwheel's policy file (NAT-2); not re-read.
+# Taken from the improvement plan's reading of auditwheel's policy file (NAT-2). The aarch64
+# policy has the same numeric limits (compared with auditwheel's file on 2026-10-21) and lists
+# CXXABI_TM_1 but not CXXABI_FLOAT128; both targets use these.
 MANYLINUX_2_28_LIMITS = {
     "GLIBCXX": (3, 4, 24), "CXXABI": (1, 3, 11), "GCC": (7, 0, 0), "ZLIB": (1, 2, 9),
 }  # fmt: skip

@@ -76,6 +76,24 @@ class StubBuildError(RuntimeError):
     """The compiler or linker failed."""
 
 
+def outlined_atomics(toolchain: Toolchain, triple: str) -> Path | None:
+    """The library with the outlined atomics (``__aarch64_cas4_acq_rel`` and the like) that
+    PBS's aarch64 objects call: clang's compiler-rt builtins. The sysroot's libgcc 8 predates
+    them (GCC 10), so the link needs them from the toolchain; x86-64 needs nothing."""
+    if not triple.startswith("aarch64-"):
+        return None
+    command = [os.fspath(toolchain.clang), f"--target={triple}", "-rtlib=compiler-rt",
+               "--print-libgcc-file-name"]  # fmt: skip
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    library = Path(result.stdout.strip())
+    if result.returncode != 0 or not library.is_file():
+        raise StubBuildError(
+            f"clang {toolchain.major} has no compiler-rt builtins for {triple} ({library}); "
+            f"install libclang-rt-{toolchain.major}-dev"
+        )
+    return library
+
+
 def launcher_digest(*, sanitize: bool = False) -> str:
     """SHA-256 over the launcher sources and flags: part of the runtime identity."""
     root = importlib.resources.files("fsbpyr.launcher")
@@ -95,6 +113,7 @@ def stub_command(  # noqa: PLR0913  # the build's inputs, and which variant
     out: Path,
     *,
     sanitize: bool = False,
+    atomics: Path | None = None,
 ) -> list[str]:
     magic = int.from_bytes(dist.bytecode_magic, "little")
     return [
@@ -124,6 +143,7 @@ def stub_command(  # noqa: PLR0913  # the build's inputs, and which variant
         *map(os.fspath, inputs.static_libs),
         "-Wl,--end-group",
         *(f"-l{name}" for name in inputs.system_libs),
+        *([os.fspath(atomics)] if atomics is not None else []),
     ]
 
 
@@ -154,7 +174,8 @@ def build_stub(
         work = Path(tmp)
         _copy_launcher(work)
         sources = [Path(name) for name in LAUNCHER_SOURCES]
-        command = stub_command(dist, inputs, toolchain, sources, Path(_LINKED), sanitize=sanitize)
+        command = stub_command(dist, inputs, toolchain, sources, Path(_LINKED), sanitize=sanitize,
+                               atomics=outlined_atomics(toolchain, dist.triple))  # fmt: skip
         result = subprocess.run(command, cwd=work, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             raise StubBuildError(f"launcher link failed:\n{result.stderr[-_ERROR_TAIL:]}")
