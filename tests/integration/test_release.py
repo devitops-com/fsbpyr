@@ -902,6 +902,7 @@ def test_the_full_suite_runs_on_main_nightly_and_weekly_once_per_python_version(
     assert f'WEEKLY="{weekly}"' in workflow  # the fuzzing time reads the weekly schedule
     # the suite and the portability matrix
     assert len(re.findall(r'python: \["3.12", "3.13", "3.14"\]', workflow)) == 2
+    assert len(re.findall(r'target: \["x86_64-linux-gnu", "aarch64-linux-gnu"\]', workflow)) == 2
     assert "options: --privileged" in workflow and "timeout-minutes: 60" in workflow
     assert "--ignore=tests/e2e/test_portability.py" in workflow
     assert "FSBPYR_TESTS_REQUIRE_ALL=full" in workflow
@@ -912,7 +913,7 @@ def test_the_portability_job_runs_on_the_host_after_the_suite_with_nothing_skipp
     workflow = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
     job = workflow.split("\n  portability:\n")[1]
 
-    assert "needs: suite" in job and "runs-on: ubuntu-24.04" in job
+    assert "needs: suite" in job and "runs-on: ${{ matrix.runner }}" in job
     assert "container:" not in job
     assert "tools/portability-apps.sh dist/fsbpyr$SUFFIX" in job
     assert "FSBPYR_TESTS_REQUIRE_ALL=portability" in job
@@ -927,7 +928,7 @@ def test_the_portability_tests_pull_images_without_a_network_in_them() -> None:
 
 
 def test_uv_version_names_a_uv_that_the_build_backend_accepts() -> None:
-    version, sha256 = (ROOT / "tools/release/uv.version").read_text(encoding="utf-8").split()
+    version, *digests = (ROOT / "tools/release/uv.version").read_text(encoding="utf-8").split()
     backend = next(
         Requirement(r)
         for r in tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
@@ -936,7 +937,8 @@ def test_uv_version_names_a_uv_that_the_build_backend_accepts() -> None:
         if r.startswith("uv_build")
     )
 
-    assert re.fullmatch(r"[0-9a-f]{64}", sha256)
+    assert len(digests) == 2  # the x86_64 and the aarch64 tarball
+    assert all(re.fullmatch(r"[0-9a-f]{64}", sha256) for sha256 in digests)
     assert backend.specifier.contains(version)  # uv_build is released with uv: same numbering
 
 
@@ -996,12 +998,14 @@ def test_bootstrap_refuses_other_architectures(tmp_path: Path) -> None:
 
 
 def test_the_containerfile_installs_the_pinned_uv_for_both_architectures() -> None:
-    version, sha256 = (ROOT / "tools/release/uv.version").read_text(encoding="utf-8").split()
+    version, sha_x86_64, sha_aarch64 = (
+        (ROOT / "tools/release/uv.version").read_text(encoding="utf-8").split()
+    )
     containerfile = (ROOT / "Containerfile").read_text(encoding="utf-8")
 
     assert f"ARG UV_VERSION={version}\n" in containerfile
-    assert f"ARG UV_SHA256_AMD64={sha256}\n" in containerfile
-    assert re.search(r"^ARG UV_SHA256_ARM64=[0-9a-f]{64}$", containerfile, re.MULTILINE)
+    assert f"ARG UV_SHA256_AMD64={sha_x86_64}\n" in containerfile
+    assert f"ARG UV_SHA256_ARM64={sha_aarch64}\n" in containerfile
     assert "uv-aarch64-unknown-linux-gnu" in containerfile and "sha256sum -c" in containerfile
 
 
@@ -1097,23 +1101,29 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
     build, publish = jobs["build"], jobs["publish"]
     assert "make bootstrap $MAKE_ARGS" in build
     assert 'echo "MAKE_ARGS=PYTHON=$MATRIX_PYTHON"' in build
-    assert "xz --x86 --lzma2=preset=9e --threads=1 --keep dist/fsbpyr$SUFFIX" in build
-    assert "TARGET: x86_64-linux-gnu" in workflow
+    assert "xz $filter --lzma2=preset=9e --threads=1 --keep dist/fsbpyr$SUFFIX" in build
+    assert all("TARGET: ${{ matrix.target }}" in jobs[job] for job in ("build", "compare"))
     assert "> dist/THIRD_PARTY_LICENSES$SUFFIX-$TARGET.txt" in build
     assert 'cp "dist/fsbpyr$SUFFIX$ext" "dist/fsbpyr$SUFFIX-$TARGET$ext"' in build  # long names
     assert ('cp "dist/THIRD_PARTY_LICENSES$SUFFIX-$TARGET.txt" '
             '"dist/THIRD_PARTY_LICENSES$SUFFIX.txt"') in build
-    uploaded = re.search(r"path: \|\n((?:            dist/.*\n)+)", build)
-    assert uploaded is not None
-    assert [line.strip() for line in uploaded.group(1).splitlines()] == [
-        "dist/fsbpyr${{ env.SUFFIX }}",  # the short names, copies of the long ones
-        "dist/fsbpyr${{ env.SUFFIX }}.xz",
-        "dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}",
-        "dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}.xz",
-        "dist/THIRD_PARTY_LICENSES${{ env.SUFFIX }}.txt",
-        "dist/THIRD_PARTY_LICENSES${{ env.SUFFIX }}-${{ env.TARGET }}.txt",
+    uploads = re.findall(r"upload-artifact@.*\n\s+with:\n\s+name: (.+)\n\s+path: \|\n"
+                         r"((?:            dist/.*\n)+)", build)
+    assert [(name, [line.strip() for line in paths.splitlines()]) for name, paths in uploads] == [
+        ("built-${{ matrix.python }}-${{ matrix.target }}", [
+            "dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}",
+            "dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}.xz",
+            "dist/THIRD_PARTY_LICENSES${{ env.SUFFIX }}-${{ env.TARGET }}.txt",
+        ]),
+        ("built-short-${{ matrix.python }}", [  # copies of the x86-64 glibc builds only
+            "dist/fsbpyr${{ env.SUFFIX }}",
+            "dist/fsbpyr${{ env.SUFFIX }}.xz",
+            "dist/THIRD_PARTY_LICENSES${{ env.SUFFIX }}.txt",
+        ]),
     ]
-    assert "name: built-${{ matrix.python }}" in build
+    for step in ("Name the short licence notices", "Upload the short-name copies"):
+        header = build.split(f"- name: {step}\n")[1].split("\n")[0]
+        assert header.strip() == "if: ${{ matrix.target == 'x86_64-linux-gnu' }}", step
     assert 'release_asset\\": \\"fsbpyr$SUFFIX-$TARGET' in build  # each records its long asset
     assert "-name \"fsbpyr*-$TARGET\" ! -name '*.xz'" in jobs["compare"]
     assert "pattern: built-*" in publish and "merge-multiple: true" in publish
@@ -1143,10 +1153,13 @@ def test_the_release_assets_are_named_with_the_target_and_the_short_names_are_co
                           (f"THIRD_PARTY_LICENSES{suffix}-x86_64-linux-gnu.txt", "notices")):
         (dist / name).write_text(content)
     env = {"PATH": os.environ["PATH"], "SUFFIX": suffix, "TARGET": "x86_64-linux-gnu"}
+    short = re.search(r"- name: Name the short licence notices\n\s+if: .*\n\s+run: (.*)\n",
+                      workflow)
+    assert short is not None
 
     sh, find = shutil.which("sh") or "sh", shutil.which("find") or "find"
-    done = subprocess.run([sh, "-ec", textwrap.dedent(naming.group(1))], cwd=tmp_path, env=env,
-                          capture_output=True, text=True, check=False)
+    done = subprocess.run([sh, "-ec", textwrap.dedent(naming.group(1)) + short.group(1)],
+                          cwd=tmp_path, env=env, capture_output=True, text=True, check=False)
 
     assert done.returncode == 0, done.stderr
     assert sorted(p.name for p in dist.iterdir()) == sorted([
@@ -1324,3 +1337,199 @@ def test_publish_job_makes_the_inspector_executable_before_building_install_sh()
     step = workflow.split("- name: Make install.sh", 1)[1].split("\n      # ", 1)[0]
     chmod = step.find("chmod +x dist/fsbpyr-x86_64-linux-gnu")
     assert 0 <= chmod < step.find("make-install.sh")
+
+
+# The target dimension (Phase 9, "More platforms", step 2): every build, reproduce, compare,
+# suite and portability job runs once per (target, Python) on a runner of the target's
+# architecture, and the release and its gate need all of them.
+
+RUNNERS = {"x86_64-linux-gnu": "ubuntu-24.04", "aarch64-linux-gnu": "ubuntu-24.04-arm"}
+MATRIX_JOBS = [
+    ("release.yml", "build"), ("release.yml", "reproduce"), ("release.yml", "compare"),
+    ("full-suite.yml", "suite"), ("full-suite.yml", "portability"),
+]  # fmt: skip
+
+
+def workflow_jobs(name: str) -> dict[str, str]:
+    workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
+    return dict(re.findall(r"^  ([a-z]+):\n(.*?)(?=^  [a-z]+:\n|\Z)", workflow, re.M | re.S))
+
+
+@pytest.mark.parametrize(("name", "job"), MATRIX_JOBS)
+def test_each_job_runs_every_target_and_python_on_a_runner_of_the_targets_architecture(
+    name: str, job: str
+) -> None:
+    from fsbpyr.targets import target_named  # noqa: PLC0415
+
+    text = workflow_jobs(name)[job]
+    matrix = text.split("    strategy:\n", 1)[1].split("\n    steps:", 1)[0]
+
+    assert "    runs-on: ${{ matrix.runner }}\n" in text
+    assert 'target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]' in matrix
+    assert 'python: ["3.12", "3.13", "3.14"]' in matrix
+    assert "fail-fast: false" in matrix
+    includes = re.findall(r'- \{target: "([^"]+)", runner: "([^"]+)"\}', matrix)
+    assert dict(includes) == RUNNERS and len(includes) == 2
+    for target in RUNNERS:
+        assert target_named(target).libc == "glibc"
+
+
+def test_a_run_needs_every_job_to_pass_for_the_commit_to_be_released() -> None:
+    """No job tolerates a failure, publish needs every build and compare entry (aarch64 too)
+    and green-run.sh requires the run's conclusion, which is that of all its jobs."""
+    for name in ("release.yml", "full-suite.yml"):
+        for job, text in workflow_jobs(name).items():
+            header = text.split("    steps:", 1)[0]
+            assert "continue-on-error" not in header, (name, job)
+    assert "needs: [build, compare]" in workflow_jobs("release.yml")["publish"]
+    assert "needs: suite" in workflow_jobs("full-suite.yml")["portability"]
+    gate = GREEN_RUN_SH.read_text(encoding="utf-8")
+    assert "completed/success) ;;" in gate and "--jobs" not in gate
+
+
+def test_every_trigger_of_the_full_suite_runs_every_target_and_python() -> None:
+    """A push to main is the run before a release (main goes to GitHub for a release only), so
+    no job is conditional on the event: nightly, push and manual runs are the same matrix."""
+    jobs = workflow_jobs("full-suite.yml")
+
+    for job in ("suite", "portability"):
+        assert "github.event_name" not in jobs[job].split("    steps:", 1)[0]
+        assert "matrix.target" in jobs[job]
+    assert "\n    if:" not in jobs["suite"] + jobs["portability"]
+
+
+def test_the_artifacts_of_a_matrix_entry_carry_its_target() -> None:
+    for name in ("release.yml", "full-suite.yml"):
+        workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
+        for artifact in re.findall(r"^\s+name: ((?:built|reproduced|coverage|fsbpyr|full-suite|"
+                                   r"portability)-\S.*)$", workflow, re.MULTILINE):
+            if "matrix.python" in artifact:
+                assert artifact.endswith("-${{ matrix.target }}") or artifact.startswith(
+                    "built-short-"), artifact
+    compare = workflow_jobs("release.yml")["compare"]
+    assert "built-${{ matrix.python }}-${{ matrix.target }}" in compare
+    assert "fuzz-corpus-${{ matrix.target }}-${{ matrix.python }}-" in (
+        ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("target", "filter_option"),
+    [("x86_64-linux-gnu", "--x86"), ("aarch64-linux-gnu", "--arm64"), ("riscv64-linux-gnu", None)],
+)
+def test_the_release_xz_uses_the_filter_of_the_targets_architecture(
+    target: str, filter_option: str | None, tmp_path: Path
+) -> None:
+    """The compress step under dash with an xz that records its arguments."""
+    build = workflow_jobs("release.yml")["build"]
+    step = re.search(r"- name: Compress the executable\n\s+run: \|\n((?:          .*\n)+)", build)
+    assert step is not None
+    write_program(tmp_path / "bin" / "xz", 'echo "$*" >> "$XZ_LOG"\n')
+    env = {"PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin", "TARGET": target, "SUFFIX": "-3.12",
+           "XZ_LOG": str(tmp_path / "xz.log")}
+    dash = shutil.which("dash") or shutil.which("sh") or "sh"
+
+    done = subprocess.run([dash, "-e", "-c", textwrap.dedent(step.group(1))], cwd=tmp_path,
+                          env=env, capture_output=True, text=True, check=False)
+
+    if filter_option is None:
+        assert done.returncode == 1 and f"no xz filter for {target}" in done.stdout
+        assert not (tmp_path / "xz.log").exists()
+        return
+    calls = (tmp_path / "xz.log").read_text().splitlines()
+    assert calls[0] == f"{filter_option} --lzma2=preset=9e --threads=1 --keep dist/fsbpyr-3.12"
+    assert calls[1:2] == ["--decompress --stdout dist/fsbpyr-3.12.xz"]
+
+
+UV_RELEASE_URL = "https://github.com/astral-sh/uv/releases/download"
+
+
+def uv_installer_env(tmp_path: Path, arch: str) -> tuple[dict[str, str], str]:
+    """A PATH with a uname that says ``arch`` and a curl that 'downloads' a tarball of fake uv
+    and uvx; returns the environment and the sha256 of that tarball."""
+    import io  # noqa: PLC0415
+    import tarfile  # noqa: PLC0415
+
+    name = f"uv-{arch}-unknown-linux-gnu"
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for tool in ("uv", "uvx"):
+            data = f"#!/bin/sh\necho {tool} for {arch}\n".encode()
+            info = tarfile.TarInfo(f"{name}/{tool}")
+            info.size, info.mode = len(data), 0o755
+            archive.addfile(info, io.BytesIO(data))
+    tarball = tmp_path / "served.tar.gz"
+    tarball.write_bytes(buffer.getvalue())
+    write_program(tmp_path / "bin" / "uname", f'echo "{arch}"\n')
+    write_program(
+        tmp_path / "bin" / "curl",
+        'while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift ;; http*) url="$1" ;; esac;'
+        ' shift; done\n'
+        f'echo "$url" >> "{tmp_path}/curl.log"\ncp "{tarball}" "$out"\n',
+    )
+    return {"PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin"}, hashlib.sha256(
+        tarball.read_bytes()).hexdigest()  # fmt: skip
+
+
+def installer_copy(tmp_path: Path, version: str, x86_64: str, aarch64: str) -> Path:
+    """tools/release/install-uv.sh next to a uv.version of the test's."""
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    shutil.copy(ROOT / "tools/release/install-uv.sh", tools)
+    (tools / "uv.version").write_text(f"{version} {x86_64} {aarch64}\n")
+    return tools / "install-uv.sh"
+
+
+@pytest.mark.parametrize("arch", ["x86_64", "aarch64"])
+def test_install_uv_fetches_the_tarball_of_the_machines_architecture_and_checks_its_digest(
+    arch: str, tmp_path: Path
+) -> None:
+    env, digest = uv_installer_env(tmp_path, arch)
+    other = "0" * 64
+    script = installer_copy(tmp_path, "9.9.9", *((digest, other) if arch == "x86_64"
+                                                  else (other, digest)))
+    dash = shutil.which("dash") or shutil.which("sh") or "sh"
+
+    done = run_script([dash, str(script), str(tmp_path / "out" / "bin")], env)
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "9.9.9\n"  # what FSBPYR_UV_VERSION is set to
+    assert (tmp_path / "curl.log").read_text() == (
+        f"{UV_RELEASE_URL}/9.9.9/uv-{arch}-unknown-linux-gnu.tar.gz\n")
+    assert sorted(p.name for p in (tmp_path / "out" / "bin").iterdir()) == ["uv", "uvx"]
+    assert os.access(tmp_path / "out" / "bin" / "uv", os.X_OK)
+
+
+@pytest.mark.parametrize("arch", ["x86_64", "aarch64"])
+def test_install_uv_refuses_a_tarball_that_does_not_match_the_digest_of_its_architecture(
+    arch: str, tmp_path: Path
+) -> None:
+    env, digest = uv_installer_env(tmp_path, arch)
+    # the other architecture's digest is the right one for the tarball: the wrong column fails
+    script = installer_copy(tmp_path, "9.9.9", *(("1" * 64, digest) if arch == "x86_64"
+                                                  else (digest, "1" * 64)))
+    dash = shutil.which("dash") or shutil.which("sh") or "sh"
+
+    done = run_script([dash, str(script), str(tmp_path / "out")], env)
+
+    assert done.returncode != 0 and "FAILED" in done.stderr
+    assert not (tmp_path / "out").exists()  # nothing unpacked
+
+
+def test_install_uv_has_no_uv_for_another_architecture(tmp_path: Path) -> None:
+    env, digest = uv_installer_env(tmp_path, "riscv64")
+    script = installer_copy(tmp_path, "9.9.9", digest, digest)
+
+    done = run_script(["/bin/sh", str(script), str(tmp_path / "out")], env)
+
+    assert done.returncode == 1 and "no uv is pinned for riscv64" in done.stderr
+
+
+def test_install_uv_takes_one_directory(tmp_path: Path) -> None:
+    assert run_script(["/bin/sh", str(ROOT / "tools/release/install-uv.sh")], {}).returncode == 2
+
+
+def test_the_workflows_install_uv_with_the_script_and_not_the_x86_64_tarball() -> None:
+    for name in ("release.yml", "full-suite.yml"):
+        workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
+        assert "uv-x86_64-unknown-linux-gnu" not in workflow, name
+        assert "sh tools/release/install-uv.sh" in workflow, name

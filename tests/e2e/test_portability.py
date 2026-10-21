@@ -7,6 +7,7 @@ FSBPYR_PORTABILITY_APPS names a directory with the four built apps (tools/portab
 
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -20,6 +21,7 @@ from fsbpyr.payload.format import NATIVE_KINDS
 from fsbpyr.payload.reader import Executable
 from fsbpyr.project import LockSource
 
+from ..support.images import images_for
 from ..support.stderr import NO_HOSTNAME, ONNX_HOST
 from .test_compat import MATRIX
 from .test_natives import EXPECTED as HEAVY
@@ -30,21 +32,7 @@ OBJDUMP = shutil.which("llvm-objdump-22") or shutil.which("llvm-objdump")
 pytestmark = [pytest.mark.slow, pytest.mark.skipif(PODMAN is None, reason="needs podman")]
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "projects"
-IMAGES = (  # glibc 2.28 (the baseline) up to the newest releases
-    "docker.io/library/debian:10",  # 2.28
-    "docker.io/library/rockylinux:8",  # 2.28
-    "docker.io/library/debian:11",  # 2.31
-    "docker.io/library/ubuntu:20.04",  # 2.31
-    "docker.io/library/rockylinux:9",  # 2.34
-    "docker.io/library/amazonlinux:2023",  # 2.34
-    "docker.io/library/ubuntu:22.04",  # 2.35
-    "docker.io/library/debian:12",  # 2.36
-    "docker.io/opensuse/leap:15.6",  # 2.38
-    "docker.io/library/ubuntu:24.04",  # 2.39
-    "docker.io/library/debian:13",  # 2.41
-    "docker.io/library/fedora:latest",  # 2.43
-    "docker.io/library/archlinux:latest",  # 2.44
-)
+IMAGES = images_for(platform.machine())  # x86-64: all 13; aarch64: those with an arm64 variant
 COMMANDS = {  # (binary, arguments) -> expected stdout; the HTTP checks need the host's network
     ("hello", "5 x"): "hello ['5', 'x']",
     **{("heavy", check): out for check, out in HEAVY.items()},

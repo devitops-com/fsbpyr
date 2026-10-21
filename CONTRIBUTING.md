@@ -25,9 +25,11 @@ The tiers, from fastest to most complete:
 - The full suite in CI (`.github/workflows/full-suite.yml`): everything but the portability
   tests, as the user `tester` in a privileged Debian trixie container with rootless podman, so
   the root-only, supplementary-group and `podman unshare` tests run. It runs on every push to
-  main, nightly and weekly, with `FSBPYR_TESTS_REQUIRE_ALL=full` (no skip is expected), and
-  `make release` and the publish job require a green run for the commit a release is made
-  from. The fuzzer runs for 600 s (`FSBPYR_FUZZ_SECONDS`) when `src/fsbpyr/launcher` or
+  main (which is pushed to GitHub for a release only), nightly and weekly, once per target
+  (x86-64 on `ubuntu-24.04`, aarch64 on `ubuntu-24.04-arm`) and Python, with
+  `FSBPYR_TESTS_REQUIRE_ALL=full` (no skip is expected), and `make release` and the publish
+  job require a green run, aarch64 jobs included, for the commit a release is made from. The
+  fuzzer runs for 600 s (`FSBPYR_FUZZ_SECONDS`) when `src/fsbpyr/launcher` or
   `tests/fuzz` changed since the last tag and on the weekly run, else for 30 s; the corpus it
   finds (`FSBPYR_FUZZ_CORPUS`) is kept in the Actions cache. The launcher programs the tests
   build are instrumented for llvm-cov (`FSBPYR_LLVM_COV_DIR`), and the run's summary shows the
@@ -46,5 +48,6 @@ The tiers, from fastest to most complete:
   for the tests that map a second range of user ids with `podman unshare`: the stage has no
   podman. It copies the checkout (without `.venv` and `dist`) into the container, so run it
   from a checkout with its `.git` directory, not a linked worktree.
-- Portability (`tests/e2e/test_portability.py`, `podman run` on 13 distributions): needs
-  podman on the host and is not part of `make test-container`.
+- Portability (`tests/e2e/test_portability.py`, `podman run` on 13 distributions, 12 on aarch64
+  where `archlinux:latest` has no image): needs podman on the host and is not part of `make
+  test-container`. CI runs it per target and Python after the suite job.

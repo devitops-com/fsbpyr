@@ -397,7 +397,7 @@ def _first_column(section: str) -> set[str]:
 
 
 def test_compatibility_distribution_table_is_the_portability_images() -> None:
-    from ..e2e.test_portability import IMAGES  # noqa: PLC0415
+    from ..support.images import IMAGES  # noqa: PLC0415
 
     text = COMPATIBILITY.read_text().partition("## Tested on")[2].partition("`compat` app")[0]
 

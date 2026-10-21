@@ -722,7 +722,7 @@ A rebuild checks the bytes themselves, at two levels:
   (`http://snapshot.debian.org/archive/debian/TIMESTAMP/` for trixie and trixie-updates,
   `.../debian-security/TIMESTAMP/` for trixie-security) before installing `clang-22 lld-22`,
   and use the uv named by `tools/release/uv.version` (release CI downloads that release's
-  tarball and checks its SHA-256; `FSBPYR_UV_VERSION=<version>` makes `tools/bootstrap.sh`
+  tarball for the machine's architecture and checks its SHA-256, `tools/release/install-uv.sh`; `FSBPYR_UV_VERSION=<version>` makes `tools/bootstrap.sh`
   refuse any other uv). `make bootstrap` also installs the result, though,
   so run fsbpyr from source directly in the checkout above: it builds the runtime, then `stage1`,
   and `stage1` builds the file to compare. A runtime already in the cache under the same id is
