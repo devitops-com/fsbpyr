@@ -18,6 +18,10 @@ name: Release
 # also published under the short names `fsbpyr`, `fsbpyr-3.12`, ... (copies). Adding a Python
 # version adds an entry to the three `python` lists, adding a target one to the three `target`
 # lists and the `include` entry that names its runner.
+# Each long-named executable also has a CycloneDX SBOM, `<asset>.cdx.json` (tools/release/sbom.py,
+# REP-7): build makes it from its frozen executable, reproduce from its rebuild, compare checks
+# the two are identical, and the sbom job attests it to its executable. The short-name copies
+# have none: they are byte for byte the long-named ones, whose attestation covers their digest.
 # GitHub artifact attestations can only be made inside GitHub Actions, so releases are built
 # here and not on the maintainer's machine.
 
@@ -251,6 +255,15 @@ jobs:
           dist/fsbpyr$SUFFIX inspect --licenses dist/fsbpyr$SUFFIX \
             > dist/THIRD_PARTY_LICENSES$SUFFIX-$TARGET.txt
 
+      # What the executable contains, for vulnerability scanners (REP-7): the SBOM is a function
+      # of `inspect --verify --json`, so the rebuild below gives the same bytes. Standard library
+      # only, run by the project's Python.
+      - name: Make the SBOM
+        run: |
+          dist/fsbpyr$SUFFIX inspect --verify --json dist/fsbpyr$SUFFIX > "$RUNNER_TEMP/inspect.json"
+          $UV_RUN python tools/release/sbom.py "$RUNNER_TEMP/inspect.json" \
+            -o dist/fsbpyr$SUFFIX-$TARGET.cdx.json
+
       # Every file under its long name, the target in it (dist/fsbpyr$SUFFIX is what the build
       # made; the x86-64 glibc builds also keep it, as the short name, below).
       - name: Name the release assets
@@ -270,6 +283,7 @@ jobs:
             dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}
             dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}.xz
             dist/THIRD_PARTY_LICENSES${{ env.SUFFIX }}-${{ env.TARGET }}.txt
+            dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}.cdx.json
           if-no-files-found: error
 
       # The short names (`fsbpyr`, `fsbpyr-3.12`, each with its .xz and notices) are copies of
@@ -424,11 +438,25 @@ jobs:
             FSBPYR_UV_VERSION="$FSBPYR_UV_VERSION" BOOTSTRAP_ARGS="$BOOTSTRAP_ARGS" \
             sh -c 'umask 077; bash tools/bootstrap.sh --from-source $BOOTSTRAP_ARGS'
 
+      # The SBOM of the rebuild, as build makes it of its executable. Both files are written to
+      # one directory, so that the artifact keeps their names.
+      - name: Make the SBOM of the rebuild
+        env:
+          MATRIX_PYTHON: ${{ matrix.python }}
+        working-directory: rebuild
+        run: |
+          dist/stage3$SUFFIX/fsbpyr inspect --verify --json dist/stage3$SUFFIX/fsbpyr \
+            > "$RUNNER_TEMP/inspect.json"
+          uv run --no-project --python "$MATRIX_PYTHON" python tools/release/sbom.py \
+            "$RUNNER_TEMP/inspect.json" -o dist/stage3$SUFFIX/fsbpyr.cdx.json
+
       - name: Upload the rebuilt executable
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: reproduced-${{ matrix.python }}-${{ matrix.target }}
-          path: rebuild/dist/stage3${{ env.SUFFIX }}/fsbpyr
+          path: |
+            rebuild/dist/stage3${{ env.SUFFIX }}/fsbpyr
+            rebuild/dist/stage3${{ env.SUFFIX }}/fsbpyr.cdx.json
           if-no-files-found: error
 
   # build's executable against reproduce's. Nothing is built here, so it runs on the runner (of
@@ -479,9 +507,72 @@ jobs:
                <("$built" inspect --json rebuilt/fsbpyr | jq -S .) || true
           exit 1
 
+      # The SBOMs are functions of the executables' inspect output, so identical executables
+      # must give identical ones; a difference is a bug in sbom.py or in what inspect prints.
+      - name: Compare the SBOMs byte for byte
+        run: |
+          sbom="$(find built -maxdepth 1 -type f -name "fsbpyr*-$TARGET.cdx.json")"
+          case "$sbom" in
+            ""|*$'\n'*) echo "::error::expected one SBOM in built/, found: $sbom"; exit 1 ;;
+          esac
+          if cmp "$sbom" rebuilt/fsbpyr.cdx.json; then
+            echo "identical: $(sha256sum < "$sbom" | cut -d' ' -f1)"
+            exit 0
+          fi
+          echo "::error::the SBOM of the rebuild differs from the release build's"
+          diff "$sbom" rebuilt/fsbpyr.cdx.json || true
+          exit 1
+
+  # One attestation per executable: attest-sbom takes one SBOM and the subjects it describes.
+  # Tags only, like publish, which needs every one of them. It attests the SBOM that build made
+  # (the one publish uploads), whose bytes compare checked against the rebuild's.
+  sbom:
+    name: attest SBOM (${{ matrix.target }}, Python ${{ matrix.python }})
+    needs: [build, compare]
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+        target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
+    permissions:
+      id-token: write      # sign the attestation (Sigstore, through the job's OIDC token)
+      attestations: write  # store it with the repository
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: built-${{ matrix.python }}-${{ matrix.target }}
+          path: built
+
+      # The executable and its SBOM in built/ are the files named fsbpyr[-3.X]-TARGET and
+      # fsbpyr[-3.X]-TARGET.cdx.json.
+      - name: Find the executable and its SBOM
+        id: files
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          exe="$(find built -maxdepth 1 -type f -name "fsbpyr*-$TARGET" ! -name '*.xz')"
+          case "$exe" in
+            ""|*$'\n'*) echo "::error::expected one executable in built/, found: $exe"; exit 1 ;;
+          esac
+          test -f "$exe.cdx.json" || { echo "::error::no SBOM $exe.cdx.json"; exit 1; }
+          echo "executable=$exe" >> "$GITHUB_OUTPUT"
+          echo "sbom=$exe.cdx.json" >> "$GITHUB_OUTPUT"
+
+      # Verify with: gh attestation verify fsbpyr-x86_64-linux-gnu --repo devitops-com/fsbpyr \
+      #   --predicate-type https://cyclonedx.org/bom
+      # (the short-name copies have the same digest, so they verify too)
+      - name: Attest the SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: ${{ steps.files.outputs.executable }}
+          sbom-path: ${{ steps.files.outputs.sbom }}
+
   publish:
     name: attest + publish
-    needs: [build, compare]
+    needs: [build, compare, sbom]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -559,7 +650,8 @@ jobs:
 
       # `sha256sum -c --ignore-missing SHA256SUMS` checks a download against the digests the
       # attestation signs. The globs take every target and variant that build made:
-      # fsbpyr[-3.X][-TARGET] and its .xz, and THIRD_PARTY_LICENSES[-3.X][-TARGET].txt;
+      # fsbpyr[-3.X][-TARGET] with its .xz and its .cdx.json (the SBOM, attested by the sbom
+      # job), and THIRD_PARTY_LICENSES[-3.X][-TARGET].txt;
       # install.sh is listed too.
       - name: Publish the GitHub release
         env:

@@ -745,6 +745,24 @@ For `fsbpyr-3.12-x86_64-linux-gnu` or `fsbpyr-3.13-x86_64-linux-gnu`, `bash tool
 the checkout runs the same stages in `.venv-3.12` (`dist/stage1-3.12` to `dist/stage3-3.12`,
 the last being the file to compare); the Python must be installed with uv.
 
+Each long-named asset also has an SBOM, `<asset>.cdx.json` (CycloneDX 1.6), which lists the
+statically linked OpenSSL, SQLite, expat and zlib with CPEs, CPython, and the Python
+distributions with their lock hashes, so that a scanner such as grype can match them
+(`grype sbom:fsbpyr-x86_64-linux-gnu.cdx.json`). The release workflow attests it to its
+executable, and the short names (`fsbpyr`, `fsbpyr-3.12`) share the digests, so
+`gh attestation verify` accepts them too:
+
+```
+gh attestation verify "$asset" --repo devitops-com/fsbpyr \
+  --predicate-type https://cyclonedx.org/bom
+curl -fLO "https://github.com/devitops-com/fsbpyr/releases/download/$tag/$asset.cdx.json"
+./"$asset" inspect --verify --json "$asset" | python3 tools/release/sbom.py - | cmp - "$asset.cdx.json"
+```
+
+The last command, run in a checkout of the tag, makes the SBOM again from the executable and
+compares it with the published file. `tools/release/sbom.py` needs only Python's standard
+library. These commands have not been run against a published release yet.
+
 An executable also records the version of the fsbpyr that built it (`fsbpyr inspect` shows it
 as "built with"), so an fsbpyr of another version, or of an untagged commit, gives a different
 file from the same sources, even when the launcher and the payload are otherwise the same. Such

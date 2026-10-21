@@ -29,6 +29,7 @@ from fsbpyr.staging import StagingPlan
 from fsbpyr.vcs import git_state, own_version, version_string
 
 from ..support.readme import quickstart
+from ..support.sbom import load as load_sbom
 
 pytestmark = pytest.mark.slow
 
@@ -88,6 +89,14 @@ def test_hello_from_uv_lock(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert {"name": "hello", "version": "1.0.0", "source": "local"} in info["dists"]
     assert info["runtime_components"]["openssl"].startswith("OpenSSL 3.")
     assert report["shared_libraries"] == [] and "json" in report["runtime_modules"]
+    bom = json.loads(load_sbom().render(report))  # REP-7: the SBOM of this very executable
+    assert bom["metadata"]["component"]["hashes"] == [
+        {"alg": "SHA-256", "content": hashlib.sha256(executable.read_bytes()).hexdigest()}]
+    cpes = {c["name"]: c["cpe"] for c in bom["components"] if "cpe" in c}
+    openssl = info["runtime_components"]["openssl"].split()[1]
+    assert cpes["openssl"] == f"cpe:2.3:a:openssl:openssl:{openssl}:*:*:*:*:*:*:*"
+    assert cpes["sqlite"].split(":")[5] == info["runtime_components"]["sqlite"]
+    assert cpes["cpython"].split(":")[5] == report["python"]
 
 
 def test_readme_quickstart_works_on_a_new_account(tmp_path: Path) -> None:

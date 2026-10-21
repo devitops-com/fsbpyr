@@ -1114,6 +1114,7 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
             "dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}",
             "dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}.xz",
             "dist/THIRD_PARTY_LICENSES${{ env.SUFFIX }}-${{ env.TARGET }}.txt",
+            "dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}.cdx.json",
         ]),
         ("built-short-${{ matrix.python }}", [  # copies of the x86-64 glibc builds only
             "dist/fsbpyr${{ env.SUFFIX }}",
@@ -1134,6 +1135,50 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
     assert "tools/release/make-install.sh" in publish and "dist/install.sh dist/fsbpyr" in publish
     assert publish.index("make-install.sh") < publish.index("attest-build-provenance")
     assert "dist/THIRD_PARTY_LICENSES*.txt\n            dist/install.sh" in publish
+
+
+def _jobs() -> dict[str, str]:
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    return dict(re.findall(r"^  ([a-z]+):\n(.*?)(?=^  [a-z]+:\n|\Z)", workflow, re.M | re.S))
+
+
+def test_build_and_reproduce_make_the_sbom_from_their_executable_and_compare_compares_them(
+) -> None:
+    """REP-7: one CycloneDX file per long-named executable, from `inspect --verify --json`,
+    made by build from its frozen artifact and by reproduce from its rebuild, byte for byte."""
+    jobs = _jobs()
+    build, reproduce, compare = jobs["build"], jobs["reproduce"], jobs["compare"]
+
+    assert "inspect --verify --json dist/fsbpyr$SUFFIX" in build
+    assert "tools/release/sbom.py" in build and "dist/fsbpyr$SUFFIX-$TARGET.cdx.json" in build
+    assert "name: Name the short licence notices" in build  # the short names get no SBOM
+    assert ".cdx.json" not in build.split("name: Name the short licence notices")[1]
+    assert "stage3$SUFFIX/fsbpyr inspect --verify --json" in reproduce
+    assert "tools/release/sbom.py" in reproduce
+    assert "stage3$SUFFIX/fsbpyr.cdx.json" in reproduce
+    upload = reproduce.split("name: Upload the rebuilt executable")[1]
+    assert upload.count("rebuild/dist/stage3${{ env.SUFFIX }}/fsbpyr") == 2  # one directory
+    assert "fsbpyr*-$TARGET.cdx.json" in compare
+    assert "cmp " in compare.split("Compare the SBOMs byte for byte")[1]
+    assert "rebuilt/fsbpyr.cdx.json" in compare
+
+
+def test_each_sbom_is_attested_to_its_executable_by_a_pinned_action_and_published() -> None:
+    jobs = _jobs()
+    sbom, publish = jobs["sbom"], jobs["publish"]
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+    assert "needs: [build, compare]" in sbom
+    assert "if: github.event_name == 'push' && github.ref_type == 'tag'" in sbom
+    assert "id-token: write" in sbom and "attestations: write" in sbom
+    assert "name: built-${{ matrix.python }}-${{ matrix.target }}" in sbom
+    assert re.search(r"uses: actions/attest-sbom@[0-9a-f]{40} # v\d+\.\d+\.\d+\n", sbom)
+    assert "sbom-path: ${{ steps.files.outputs.sbom }}" in sbom
+    assert "needs: [build, compare, sbom]" in publish  # nothing is released unattested
+    assert "id-token: write" in publish  # still its own provenance
+    assert "dist/fsbpyr*" in publish  # the SBOMs travel with the executables
+    assert "actions/attest-sbom" in workflow and workflow.count("attest-sbom@") == 1
+    assert "spdx" not in workflow.lower()
 
 
 @pytest.mark.parametrize(("suffix", "long_name"), [
