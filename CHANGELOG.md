@@ -21,6 +21,13 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   The new [docs/security.md](docs/security.md) is the threat model.
 
 ### Added
+- **`FSBPYR_SELFTEST=natives` checks a machine before you deploy.** Run an app with it set
+  and fsbpyr extracts every native extension, runs the target's dynamic loader in trace mode
+  on each (no initialization code runs), and prints one line per missing library or symbol
+  version, such as `missing libstdc++.so.6` or `missing version `GLIBCXX_3.4.32' of
+  libstdc++.so.6`. It exits 1 if anything is missing and 0 otherwise. Libraries an extension
+  opens later by name are not seen. Documented in docs/compatibility.md, the README and the
+  man page. Other values of `FSBPYR_SELFTEST` behave as before.
 - **Linux aarch64 with glibc** (Phase 9, platforms step 2). An fsbpyr on an aarch64 host builds
   its runtime and its apps for aarch64, as the x86-64 one does for x86-64 (no cross builds).
   `runtime/pins.py` pins the python-build-standalone 20261009 `pgo+lto-full` archives for
