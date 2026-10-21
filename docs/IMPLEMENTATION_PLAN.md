@@ -1622,13 +1622,93 @@ write, a truncated binary.
     wheels and musl's loader rules on musl;
   - CI runners (Linux arm64, macOS arm64), and a reproduction check per target.
 
+  **Checked 2026-10-21** (`PYTHON.json` of each 3.14.8 archive; two code surveys):
+  - PBS 20261009 has a "full" archive (objects to link) for every target and Python:
+    `pgo+lto-full` for aarch64 glibc and macOS, `lto-full` (musl-dynamic) and
+    `lto+static-full` for musl. All are LLVM 22.1.3 bitcode, so clang/lld 22 links every
+    target. aarch64 glibc is as x86-64 (glibc-dynamic, symbols up to 2.17, the same system
+    libraries). musl's dynamic build (musl 1.2.2) loads extension modules; the static one
+    records `builtin` loading only. macOS links libSystem and CoreFoundation, which needs
+    Apple's SDK, so macOS builds run on macOS; Xcode's clang is an older LLVM and cannot read
+    LLVM 22 bitcode, so they need upstream LLVM 22 (clang and `ld64.lld`).
+  - What is tied to Linux x86-64 today: `registry.host_triple()` (the only host gate),
+    `pins.py` (PBS pins and sysroots per triple), `sysroot._MULTIARCH`, `elf.py`'s
+    `EM_X86_64`, the glibc/manylinux lists in `natives.py`, glibc's error strings in
+    `native.py`, the x86 BCJ filter (`payload/spec.py` and the release's `xz --x86`; Python's
+    `lzma` has no ARM64 BCJ, checked on 3.12 and 3.14, while the launcher decodes with PBS's
+    liblzma), the payload's 4096-byte alignment (`format.py`, `format.h`: aarch64 kernels run
+    with 4K, 16K or 64K pages, macOS arm64 with 16K), the asset names (`vcs.release_asset`,
+    the self-update pattern, dispatch's URL and cache name), `bootstrap.sh` (x86-64 on
+    trixie only), CI (the x86-64 uv tarball, one runner type) and `install -D` in the
+    Makefile. On macOS only: about a dozen Linux-only calls in the launcher (`/proc/self/exe`,
+    `O_TMPFILE`/`AT_EMPTY_PATH`, `getauxval`, `sched_getaffinity`, `pthread_tryjoin_np`,
+    `ioprio`, `O_PATH`, `st_mtim`, `uid_map`) and in the boot code (`mp.py`'s
+    `/proc/<ppid>`, `gc.py`'s `O_PATH`).
+
+  **Owner decisions (2026-10-21):**
+  - each fsbpyr builds apps for the platform it runs on, as it does for its Python version; no
+    cross-target builds in this phase;
+  - the payload is aligned to 64 KiB on every target (one format for 4K, 16K and 64K pages;
+    at most 64 KiB more per file);
+  - musl: a dynamically linked launcher (the target needs musl's loader, as Alpine has); a
+    static one cannot load extension modules;
+  - macOS keeps `~/.cache` (as uv and the code today), not `~/Library/Caches`;
+  - macOS builds need upstream LLVM 22, which the user installs (Homebrew `llvm@22` or the
+    LLVM release; fsbpyr says so when it is missing); CI uses a pinned release tarball;
+  - order: groundwork, then aarch64 glibc, then musl, then macOS, `install.sh` alongside;
+  - the full suite on a push runs the newest Python on every target and every Python on
+    x86-64 glibc; nightly and before a release, every target and Python;
+  - the short asset names stay: `fsbpyr`, `fsbpyr-3.12` and `fsbpyr-3.13` (each with its
+    `.xz`) are copies of the x86-64 glibc builds, so executables already released keep
+    updating.
+
+  **Steps** (a target is done when, on its own runner, the full suite passes with that
+  target's skip list, the three-stage bootstrap is byte-identical and an independent rebuild
+  reproduces it, the fixture apps build and run, and its portability images pass):
+  0. Groundwork (M, on x86-64, no new target yet): a target table (triple, PBS flavour,
+     sysroot, ELF machine, loader name, library policy, BCJ filter, uv's
+     `--python-platform`); `host_triple()` names all five targets, pins and sysroots are
+     keyed by (Python, triple); the 64 KiB alignment (a format version bump); asset names
+     with the target and the short names as copies, and self-update and dispatch with them.
+     Done when x86-64 CI stays green and every target-specific value comes from the table.
+  1. `install.sh` (S, alongside step 0), as settled below.
+  2. Linux aarch64 glibc (M). Spike: the launcher cross-linked on x86-64 against the aarch64
+     archive and Debian 10's arm64 packages, run on GitHub's `ubuntu-24.04-arm`. Work:
+     `EM_AARCH64` and `ld-linux-aarch64.so.1`, the manylinux_2_28 aarch64 policy, no BCJ
+     filter for the payload's natives and `xz --arm64` for the release's `.xz`, CI's target
+     dimension (arm runners, the trixie arm64 container), arm64 portability images.
+  3. Linux musl, x86-64 and aarch64 (M–L). Spike: a musl 1.2.2 sysroot from pinned packages
+     (Alpine 3.14's, to confirm), the `lto-full` archive linked into a dynamic musl PIE, a
+     musllinux numpy wheel loaded, an Alpine release with clang/lld 22 for the bootstrap.
+     Work: a musllinux policy (no symbol versions: a musl baseline instead of a glibc
+     version), musl's loader rules, error strings, Alpine CI containers and portability
+     images.
+  4. macOS arm64 (L). Spike, on `macos-15` through a throwaway workflow on a spike branch:
+     the link with upstream clang 22, `ld64.lld` and the SDK; the payload in a new segment
+     before `__LINKEDIT`, ad-hoc signed, `codesign --verify --strict` and a run;
+     reproducibility across two runners (whether fsbpyr writes the ad-hoc signature itself or
+     runs `codesign -s -` is settled here). Work: the launcher's ports
+     (`_NSGetExecutablePath`, `issetugid`, `sysconf`, a done flag for
+     `pthread_tryjoin_np`, `O_TMPFILE` falling back to the rename path, `ioprio`, `uid_map`
+     and `close_range` under `__linux__`), the boot code (the multiprocessing parent check
+     through `proc_pidpath` in `_fsbpyr`, `gc.py` without `O_PATH`, the CA bundle at
+     `/etc/ssl/cert.pem`), a Mach-O reader (`LC_LOAD_DYLIB`, `@rpath`/`@loader_path`) with a
+     delocate-style policy and the minimum macOS version recorded as glibc's is, a portable
+     `make install`, `bootstrap.sh` on macOS, CI on `macos-15` (pinned LLVM and Xcode, a
+     macOS skip list). Developer ID signing and notarization of apps are out of scope (the
+     payload in a segment leaves them possible).
+  5. Releases with every target (M): 15 executables plus the short-name copies, each with its
+     `.xz`, attestation and licence notices, in `SHA256SUMS`; `install.sh` picks the target;
+     README; a reproduction per target.
+
   With one fsbpyr per Python version a release carries 3 versions × 5 targets = 15
   executables, each with its `.xz` and attestation. Settled with the owner (2026-10-18):
   - **asset names** carry the target, in uv's and PBS's triples: for the newest Python
     `fsbpyr-x86_64-linux-gnu`, `fsbpyr-aarch64-linux-gnu`, `fsbpyr-x86_64-linux-musl`,
     `fsbpyr-aarch64-linux-musl` and `fsbpyr-aarch64-macos`; for the others the version too
     (`fsbpyr-3.12-aarch64-linux-musl`); each with its `.xz`. `fsbpyr` and `fsbpyr.xz` stay,
-    copies of `fsbpyr-x86_64-linux-gnu`, so the links in use keep working;
+    copies of `fsbpyr-x86_64-linux-gnu`, so the links in use keep working (and, owner
+    decision 2026-10-21, `fsbpyr-3.12` and `fsbpyr-3.13` as copies of the x86-64 glibc ones);
   - **an installer, `install.sh`, modelled on uv's** (`curl -LsSf
     https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh | sh`, or a
     tag's own `releases/download/vX.Y.Z/install.sh` for that version), built and attested by
