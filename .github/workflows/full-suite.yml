@@ -3,18 +3,24 @@ name: Full suite
 # The whole test suite but the portability tests (tests/e2e/test_portability.py, which need
 # `podman run` on the runner host: the portability job below), as an unprivileged user in a
 # Debian trixie container:
-#   - on every push to main, so that tools/release/release.sh and the publish job of release.yml
-#     can require a green run for the commit a release is made from;
+#   - on every push to main (main goes to GitHub for a release only, so this is the run before
+#     a release), so that tools/release/release.sh and the publish job of release.yml can
+#     require a green run for the commit a release is made from;
 #   - nightly, and weekly with a longer fuzzing run (below);
 #   - on request.
 # release.yml runs the core of the suite as root before a release; this runs the rest: natives,
 # compatibility, the ASan/UBSan launcher, the fuzzer, the cache-directory and GC tests, and the
 # ownership checks that have nothing to test as root. Nothing is published from here, so the
 # fuzz corpus is kept in actions/cache (release.yml stays cache-free).
-# One fsbpyr per Python version (Phase 9): the suite and the portability matrix run once per
-# entry of the `python` matrix, the development environment on that Python and that variant's
-# executable (dist/fsbpyr for the newest version, the one .python-version pins; dist/fsbpyr-3.X
-# for the others). Adding a Python version adds an entry to both matrices.
+# One fsbpyr per Python version and per target (Phase 9): the suite and the portability matrix
+# run once per (target, Python) entry, the development environment on that Python and that
+# variant's executable (dist/fsbpyr for the newest version, the one .python-version pins;
+# dist/fsbpyr-3.X for the others), each target on a runner of its architecture
+# (x86_64-linux-gnu on ubuntu-24.04, aarch64-linux-gnu on ubuntu-24.04-arm). Every trigger runs
+# every target and Python: the owner's plan (a push runs the newest Python on every target and
+# every Python on x86-64; nightly and before a release, everything) meets "main is pushed for a
+# release only". Adding a Python version adds an entry to both `python` lists, adding a target
+# one to both `target` lists and the `include` entry that names its runner.
 
 on:
   push:
@@ -35,13 +41,18 @@ permissions:
 
 jobs:
   suite:
-    name: suite (Python ${{ matrix.python }})
-    runs-on: ubuntu-24.04
+    name: suite (${{ matrix.target }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         python: ["3.12", "3.13", "3.14"]  # one entry per Python version a release is built for
-    # Debian trixie by digest, as release.yml. Privileged: rootless podman for the tests that map
+        target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
+        include:
+          - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
+          - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
+    # Debian trixie by digest, as release.yml (a multi-arch index: one image per runner
+    # architecture). Privileged: rootless podman for the tests that map
     # a second range of user ids, strace and user namespaces inside the container.
     container:
       image: docker.io/library/debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
@@ -69,14 +80,7 @@ jobs:
       # Python and caches are its own (below); only the uv executable is shared.
       - name: Install uv
         run: |
-          read -r version sha256 < tools/release/uv.version
-          name=uv-x86_64-unknown-linux-gnu
-          curl -fsSL -o "$RUNNER_TEMP/uv.tar.gz" \
-            "https://github.com/astral-sh/uv/releases/download/$version/$name.tar.gz"
-          echo "$sha256  $RUNNER_TEMP/uv.tar.gz" | sha256sum -c -
-          tar -xzf "$RUNNER_TEMP/uv.tar.gz" --strip-components=1 -C /usr/local/bin \
-            "$name/uv" "$name/uvx"
-          echo "FSBPYR_UV_VERSION=$version" >> "$GITHUB_ENV"
+          echo "FSBPYR_UV_VERSION=$(sh tools/release/install-uv.sh /usr/local/bin)" >> "$GITHUB_ENV"
 
       # The sanitizer runtimes, llvm-objdump and llvm-cov, gcc, strace, groff, the user `tester`
       # and the directories the cache-ownership tests walk through.
@@ -142,8 +146,8 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /home/tester/fuzz-corpus
-          key: fuzz-corpus-${{ matrix.python }}-${{ github.run_id }}
-          restore-keys: fuzz-corpus-${{ matrix.python }}-
+          key: fuzz-corpus-${{ matrix.target }}-${{ matrix.python }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-${{ matrix.python }}-
 
       - name: Show the corpus
         run: |
@@ -199,7 +203,7 @@ jobs:
       - name: Upload the executable
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: fsbpyr-${{ matrix.python }}
+          name: fsbpyr-${{ matrix.python }}-${{ matrix.target }}
           path: /home/tester/src/dist/fsbpyr${{ env.SUFFIX }}
           if-no-files-found: error
 
@@ -241,26 +245,31 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: full-suite-${{ matrix.python }}
+          name: full-suite-${{ matrix.python }}-${{ matrix.target }}
           path: |
             /home/tester/src/full.xml
             /home/tester/src/coverage.xml
             /home/tester/launcher-coverage.txt
           if-no-files-found: warn
 
-  # The portability matrix: the apps run on 13 distributions (glibc 2.28 to 2.44) and the
-  # objdump check of the glibc floor. On the runner host, without a container: the runner image
-  # ships Podman, and nested podman in the suite job's container failed. Needs the suite job's
-  # executable, which builds the apps (D4: no compiler); its conclusion is part of the run's,
-  # which the release gate (tools/release/green-run.sh) checks.
+  # The portability matrix: the apps run on 13 distributions (glibc 2.28 to 2.44; the 12 with an
+  # arm64 variant on aarch64, tests/support/images.py) and the objdump check of the glibc floor.
+  # On the runner host, without a container: the runner image ships Podman, and nested podman in
+  # the suite job's container failed. Needs the suite job's executable, which builds the apps
+  # (D4: no compiler); its conclusion is part of the run's, which the release gate
+  # (tools/release/green-run.sh) checks.
   portability:
-    name: portability (Python ${{ matrix.python }})
+    name: portability (${{ matrix.target }}, Python ${{ matrix.python }})
     needs: suite
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         python: ["3.12", "3.13", "3.14"]  # as in the suite job
+        target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
+        include:
+          - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
+          - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -281,21 +290,14 @@ jobs:
       - name: Download the executable
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: fsbpyr-${{ matrix.python }}
+          name: fsbpyr-${{ matrix.python }}-${{ matrix.target }}
           path: dist
 
-      # The uv that tools/release/uv.version names; llvm for llvm-objdump (the test skips
-      # without it, and a skip fails the run below).
+      # The uv that tools/release/uv.version names, for this runner's architecture; llvm for
+      # llvm-objdump (the test skips without it, and a skip fails the run below).
       - name: Install uv and llvm
         run: |
-          read -r version sha256 < tools/release/uv.version
-          name=uv-x86_64-unknown-linux-gnu
-          curl -fsSL -o "$RUNNER_TEMP/uv.tar.gz" \
-            "https://github.com/astral-sh/uv/releases/download/$version/$name.tar.gz"
-          echo "$sha256  $RUNNER_TEMP/uv.tar.gz" | sha256sum -c -
-          mkdir -p "$RUNNER_TEMP/bin"
-          tar -xzf "$RUNNER_TEMP/uv.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/bin" \
-            "$name/uv" "$name/uvx"
+          sh tools/release/install-uv.sh "$RUNNER_TEMP/bin" > /dev/null
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           sudo apt-get update -q
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends llvm
@@ -334,6 +336,6 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: portability-${{ matrix.python }}
+          name: portability-${{ matrix.python }}-${{ matrix.target }}
           path: portability.xml
           if-no-files-found: warn

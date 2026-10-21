@@ -15,6 +15,7 @@ from pathlib import Path
 from .inspection import InspectError, read
 from .runtime.registry import cache_root, secure_directory
 from .selfupdate import REPO, UpdateError, release_numbers, unpack
+from .targets import host_target
 from .vcs import own_version, release_asset
 
 DOWNLOADS_VARIABLE = "FSBPYR_RELEASE_DOWNLOADS"  # the releases' download URL; tests serve their own
@@ -44,7 +45,7 @@ def _own_tag(python: str) -> str:
 def _fetch(python: str, tag: str, final: Path) -> None:
     """The release's asset for ``python`` into ``final``, verified; ``final`` appears whole or
     not at all."""
-    asset = release_asset(python)
+    asset = release_asset(python, host_target().name)
     url = f"{os.environ.get(DOWNLOADS_VARIABLE) or DEFAULT_DOWNLOADS}/{tag}/{asset}.xz"
     handle, name = tempfile.mkstemp(dir=final.parent, prefix=f".{final.name}.")
     os.close(handle)
@@ -70,9 +71,10 @@ def variant(python: str, log: Callable[[str], None] = print) -> Path:
     root = secure_directory(cache_root())
     directory = root / "downloads"
     directory.mkdir(mode=0o700, exist_ok=True)
-    final = directory / f"{release_asset(python)}-{tag}"
+    asset = release_asset(python, host_target().name)
+    final = directory / f"{asset}-{tag}"
     if not final.is_file():
-        log(f"fetching {release_asset(python)} of release {tag}")
+        log(f"fetching {asset} of release {tag}")
         _fetch(python, tag, final)
     return final
 

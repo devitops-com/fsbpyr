@@ -21,6 +21,74 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   The new [docs/security.md](docs/security.md) is the threat model.
 
 ### Added
+- **Linux aarch64 with glibc** (Phase 9, platforms step 2). An fsbpyr on an aarch64 host builds
+  its runtime and its apps for aarch64, as the x86-64 one does for x86-64 (no cross builds).
+  `runtime/pins.py` pins the python-build-standalone 20261009 `pgo+lto-full` archives for
+  3.12.15, 3.13.16 and 3.14.8 (SHA-256s from the release's checksums and the downloads) and a
+  glibc 2.28 sysroot from the same Debian 10 package versions as x86-64's, for arm64. The
+  aarch64 objects call outlined atomics that Debian 10's libgcc 8 lacks, so the launcher links
+  clang's compiler-rt builtins too (`libclang-rt-22-dev`; the link stops and says so when
+  they are missing). libgcc is linked in on every target (`-static-libgcc`), so the launcher
+  needs glibc's libraries only: on aarch64 the libcalls LTO adds (`__extenddftf2`,
+  `__trunctfdf2`) had bound to `libgcc_s.so.1`; the x86-64 launcher is byte-identical, under
+  a new runtime id. The native analysis takes the aarch64
+  ELF machine and loader (`ld-linux-aarch64.so.1`) from the target table and the same
+  manylinux_2_28 limits; the payload's xz natives use no BCJ filter there. `tools/bootstrap.sh`
+  accepts aarch64 hosts, and the `Containerfile` builds for amd64 and arm64
+  (`podman build --arch arm64`) with the pinned uv of each architecture, checked against a
+  SHA-256, instead of the newest from astral.sh. Checked under QEMU emulation only (no arm64
+  hardware yet; the full suite, the three-stage bootstrap and the portability images are for
+  GitHub's arm runners): the 3.14 runtime built (of the 3.12 and 3.13 pins only the downloads'
+  SHA-256s were checked), two fixture apps (`hello`, and `heavy` with numpy,
+  onnxruntime, cryptography, orjson and pydantic) built, verified and ran, and the unit tests
+  pass. No release has aarch64 executables yet.
+- **`install.sh`, an installer modelled on uv's** (Phase 9, platforms step 1). The release
+  workflow builds it from `tools/release/install.sh.in` with `tools/release/make-install.sh`,
+  which writes in the release's version and the SHA-256 and glibc of every executable, then
+  attests it, lists it in `SHA256SUMS` and attaches it: `curl -LsSf
+  https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh | sh`. POSIX `sh`;
+  it detects the target (musl by `ldd --version`), stops naming the release's targets when there
+  is none for the host or the host's glibc is too old, downloads with `curl` (HTTPS only) or
+  `wget`, the `.xz` when `xz` is there, checks the SHA-256 and `fsbpyr inspect --verify` before
+  installing, and with `FSBPYR_VERIFY=1` also `gh attestation verify`. It installs into
+  `$FSBPYR_INSTALL_DIR`, `$XDG_BIN_HOME`, `$XDG_DATA_HOME/../bin` or `~/.local/bin` with the man
+  page and completions, and puts the directory on `PATH` through an `env` script sourced from
+  the shell files (`--no-modify-path`, `FSBPYR_NO_MODIFY_PATH=1`; `$GITHUB_PATH` in GitHub
+  Actions). It looks for the per-target asset names (`fsbpyr-x86_64-linux-gnu`, ...), so it
+  installs from a release only once the release has them. The README's "Getting fsbpyr" leads
+  with it.
+- **Release assets are named with the target** (Phase 9, step 0). Every executable is
+  published as `fsbpyr-x86_64-linux-gnu` (the newest Python) or
+  `fsbpyr-3.12-x86_64-linux-gnu` (the others), each with its `.xz`, attestation and
+  `THIRD_PARTY_LICENSES-<...>.txt`. The old names `fsbpyr`, `fsbpyr-3.12`, `fsbpyr-3.13` and
+  `THIRD_PARTY_LICENSES[-3.X].txt` stay as copies of the x86-64 glibc assets, so URLs,
+  scripts and executables already released keep working. An fsbpyr built from now on records
+  the long name as `release_asset` and `fsbpyr self update` follows it; one that recorded a
+  short name or nothing keeps following the short name. A build for another Python fetches
+  `fsbpyr-3.X-x86_64-linux-gnu.xz` and keeps it as
+  `downloads/fsbpyr-3.X-x86_64-linux-gnu-vX.Y.Z` in the cache (it was
+  `downloads/fsbpyr-3.X-vX.Y.Z`; the old file stays until deleted by hand).
+- **Releases carry aarch64 assets, and CI builds and tests every target** (Phase 9, platforms
+  step 2). `release.yml` builds, smoke-tests, reproduces and compares each (target, Python)
+  entry, `x86_64-linux-gnu` on `ubuntu-24.04` and `aarch64-linux-gnu` on `ubuntu-24.04-arm`,
+  in the same Debian trixie image (its multi-arch digest). The release adds
+  `fsbpyr-aarch64-linux-gnu`, `fsbpyr-3.12-aarch64-linux-gnu` and `fsbpyr-3.13-aarch64-linux-gnu`
+  with their `.xz` (compressed with `xz --arm64`, the x86-64 ones with `xz --x86`), attestations
+  and licence notices, and `install.sh` lists both targets. The short names stay copies of the
+  x86-64 glibc builds only. `full-suite.yml` runs the suite and the portability matrix per
+  (target, Python) on the matching runner, on every trigger; the portability matrix on aarch64
+  runs the 12 images that have an arm64 variant (`archlinux:latest` has none). `tools/release/
+  uv.version` holds a checksum per architecture and `tools/release/install-uv.sh` installs the
+  uv of the machine's. A release still needs every job of both workflows to have passed. The
+  workflows have not run on GitHub's arm64 runners yet.
+- **Format version 7: the payload starts at a multiple of 64 KiB, not 4 KiB** (Phase 9,
+  step 0). One executable format now serves kernels with 4K, 16K and 64K pages (aarch64
+  Linux, macOS arm64), because the payload's file offset is a multiple of every running page
+  size. An executable is up to 64 KiB larger (the zero padding after the stub); `fsbpyr
+  inspect` names it "zero padding to the 64 KiB boundary". The launcher accepts only version 7
+  and refuses an offset that is not a multiple of 64 KiB; `inspect` still reads versions 1 to
+  6. Each executable carries its own launcher, so executables built before this change still
+  run; they are not rebuilt.
 - **`fsbpyr build` chooses the Python of the app and hands the build to the fsbpyr of that
   Python** (Phase 9, step 4). The version comes from, strongest first, the new `--python X.Y`
   (or `python = "X.Y"` in `[tool.fsbpyr]`), a `.python-version` pin that names a supported
@@ -262,6 +330,24 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   `runtime.json`, for information; they are not part of the runtime id.
 
 ### Changed
+- **The tests keep their temporary files under `~/tmp`, not `/tmp`.** `make test`, `make
+  test-ci` and `make test-portability` set `TMPDIR` to `TESTTMP` (default `~/tmp`, created if
+  missing): `/tmp` is often a tmpfs mounted nosuid, where the set-gid start test skipped. The
+  long-symlink test of the cache root uses a 999-byte target, which XFS takes.
+- **A test run removes the builds of local projects it made from uv's cache.** The tests build
+  their fixture projects (and fsbpyr) from new temporary copies every time, and uv kept every
+  build and its unpacked wheel: thousands of entries a run. At the end of a run, the entries
+  uv made for local paths, editable installs and wheel files since it started go, with the
+  wheels they link to; what uv downloaded from an index stays.
+- **One table holds the platforms fsbpyr knows** (Phase 9, step 0): `src/fsbpyr/targets.py`
+  has x86_64-linux-gnu, aarch64-linux-gnu, x86_64-linux-musl, aarch64-linux-musl and
+  aarch64-macos, each with its python-build-standalone triple and flavour, ELF machine,
+  dynamic loader, C library, xz filter for native files, sysroot directory and uv's
+  `--python-platform`. The host's target comes from `sys.platform`, the machine and the C
+  library; the ELF check, the system libraries, the payload's xz filter, the sysroot flags,
+  the cache collector and staging take their values from it. A recognized host without pins
+  (anything but x86-64 glibc) stops with "fsbpyr does not support the ... target yet" before
+  any download; an unknown host keeps "unsupported host". Nothing changes on x86-64 glibc.
 - **fsbpyr's code imports and runs on Python 3.12 and 3.13** (Phase 9, the base of the port):
   `requires-python` is now `>=3.12,<3.15`, with `backports.zstd` (the official backport of
   3.14's `compression.zstd`) as a dependency below 3.14. The CLI still refuses 3.12 and 3.13:
@@ -340,6 +426,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   container, as before, and the README's release check no longer runs `uv self update`.
 
 ### Fixed
+- **A bundled library whose version ends in a letter is a native library.** A file named like
+  `libcrypto-02bae65c.so.1.1.1k` (OpenSSL 1.1) was kept as data, so the libraries that need it
+  failed the build as "neither bundled nor standard system libraries"; psycopg-binary's
+  aarch64 wheel bundles one. A version part after `.so` now starts with a digit and may go on
+  with letters; the ELF check decides, as before.
 - **Runtimes build and modules compile alike on Python 3.12 and 3.13.** `fsbpyr runtime build`
   unpacked the python-build-standalone archive with 3.14's `tarfile` mode `r:zst`; below 3.14
   it uses the one of `backports.zstd`. A module's `co_filename` is now a copy of its name:

@@ -10,7 +10,7 @@ from fsbpyr.payload.convert import spec_from_payload
 from fsbpyr.payload.format import (
     DIGEST_LEAF,
     DIGEST_SIZE,
-    PAGE_SIZE,
+    PAYLOAD_ALIGN,
     TRAILER,
     TRAILER_MAGIC,
     TRAILER_SIZE,
@@ -97,14 +97,14 @@ def test_version_2_executables_verify_their_payload_digest() -> None:
     payload = bytearray(encode_payload(make_spec()))
     struct.pack_into("<I", payload, 8, 2)  # header format_version
     digest = hashlib.sha256(payload).digest()
-    trailer = TRAILER.pack(TRAILER_MAGIC, 2, 0, PAGE_SIZE, len(payload), digest)
-    image = bytearray(STUB + bytes(PAGE_SIZE - len(STUB)) + payload + trailer)
+    trailer = TRAILER.pack(TRAILER_MAGIC, 2, 0, PAYLOAD_ALIGN, len(payload), digest)
+    image = bytearray(STUB + bytes(PAYLOAD_ALIGN - len(STUB)) + payload + trailer)
     exe = Executable.parse(bytes(image))
     exe.verify()
     assert not exe.covers_file
     image[2] ^= 0x01  # the stub was never covered
     Executable.parse(bytes(image)).verify()
-    image[PAGE_SIZE + len(payload) - 1] ^= 0x01
+    image[PAYLOAD_ALIGN + len(payload) - 1] ^= 0x01
 
     with pytest.raises(PayloadError, match="payload digest mismatch"):
         Executable.parse(bytes(image)).verify()

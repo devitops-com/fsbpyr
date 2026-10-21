@@ -192,7 +192,7 @@ def any_raw(request: pytest.FixtureRequest) -> bytes:
     ("offset", "fmt", "value", "message"),
     [
         (0, "<8s", b"NOTMAGIC", "magic"),
-        (8, "<I", 7, "version"),
+        (8, "<I", 8, "version"),
         (12, "<I", 191, "header size"),
     ],
 )
@@ -320,7 +320,7 @@ def image() -> bytes:
     ("offset", "fmt", "value", "message"),
     [
         (0, "<8s", b"XXXXXXXX", "trailer magic"),
-        (8, "<I", 7, "version"),
+        (8, "<I", 8, "version"),
         (16, "<Q", 4097, "aligned"),
         (24, "<Q", 5, "size"),
     ],

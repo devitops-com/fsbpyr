@@ -140,6 +140,8 @@ def test_a_start_a_day_after_the_last_run_collects_in_the_background(
 def test_no_collection_starts_when_none_is_due(
     app: Path, tmp_path: Path, age: float, setting: str | None
 ) -> None:
+    if setting is None and gc.short_of_space(str(tmp_path)):
+        pytest.skip("needs 10% free where the tests run: with less, a collection is due hourly")
     cache = tmp_path / "cache"
     assert _run(app, cache, FSBPYR_GC="0").returncode == 0
     _old_tree(cache)

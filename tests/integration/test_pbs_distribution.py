@@ -11,14 +11,15 @@ import pytest
 from fsbpyr.build import TARGET_PYTHON
 from fsbpyr.runtime import ar, notices, pbs, stdlib
 from fsbpyr.runtime.pins import pin_for
-from fsbpyr.runtime.registry import cache_root
+from fsbpyr.runtime.registry import cache_root, host_triple
+from fsbpyr.targets import host_target
 
 pytestmark = pytest.mark.slow
 
 
 @pytest.fixture(scope="module")
 def dist() -> pbs.PbsDist:
-    pin = pin_for(TARGET_PYTHON, "x86_64-unknown-linux-gnu")
+    pin = pin_for(TARGET_PYTHON, host_triple())
     root = cache_root() / "pbs" / pin.name / "python"
     if not (root / "PYTHON.json").exists():
         pytest.skip("pinned PBS distribution is not in the cache (run fsbpyr runtime build)")
@@ -77,7 +78,8 @@ def test_a_stdlib_module_that_does_not_compile_is_named(dist: pbs.PbsDist, tmp_p
     ]
 
 
-HACL_OBJECTS = {"3.12": 1, "3.13": 1, "3.14": 11}  # the objects of HACL*'s hashes PBS leaves out
+# the objects of HACL*'s hashes PBS leaves out (3.14's 128- and 256-bit vector ones are x86-64's)
+HACL_OBJECTS = {"3.12": 1, "3.13": 1, "3.14": 11 if host_target().arch == "x86-64" else 9}
 
 
 def test_link_plan_adds_only_hacl_objects(dist: pbs.PbsDist) -> None:

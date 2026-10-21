@@ -21,24 +21,44 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .elf import ElfError, VersionNeed, dynamic_info, version_requirements
+from .targets import host_target
 
 # Libraries manylinux wheels may take from the system (auditwheel policy, manylinux_2_17 and
-# later for x86-64, plus the dynamic loader and libz which current policies also allow).
-SYSTEM_LIBRARIES = frozenset({
-    "ld-linux-x86-64.so.2", "libc.so.6", "libm.so.6", "libdl.so.2", "librt.so.1",
+# later for x86-64 and aarch64, plus the dynamic loader and libz which current policies also
+# allow).
+_SYSTEM_LIBRARIES = frozenset({
+    "libc.so.6", "libm.so.6", "libdl.so.2", "librt.so.1",
     "libpthread.so.0", "libutil.so.1", "libnsl.so.1", "libresolv.so.2", "libgcc_s.so.1",
     "libstdc++.so.6", "libz.so.1", "libX11.so.6", "libXext.so.6", "libXrender.so.1",
     "libICE.so.6", "libSM.so.6", "libGL.so.1", "libgobject-2.0.so.0", "libgthread-2.0.so.0",
     "libglib-2.0.so.0",
 })  # fmt: skip
 # The libraries of glibc itself: their versions are glibc's, reported as "glibc >= X".
-GLIBC_LIBRARIES = frozenset({
-    "ld-linux-x86-64.so.2", "libc.so.6", "libm.so.6", "libdl.so.2", "librt.so.1",
+_GLIBC_LIBRARIES = frozenset({
+    "libc.so.6", "libm.so.6", "libdl.so.2", "librt.so.1",
     "libpthread.so.0", "libutil.so.1", "libnsl.so.1", "libresolv.so.2",
 })  # fmt: skip
+
+
+def _with_loader(libraries: frozenset[str]) -> frozenset[str]:
+    loader = host_target().loader
+    return libraries | {loader} if loader else libraries
+
+
+def system_libraries() -> frozenset[str]:
+    """What extensions may take from the system: the list and the host's dynamic loader."""
+    return _with_loader(_SYSTEM_LIBRARIES)
+
+
+def glibc_libraries() -> frozenset[str]:
+    return _with_loader(_GLIBC_LIBRARIES)
+
+
 # The newest symbol version per namespace that auditwheel's manylinux_2_28 x86_64 policy
 # allows (libstdc++ 8.x, libgcc_s, libz), and the non-numeric CXXABI versions it allows.
-# Taken from the improvement plan's reading of auditwheel's policy file (NAT-2); not re-read.
+# Taken from the improvement plan's reading of auditwheel's policy file (NAT-2). The aarch64
+# policy has the same numeric limits (compared with auditwheel's file on 2026-10-21) and lists
+# CXXABI_TM_1 but not CXXABI_FLOAT128; both targets use these.
 MANYLINUX_2_28_LIMITS = {
     "GLIBCXX": (3, 4, 24), "CXXABI": (1, 3, 11), "GCC": (7, 0, 0), "ZLIB": (1, 2, 9),
 }  # fmt: skip
@@ -221,7 +241,7 @@ def _direct_dependencies(  # noqa: PLR0913  the object, the payload, and inherit
         found = next((c for c in candidates if c in payload), None)
         if found is not None:
             dependencies.append((found, False))
-        elif needed not in SYSTEM_LIBRARIES and needed not in allowed:
+        elif needed not in system_libraries() and needed not in allowed:
             missing.append(needed)
         else:
             from_system.append(needed)

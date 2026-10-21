@@ -44,7 +44,7 @@ attestation check and building fsbpyr from source are in [Getting fsbpyr](#getti
 
 ## Requirements
 
-- **Build host:** Linux x86-64, with [uv](https://docs.astral.sh/uv/) on `PATH`
+- **Build host:** Linux x86-64, or Linux aarch64 with glibc (see "Supported targets"), with [uv](https://docs.astral.sh/uv/) on `PATH`
   ([D26](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)): uv installs every project, pip
   projects too.
 - **Project:** a console script (`[project.scripts]`, or the build backend's own table such as
@@ -62,13 +62,18 @@ attestation check and building fsbpyr from source are in [Getting fsbpyr](#getti
   the version that fsbpyr embeds, which "Which Python" says how a build chooses. fsbpyr itself
   needs Python 3.12 to 3.14 (D13) and one checkout builds all three variants (`make build
   PYTHON=3.12`, see "Building from source"). The releases carry the 3.14 variant only so far.
-- **Platform:** Linux x86-64 with glibc only. On a musl system such as Alpine the glibc loader
+- **Platform:** Linux x86-64 with glibc. On a musl system such as Alpine the glibc loader
   the executable names does not exist, and the shell reports the executable as "not found"
-  although the file is there.
+  although the file is there. Linux aarch64 with glibc builds from a checkout, on an aarch64
+  host: each fsbpyr builds apps for the platform it runs on, and there are no cross builds.
+  No release has an aarch64 executable yet, and it was checked under QEMU emulation only
+  (the 3.14 runtime and two fixture apps built, verified and ran in the arm64 podman image;
+  the unit tests passed), not on arm64 hardware and not through `make bootstrap`.
 - **Interpreter build:** CPython with the GIL only; the launcher refuses to build for a
   free-threaded CPython ([D35](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)).
 - **Planned** in [Phase 9](docs/IMPLEMENTATION_PLAN.md), after the MVP: releases of the 3.12
-  and 3.13 variants (one fsbpyr per Python version), then Linux aarch64, musl and macOS arm64.
+  and 3.13 variants (one fsbpyr per Python version) and of Linux aarch64, then musl and macOS
+  arm64.
 
 How an executable differs from a venv, what the target must provide, which distributions and
 packages are tested, and what to do when an app fails: [docs/compatibility.md](docs/compatibility.md).
@@ -171,9 +176,9 @@ An app runs on the CPython of the fsbpyr that builds it, and there is one fsbpyr
 
 The patch release is the one that variant embeds. When the chosen version is not the running
 fsbpyr's, the build is handed to the matching one: a released fsbpyr downloads the variant of
-its own release (the `.xz` of the release's `fsbpyr-3.X` asset, unpacked and checked as
+its own release (the `.xz` of the release's `fsbpyr-3.X-TARGET` asset, unpacked and checked as
 `fsbpyr self update` does before anything runs it), keeps it in its cache
-(`~/.cache/fsbpyr/downloads/fsbpyr-3.X-vX.Y.Z`, or under `$FSBPYR_CACHE_DIR`; `fsbpyr cache gc`
+(`~/.cache/fsbpyr/downloads/fsbpyr-3.X-TARGET-vX.Y.Z`, or under `$FSBPYR_CACHE_DIR`; `fsbpyr cache gc`
 leaves it alone, delete it by hand to reclaim the space) and runs it with the same
 arguments, so only the variants a project needs are downloaded, and a cached one builds
 offline. A developer build (`fsbpyr --version` starts with `untagged`) never downloads a
@@ -279,7 +284,8 @@ fsbpyr's LICENSE has a runtime exception for the launcher and the boot modules, 
 not reproduce fsbpyr's MIT notice for them. To redistribute an app, ship the output of
 `inspect --licenses` with it (or point to the executable), and check the distributions' part
 against what you know your dependencies bundle. Each release also carries it for fsbpyr's own
-executable as the asset `THIRD_PARTY_LICENSES.txt`.
+executable as the asset `THIRD_PARTY_LICENSES-x86_64-linux-gnu.txt` (also
+`THIRD_PARTY_LICENSES.txt`).
 
 A build warns when a native file needs a `GLIBCXX`, `CXXABI`, `GCC` or `ZLIB` version newer
 than the manylinux_2_28 policy allows, since such a library fails to import on a target with
@@ -455,14 +461,15 @@ Before 1.0 only the following is kept stable; everything else may change in any 
   covered: they can change before 1.0, and a change that breaks them is marked **Breaking:**
   in the [changelog](CHANGELOG.md).
 - What `fsbpyr self update` and an installer rely on across releases: the release assets
-  `fsbpyr` and `fsbpyr.xz` and their `releases/latest/download/` URLs, the version-named
-  assets `fsbpyr-3.12` and `fsbpyr-3.13` with their `.xz` (and the `fsbpyr-3.14` that appears
-  when a newer Python takes over the plain name), and the `release_asset` key of `build_info`
-  that records which asset an executable was released as, which a variant's self-update
-  reads. The planned target-named assets (`fsbpyr-x86_64-linux-gnu`,
+  `fsbpyr-x86_64-linux-gnu` and its `.xz` and their `releases/latest/download/` URLs, the
+  version-named assets `fsbpyr-3.12-x86_64-linux-gnu` and `fsbpyr-3.13-x86_64-linux-gnu` with
+  their `.xz` (and the `fsbpyr-3.14-x86_64-linux-gnu` that appears when a newer Python takes
+  over the plain name), the short names `fsbpyr`, `fsbpyr-3.12` and `fsbpyr-3.13` with their
+  `.xz`, which stay copies of the x86-64 glibc assets, and the `release_asset` key of
+  `build_info` that records which asset an executable was released as, which self-update
+  reads. The assets of other targets (`fsbpyr-aarch64-linux-musl`,
   `fsbpyr-3.12-aarch64-linux-musl`, each with its `.xz`) and `install.sh` come under the same
-  promise when they ship, and `fsbpyr` and `fsbpyr.xz` then stay copies of the default
-  executable.
+  promise when they ship.
 - The trailer and the whole-file digest layout (`docs/format.md`) that `inspect --verify`
   reads: an older fsbpyr checks its download of a newer release in-process, so a later format
   version must keep that check working.
@@ -478,33 +485,78 @@ it: it carries its own runtime (CPython and the launcher), so building apps with
 no compiler. There is one fsbpyr per Python version, 3.12, 3.13 and 3.14, each built with and
 carrying that version's runtime only; the apps it builds run on that Python. Each
 [release](https://github.com/devitops-com/fsbpyr/releases) carries all of them, built and
-attested by GitHub Actions. `fsbpyr` is the newest version's (Python 3.14 now), and the
-commands below fetch it:
+attested by GitHub Actions. An asset is named with its target, the platform it runs on, and
+fsbpyr releases for `x86_64-linux-gnu` so far. `fsbpyr-x86_64-linux-gnu` is the newest
+version's (Python 3.14 now).
+
+### The installer
+
+```
+curl -LsSf https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh | sh
+```
+
+`install.sh` is a POSIX `sh` script (dash and busybox too) that each release builds, attests and
+attaches, modelled on uv's: the release's version and the SHA-256 of every asset are written
+into it, so a download is checked before it is used. A tag's own copy installs that version
+(`.../releases/download/vX.Y.Z/install.sh`). It
+
+- detects the target (`uname`, and musl when `ldd --version` says so) and stops, naming the
+  targets the release has, when there is none for this host or the host's glibc is older than
+  the `glibc >= X.Y` the release records for the executable;
+- downloads with `curl` (HTTPS only, TLS 1.2 or newer) or else `wget`, the `.xz` when `xz` is
+  installed, checks the SHA-256 and runs `fsbpyr inspect --verify` on the new file before it
+  installs it; with `FSBPYR_VERIFY=1` it also runs `gh attestation verify` and stops when that
+  fails or `gh` is missing;
+- installs into the first of `$FSBPYR_INSTALL_DIR`, `$XDG_BIN_HOME`, `$XDG_DATA_HOME/../bin`
+  and `~/.local/bin`, under a temporary name renamed into place, and writes the man page and
+  completions where `make install` puts them under that prefix (only for a directory named
+  `bin`);
+- when the directory is not on `PATH`, writes an `env` script (`env.fish` for fish) next to the
+  executable and sources it from `~/.profile` (created if missing), `~/.bashrc` and `~/.zshrc`
+  (when they exist) and fish's `conf.d`; an `env` that is already there, uv's included, is
+  reused. `--no-modify-path` or `FSBPYR_NO_MODIFY_PATH=1` leaves the shell files alone, and in
+  GitHub Actions the directory goes to `$GITHUB_PATH` instead.
+
+Options: `-h/--help`, `-q/--quiet`, `-v/--verbose`, `--no-modify-path` (through the pipe:
+`curl ... | sh -s -- --no-modify-path`). The installer is tested against a local HTTPS server
+under dash, bash and busybox sh. It picks the per-target assets of Phase 9
+(`fsbpyr-x86_64-linux-gnu` and so on); a release without them has no target for it, and the
+commands below are the manual way.
+
+### Manually
+
+`fsbpyr-x86_64-linux-gnu` is the newest version's (Python 3.14 now), and the commands below
+fetch it:
 
 ```
 mkdir -p ~/.local/bin
-curl -fLo ~/.local/bin/fsbpyr https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr
+curl -fLo ~/.local/bin/fsbpyr https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr-x86_64-linux-gnu
 chmod +x ~/.local/bin/fsbpyr
 # recommended: checks that this repository's release workflow built it
 gh attestation verify ~/.local/bin/fsbpyr --repo devitops-com/fsbpyr \
   --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml
 ```
 
-The same executable also comes as `fsbpyr.xz`, half the download (14.0 MB instead of 28.9 MB
+The same executable also comes as `fsbpyr-x86_64-linux-gnu.xz`, half the download (14.0 MB instead of 28.9 MB
 for 0.20.0), attested as well:
 
 ```
 mkdir -p ~/.local/bin
-curl -fL https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr.xz \
+curl -fL https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr-x86_64-linux-gnu.xz \
   | xz -d > ~/.local/bin/fsbpyr
 chmod +x ~/.local/bin/fsbpyr
 ```
 
-The other versions are the assets `fsbpyr-3.12` and `fsbpyr-3.13`, each with its `.xz`, at the
-same URLs (`.../releases/latest/download/fsbpyr-3.12`). When a newer Python becomes the
-newest, `fsbpyr` moves to it and `fsbpyr-3.14` appears. A release also carries
-`THIRD_PARTY_LICENSES.txt` for `fsbpyr` and `THIRD_PARTY_LICENSES-3.12.txt` and so on for the
-others, and `SHA256SUMS` lists every file. One installed `fsbpyr` is enough: for a project that
+The other versions are the assets `fsbpyr-3.12-x86_64-linux-gnu` and
+`fsbpyr-3.13-x86_64-linux-gnu`, each with its `.xz`, at the same URLs
+(`.../releases/latest/download/fsbpyr-3.12-x86_64-linux-gnu`). When a newer Python becomes the
+newest, `fsbpyr-x86_64-linux-gnu` moves to it and `fsbpyr-3.14-x86_64-linux-gnu` appears. The
+x86-64 glibc assets are also published under the short names `fsbpyr`, `fsbpyr-3.12` and
+`fsbpyr-3.13`, each with its `.xz`: copies, so URLs and scripts that use them keep working.
+A release also carries `THIRD_PARTY_LICENSES-x86_64-linux-gnu.txt` for the newest and
+`THIRD_PARTY_LICENSES-3.12-x86_64-linux-gnu.txt` and so on for the others (and
+`THIRD_PARTY_LICENSES.txt`, `THIRD_PARTY_LICENSES-3.12.txt` as short-name copies), and
+`SHA256SUMS` lists every file. One installed `fsbpyr` is enough: for a project that
 needs another Python it downloads the matching variant of its own release (see "Which
 Python").
 
@@ -515,10 +567,11 @@ fsbpyr self update
 ```
 
 asks GitHub for the latest release and, when it is newer than the running executable, downloads
-its own asset of it (`fsbpyr.xz`, or `fsbpyr-3.12.xz` for the 3.12 variant: an executable
-records which asset it was released as, and updates to the same one; one released before that
-record updates to `fsbpyr.xz`), unpacks it in-process, checks it as `fsbpyr inspect --verify` does before
-anything runs it, and renames it over the executable (its real path, mode kept; a running
+its own asset of it (`fsbpyr-x86_64-linux-gnu.xz`, or `fsbpyr-3.12-x86_64-linux-gnu.xz` for
+the 3.12 variant: an executable records which asset it was released as, and updates to the
+same one; one released before the target names, which recorded `fsbpyr`, `fsbpyr-3.12` or
+nothing, keeps updating to the short name, `fsbpyr.xz`), unpacks it in-process, checks it as
+`fsbpyr inspect --verify` does before anything runs it, and renames it over the executable (its real path, mode kept; a running
 fsbpyr keeps its old file). The man page and the completions that `make install` put under the
 same prefix (`<prefix>/bin/fsbpyr` and `<prefix>/share/...`) are written again; ones installed
 elsewhere get a hint. It needs write access to the executable's directory and says so when it
@@ -558,7 +611,8 @@ the host:
 3. builds the runtime (`fsbpyr runtime build`: the pinned CPython from python-build-standalone
    and a glibc 2.28 sysroot are downloaded, the launcher linked with clang and lld 22, the
    standard library compiled; a minute or two, cached in `~/.cache/fsbpyr`). Without clang and
-   lld 22 it stops and says so;
+   lld 22 it stops and says so; on aarch64 the link also needs `libclang-rt-22-dev` (clang's
+   compiler-rt builtins, which have the atomics that CPython's aarch64 objects call);
 4. builds fsbpyr in three stages: fsbpyr run from source builds `dist/stage1/fsbpyr`, that
    executable builds `dist/stage2/fsbpyr`, and that one builds `dist/stage3/fsbpyr`. Each
    stage must pass `fsbpyr inspect --verify` (its digest is recomputed over the whole file),
@@ -566,9 +620,10 @@ the host:
    fsbpyr does not build itself faithfully, and bootstrap stops there;
 5. copies stage 3 to `dist/fsbpyr` and runs `make install`.
 
-On **any other Linux x86-64** steps 1 to 4 run in a Debian trixie podman image
-(`Containerfile`: clang and lld 22 from Debian and uv from astral.sh, which installs the
-pinned Python there), on the checkout mounted into it, and `make install` runs on the host. The
+On **any other Linux x86-64 or aarch64** host steps 1 to 4 run in a Debian trixie podman image
+of the host's architecture (`Containerfile`: clang, lld and compiler-rt 22 from Debian and the
+pinned uv from its release tarball, checked against a SHA-256 per architecture, which installs
+the pinned Python there), on the checkout mounted into it, and `make install` runs on the host. The
 container is IPv4-only: on podman's default network, TLS handshakes from Python with GitHub's
 download host time out. A podman volume, `fsbpyr-cache`, keeps uv's cache, its Python and the
 runtime between runs. `FSBPYR_BOOTSTRAP=podman make bootstrap` uses the container on trixie too.
@@ -602,7 +657,9 @@ release binary, which carries its own.
 
 ### Verifying a release
 
-Each release's `fsbpyr` (and `fsbpyr-3.12` and `fsbpyr-3.13`; the steps below name `fsbpyr`,
+Each release's `fsbpyr-x86_64-linux-gnu` (and `fsbpyr-3.12-x86_64-linux-gnu` and
+`fsbpyr-3.13-x86_64-linux-gnu`, which the short names `fsbpyr`, `fsbpyr-3.12` and `fsbpyr-3.13`
+duplicate; the steps below name `fsbpyr-x86_64-linux-gnu`,
 and a variant's differ where said) is built by GitHub Actions from its `vX.Y.Z` tag and
 attested there.
 Every release from 0.19.0 on stays published as it is: a version whose release fails is
@@ -619,7 +676,7 @@ The attestation comes first, before anything runs the file. It shows that this r
 release workflow built the file from the latest release's tag:
 
 ```
-asset=fsbpyr   # or fsbpyr-3.12, fsbpyr-3.13: the variant to check
+asset=fsbpyr-x86_64-linux-gnu   # or fsbpyr-3.12-x86_64-linux-gnu, fsbpyr-3.13-x86_64-linux-gnu
 tag="$(gh release view --repo devitops-com/fsbpyr --json tagName --jq .tagName)"
 curl -fLo "$asset" "https://github.com/devitops-com/fsbpyr/releases/download/$tag/$asset"
 gh attestation verify "$asset" --repo devitops-com/fsbpyr \
@@ -665,7 +722,7 @@ A rebuild checks the bytes themselves, at two levels:
   (`http://snapshot.debian.org/archive/debian/TIMESTAMP/` for trixie and trixie-updates,
   `.../debian-security/TIMESTAMP/` for trixie-security) before installing `clang-22 lld-22`,
   and use the uv named by `tools/release/uv.version` (release CI downloads that release's
-  tarball and checks its SHA-256; `FSBPYR_UV_VERSION=<version>` makes `tools/bootstrap.sh`
+  tarball for the machine's architecture and checks its SHA-256, `tools/release/install-uv.sh`; `FSBPYR_UV_VERSION=<version>` makes `tools/bootstrap.sh`
   refuse any other uv). `make bootstrap` also installs the result, though,
   so run fsbpyr from source directly in the checkout above: it builds the runtime, then `stage1`,
   and `stage1` builds the file to compare. A runtime already in the cache under the same id is
@@ -684,7 +741,7 @@ uv run --locked fsbpyr build . -o ../stage1
 cd .. && cmp fsbpyr from-source && echo identical
 ```
 
-For `fsbpyr-3.12` or `fsbpyr-3.13`, `bash tools/bootstrap.sh --from-source --python 3.12` in
+For `fsbpyr-3.12-x86_64-linux-gnu` or `fsbpyr-3.13-x86_64-linux-gnu`, `bash tools/bootstrap.sh --from-source --python 3.12` in
 the checkout runs the same stages in `.venv-3.12` (`dist/stage1-3.12` to `dist/stage3-3.12`,
 the last being the file to compare); the Python must be installed with uv.
 

@@ -11,6 +11,9 @@ from fsbpyr.runtime import ar
 from fsbpyr.runtime.pbs import PbsError, download
 from fsbpyr.runtime.pins import SysrootPin
 from fsbpyr.runtime.sysroot import SysrootError, build_flags, extract_deb, fetch_sysroot
+from fsbpyr.targets import host_target
+
+MULTIARCH = host_target().multiarch  # Debian's layout of the pinned packages, per target
 
 
 def _ar(members: dict[str, bytes]) -> bytes:
@@ -50,7 +53,7 @@ def test_ar_read_returns_member_contents(tmp_path: Path) -> None:
 
 def test_absolute_symlinks_are_rewritten_into_the_sysroot(tmp_path: Path) -> None:
     deb = tmp_path / "libc6-dev.deb"
-    lib = "lib/x86_64-linux-gnu"
+    lib = f"lib/{MULTIARCH}"
     deb.write_bytes(_deb([
         (f"./{lib}/libpthread.so.0", b"ELF"),
         _symlink(f"./usr/{lib}/libpthread.so", f"/{lib}/libpthread.so.0"),
@@ -60,10 +63,10 @@ def test_absolute_symlinks_are_rewritten_into_the_sysroot(tmp_path: Path) -> Non
 
     extract_deb(deb.read_bytes(), root, deb.name)
 
-    link = root / "usr/lib/x86_64-linux-gnu/libpthread.so"
-    assert link.readlink() == Path("../../../lib/x86_64-linux-gnu/libpthread.so.0")
+    link = root / f"usr/lib/{MULTIARCH}/libpthread.so"
+    assert link.readlink() == Path(f"../../../lib/{MULTIARCH}/libpthread.so.0")
     assert link.read_bytes() == b"ELF"  # resolves inside the sysroot, never to the host's
-    assert (root / "usr/lib/x86_64-linux-gnu/libm.so").readlink() == Path("libm.so.6")
+    assert (root / f"usr/lib/{MULTIARCH}/libm.so").readlink() == Path("libm.so.6")
 
 
 def test_entries_leaving_the_sysroot_are_refused(tmp_path: Path) -> None:
@@ -116,7 +119,7 @@ def test_fetch_verifies_extracts_once_and_reuses(tmp_path: Path) -> None:
     cache = tmp_path / "cache"
     (cache / "downloads").mkdir(parents=True)
     (cache / "downloads" / "libc6-dev.deb").write_bytes(deb)  # as if downloaded before
-    pin = SysrootPin(name="test-sysroot", glibc="2.28", platform="x86_64-manylinux_2_28",
+    pin = SysrootPin(name="test-sysroot", glibc="2.28",
                      packages=(("https://example.invalid/libc6-dev.deb",
                                 hashlib.sha256(deb).hexdigest()),))  # fmt: skip
 
@@ -133,7 +136,7 @@ def test_fetch_rejects_a_tampered_download(tmp_path: Path) -> None:
     cache = tmp_path / "cache"
     (cache / "downloads").mkdir(parents=True)
     (cache / "downloads" / "libc6-dev.deb").write_bytes(b"tampered")
-    pin = SysrootPin(name="test-sysroot", glibc="2.28", platform="x86_64-manylinux_2_28",
+    pin = SysrootPin(name="test-sysroot", glibc="2.28",
                      packages=(("https://example.invalid/libc6-dev.deb", "0" * 64),))  # fmt: skip
 
     with pytest.raises(SysrootError, match="SHA-256"):
@@ -141,9 +144,9 @@ def test_fetch_rejects_a_tampered_download(tmp_path: Path) -> None:
 
 
 def test_pin_identity_covers_the_package_hashes() -> None:
-    pin = SysrootPin(name="s", glibc="2.28", platform="x86_64-manylinux_2_28",
+    pin = SysrootPin(name="s", glibc="2.28",
                      packages=(("https://example.invalid/a.deb", "1" * 64),))  # fmt: skip
-    changed = SysrootPin(name="s", glibc="2.28", platform="x86_64-manylinux_2_28",
+    changed = SysrootPin(name="s", glibc="2.28",
                          packages=(("https://example.invalid/a.deb", "2" * 64),))  # fmt: skip
 
     assert pin.identity.startswith("s-") and pin.identity != changed.identity
@@ -157,15 +160,15 @@ def test_downloads_must_use_https(tmp_path: Path) -> None:
 
 def test_build_flags_point_the_host_compiler_at_the_sysroot(tmp_path: Path) -> None:
     root = tmp_path / "sysroot"
-    (root / "usr/lib/gcc/x86_64-linux-gnu/8").mkdir(parents=True)
+    (root / f"usr/lib/gcc/{MULTIARCH}/8").mkdir(parents=True)
 
     flags = build_flags(root, {"CFLAGS": "-O2", "CPPFLAGS": "-DX"})
 
     cflags, ldflags = flags["CFLAGS"].split(), flags["LDFLAGS"].split()
-    assert cflags == [f"--sysroot={root}", "-isystem", f"{root}/usr/include/x86_64-linux-gnu",
+    assert cflags == [f"--sysroot={root}", "-isystem", f"{root}/usr/include/{MULTIARCH}",
                       "-O2"]  # the caller's own flags last  # fmt: skip
-    assert ldflags == [f"--sysroot={root}", f"-B{root}/usr/lib/x86_64-linux-gnu",
-                       f"-B{root}/usr/lib/gcc/x86_64-linux-gnu/8",  # crtbeginS.o, libgcc
-                       f"-L{root}/usr/lib/x86_64-linux-gnu",
-                       f"-L{root}/lib/x86_64-linux-gnu"]  # fmt: skip
+    assert ldflags == [f"--sysroot={root}", f"-B{root}/usr/lib/{MULTIARCH}",
+                       f"-B{root}/usr/lib/gcc/{MULTIARCH}/8",  # crtbeginS.o, libgcc
+                       f"-L{root}/usr/lib/{MULTIARCH}",
+                       f"-L{root}/lib/{MULTIARCH}"]  # fmt: skip
     assert "CPPFLAGS" not in flags

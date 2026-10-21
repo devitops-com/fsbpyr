@@ -168,6 +168,13 @@ def _trailer(field: int, fmt: str, value: int) -> Mutation:
     return _put(fmt, lambda at: at.size - TRAILER_SIZE + field, value)
 
 
+def _payload_shifted_by_a_page(image: bytearray, at: Layout) -> bytes:
+    """The payload 4 KiB further on, the trailer naming it: a 4 KiB page boundary, not 64 KiB."""
+    trailer = at.size - TRAILER_SIZE + 16
+    struct.pack_into("<Q", image, trailer, at.payload + 4096)
+    return bytes(image[: at.payload]) + bytes(4096) + bytes(image[at.payload :])
+
+
 def _header(field: int, fmt: str, value: int) -> Mutation:
     return _put(fmt, lambda at: at.payload + field, value)
 
@@ -272,6 +279,7 @@ CASES: tuple[Case, ...] = (
     Case("trailer version 2^32-1", _trailer(8, "<I", U32), True, "start"),
     Case("trailer flags", _trailer(12, "<I", 1), True, "start"),
     Case("payload offset unaligned", _trailer(16, "<Q", 4097), True, "start"),
+    Case("payload offset 4 KiB aligned", _payload_shifted_by_a_page, True, "start"),
     Case("payload offset 2^63", _trailer(16, "<Q", 2**63), True, "start"),
     Case("payload offset 2^64-4096", _trailer(16, "<Q", U64 - 4095), True, "start"),
     Case("payload size 0", _trailer(24, "<Q", 0), True, "start"),

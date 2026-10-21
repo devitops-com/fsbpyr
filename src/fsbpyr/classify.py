@@ -34,7 +34,7 @@ INSTALLER_FILES = frozenset({
 })  # fmt: skip
 
 
-_SHARED_OBJECT = re.compile(r"\.so(\.\d+)*$")
+_SHARED_OBJECT = re.compile(r"\.so(\.\d[0-9A-Za-z]*)*$")  # libcrypto.so.1.1.1k too
 _TEST_DIRECTORIES = frozenset({"tests", "test"})
 # .pth files whose code only re-creates what PEP 420 namespaces (and the payload) provide
 _REDUNDANT_PTH = re.compile(r"(-nspkg|^distutils-precedence)\.pth$")
@@ -461,7 +461,7 @@ class _Collector:
                 try:
                     program = is_executable(data)
                 except ElfError:
-                    continue  # not an x86-64 ELF64 file: data to us
+                    continue  # not an ELF64 file of this host's machine: data to us
             if program:
                 found[rel] = path
         return found

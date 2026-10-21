@@ -7,7 +7,6 @@ import dataclasses
 import hashlib
 import json
 import os
-import platform
 import shutil
 import stat
 import sys
@@ -16,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import __version__
+from .. import __version__, targets
 from ..boot._fsbpyr_rt import gc
 from ..payload.convert import spec_from_payload
 from ..payload.format import PayloadError, tree_digest
@@ -100,9 +99,10 @@ def cache_root() -> Path:
 
 
 def host_triple() -> str:
-    if sys.platform == "linux" and platform.machine() == "x86_64":
-        return "x86_64-unknown-linux-gnu"
-    raise RuntimeCacheError(f"unsupported host {sys.platform}/{platform.machine()}")
+    try:
+        return targets.host_target().triple
+    except targets.UnsupportedHost as exc:
+        raise RuntimeCacheError(str(exc)) from exc
 
 
 def runtime_id(pin: pins.PbsPin, *, sanitize: bool = False) -> str:

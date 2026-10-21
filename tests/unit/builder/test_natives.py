@@ -15,8 +15,11 @@ from fsbpyr.elf import (
     section,
 )
 from fsbpyr.natives import NativeError, closures, is_extension_module
+from fsbpyr.targets import EM_AARCH64, EM_X86_64, host_target
 
 from ...support.elf import DT_NEEDED, make_elf
+
+FOREIGN_MACHINE = EM_AARCH64 if host_target().elf_machine == EM_X86_64 else EM_X86_64
 
 # --- elf ---------------------------------------------------------------------------------
 
@@ -83,13 +86,14 @@ def test_objects_without_dynamic_section_have_no_dependencies() -> None:
 
 
 def test_real_host_library_parses() -> None:
-    libc = Path("/lib/x86_64-linux-gnu/libc.so.6")
-    if not libc.exists():
+    host = host_target()
+    libc = Path(f"/lib/{host.multiarch}/libc.so.6")
+    if host.libc != "glibc" or not libc.exists():
         pytest.skip("no glibc at the Debian path")
 
     info = dynamic_info(libc.read_bytes())
 
-    assert info.soname == "libc.so.6" and "ld-linux-x86-64.so.2" in info.needed
+    assert info.soname == "libc.so.6" and host.loader in info.needed
 
 
 @pytest.mark.parametrize(
@@ -97,7 +101,7 @@ def test_real_host_library_parses() -> None:
     [
         (b"MZ" + bytes(100), "not an ELF"),
         (b"\x7fELF" + bytes([1, 1]) + bytes(58), "64-bit"),
-        (make_elf(machine=183), "x86-64"),
+        (make_elf(machine=FOREIGN_MACHINE), f"not {host_target().arch}"),
         (make_elf()[:70], "truncated"),
     ],
 )

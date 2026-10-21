@@ -217,7 +217,9 @@ def test_a_working_directory_removed_under_the_app_refuses_a_relative_root(
 
 
 def test_a_way_too_long_once_a_symlink_is_followed_is_refused(app: Path, tmp_path: Path) -> None:
-    (tmp_path / "long").symlink_to("/" + "a/" * 1999)  # a target of 3999 bytes
-    root = f"{tmp_path}/long/" + "b/" * 2100
+    # a target of 999 bytes (XFS takes 1024 at most) spliced in front of the 7,200 left: more
+    # than the walk's 2 * PATH_MAX + 2 bytes, which the root alone is not
+    (tmp_path / "long").symlink_to("/" + "a/" * 499)
+    root = f"{tmp_path}/long/" + "b/" * 3600
 
     assert "File name too long" in _run(app, tmp_path, root=root)

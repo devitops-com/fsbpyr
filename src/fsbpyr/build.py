@@ -48,6 +48,7 @@ from .staging import (
     uv_version,
 )
 from .system import system_info, system_report, target_needs
+from .targets import target_named
 from .vcs import git_state, own_version, release_asset_record
 
 TARGET_PYTHON = f"{sys.version_info[0]}.{sys.version_info[1]}"  # builder and apps run alike
@@ -419,9 +420,11 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
     # the staged files and the spill live until the executable is written: files too large to
     # hold are streamed from them (D38)
     with tempfile.TemporaryDirectory(prefix="fsbpyr-stage-") as tmp:
-        baseline = pins.sysroot_for(runtime.tag.partition("-")[2])  # the stub's glibc (D25)
+        triple = runtime.tag.partition("-")[2]
+        baseline = pins.sysroot_for(triple)  # the stub's glibc (D25)
         options = StagingOptions(TARGET_PYTHON, config.extras, config.offline, config.requirements,
-                                 platform=baseline.platform, strict=config.strict)  # fmt: skip
+                                 platform=target_named(triple).uv_platform,
+                                 strict=config.strict)  # fmt: skip
         plan = staging_plan(project, source, uv, Path(tmp), options)
         wheel = run_plan(plan, project.directory, log=log, verbose=verbose)
         index = SiteIndex.scan(plan.site)
@@ -497,7 +500,8 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                     ("interpreter_reexec", config.interpreter_reexec),  # read at start (D23)
                     ("git", git_state(project.directory,
                                       warn=lambda note: warnings.append(Uncounted(note)))),
-                    *release_asset_record(dist.name, TARGET_PYTHON),  # fsbpyr's own, self update
+                    # fsbpyr's own, self update
+                    *release_asset_record(dist.name, TARGET_PYTHON, target_named(triple).name),
                 ),
                 zstd_level=level,
             )

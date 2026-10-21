@@ -14,10 +14,12 @@ import stat
 import time
 from pathlib import Path
 
+from .. import targets
 from ..boot._fsbpyr_rt import gc
 from . import pins, registry
 
 STAMP, TRASH = ".gc-tool", ".trash-tool"  # the app collector's are .gc and .trash: same root
+_SYSROOT_LIBCS = "|".join(sorted({t.libc for t in targets.TARGETS if t.multiarch}))
 ITEMS = ("runtimes", "pbs", "sysroots")
 DOWNLOADS = "downloads"
 # The names the tool gives, by subtree: nothing else there is ever removed (a directory of the
@@ -25,7 +27,7 @@ DOWNLOADS = "downloads"
 NAMES = {
     "runtimes": re.compile(r"cp[0-9]+-[a-z0-9_.-]+-[0-9a-f]{12}(-sanitized)?"),
     "pbs": re.compile(r"cpython-[0-9.]+\+[0-9]+-[a-z0-9_.+-]+"),
-    "sysroots": re.compile(r"[a-z0-9]+-glibc[0-9.]+-[a-z0-9_]+(-[0-9a-f]{12})?"),
+    "sysroots": re.compile(rf"[a-z0-9]+-({_SYSROOT_LIBCS})[0-9.]+-[a-z0-9_]+(-[0-9a-f]{{12}})?"),
     DOWNLOADS: re.compile(
         r"cpython-[0-9.]+\+[0-9]+-[a-z0-9_.+-]+\.tar\.zst"
         r"|[a-z0-9.+-]+_[a-z0-9.+~:-]+_[a-z0-9]+\.deb|tmp[a-z0-9_]+\.part"

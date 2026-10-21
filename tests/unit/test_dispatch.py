@@ -13,6 +13,7 @@ from fsbpyr.assemble import App, build_executable
 from fsbpyr.cli import DEFAULT_PYTHON, main
 from fsbpyr.pyversion import supported
 from fsbpyr.runtime import collect
+from fsbpyr.targets import TARGETS, host_target
 from fsbpyr.vcs import release_asset
 
 from ..support.releases import FakeReleases
@@ -21,7 +22,8 @@ from .boot.conftest import FAKE_RUNTIME
 pytestmark = pytest.mark.version_rule
 
 OTHER = next(version for version in reversed(supported()) if version != DEFAULT_PYTHON)
-ASSET = release_asset(OTHER)
+HOST = host_target().name
+ASSET = release_asset(OTHER, HOST)
 PATH = f"/v1.2.0/{ASSET}.xz"
 
 
@@ -93,6 +95,22 @@ def test_a_project_for_another_python_runs_the_variant_with_the_same_arguments(
     assert _cached(tmp_path) == [cached.name]  # no temporary file left
     assert releases.requests == [PATH]
     assert f"running {cached}" in capsys.readouterr().out
+
+
+def test_the_url_and_the_cache_name_carry_the_hosts_target(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other = next(t for t in TARGETS if t.name != HOST)
+    monkeypatch.setattr(dispatch, "host_target", lambda: other)
+    asset = release_asset(OTHER, other.name)
+    assert asset.endswith(f"-{other.name}") and asset != ASSET
+    releases.files[f"/v1.2.0/{asset}.xz"] = lzma.compress(_release(tmp_path))
+
+    assert main(["build", str(project)]) == 0
+
+    assert releases.requests == [f"/v1.2.0/{asset}.xz"]
+    assert _cached(tmp_path) == [f"{asset}-v1.2.0"]  # not the host's
 
 
 def test_the_variants_exit_status_is_the_builds(
@@ -231,4 +249,6 @@ def test_a_project_no_supported_python_fits_stops_before_any_fetch(
 
 def test_a_cached_variants_name_is_not_one_the_cache_collector_removes() -> None:
     for version in supported():
-        assert not collect.NAMES[collect.DOWNLOADS].fullmatch(f"{release_asset(version)}-v1.2.0")
+        for target in TARGETS:
+            name = f"{release_asset(version, target.name)}-v1.2.0"
+            assert not collect.NAMES[collect.DOWNLOADS].fullmatch(name)

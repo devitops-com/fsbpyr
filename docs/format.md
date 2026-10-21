@@ -1,4 +1,4 @@
-# fsbpyr executable format — version 6
+# fsbpyr executable format — version 7
 
 The single source of truth for this format is `src/fsbpyr/payload/format.py`.
 `src/fsbpyr/launcher/format.h` mirrors it, and a test checks that the two agree.
@@ -13,7 +13,8 @@ All integers are little-endian.
 
 - The stub is an unmodified ELF. The loader maps only its `PT_LOAD` segments, so the appended
   bytes are inert.
-- `payload_offset` is a multiple of 4096, so the payload can be mapped with `mmap` directly.
+- `payload_offset` is a multiple of 65536 (4096 up to version 6), so the payload can be mapped
+  with `mmap` directly on kernels with 4K, 16K and 64K pages (version 7).
 - The payload ends exactly where the trailer begins:
   `payload_offset + payload_size + 64 == file_size`.
 
@@ -22,7 +23,7 @@ All integers are little-endian.
 | Offset | Size | Field |
 |--------|------|-------|
 | 0 | 8 | magic `FSBPYR\0T` |
-| 8 | 4 | `format_version` (= 6) |
+| 8 | 4 | `format_version` (= 7) |
 | 12 | 4 | `flags` (reserved, 0) |
 | 16 | 8 | `payload_offset` (absolute file offset) |
 | 24 | 8 | `payload_size` |
@@ -88,7 +89,7 @@ equal), for two things:
 | Offset | Size | Field |
 |--------|------|-------|
 | 0 | 8 | magic `FSBPYR\0H` |
-| 8 | 4 | `format_version` (= 6) |
+| 8 | 4 | `format_version` (= 7) |
 | 12 | 4 | `header_size` (= 208) |
 | 16 | 4 | `python_hexversion` of the target CPython (`PY_VERSION_HEX`) |
 | 20 | 4 | bytecode magic (`importlib.util.MAGIC_NUMBER`) |
@@ -254,7 +255,7 @@ this short list to build CPython's frozen-module table, so it never scans the MO
 ## Validation rules (readers MUST enforce)
 
 - Trailer and header magic and version must match. `header_size` must be 208. Trailer `flags`
-  must be 0. The launcher accepts only version 6; the Python reader also reads 1 to 5.
+  must be 0. The launcher accepts only version 7; the Python reader also reads 1 to 6.
 - A blob of codec 3 or 4 needs format version 5 and belongs only to native files, never to
   another file or a module; a blob of codec 5 needs version 6 and may belong to any file or
   module (its pieces are checksummed frames, so module code may be in them); no file or module
@@ -262,7 +263,8 @@ this short list to build CPython's frozen-module table, so it never scans the MO
   writer enforce this; the launcher relies on the integrity digest, which only the writer's
   output passes.
 - The launcher checks the integrity digest (above) before any other rule.
-- `payload_offset` must be 4096-aligned, and the file size must match exactly.
+- `payload_offset` must be 65536-aligned (4096-aligned in versions 1 to 6), and the file size
+  must match exactly.
 - Every section must lie inside the payload, start after the header, be 8-byte aligned, and not
   overlap any other section.
 - Every Str must lie inside STRTAB, be NUL-terminated, contain no NUL, and be valid UTF-8.
@@ -303,7 +305,7 @@ project's directory: nothing in it names the builder's paths, time or host.
 | `runtime_components` | versions the runtime's interpreter reports: `openssl`, `sqlite`, `zlib`, `expat`, `libmpdec`. Read once when the runtime is built; an executable that builds another passes them on |
 | `stub_sha256` | SHA-256 of the bytes before the payload (the stub and its zero padding): `head -c <payload_offset> app \| sha256sum`. The same in every app built by the same fsbpyr release; there is no digest of the builder |
 | `settings` | `{entry, fs_packages, allow_system_libs, extras, include_source}`: `fs_packages` is the effective list (the built-in packages and the configured ones) |
-| `release_asset` | only in fsbpyr's own executable: the release asset (without `.xz`) it is released as, `fsbpyr` for the newest supported Python and `fsbpyr-3.X` for another, which `fsbpyr self update` fetches the same variant of. Absent before the one fsbpyr per Python version releases of Phase 9, which updated to `fsbpyr` |
+| `release_asset` | only in fsbpyr's own executable: the release asset (without `.xz`) it is released as, `fsbpyr-<target>` (e.g. `fsbpyr-x86_64-linux-gnu`) for the newest supported Python and `fsbpyr-3.X-<target>` for another, the target being the host's name from the target table, which `fsbpyr self update` fetches the same variant of. Builds before target names recorded `fsbpyr` or `fsbpyr-3.X` (the short names, still published as copies for x86-64 glibc), and ones before the one fsbpyr per Python version releases of Phase 9 nothing, which updated to `fsbpyr` |
 | `project`, `fsbpyr_version`, `git`, `uv`, `glibc`, `system`, `zstd_level`, `native_compression`, `interpreter_reexec`, `runtime`, `runtime_tag`, `python`, `extension_suffixes`, `fsbpyr`, `zstd`, `resources` | as before (D28, D26, NAT-2, D29, D33, D23, D27) |
 
 `dists[].source` is one of:

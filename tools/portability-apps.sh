@@ -5,7 +5,9 @@
 # is told which), as that test's `apps` fixture does: hello, heavy, compat and
 # heavy-pip (heavy kept with pip: a hash-pinned requirements.txt and no uv.lock).
 # `make test-portability` and the portability job of full-suite.yml run it, then point
-# FSBPYR_PORTABILITY_APPS at DIR.
+# FSBPYR_PORTABILITY_APPS at DIR. The apps are for the host's target (fsbpyr builds for the
+# platform it runs on), so the job runs it on each target's runner and the test runs the
+# images that have a variant for that architecture (tests/support/images.py).
 set -euo pipefail
 
 [ $# = 3 ] || { echo "usage: $0 FSBPYR DIR PYTHON" >&2; exit 2; }

@@ -5,6 +5,8 @@ import re
 import struct
 from dataclasses import dataclass
 
+from .targets import host_target
+
 type ElfData = bytes | mmap.mmap  # a file's content, or its file mapped (D38)
 _HEADER = struct.Struct("<HHIQQQIHHHHHH")  # e_type .. e_shstrndx, after e_ident[16]
 _PHDR = struct.Struct("<IIQQQQQQ")  # type, flags, offset, vaddr, paddr, filesz, memsz, align
@@ -21,12 +23,11 @@ ET_EXEC = 2
 SHT_NOBITS = 8
 DT_NULL, DT_NEEDED, DT_STRTAB, DT_STRSZ, DT_SONAME, DT_RPATH, DT_RUNPATH = 0, 1, 5, 10, 14, 15, 29
 DT_VERNEED, DT_VERNEEDNUM = 0x6FFFFFFE, 0x6FFFFFFF
-EM_X86_64 = 62
 _MAX_ENTRIES = 1 << 16
 
 
 class ElfError(ValueError):
-    """Not a usable ELF64 x86-64 object."""
+    """Not a usable ELF64 object of the host's architecture."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,8 +54,9 @@ def _header(data: ElfData) -> tuple[int, ...]:
     if len(data) < 64 or data[4] != 2 or data[5] != 1:
         raise ElfError("only 64-bit little-endian ELF objects are supported")
     header = _unpack(_HEADER, data, 16)
-    if header[1] != EM_X86_64:
-        raise ElfError(f"ELF object for machine {header[1]}, not x86-64")
+    host = host_target()
+    if header[1] != host.elf_machine:
+        raise ElfError(f"ELF object for machine {header[1]}, not {host.arch}")
     return header
 
 
@@ -151,7 +153,7 @@ def _dynamic(data: ElfData) -> _Dynamic | None:
 
 
 def dynamic_info(data: ElfData) -> DynamicInfo:
-    """DT_NEEDED, DT_RPATH, DT_RUNPATH and DT_SONAME of an ELF64 x86-64 object."""
+    """DT_NEEDED, DT_RPATH, DT_RUNPATH and DT_SONAME of an ELF64 object."""
     section = _dynamic(data)
     if section is None:
         return DynamicInfo((), (), (), None)

@@ -400,7 +400,7 @@ def _size_lines(sizes: Sizes | None) -> list[str]:
     """Stored bytes by part; the rows add up to the file less its trailer."""
     if sizes is None:
         return []
-    rows = [("stub", sizes.stub), ("zero padding to the page boundary", sizes.stub_padding),
+    rows = [("stub", sizes.stub), ("zero padding to the 64 KiB boundary", sizes.stub_padding),
             ("payload header", sizes.payload_header), ("index and string tables", sizes.tables),
             ("blob alignment padding", sizes.blob_padding),
             ("standard library and boot modules", sizes.runtime)]

@@ -18,7 +18,7 @@ from click.shell_completion import ShellComplete
 from fsbpyr.classify import BUILTIN_FS_PACKAGES
 from fsbpyr.cli import EXAMPLES, cli, main
 from fsbpyr.config import CONFIG_KEYS, BuildConfig, ConfigError, load_config
-from fsbpyr.natives import SYSTEM_LIBRARIES
+from fsbpyr.natives import system_libraries
 from fsbpyr.payload.format import FORMAT_VERSION
 from fsbpyr.project import Project
 from fsbpyr.runtime import pins
@@ -378,7 +378,7 @@ def test_allow_system_lib_examples_name_libraries_the_build_does_not_allow_anywa
         sonames += [value for option, value in pairwise(argv) if option == "--allow-system-lib"]
 
     assert sonames
-    assert SYSTEM_LIBRARIES.isdisjoint(sonames), sonames
+    assert system_libraries().isdisjoint(sonames), sonames
 
 
 # --- docs/compatibility.md -------------------------------------------------------------------
@@ -397,7 +397,7 @@ def _first_column(section: str) -> set[str]:
 
 
 def test_compatibility_distribution_table_is_the_portability_images() -> None:
-    from ..e2e.test_portability import IMAGES  # noqa: PLC0415
+    from ..support.images import IMAGES  # noqa: PLC0415
 
     text = COMPATIBILITY.read_text().partition("## Tested on")[2].partition("`compat` app")[0]
 
