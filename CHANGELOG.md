@@ -80,13 +80,14 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   runs the 12 images that have an arm64 variant (`archlinux:latest` has none). `tools/release/
   uv.version` holds a checksum per architecture and `tools/release/install-uv.sh` installs the
   uv of the machine's. A release still needs every job of both workflows to have passed. The
-  workflows have not run on GitHub's arm64 runners yet.
+  workflows passed on GitHub's arm64 runners (the full suite, and release CI on PR #21).
 - **Format version 7: the payload starts at a multiple of 64 KiB, not 4 KiB** (Phase 9,
   step 0). One executable format is meant for kernels with 4K, 16K and 64K pages (aarch64
   Linux, macOS arm64): the payload's file offset is a multiple of each of those page sizes.
   It has run on 4K-page kernels only (x86-64, and aarch64 on GitHub's arm64 runners); no
-  16K or 64K kernel has been tried. An executable is up to 64 KiB larger (the zero padding after the stub); `fsbpyr
-  inspect` names it "zero padding to the 64 KiB boundary". The launcher accepts only version 7
+  16K or 64K kernel has been tried. An executable is up to 64 KiB larger (the zero padding
+  after the stub); `fsbpyr inspect` names it "zero padding to the 64 KiB boundary". The
+  launcher accepts only version 7
   and refuses an offset that is not a multiple of 64 KiB; `inspect` still reads versions 1 to
   6. Each executable carries its own launcher, so executables built before this change still
   run; they are not rebuilt.
