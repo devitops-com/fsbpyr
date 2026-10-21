@@ -335,8 +335,9 @@ static int open_private(struct state *s, int parent, const char *name, const cha
 
 /* *buffer holding at least ``needed`` items of ``size`` bytes; false if out of memory. */
 static bool reserve(void **buffer, size_t *capacity, size_t needed, size_t size) {
-    if (needed <= *capacity) return true;
+    if (needed <= *capacity && *buffer != NULL) return true;
     size_t grown = *capacity * 2 > needed ? *capacity * 2 : needed;
+    if (grown == 0 || grown > SIZE_MAX / size) return false; /* wrapped: no such size */
     void *more = realloc(*buffer, grown * size);
     if (more == NULL) return false;
     *buffer = more;
@@ -912,7 +913,7 @@ static bool holds_a_tree(struct state *s, const char *kind) {
         for (int i = 0; !found && d->d_name[0] != '.' && i < 2; i++)
             found = snprintf(path, sizeof path, "%s/%s", d->d_name, i ? "site" : LOCK) <
                         (int)sizeof path &&
-                    fstatat(dirfd(directory), path, &st, AT_SYMLINK_NOFOLLOW) == 0;
+                    fstatat(fd, path, &st, AT_SYMLINK_NOFOLLOW) == 0; /* the stream's */
     }
     closedir(directory);
     return found;

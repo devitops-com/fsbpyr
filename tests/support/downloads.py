@@ -7,6 +7,7 @@ The runtimes built from them are kept there too, in a cache of their own (``cach
 once (before the workers of a parallel run start), and copied into each session's cache. A
 runtime's id covers what it is built from, so a kept one is rebuilt only when that changes."""
 
+import os
 import shutil
 from pathlib import Path
 
@@ -38,12 +39,24 @@ def build_kept_runtime(python: str, kept: Path, *, sanitize: bool) -> None:
     """``python``'s runtime built into ``kept``'s cache, from the kept downloads, unless it is
     there; that Python's older runtimes there go."""
     cache = registry.secure_directory(kept / "cache")
+    name = registry.runtime_id(pins.pin_for(python, registry.host_triple()), sanitize=sanitize)
+    if (cache / "runtimes" / name / "runtime.json").is_file():
+        return  # built (by the main process of a parallel run, or an earlier session)
     files = pinned(python)
     seed(files, kept, cache)
     built = registry.build_runtime(python, cache=cache, log=lambda _: None, sanitize=sanitize)
     keep(files, kept, cache)
-    for old in (cache / "runtimes").glob(f"{built.tag}-*"):
-        if old.name != built.runtime_id and old.name.endswith("-sanitized") == sanitize:
+    prune_runtimes(cache, built.runtime_id)
+
+
+def prune_runtimes(cache: Path, current: str) -> None:
+    """Remove the runtimes in ``cache`` that ``current`` replaces: same Python, target and
+    variant (release or sanitized), another id."""
+    tag = current.rsplit("-", 2 if current.endswith("-sanitized") else 1)[0]
+    for old in (cache / "runtimes").glob(f"{tag}-*"):
+        if old.name != current and old.name.endswith("-sanitized") == current.endswith(
+            "-sanitized"
+        ):
             shutil.rmtree(old)
 
 
@@ -66,7 +79,7 @@ def _matches(path: Path, sha256: str) -> bool:
 
 def _copy(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
-    partial = target.with_name(target.name + ".part")
+    partial = target.with_name(f"{target.name}.{os.getpid()}.part")  # sessions copy at once
     shutil.copyfile(source, partial)
     partial.replace(target)
 

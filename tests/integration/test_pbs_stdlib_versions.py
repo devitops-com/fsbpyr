@@ -71,6 +71,9 @@ def plain_canonicalize(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """The canonicalizer reads 3.14's marshal format only (per version: Phase 9 step 2); the
     selection does not depend on it."""
     monkeypatch.setattr(stdlib, "canonicalize", lambda raw: raw)
+    # in this process: a pool worker started by a fork server (pytest-xdist's thread rules out
+    # fork) imports stdlib anew and would canonicalize after all
+    monkeypatch.setattr(stdlib, "THREADS", 1)
     yield
 
 

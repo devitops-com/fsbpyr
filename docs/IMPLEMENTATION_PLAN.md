@@ -1665,6 +1665,14 @@ write, a truncated binary.
   - aarch64 is tested on the development host only with basic checks under user-mode QEMU
     (`podman --arch arm64`); the full suite, the three-stage bootstrap and the portability
     images run on GitHub's `ubuntu-24.04-arm` runners.
+  - after step 2 (later the same day): musl and macOS are put aside for now, so steps 3 and 4
+    wait and releases carry Linux x86-64 and aarch64 with glibc (step 5 for those two came
+    with step 2's CI); `main` goes to GitHub through a pull request only, a feature fully
+    tested first, so the full suite runs on a push to main, weekly and on request, with no
+    nightly run (it would test the same commit night after night).
+  - the 64 KiB alignment stays untested on 16K- and 64K-page kernels (no such kernel at hand;
+    a `qemu-system-aarch64` VM with a 64K kernel would show it): the docs say it was tested on
+    4K-page kernels only.
 
   **Steps** (a target is done when, on its own runner, the full suite passes with that
   target's skip list, the three-stage bootstrap is byte-identical and an independent rebuild
@@ -1878,7 +1886,7 @@ the fuzzer in `tests/fuzz/` (8a); CI (`.github/workflows/release.yml`) runs `mak
 after 0.20.0) on every pull request and tag since 0.19.0 and on every push to main after 0.20.0,
 the rest locally (`make test`) and, after 0.20.0, in `.github/workflows/full-suite.yml`: every
 test but the portability ones, as an unprivileged user in a container, on every push to main,
-nightly and weekly (its `portability` job runs those on the runner host, `make test-portability`
+weekly and on request (its `portability` job runs those on the runner host, `make test-portability`
 locally), and a release needs a green run of it for its parent commit; tests that
 need the kernel to refuse access skip as root, and after 0.20.0 a skip that the `ci` list (the
 `full` list for the full suite, which expects none) in `tests/conftest.py` does not expect

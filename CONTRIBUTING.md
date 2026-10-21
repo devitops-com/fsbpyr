@@ -25,7 +25,7 @@ The tiers, from fastest to most complete:
 - The full suite in CI (`.github/workflows/full-suite.yml`): everything but the portability
   tests, as the user `tester` in a privileged Debian trixie container with rootless podman, so
   the root-only, supplementary-group and `podman unshare` tests run. It runs on every push to
-  main (which is pushed to GitHub for a release only), nightly and weekly, once per target
+  main (which is pushed to GitHub for a release only), weekly and on request, once per target
   (x86-64 on `ubuntu-24.04`, aarch64 on `ubuntu-24.04-arm`) and Python, with
   `FSBPYR_TESTS_REQUIRE_ALL=full` (no skip is expected), and `make release` and the publish
   job require a green run, aarch64 jobs included, for the commit a release is made from. The
