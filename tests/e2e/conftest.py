@@ -61,11 +61,13 @@ def runtime(request: pytest.FixtureRequest) -> registry.Runtime:
     for name, how in seeded.items():
         _download_status.setdefault(name, how)
     try:
-        built = registry.build_runtime(TARGET_PYTHON, log=lambda _: None, sanitize=sanitize)
+        if kept is None:
+            return registry.build_runtime(TARGET_PYTHON, log=lambda _: None, sanitize=sanitize)
+        downloads.build_kept_runtime(TARGET_PYTHON, kept, sanitize=sanitize)  # built already?
     except ToolchainError as exc:  # pragma: no cover - depends on the host
         pytest.skip(f"cannot build a runtime here: {exc}")
-    downloads.keep(pinned, kept, registry.cache_root())
-    return built
+    downloads.seed_runtime(TARGET_PYTHON, kept, registry.cache_root(), sanitize=sanitize)
+    return registry.find_runtime(TARGET_PYTHON, sanitize=sanitize)
 
 
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:

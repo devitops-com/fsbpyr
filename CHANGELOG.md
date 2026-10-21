@@ -334,6 +334,12 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   test-ci` and `make test-portability` set `TMPDIR` to `TESTTMP` (default `~/tmp`, created if
   missing): `/tmp` is often a tmpfs mounted nosuid, where the set-gid start test skipped. The
   long-symlink test of the cache root uses a 999-byte target, which XFS takes.
+- **`make test` runs the suite in 8 processes** (pytest-xdist, `JOBS=` to change it, each test
+  file in one process): about 2.5 minutes instead of 10.5 on a 24-core host. Before the workers
+  start, the runtime's pinned downloads are fetched and its release and sanitized runtimes
+  built, once, into `FSBPYR_TEST_DOWNLOADS` (`make test*` default to `~/tmp/fsbpyr-test-downloads`);
+  every session copies the runtime from there instead of building its own, and a kept runtime
+  is rebuilt only when its id changes.
 - **A test run removes the builds of local projects it made from uv's cache.** The tests build
   their fixture projects (and fsbpyr) from new temporary copies every time, and uv kept every
   build and its unpacked wheel: thousands of entries a run. At the end of a run, the entries
@@ -426,6 +432,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   container, as before, and the README's release check no longer runs `uv self update`.
 
 ### Fixed
+- **The build's compile pool forks only when the process runs one thread.** It counted the
+  threads `threading` knows; one started by C code (or pytest-xdist's) did not count, and the
+  pool forked a multi-threaded process, which may deadlock. It now counts `/proc/self/task`, as
+  CPython's own warning does, and starts a fork server otherwise.
 - **A bundled library whose version ends in a letter is a native library.** A file named like
   `libcrypto-02bae65c.so.1.1.1k` (OpenSSL 1.1) was kept as data, so the libraries that need it
   failed the build as "neither bundled nor standard system libraries"; psycopg-binary's

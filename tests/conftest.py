@@ -111,11 +111,30 @@ def _version_rule(request: pytest.FixtureRequest) -> Iterator[None]:
         yield
 
 
-def pytest_configure() -> None:
+def pytest_configure(config: pytest.Config) -> None:
     name = os.environ.get("FSBPYR_TESTS_REQUIRE_ALL")
     if name and name not in EXPECTED_SKIPS:
         raise pytest.UsageError(f"FSBPYR_TESTS_REQUIRE_ALL={name}: no such list "
                                 f"({', '.join(EXPECTED_SKIPS)})")  # fmt: skip
+    kept = os.environ.get("FSBPYR_TEST_DOWNLOADS")
+    if kept and getattr(config.option, "numprocesses", None) and not hasattr(config, "workerinput"):
+        _prepare_for_workers(Path(kept))
+
+
+def _prepare_for_workers(kept: Path) -> None:
+    """pytest-xdist: the runtime's downloads and both runtimes once, here, before the workers
+    start, each of which would otherwise fetch and build them for its own cache."""
+    from fsbpyr.build import TARGET_PYTHON  # noqa: PLC0415
+    from fsbpyr.runtime.toolchain import ToolchainError  # noqa: PLC0415
+
+    from .support import downloads  # noqa: PLC0415
+
+    downloads.fill(TARGET_PYTHON, kept)
+    try:
+        for sanitize in (False, True):
+            downloads.build_kept_runtime(TARGET_PYTHON, kept, sanitize=sanitize)
+    except ToolchainError:  # no compiler here: the end-to-end tests skip in the workers
+        pass
 
 
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:
@@ -155,6 +174,8 @@ def _prune_local_builds() -> str | None:
 
 
 def pytest_sessionfinish(session: pytest.Session) -> None:
+    if hasattr(session.config, "workerinput"):  # a pytest-xdist worker: the controller sees all
+        return
     if problem := _prune_local_builds():
         session.config.get_terminal_writer().line(f"uv's cache keeps this run's builds: {problem}")
     name = os.environ.get("FSBPYR_TESTS_REQUIRE_ALL")
