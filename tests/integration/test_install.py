@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import lzma
 import os
+import re
 import shutil
 import ssl
 import subprocess
@@ -832,6 +833,36 @@ def test_the_generator_writes_version_targets_checksums_and_glibc(release: Relea
             assert f"fsbpyr-{target}{suffix} {hashlib.sha256(data).hexdigest()} {shown}\n" in text
     assert "@VERSION@" not in text and "@TARGETS@" not in text and "@ASSETS@" not in text
     assert os.access(release.root / "install.sh", os.X_OK)
+
+
+def test_the_generator_lists_both_linux_targets_of_a_release_directory(tmp_path: Path) -> None:
+    """The publish job's dist/: x86-64 glibc and aarch64 glibc builds of two Pythons, the short
+    names (copies, x86-64 only), the .xz files and the notices. Only the long names of the
+    newest Python's executables are the installer's."""
+    assets = tmp_path / "dist"
+    assets.mkdir()
+    for suffix in ("", "-3.12"):
+        for ext in ("", ".xz"):
+            (assets / f"fsbpyr{suffix}-x86_64-linux-gnu{ext}").write_text(f"x86{suffix}{ext}")
+            (assets / f"fsbpyr{suffix}-aarch64-linux-gnu{ext}").write_text(f"arm{suffix}{ext}")
+            (assets / f"fsbpyr{suffix}{ext}").write_text(f"x86{suffix}{ext}")
+        for name in (f"THIRD_PARTY_LICENSES{suffix}.txt",
+                     f"THIRD_PARTY_LICENSES{suffix}-x86_64-linux-gnu.txt",
+                     f"THIRD_PARTY_LICENSES{suffix}-aarch64-linux-gnu.txt"):
+            (assets / name).write_text("notices")  # fmt: skip
+    inspector = tmp_path / "inspector"
+    inspector.write_text("#!/bin/sh\necho '  \"glibc\": \"2.28\",'\n")
+    inspector.chmod(0o755)
+    out = tmp_path / "install.sh"
+
+    result = run_generator(VERSION, assets, out, inspector)
+
+    assert result.returncode == 0, result.stderr
+    text = out.read_text()
+    assert "TARGETS='x86_64-linux-gnu aarch64-linux-gnu'" in text
+    listed = re.findall(r"^(fsbpyr-\S+) [0-9a-f]{64} \S+$", text, re.MULTILINE)
+    assert listed == ["fsbpyr-x86_64-linux-gnu", "fsbpyr-x86_64-linux-gnu.xz",
+                      "fsbpyr-aarch64-linux-gnu", "fsbpyr-aarch64-linux-gnu.xz"]  # fmt: skip
 
 
 def test_the_generator_without_targets_warns_and_makes_an_installer_with_none(

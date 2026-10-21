@@ -65,6 +65,19 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   `fsbpyr-3.X-x86_64-linux-gnu.xz` and keeps it as
   `downloads/fsbpyr-3.X-x86_64-linux-gnu-vX.Y.Z` in the cache (it was
   `downloads/fsbpyr-3.X-vX.Y.Z`; the old file stays until deleted by hand).
+- **Releases carry aarch64 assets, and CI builds and tests every target** (Phase 9, platforms
+  step 2). `release.yml` builds, smoke-tests, reproduces and compares each (target, Python)
+  entry, `x86_64-linux-gnu` on `ubuntu-24.04` and `aarch64-linux-gnu` on `ubuntu-24.04-arm`,
+  in the same Debian trixie image (its multi-arch digest). The release adds
+  `fsbpyr-aarch64-linux-gnu`, `fsbpyr-3.12-aarch64-linux-gnu` and `fsbpyr-3.13-aarch64-linux-gnu`
+  with their `.xz` (compressed with `xz --arm64`, the x86-64 ones with `xz --x86`), attestations
+  and licence notices, and `install.sh` lists both targets. The short names stay copies of the
+  x86-64 glibc builds only. `full-suite.yml` runs the suite and the portability matrix per
+  (target, Python) on the matching runner, on every trigger; the portability matrix on aarch64
+  runs the 12 images that have an arm64 variant (`archlinux:latest` has none). `tools/release/
+  uv.version` holds a checksum per architecture and `tools/release/install-uv.sh` installs the
+  uv of the machine's. A release still needs every job of both workflows to have passed. The
+  workflows have not run on GitHub's arm64 runners yet.
 - **Format version 7: the payload starts at a multiple of 64 KiB, not 4 KiB** (Phase 9,
   step 0). One executable format now serves kernels with 4K, 16K and 64K pages (aarch64
   Linux, macOS arm64), because the payload's file offset is a multiple of every running page

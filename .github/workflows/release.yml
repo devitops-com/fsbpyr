@@ -8,12 +8,16 @@ name: Release
 #     commit whose main run and full-suite.yml's main run (every other test) passed;
 #   - a pushed version tag (tools/release/release.sh pushes it): the same, then attest and
 #     publish the GitHub release. Nothing is released unless the tests pass.
-# One fsbpyr per Python version (Phase 9): build, reproduce and compare run once per entry of
-# their `python` matrix, and the release carries every variant. An asset is named with its
-# target: the newest version's (the one .python-version pins) is `fsbpyr-x86_64-linux-gnu`, the
-# others are `fsbpyr-3.12-x86_64-linux-gnu` and so on, each with its `.xz`. The x86-64 glibc
-# ones are also published under the short names `fsbpyr`, `fsbpyr-3.12`, ... (copies). Adding a
-# Python version adds an entry to the three matrices.
+# One fsbpyr per Python version and per target (Phase 9): build, reproduce and compare run once
+# per (target, Python) entry of their matrix, each target on a runner of its architecture
+# (x86_64-linux-gnu on ubuntu-24.04, aarch64-linux-gnu on ubuntu-24.04-arm) in the same Debian
+# trixie image (a multi-arch index: its digest covers both), and the release carries every
+# variant. An asset is named with its target: the newest version's (the one .python-version
+# pins) is `fsbpyr-x86_64-linux-gnu`, the others are `fsbpyr-3.12-x86_64-linux-gnu` and so on,
+# each with its `.xz` (`fsbpyr-aarch64-linux-gnu`, ... for aarch64). The x86-64 glibc ones are
+# also published under the short names `fsbpyr`, `fsbpyr-3.12`, ... (copies). Adding a Python
+# version adds an entry to the three `python` lists, adding a target one to the three `target`
+# lists and the `include` entry that names its runner.
 # GitHub artifact attestations can only be made inside GitHub Actions, so releases are built
 # here and not on the maintainer's machine.
 
@@ -32,23 +36,26 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  TARGET: x86_64-linux-gnu  # what the release assets are named with (vcs.release_asset)
-
 jobs:
   build:
-    name: build + smoke test (Python ${{ matrix.python }})
-    runs-on: ubuntu-24.04
+    name: build + smoke test (${{ matrix.target }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         python: ["3.12", "3.13", "3.14"]  # one entry per Python version a release is built for
-    # Debian trixie, as `make bootstrap` expects, by digest: the tag alone moves. It installs no
-    # tools, so the job does: clang/lld 22 and the rest from Debian's packages, the pinned uv
+        target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]  # what the assets are named with
+        include:
+          - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
+          - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
+    # Debian trixie, as `make bootstrap` expects, by digest: the tag alone moves. The digest is
+    # the multi-arch index's, so each runner pulls its own architecture. It installs no tools,
+    # so the job does: clang/lld 22 and the rest from Debian's packages, the pinned uv
     # (tools/release/uv.version) and the Python of .python-version.
     container: docker.io/library/debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
     timeout-minutes: 75
     env:
+      TARGET: ${{ matrix.target }}  # what the release assets are named with (vcs.release_asset)
       PREFIX: ${{ github.workspace }}/../prefix
       # The container runs as root, but GitHub mounts its HOME (/github/home) owned by the
       # runner's user: fsbpyr refuses a cache whose way from / another user owns. The caches
@@ -143,22 +150,16 @@ jobs:
           for try in 1 2 3; do apt-get update -q && break; [ "$try" -lt 3 ] || exit 1; sleep 15; done
           apt-get install -y -q --no-install-recommends make clang-22 lld-22 gcc strace groff-base zstd
 
-      # The uv that tools/release/uv.version names, from its release tarball and checked against
-      # the sha256 recorded there, and the Python of this entry: the one .python-version pins
-      # for the newest version, else the newest patch release of the minor version. bootstrap.sh
-      # installs no tool; with FSBPYR_UV_VERSION set it fails on any other uv.
+      # The uv that tools/release/uv.version names, for this runner's architecture, from its
+      # release tarball and checked against the sha256 recorded there, and the Python of this
+      # entry: the one .python-version pins for the newest version, else the newest patch
+      # release of the minor version. bootstrap.sh installs no tool; with FSBPYR_UV_VERSION set
+      # it fails on any other uv.
       - name: Install uv and Python
         env:
           MATRIX_PYTHON: ${{ matrix.python }}
         run: |
-          read -r version sha256 < tools/release/uv.version
-          name=uv-x86_64-unknown-linux-gnu
-          curl -fsSL -o "$RUNNER_TEMP/uv.tar.gz" \
-            "https://github.com/astral-sh/uv/releases/download/$version/$name.tar.gz"
-          echo "$sha256  $RUNNER_TEMP/uv.tar.gz" | sha256sum -c -
-          tar -xzf "$RUNNER_TEMP/uv.tar.gz" --strip-components=1 -C /usr/local/bin \
-            "$name/uv" "$name/uvx"
-          echo "FSBPYR_UV_VERSION=$version" >> "$GITHUB_ENV"
+          echo "FSBPYR_UV_VERSION=$(sh tools/release/install-uv.sh /usr/local/bin)" >> "$GITHUB_ENV"
           if [ -z "$SUFFIX" ]; then uv python install "$(cat .python-version)"
           else uv python install "$MATRIX_PYTHON"; fi
 
@@ -227,11 +228,17 @@ jobs:
             done
           fi
 
-      # The same executable, about half the download. One thread: the same input gives the same
-      # .xz with the same xz (multithreaded xz splits the stream by thread count).
+      # The same executable, about half the download, with the BCJ filter of its architecture
+      # (x86 or ARM64: executable code compresses better after it). One thread: the same input
+      # gives the same .xz with the same xz (multithreaded xz splits the stream by thread count).
       - name: Compress the executable
         run: |
-          xz --x86 --lzma2=preset=9e --threads=1 --keep dist/fsbpyr$SUFFIX
+          case "$TARGET" in
+            x86_64-*) filter=--x86 ;;
+            aarch64-*) filter=--arm64 ;;
+            *) echo "::error::no xz filter for $TARGET"; exit 1 ;;
+          esac
+          xz $filter --lzma2=preset=9e --threads=1 --keep dist/fsbpyr$SUFFIX
           xz --decompress --stdout dist/fsbpyr$SUFFIX.xz | cmp - dist/fsbpyr$SUFFIX
 
       # The notices the executable carries, as a release asset (REP-4): the runtime's exact, the
@@ -242,14 +249,13 @@ jobs:
           dist/fsbpyr$SUFFIX inspect --licenses dist/fsbpyr$SUFFIX \
             > dist/THIRD_PARTY_LICENSES$SUFFIX-$TARGET.txt
 
-      # Every file under its long name, the target in it; the x86-64 glibc ones stay under the
-      # short names too (dist/fsbpyr$SUFFIX is what the build made), as copies.
+      # Every file under its long name, the target in it (dist/fsbpyr$SUFFIX is what the build
+      # made; the x86-64 glibc builds also keep it, as the short name, below).
       - name: Name the release assets
         run: |
           for ext in "" .xz; do
             cp "dist/fsbpyr$SUFFIX$ext" "dist/fsbpyr$SUFFIX-$TARGET$ext"
           done
-          cp "dist/THIRD_PARTY_LICENSES$SUFFIX-$TARGET.txt" "dist/THIRD_PARTY_LICENSES$SUFFIX.txt"
 
       # Uploaded before the checks and tests, which run dev dependencies with write access to
       # dist/: the release is the executable compared above. publish needs this job, so
@@ -257,14 +263,28 @@ jobs:
       - name: Upload the executable
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: built-${{ matrix.python }}
+          name: built-${{ matrix.python }}-${{ matrix.target }}
+          path: |
+            dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}
+            dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}.xz
+            dist/THIRD_PARTY_LICENSES${{ env.SUFFIX }}-${{ env.TARGET }}.txt
+          if-no-files-found: error
+
+      # The short names (`fsbpyr`, `fsbpyr-3.12`, each with its .xz and notices) are copies of
+      # the x86-64 glibc builds only, so that executables already released keep updating.
+      - name: Name the short licence notices
+        if: ${{ matrix.target == 'x86_64-linux-gnu' }}
+        run: cp "dist/THIRD_PARTY_LICENSES$SUFFIX-$TARGET.txt" "dist/THIRD_PARTY_LICENSES$SUFFIX.txt"
+
+      - name: Upload the short-name copies
+        if: ${{ matrix.target == 'x86_64-linux-gnu' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: built-short-${{ matrix.python }}
           path: |
             dist/fsbpyr${{ env.SUFFIX }}
             dist/fsbpyr${{ env.SUFFIX }}.xz
-            dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}
-            dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}.xz
             dist/THIRD_PARTY_LICENSES${{ env.SUFFIX }}.txt
-            dist/THIRD_PARTY_LICENSES${{ env.SUFFIX }}-${{ env.TARGET }}.txt
           if-no-files-found: error
 
       # Static checks and the core of the suite, on the environment `make bootstrap` left (the
@@ -293,7 +313,7 @@ jobs:
         if: ${{ !cancelled() && steps.test-ci.outcome != 'skipped' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage-${{ matrix.python }}
+          name: coverage-${{ matrix.python }}-${{ matrix.target }}
           path: coverage.xml
           if-no-files-found: error
 
@@ -302,14 +322,18 @@ jobs:
   # and uv. build's own stage 2 == stage 3 cannot see the launcher stub or anything that depends
   # on where it ran (D4); compare checks this job's stage 3 against build's executable.
   reproduce:
-    name: reproduce (Python ${{ matrix.python }})
-    runs-on: ubuntu-24.04
+    name: reproduce (${{ matrix.target }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.runner }}
     container: docker.io/library/debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
     timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
         python: ["3.12", "3.13", "3.14"]  # one entry per Python version a release is built for
+        target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
+        include:
+          - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
+          - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
     env:
       UV_PYTHON_INSTALL_DIR: /opt/uv-python  # root installs the Python, builder only reads it
     steps:
@@ -367,14 +391,7 @@ jobs:
         env:
           MATRIX_PYTHON: ${{ matrix.python }}
         run: |
-          read -r version sha256 < tools/release/uv.version
-          name=uv-x86_64-unknown-linux-gnu
-          curl -fsSL -o "$RUNNER_TEMP/uv.tar.gz" \
-            "https://github.com/astral-sh/uv/releases/download/$version/$name.tar.gz"
-          echo "$sha256  $RUNNER_TEMP/uv.tar.gz" | sha256sum -c -
-          tar -xzf "$RUNNER_TEMP/uv.tar.gz" --strip-components=1 -C /usr/local/bin \
-            "$name/uv" "$name/uvx"
-          echo "FSBPYR_UV_VERSION=$version" >> "$GITHUB_ENV"
+          echo "FSBPYR_UV_VERSION=$(sh tools/release/install-uv.sh /usr/local/bin)" >> "$GITHUB_ENV"
           if [ "$MATRIX_PYTHON" = "$(cut -d. -f1,2 .python-version)" ]; then
             echo "SUFFIX=" >> "$GITHUB_ENV"
             echo "BOOTSTRAP_ARGS=" >> "$GITHUB_ENV"
@@ -405,29 +422,36 @@ jobs:
       - name: Upload the rebuilt executable
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: reproduced-${{ matrix.python }}
+          name: reproduced-${{ matrix.python }}-${{ matrix.target }}
           path: rebuild/dist/stage3${{ env.SUFFIX }}/fsbpyr
           if-no-files-found: error
 
-  # build's executable against reproduce's. Nothing is built here, so it runs on the runner.
+  # build's executable against reproduce's. Nothing is built here, so it runs on the runner (of
+  # the target's architecture: a difference is shown by running the executable).
   compare:
-    name: compare (Python ${{ matrix.python }})
+    name: compare (${{ matrix.target }}, Python ${{ matrix.python }})
     needs: [build, reproduce]
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         python: ["3.12", "3.13", "3.14"]
+        target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
+        include:
+          - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
+          - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
+    env:
+      TARGET: ${{ matrix.target }}
     steps:
       - name: Download both executables
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: built-${{ matrix.python }}
+          name: built-${{ matrix.python }}-${{ matrix.target }}
           path: built
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: reproduced-${{ matrix.python }}
+          name: reproduced-${{ matrix.python }}-${{ matrix.target }}
           path: rebuilt
 
       # Artifacts do not keep file modes. The executable is the one file of built/ named
@@ -488,7 +512,9 @@ jobs:
           suite_run="$(bash tools/release/green-run.sh full-suite.yml "$parent")"
           echo "FULL_SUITE_RUN=$suite_run" >> "$GITHUB_ENV"
 
-      # Every variant's files, side by side in dist/ (they have different names).
+      # Every target's and variant's files, side by side in dist/ (they have different names).
+      # needs: [build, compare] holds publish back until every (target, Python) entry passed,
+      # the aarch64 ones included.
       - name: Download the executables
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -504,8 +530,9 @@ jobs:
           printf '\nFull suite: %s\n' "$FULL_SUITE_RUN" >> "$RUNNER_TEMP/notes.md"
 
       # The installer, with this release's version, targets and the SHA-256 and glibc of every
-      # executable written into it (tools/release/make-install.sh). fsbpyr-x86_64-linux-gnu runs
-      # on this runner and reads the other targets' files for their glibc.
+      # executable written into it (tools/release/make-install.sh), so it lists every target
+      # that was built. fsbpyr-x86_64-linux-gnu runs on this runner and reads the other targets'
+      # files (aarch64) for their glibc.
       - name: Make install.sh
         env:
           TAG: ${{ github.ref_name }}
@@ -516,7 +543,7 @@ jobs:
       # Verify with: gh attestation verify fsbpyr --repo devitops-com/fsbpyr \
       #   --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml \
       #   --source-ref "refs/tags/$tag"
-      # (or fsbpyr-x86_64-linux-gnu, fsbpyr-3.12-x86_64-linux-gnu, fsbpyr.xz and the other assets)
+      # (or fsbpyr-x86_64-linux-gnu, fsbpyr-3.12-aarch64-linux-gnu, fsbpyr.xz and the other assets)
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -526,8 +553,8 @@ jobs:
             dist/install.sh
 
       # `sha256sum -c --ignore-missing SHA256SUMS` checks a download against the digests the
-      # attestation signs. The globs take every variant that build made: fsbpyr[-3.X][-TARGET]
-      # and its .xz, and THIRD_PARTY_LICENSES[-3.X][-TARGET].txt;
+      # attestation signs. The globs take every target and variant that build made:
+      # fsbpyr[-3.X][-TARGET] and its .xz, and THIRD_PARTY_LICENSES[-3.X][-TARGET].txt;
       # install.sh is listed too.
       - name: Publish the GitHub release
         env:

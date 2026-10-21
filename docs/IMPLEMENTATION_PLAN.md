@@ -1745,8 +1745,31 @@ write, a truncated binary.
      3.13 runtimes, `make bootstrap` and its three stages, the full suite, other page sizes.
      `tools/upstream-watch.sh` watches the x86-64 3.14 pin (the PBS releases carry all
      targets together); `tools/toolchain-watch.sh` keeps comparing uv's version and the
-     trixie digest. Still open: CI's target dimension, the `xz --arm64` of the release's
-     `.xz`, the arm64 portability images and a reproduction on a real runner (A64-CI).
+     trixie digest. What was still open then (CI's target dimension, the `xz --arm64`, the
+     arm64 portability images) is the next entry.
+     Progress 2026-10-21 (CI, `A64-CI`): the workflows have the target dimension.
+     `release.yml`'s build, reproduce and compare jobs and `full-suite.yml`'s suite and
+     portability jobs run once per (target, Python), `x86_64-linux-gnu` on `ubuntu-24.04` and
+     `aarch64-linux-gnu` on `ubuntu-24.04-arm`, in the same trixie image (the pinned digest is
+     the multi-arch index's, checked to list arm64). `tools/release/uv.version` holds one
+     SHA-256 per architecture and `tools/release/install-uv.sh` installs the machine's uv in
+     all four places that did it inline. The release's `.xz` is made with `xz --arm64` for
+     aarch64 and `xz --x86` for x86-64; artifacts are `built-<python>-<target>`; the aarch64
+     assets are `fsbpyr-aarch64-linux-gnu`, `fsbpyr-3.12-aarch64-linux-gnu` and
+     `fsbpyr-3.13-aarch64-linux-gnu` with `.xz` and licence notices, and the short names stay
+     x86-64 glibc copies (a separate `built-short-<python>` artifact). The publish job
+     collects, attests and lists every file; `install.sh` lists both targets. The owner's
+     rule (a push runs the newest Python on every target and every Python on x86-64; nightly
+     and before a release, everything) became: every trigger of `full-suite.yml` runs every
+     target and Python, because main is pushed to GitHub for a release only, so a push to
+     main is the before-a-release run. `green-run.sh` and the publish gate need no change:
+     they require the run's conclusion, which is that of every job, aarch64 included. The
+     portability test runs the images with an arm64 variant on an aarch64 host: 12 of the 13
+     (`podman manifest inspect`, 2026-10-21: only `archlinux:latest` lacks one). Checked
+     here: the YAML parses, the shell of the changed steps runs under dash with fake `xz`,
+     `curl` and `uname`, and the workflow-text tests. Not checked: any run on GitHub's arm64
+     runners (the trixie arm64 container, the arm64 `clang-22` packages, the arm64 images'
+     pulls); step 2 is not done until the aarch64 jobs are green there.
   3. Linux musl, x86-64 and aarch64 (M–L). Spike: a musl 1.2.2 sysroot from pinned packages
      (Alpine 3.14's, to confirm), the `lto-full` archive linked into a dynamic musl PIE, a
      musllinux numpy wheel loaded, an Alpine release with clang/lld 22 for the bootstrap.
