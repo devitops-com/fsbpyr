@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.cli import main
-from fsbpyr.natives import GLIBC_LIBRARIES
+from fsbpyr.natives import glibc_libraries
 from fsbpyr.payload.format import NATIVE_KINDS
 from fsbpyr.payload.reader import Executable
 from fsbpyr.project import LockSource
@@ -157,7 +157,7 @@ def test_reported_system_libraries_match_the_binary(apps: Path, tmp_path: Path, 
         for namespace, version in entry.get("versions", {}).items():
             assert seen[library][namespace] == version, f"{library} {namespace}"
     if name == "hello":
-        assert set(reported) <= GLIBC_LIBRARIES
+        assert set(reported) <= glibc_libraries()
     if name.startswith("heavy"):
         assert {"libstdc++.so.6", "libgcc_s.so.1"} <= set(reported)
 

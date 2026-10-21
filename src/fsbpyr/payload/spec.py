@@ -11,6 +11,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from ..compat import zstd
+from ..targets import host_target
 from .format import (
     DIGEST_LEAF,
     MAX_BLOB_SIZE,
@@ -231,7 +232,7 @@ class Blob:
 
     @classmethod
     def xz(cls, data: bytes, *, digest: bool = False) -> Blob:
-        """xz -6 with the x86 filter (D33), for native files only: one stream, or one per
+        """xz -6 with the host's BCJ filter (D33), for native files only: one stream, or one per
         XZ_PIECE of content so that the launcher decodes them in parallel; no check of their
         own, since the executable's integrity digest covers them. Stored raw if that is not
         smaller."""
@@ -261,7 +262,13 @@ def zstd_options(level: int) -> dict[int, int]:
 
 
 XZ_PRESET = 6  # owner decision (D33): xz -6 with the x86 filter, for native files
-_XZ_FILTERS = ({"id": lzma.FILTER_X86}, {"id": lzma.FILTER_LZMA2, "preset": XZ_PRESET})
+
+
+def _xz_filters() -> list[dict[str, int]]:
+    """The host's BCJ filter, if it has one, then LZMA2."""
+    bcj = host_target().xz_filter
+    lzma2 = {"id": lzma.FILTER_LZMA2, "preset": XZ_PRESET}
+    return [{"id": bcj}, lzma2] if bcj is not None else [lzma2]
 
 
 def xz_pieces(data: bytes) -> list[bytes]:
@@ -270,7 +277,7 @@ def xz_pieces(data: bytes) -> list[bytes]:
 
 
 def xz_stream(piece: bytes) -> bytes:
-    return lzma.compress(piece, format=lzma.FORMAT_XZ, check=lzma.CHECK_NONE, filters=_XZ_FILTERS)
+    return lzma.compress(piece, format=lzma.FORMAT_XZ, check=lzma.CHECK_NONE, filters=_xz_filters())
 
 
 def _digest(data: bytes, wanted: bool) -> bytes | None:
