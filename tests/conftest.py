@@ -3,12 +3,20 @@ the launcher's background runs would otherwise act on the caches tests use, or t
 
 pytest passes a run however many tests skip. FSBPYR_TESTS_REQUIRE_ALL names one of the lists
 below (CI's test step sets `ci`, the full-suite workflow `full` and `portability`), and a
-skip that the list does not expect fails the run."""
+skip that the list does not expect fails the run.
+
+At the end, the builds of local projects the run made leave uv's cache: the tests build their
+fixture projects (and fsbpyr) from new temporary copies every time, and uv keeps every build.
+What it downloaded from an index stays."""
 
 import functools
 import inspect
 import os
+import shutil
+import subprocess
+import time
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -61,6 +69,7 @@ EXPECTED_SKIPS = {
 # The corpus projects (TST-3) carry test files of their own, which their built apps run
 collect_ignore_glob = ["corpus/*"]
 _skips: list[tuple[str, str]] = []  # this run's, as (nodeid, reason)
+_STARTED = time.time()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -115,7 +124,39 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
         _skips.append((report.nodeid, report.longrepr[2].removeprefix("Skipped: ")))
 
 
+def _prune_local_builds() -> str | None:
+    """Removes the builds of local projects uv cached since the run started (its path and
+    editable sources, and wheels installed by URL: the tests' are files of theirs), with the
+    unpacked wheels they link to. Not `uv cache prune`: that waits for the cache lock, which
+    the `uv run` around the tests holds. The problem, if any."""
+    uv = shutil.which("uv")
+    if uv is None:
+        return None
+    found = subprocess.run([uv, "cache", "dir"], capture_output=True, text=True, check=False)
+    if found.returncode != 0:
+        return found.stderr.strip()
+    cache = Path(found.stdout.strip())
+    entries = [*cache.glob("sdists-v*/path/*"), *cache.glob("sdists-v*/editable/*"),
+               *cache.glob("wheels-v*/url/*")]  # fmt: skip
+    try:
+        for entry in entries:
+            if not entry.is_dir() or entry.stat().st_mtime < _STARTED:
+                continue
+            unpacked = {Path(directory, name).resolve()
+                        for directory, names, files in os.walk(entry)  # links not followed
+                        for name in (*names, *files) if Path(directory, name).is_symlink()}
+            for wheel in unpacked:
+                if wheel.parent.name.startswith("archive-v") and wheel.is_dir():
+                    shutil.rmtree(wheel)
+            shutil.rmtree(entry)
+    except OSError as error:
+        return str(error)
+    return None
+
+
 def pytest_sessionfinish(session: pytest.Session) -> None:
+    if problem := _prune_local_builds():
+        session.config.get_terminal_writer().line(f"uv's cache keeps this run's builds: {problem}")
     name = os.environ.get("FSBPYR_TESTS_REQUIRE_ALL")
     if not name:
         return
