@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -1195,6 +1196,8 @@ LLVM23_NAME = "LLVM-23.1.3-Linux-X64"
 def _llvm23_repo(tmp_path: Path, *, sha256: str | None = None) -> tuple[Path, Path, dict[str, str]]:
     """A copy of tools/ whose pin names a small tarball laid out like LLVM's, the tarball, and
     an environment with a cache under tmp_path and a fake uv that logs its calls."""
+    if platform.machine() != "x86_64":
+        pytest.skip("FSBPYR_LLVM23 is for x86-64 only")  # LLVM's tarball the pin names
     zstd, tar = shutil.which("zstd"), shutil.which("tar")
     if zstd is None or tar is None:
         pytest.skip("zstd is not installed")

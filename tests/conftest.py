@@ -34,6 +34,7 @@ EXPECTED_SKIPS = {
         "needs set-id bits",
         "needs busybox",  # install.sh's tests run it under busybox sh and with wget:
         "needs wget",  # test-setup.sh installs both for the full suite
+        "FSBPYR_LLVM23 is for x86-64 only",  # on aarch64
     ),
     # `make test-container`: the Containerfile's `test` stage, as `tester` (uid 1000, one
     # supplementary group) with no podman, and the Python of .python-version only
@@ -47,11 +48,13 @@ EXPECTED_SKIPS = {
         "needs set-id bits",
         "needs busybox",
         "needs wget",
+        "FSBPYR_LLVM23 is for x86-64 only",  # on aarch64
     ),
     # full-suite.yml's job: the same container with rootless podman and /proc/sys opened for
     # user namespaces, as `tester` -- every test the other lists skip runs (the job builds
     # the other versions' runtimes), except the one 3.12 skips by version
-    "full": ("3.12's takes one resource name",),
+    "full": ("3.12's takes one resource name",
+             "FSBPYR_LLVM23 is for x86-64 only"),  # on aarch64
     # full-suite.yml's portability job: podman on the runner host, and every image pulled
     "portability": (),
 }

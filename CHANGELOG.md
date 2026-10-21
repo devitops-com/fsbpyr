@@ -418,6 +418,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   container, as before, and the README's release check no longer runs `uv self update`.
 
 ### Fixed
+- **A bundled library whose version ends in a letter is a native library.** A file named like
+  `libcrypto-02bae65c.so.1.1.1k` (OpenSSL 1.1) was kept as data, so the libraries that need it
+  failed the build as "neither bundled nor standard system libraries"; psycopg-binary's
+  aarch64 wheel bundles one. A version part after `.so` now starts with a digit and may go on
+  with letters; the ELF check decides, as before.
 - **Runtimes build and modules compile alike on Python 3.12 and 3.13.** `fsbpyr runtime build`
   unpacked the python-build-standalone archive with 3.14's `tarfile` mode `r:zst`; below 3.14
   it uses the one of `backports.zstd`. A module's `co_filename` is now a copy of its name:

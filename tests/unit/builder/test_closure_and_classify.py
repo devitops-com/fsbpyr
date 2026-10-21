@@ -352,14 +352,19 @@ def test_module_files_starting_with_a_digit_are_modules(site: Path) -> None:
 
 
 def test_so_detection_matches_shared_objects_only(site: Path) -> None:
-    _dist(site, "notes", "1.0", {"notes/__init__.py": b"", "notes/readme.so.txt": b"text",
-                                 "notes.libs/libz.so.1.2.13": b"\x7fELF"})  # fmt: skip
+    _dist(site, "notes", "1.0", {
+        "notes/__init__.py": b"", "notes/readme.so.txt": b"text",
+        "notes.libs/libz.so.1.2.13": b"\x7fELF",
+        "notes.libs/libcrypto-02bae65c.so.1.1.1k": b"\x7fELF",
+    })  # fmt: skip
     index = SiteIndex.scan(site)
 
     content = classify([index.dists["notes"]], extension_suffixes=(".so",), include_source=True)
 
     kinds = {f.path: f.kind for f in content.files}
     assert kinds["notes.libs/libz.so.1.2.13"] is FileKind.NATIVE_LIB
+    # OpenSSL 1.1's version ends in a letter (psycopg-binary's aarch64 wheel bundles this one)
+    assert kinds["notes.libs/libcrypto-02bae65c.so.1.1.1k"] is FileKind.NATIVE_LIB
     assert kinds["notes/readme.so.txt"] is FileKind.RESOURCE
 
 

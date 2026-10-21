@@ -34,7 +34,7 @@ INSTALLER_FILES = frozenset({
 })  # fmt: skip
 
 
-_SHARED_OBJECT = re.compile(r"\.so(\.\d+)*$")
+_SHARED_OBJECT = re.compile(r"\.so(\.\d[0-9A-Za-z]*)*$")  # libcrypto.so.1.1.1k too
 _TEST_DIRECTORIES = frozenset({"tests", "test"})
 # .pth files whose code only re-creates what PEP 420 namespaces (and the payload) provide
 _REDUNDANT_PTH = re.compile(r"(-nspkg|^distutils-precedence)\.pth$")
