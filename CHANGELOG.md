@@ -55,12 +55,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   manylinux_2_28 limits; the payload's xz natives use no BCJ filter there. `tools/bootstrap.sh`
   accepts aarch64 hosts, and the `Containerfile` builds for amd64 and arm64
   (`podman build --arch arm64`) with the pinned uv of each architecture, checked against a
-  SHA-256, instead of the newest from astral.sh. Checked under QEMU emulation only (no arm64
-  hardware yet; the full suite, the three-stage bootstrap and the portability images are for
-  GitHub's arm runners): the 3.14 runtime built (of the 3.12 and 3.13 pins only the downloads'
-  SHA-256s were checked), two fixture apps (`hello`, and `heavy` with numpy,
-  onnxruntime, cryptography, orjson and pydantic) built, verified and ran, and the unit tests
-  pass. No release has aarch64 executables yet.
+  SHA-256, instead of the newest from astral.sh. On GitHub's arm64 runners
+  (`ubuntu-24.04-arm`) the full suite, with the three-stage bootstrap, and the 12 arm64
+  portability images pass on Python 3.12, 3.13 and 3.14, and release CI builds, reproduces
+  and compares the aarch64 executables; this is the first release that has them.
 - **`install.sh`, an installer modelled on uv's** (Phase 9, platforms step 1). The release
   workflow builds it from `tools/release/install.sh.in` with `tools/release/make-install.sh`,
   which writes in the release's version and the SHA-256 and glibc of every executable, then
