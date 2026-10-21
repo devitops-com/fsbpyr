@@ -21,6 +21,21 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   The new [docs/security.md](docs/security.md) is the threat model.
 
 ### Added
+- **`install.sh`, an installer modelled on uv's** (Phase 9, platforms step 1). The release
+  workflow builds it from `tools/release/install.sh.in` with `tools/release/make-install.sh`,
+  which writes in the release's version and the SHA-256 and glibc of every executable, then
+  attests it, lists it in `SHA256SUMS` and attaches it: `curl -LsSf
+  https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh | sh`. POSIX `sh`;
+  it detects the target (musl by `ldd --version`), stops naming the release's targets when there
+  is none for the host or the host's glibc is too old, downloads with `curl` (HTTPS only) or
+  `wget`, the `.xz` when `xz` is there, checks the SHA-256 and `fsbpyr inspect --verify` before
+  installing, and with `FSBPYR_VERIFY=1` also `gh attestation verify`. It installs into
+  `$FSBPYR_INSTALL_DIR`, `$XDG_BIN_HOME`, `$XDG_DATA_HOME/../bin` or `~/.local/bin` with the man
+  page and completions, and puts the directory on `PATH` through an `env` script sourced from
+  the shell files (`--no-modify-path`, `FSBPYR_NO_MODIFY_PATH=1`; `$GITHUB_PATH` in GitHub
+  Actions). It looks for the per-target asset names (`fsbpyr-x86_64-linux-gnu`, ...), so it
+  installs from a release only once the release has them. The README's "Getting fsbpyr" leads
+  with it.
 - **Release assets are named with the target** (Phase 9, step 0). Every executable is
   published as `fsbpyr-x86_64-linux-gnu` (the newest Python) or
   `fsbpyr-3.12-x86_64-linux-gnu` (the others), each with its `.xz`, attestation and

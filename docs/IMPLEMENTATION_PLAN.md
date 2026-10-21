@@ -1692,6 +1692,24 @@ write, a truncated binary.
      `fsbpyr-3.13` (copies, with their `.xz` and licence notices). Not checked here: the
      workflow on GitHub Actions. Still open: `install.sh` (step 1).
   1. `install.sh` (S, alongside step 0), as settled below.
+  1. `install.sh` (S, alongside step 0), as settled below. **Done 2026-10-21** (not yet in a
+     release): the template `tools/release/install.sh.in`, the generator
+     `tools/release/make-install.sh VERSION ASSET_DIR OUTPUT [INSPECTOR]` (version, targets, and
+     each asset's SHA-256 and recorded glibc, read with `INSPECTOR inspect --json`), and
+     release.yml's publish job, which generates it from the downloaded assets, attests it,
+     lists it in `SHA256SUMS` and attaches it. Tested against a local HTTPS server with a
+     committed self-signed certificate under dash, bash and busybox sh
+     (`tests/integration/test_install.py`; `FSBPYR_INSTALLER_BASE_URL` is for those tests
+     only). Details the spec left open: the asset names are `fsbpyr-<target>` and `.xz`, as step 0 publishes them (the
+     old short names are copies and the installer ignores them; a release without the long names gives an installer with no target, and the generator warns); the
+     man page and completions go under the prefix only when the install directory is named
+     `bin`; `~/.profile` is created if missing, `~/.bashrc` and `~/.zshrc` are edited only
+     when they exist, fish's `conf.d/fsbpyr.env.fish` when `~/.config/fish` exists or `fish` is
+     on `PATH`; in GitHub Actions the directory goes to `$GITHUB_PATH` and the shell files stay
+     alone; `FSBPYR_VERIFY=1` checks the attestation of the downloaded file (the `.xz` when that
+     is used) against the tag's ref and release.yml's signer. Not checked here (needs a real
+     release): the download from GitHub, `gh attestation verify` for real, the publish step,
+     the glibc read from the foreign targets' files.
   2. Linux aarch64 glibc (M). Spike: the launcher cross-linked on x86-64 against the aarch64
      archive and Debian 10's arm64 packages, run on GitHub's `ubuntu-24.04-arm`. Work:
      `EM_AARCH64` and `ld-linux-aarch64.so.1`, the manylinux_2_28 aarch64 policy, no BCJ
