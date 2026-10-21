@@ -128,15 +128,15 @@ test-ci: ## Run the core of the test suite, as CI does
 # podman, which is yours to install; --network pasta:-4 is bootstrap's, for the same reason.
 # TMPDIR is a tmpfs: a symlink target of 4,000 bytes (test_cache_root.py) fails on the
 # container's overlay file system with "File name too long", and the builds are big.
-test-container: ## Run the whole suite but the portability tests in a Debian trixie container (podman)
+test-container: ## Run the whole suite but the portability tests in a Debian trixie container (podman; PYTHON=3.X)
 	podman build --target test -t fsbpyr-test -f Containerfile .
 	podman run --rm --network pasta:-4 -v "$(CURDIR)":/checkout:ro,Z \
 		-v fsbpyr-test-cache:/home/tester/.cache -v fsbpyr-test-downloads:/home/tester/downloads \
 		--tmpfs /var/tmp:mode=1777 -e TMPDIR=/var/tmp \
 		-e FSBPYR_TEST_DOWNLOADS=/home/tester/downloads -e FSBPYR_TESTS_REQUIRE_ALL=container \
-		fsbpyr-test bash -c 'tar -C /checkout --exclude=./.venv --exclude=./dist -cf - . | tar -xf - \
-			&& uv python install "$$(cat .python-version)" \
-			&& uv run --locked pytest --ignore=tests/e2e/test_portability.py'
+		fsbpyr-test bash -c 'tar -C /checkout --exclude="./.venv*" --exclude=./dist -cf - . | tar -xf - \
+			&& uv python install $(if $(filter command line,$(origin PYTHON)),$(PYTHON),"$$(cat .python-version)") \
+			&& $(UVRUN) pytest -n $(JOBS) --dist loadfile --ignore=tests/e2e/test_portability.py'
 
 # The portability matrix (tests/e2e/test_portability.py): 13 images pulled and run with podman,
 # on $(BIN)'s builds of the fixtures (tools/portability-apps.sh); needs llvm-objdump.
