@@ -503,6 +503,16 @@ jobs:
           bash tools/release/release-notes.sh "${TAG#v}" > "$RUNNER_TEMP/notes.md"
           printf '\nFull suite: %s\n' "$FULL_SUITE_RUN" >> "$RUNNER_TEMP/notes.md"
 
+      # The installer, with this release's version, targets and the SHA-256 and glibc of every
+      # executable written into it (tools/release/make-install.sh). fsbpyr-x86_64-linux-gnu runs
+      # on this runner and reads the other targets' files for their glibc.
+      - name: Make install.sh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          chmod +x dist/fsbpyr-x86_64-linux-gnu
+          bash tools/release/make-install.sh "${TAG#v}" dist dist/install.sh dist/fsbpyr-x86_64-linux-gnu
+
       # Verify with: gh attestation verify fsbpyr --repo devitops-com/fsbpyr \
       #   --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml \
       #   --source-ref "refs/tags/$tag"
@@ -513,10 +523,12 @@ jobs:
           subject-path: |
             dist/fsbpyr*
             dist/THIRD_PARTY_LICENSES*.txt
+            dist/install.sh
 
       # `sha256sum -c --ignore-missing SHA256SUMS` checks a download against the digests the
       # attestation signs. The globs take every variant that build made: fsbpyr[-3.X][-TARGET]
-      # and its .xz, and THIRD_PARTY_LICENSES[-3.X][-TARGET].txt.
+      # and its .xz, and THIRD_PARTY_LICENSES[-3.X][-TARGET].txt;
+      # install.sh is listed too.
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -524,7 +536,7 @@ jobs:
           TAG: ${{ github.ref_name }}
           NOTES: ${{ runner.temp }}/notes.md
         run: |
-          (cd dist && sha256sum fsbpyr* THIRD_PARTY_LICENSES*.txt > SHA256SUMS)
+          (cd dist && sha256sum fsbpyr* THIRD_PARTY_LICENSES*.txt install.sh > SHA256SUMS)
           cat dist/SHA256SUMS
           gh release create "$TAG" --verify-tag --title "fsbpyr $TAG" --notes-file "$NOTES" \
-            dist/fsbpyr* dist/THIRD_PARTY_LICENSES*.txt dist/SHA256SUMS
+            dist/fsbpyr* dist/THIRD_PARTY_LICENSES*.txt dist/install.sh dist/SHA256SUMS

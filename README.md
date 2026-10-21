@@ -482,7 +482,46 @@ carrying that version's runtime only; the apps it builds run on that Python. Eac
 [release](https://github.com/devitops-com/fsbpyr/releases) carries all of them, built and
 attested by GitHub Actions. An asset is named with its target, the platform it runs on, and
 fsbpyr releases for `x86_64-linux-gnu` so far. `fsbpyr-x86_64-linux-gnu` is the newest
-version's (Python 3.14 now), and the commands below fetch it:
+version's (Python 3.14 now).
+
+### The installer
+
+```
+curl -LsSf https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh | sh
+```
+
+`install.sh` is a POSIX `sh` script (dash and busybox too) that each release builds, attests and
+attaches, modelled on uv's: the release's version and the SHA-256 of every asset are written
+into it, so a download is checked before it is used. A tag's own copy installs that version
+(`.../releases/download/vX.Y.Z/install.sh`). It
+
+- detects the target (`uname`, and musl when `ldd --version` says so) and stops, naming the
+  targets the release has, when there is none for this host or the host's glibc is older than
+  the `glibc >= X.Y` the release records for the executable;
+- downloads with `curl` (HTTPS only, TLS 1.2 or newer) or else `wget`, the `.xz` when `xz` is
+  installed, checks the SHA-256 and runs `fsbpyr inspect --verify` on the new file before it
+  installs it; with `FSBPYR_VERIFY=1` it also runs `gh attestation verify` and stops when that
+  fails or `gh` is missing;
+- installs into the first of `$FSBPYR_INSTALL_DIR`, `$XDG_BIN_HOME`, `$XDG_DATA_HOME/../bin`
+  and `~/.local/bin`, under a temporary name renamed into place, and writes the man page and
+  completions where `make install` puts them under that prefix (only for a directory named
+  `bin`);
+- when the directory is not on `PATH`, writes an `env` script (`env.fish` for fish) next to the
+  executable and sources it from `~/.profile` (created if missing), `~/.bashrc` and `~/.zshrc`
+  (when they exist) and fish's `conf.d`; an `env` that is already there, uv's included, is
+  reused. `--no-modify-path` or `FSBPYR_NO_MODIFY_PATH=1` leaves the shell files alone, and in
+  GitHub Actions the directory goes to `$GITHUB_PATH` instead.
+
+Options: `-h/--help`, `-q/--quiet`, `-v/--verbose`, `--no-modify-path` (through the pipe:
+`curl ... | sh -s -- --no-modify-path`). The installer is tested against a local HTTPS server
+under dash, bash and busybox sh. It picks the per-target assets of Phase 9
+(`fsbpyr-x86_64-linux-gnu` and so on); a release without them has no target for it, and the
+commands below are the manual way.
+
+### Manually
+
+`fsbpyr-x86_64-linux-gnu` is the newest version's (Python 3.14 now), and the commands below
+fetch it:
 
 ```
 mkdir -p ~/.local/bin

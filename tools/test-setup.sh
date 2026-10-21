@@ -5,7 +5,7 @@
 # container. The packages of bootstrap (git, make, curl, clang-22, lld-22) are already there.
 #
 #   - libclang-rt-22-dev and llvm-22: the ASan/UBSan launcher, llvm-objdump, llvm-cov;
-#   - gcc, strace, groff-base and zstd: tests that skip without them;
+#   - gcc, strace, groff-base, zstd, xz-utils, wget and busybox: tests that skip without them;
 #   - a user `tester` (uid 1000) in one supplementary group (testers), the user the suite runs
 #     as: the ownership tests need a user that is not root and has a group besides its own;
 #   - a directory of root's in /tmp and a searchable directory of another user under /var/lib,
@@ -16,7 +16,7 @@ set -euo pipefail
 
 apt-get update -q
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-    libclang-rt-22-dev llvm-22 gcc strace groff-base zstd
+    libclang-rt-22-dev llvm-22 gcc strace groff-base zstd xz-utils wget busybox
 rm -rf /var/lib/apt/lists/*
 
 groupadd --gid 2000 testers

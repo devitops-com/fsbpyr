@@ -32,6 +32,8 @@ EXPECTED_SKIPS = {
         "needs podman",
         "needs a mount that allows set-id bits",
         "needs set-id bits",
+        "needs busybox",  # install.sh's tests run it under busybox sh and with wget:
+        "needs wget",  # test-setup.sh installs both for the full suite
     ),
     # `make test-container`: the Containerfile's `test` stage, as `tester` (uid 1000, one
     # supplementary group) with no podman, and the Python of .python-version only
@@ -43,6 +45,8 @@ EXPECTED_SKIPS = {
         "needs podman",
         "needs a mount that allows set-id bits",
         "needs set-id bits",
+        "needs busybox",
+        "needs wget",
     ),
     # full-suite.yml's job: the same container with rootless podman and /proc/sys opened for
     # user namespaces, as `tester` -- every test the other lists skip runs (the job builds

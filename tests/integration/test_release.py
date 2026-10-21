@@ -1079,9 +1079,13 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
     assert 'release_asset\\": \\"fsbpyr$SUFFIX-$TARGET' in build  # each records its long asset
     assert "-name \"fsbpyr*-$TARGET\" ! -name '*.xz'" in jobs["compare"]
     assert "pattern: built-*" in publish and "merge-multiple: true" in publish
-    assert "sha256sum fsbpyr* THIRD_PARTY_LICENSES*.txt > SHA256SUMS" in publish
+    assert "sha256sum fsbpyr* THIRD_PARTY_LICENSES*.txt install.sh > SHA256SUMS" in publish
     assert "dist/fsbpyr*\n            dist/THIRD_PARTY_LICENSES*.txt" in publish  # attested
-    assert "dist/fsbpyr* dist/THIRD_PARTY_LICENSES*.txt dist/SHA256SUMS" in publish  # published
+    assert "dist/fsbpyr* dist/THIRD_PARTY_LICENSES*.txt dist/install.sh dist/SHA256SUMS" in publish
+    # install.sh is made from the downloaded assets before they are attested, and attested too
+    assert "tools/release/make-install.sh" in publish and "dist/install.sh dist/fsbpyr" in publish
+    assert publish.index("make-install.sh") < publish.index("attest-build-provenance")
+    assert "dist/THIRD_PARTY_LICENSES*.txt\n            dist/install.sh" in publish
 
 
 @pytest.mark.parametrize(("suffix", "long_name"), [
@@ -1274,3 +1278,11 @@ def test_make_runs_on_the_python_given_on_its_command_line_only() -> None:
         "build", "PYTHON=3.13"
     )
     assert "bootstrap.sh --python 3.14" in dry_run("bootstrap", "PYTHON=3.14")
+
+
+def test_publish_job_makes_the_inspector_executable_before_building_install_sh() -> None:
+    """download-artifact drops the executable bit, and make-install.sh runs the inspector."""
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    step = workflow.split("- name: Make install.sh", 1)[1].split("\n      # ", 1)[0]
+    chmod = step.find("chmod +x dist/fsbpyr-x86_64-linux-gnu")
+    assert 0 <= chmod < step.find("make-install.sh")
