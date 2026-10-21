@@ -28,7 +28,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   glibc 2.28 sysroot from the same Debian 10 package versions as x86-64's, for arm64. The
   aarch64 objects call outlined atomics that Debian 10's libgcc 8 lacks, so the launcher links
   clang's compiler-rt builtins too (`libclang-rt-22-dev`; the link stops and says so when
-  they are missing); the x86-64 link is unchanged. The native analysis takes the aarch64
+  they are missing). libgcc is linked in on every target (`-static-libgcc`), so the launcher
+  needs glibc's libraries only: on aarch64 the libcalls LTO adds (`__extenddftf2`,
+  `__trunctfdf2`) had bound to `libgcc_s.so.1`; the x86-64 launcher is byte-identical, under
+  a new runtime id. The native analysis takes the aarch64
   ELF machine and loader (`ld-linux-aarch64.so.1`) from the target table and the same
   manylinux_2_28 limits; the payload's xz natives use no BCJ filter there. `tools/bootstrap.sh`
   accepts aarch64 hosts, and the `Containerfile` builds for amd64 and arm64

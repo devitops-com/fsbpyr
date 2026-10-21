@@ -1770,6 +1770,17 @@ write, a truncated binary.
      `curl` and `uname`, and the workflow-text tests. Not checked: any run on GitHub's arm64
      runners (the trixie arm64 container, the arm64 `clang-22` packages, the arm64 images'
      pulls); step 2 is not done until the aarch64 jobs are green there.
+     Progress 2026-10-21 (GitHub, full suite run 39622219303 and 39640777848 on
+     `phase9-platforms`): on `ubuntu-24.04-arm` the suite, with the three-stage bootstrap,
+     passes on 3.12, 3.13 and 3.14 after two fixes: a bundled library whose version ends in a
+     letter (`libcrypto-….so.1.1.1k`, psycopg-binary's aarch64 wheel) is a native library,
+     and the three `FSBPYR_LLVM23` bootstrap tests skip off x86-64. The arm64 portability
+     images run every app; one check failed there: `hello`'s launcher needed `libgcc_s.so.1`,
+     for `__extenddftf2` and `__trunctfdf2`, libcalls LTO adds after the archives are read, so
+     lld bound them to the shared libgcc although libgcc 8's `libgcc.a` has them. The link now
+     has `-static-libgcc` on every target (checked under QEMU: the aarch64 launcher needs
+     glibc's libraries only; the x86-64 one is byte-identical, its runtime id new), and
+     `test_stub_hardening` checks that the host's launcher needs nothing else.
   3. Linux musl, x86-64 and aarch64 (M–L). Spike: a musl 1.2.2 sysroot from pinned packages
      (Alpine 3.14's, to confirm), the `lto-full` archive linked into a dynamic musl PIE, a
      musllinux numpy wheel loaded, an Alpine release with clang/lld 22 for the bootstrap.

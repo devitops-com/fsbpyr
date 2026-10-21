@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from fsbpyr.natives import glibc_libraries
 from fsbpyr.runtime.registry import Runtime
 
 READELF = shutil.which("readelf")
@@ -45,6 +46,13 @@ def test_stub_is_position_independent(headers: str) -> None:
     flags_1 = re.search(r"\(FLAGS_1\)\s+Flags:(.*)", headers)
 
     assert flags_1 is not None and "PIE" in flags_1.group(1).split()
+
+
+def test_stub_needs_glibc_libraries_only(headers: str) -> None:
+    """-static-libgcc: on aarch64 the stub otherwise needed libgcc_s.so.1 (LTO's libcalls)."""
+    needed = set(re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", headers))
+
+    assert needed and needed <= glibc_libraries()
 
 
 def test_stub_binds_symbols_at_load_time(headers: str) -> None:

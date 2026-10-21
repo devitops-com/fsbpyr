@@ -47,9 +47,11 @@ COMPILE_FLAGS = (
 )  # fmt: skip
 # Export only the Python C API that extension modules link against: exporting everything would
 # let wheel libraries bind to the static zlib, OpenSSL or libffi linked into the stub.
+# libgcc is linked in: the launcher needs glibc's libraries only. Without it, the libcalls
+# LTO adds on aarch64 (__extenddftf2, __trunctfdf2) bound to libgcc_s.so.1.
 LINK_FLAGS = (
     "-Wl,--export-dynamic-symbol=Py*", "-Wl,--export-dynamic-symbol=_Py*",
-    "-Wl,-z,noexecstack", "-Wl,-z,relro", "-Wl,-z,now", "-s",
+    "-Wl,-z,noexecstack", "-Wl,-z,relro", "-Wl,-z,now", "-s", "-static-libgcc",
 )  # fmt: skip
 
 
