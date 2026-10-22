@@ -10,6 +10,13 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Changed
+- `make release` pushes the release tag alone, and the release workflow moves main to the
+  release commit once it has published the release. A release now starts one workflow run, not
+  three: pushing main as well ran `release.yml` and `full-suite.yml` again for a commit that
+  changes only the version and the changelog. It follows the run with a plain line for each job
+  that starts or ends, where `gh run watch` redrew the terminal.
+
 ## [0.23.0] - 2026-10-22
 
 ### Changed

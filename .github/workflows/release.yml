@@ -6,8 +6,9 @@ name: Release
 #     bootstrap's stage 3, then a smoke test) and run the static checks and the core of the
 #     test suite (`make test-ci`), before any tag exists; tools/release/release.sh tags only a
 #     commit whose main run and full-suite.yml's main run (every other test) passed;
-#   - a pushed version tag (tools/release/release.sh pushes it): the same, then attest and
-#     publish the GitHub release. Nothing is released unless the tests pass.
+#   - a pushed version tag (tools/release/release.sh pushes it alone): the same, then attest
+#     and publish the GitHub release and move main to the tag's commit. Nothing is released
+#     unless the tests pass.
 # One fsbpyr per Python version and per target (Phase 9): build, reproduce and compare run once
 # per (target, Python) entry of their matrix, each target on a runner of its architecture
 # (x86_64-linux-gnu on ubuntu-24.04, aarch64-linux-gnu on ubuntu-24.04-arm) in the same Debian
@@ -547,7 +548,7 @@ jobs:
     # The only job that may write: the build above ran with a read-only token.
     permissions:
       actions: read        # the parent commit's workflow runs (gh run list)
-      contents: write      # create the GitHub release
+      contents: write      # create the GitHub release, move main to the release commit
       id-token: write      # sign the attestation (Sigstore, through the job's OIDC token)
       attestations: write  # store it with the repository
     steps:
@@ -631,3 +632,21 @@ jobs:
           cat dist/SHA256SUMS
           gh release create "$TAG" --verify-tag --title "fsbpyr $TAG" --notes-file "$NOTES" \
             dist/fsbpyr* dist/THIRD_PARTY_LICENSES*.txt dist/install.sh dist/SHA256SUMS
+
+      # release.sh pushes the tag alone: main gets the release commit from here, once the release
+      # is out. A push with this job's token starts no workflow run, so a release is this one run
+      # (a push of main from release.sh would run release.yml and full-suite.yml again for a
+      # commit that only changes the version and the changelog). Fast-forward only: main is still
+      # at the parent, which release.sh checked, unless something was merged during the release.
+      - name: Move main to the release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          parent="$(git rev-parse HEAD^)"
+          if ! gh api --method PATCH "repos/$GH_REPO/git/refs/heads/main" \
+              -f sha="$(git rev-parse HEAD)" -F force=false > /dev/null; then
+            echo "::error::main is no longer at ${parent:0:7}: $TAG is released, but main lacks its release commit; merge $TAG into main with a pull request"
+            exit 1
+          fi

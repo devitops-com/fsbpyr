@@ -6,12 +6,15 @@
 #
 # Flow: guard the repo state -> with X.Y.Z, set the version to it -> promote the
 # CHANGELOG's [Unreleased] section to the version -> ONE commit "chore: release
-# vX.Y.Z" -> annotated tag -> push commit and tag atomically. Nothing is built here
-# and no release is created here: the pushed tag triggers .github/workflows/release.yml,
-# which builds dist/fsbpyr from the tag (fsbpyr builds itself; the executable's
-# --version then names the tag), attests it (GitHub artifact attestations can only be
-# made inside GitHub Actions) and publishes the GitHub release. This script then
-# follows that run with `gh run watch` and prints the release URL.
+# vX.Y.Z" -> annotated tag -> push the tag alone. Nothing is built here and no release
+# is created here: the pushed tag triggers .github/workflows/release.yml, which builds
+# dist/fsbpyr from the tag (fsbpyr builds itself; the executable's --version then names
+# the tag), attests it (GitHub artifact attestations can only be made inside GitHub
+# Actions), publishes the GitHub release and then moves hub's main to the release commit.
+# Its token's push starts no workflow run, so a release is one run: a push of main from
+# here would start release.yml and full-suite.yml again for a commit that only changes
+# the version and the changelog. This script follows the tag's run (follow-run.sh: a
+# line per job started or finished) and prints the release URL.
 #
 # The version lives in three files that must agree: pyproject.toml's [project]
 # version, src/fsbpyr/__init__.py's __version__ and fsbpyr's own entry in uv.lock.
@@ -255,18 +258,18 @@ if ! git tag -a "$TAG" -m "fsbpyr $TAG"; then
 fi
 echo "==> Committed and tagged $TAG"
 
-# --- 6. Push commit + tag together -------------------------------------------
-# --atomic: hub takes both or neither, so main never carries a release commit
-# without its tag (and the release workflow never runs for a tag main does not have).
-echo "==> Pushing $BRANCH and $TAG to hub"
-if ! git push --atomic hub "$BRANCH" "$TAG"; then
+# --- 6. Push the tag ----------------------------------------------------------
+# The tag alone: the release workflow moves hub's $BRANCH to the release commit once it
+# has published, so $BRANCH never carries a release commit without a release.
+echo "==> Pushing $TAG to hub"
+if ! git push hub "$TAG"; then
     cat >&2 <<EOF
 ERROR: push failed. The release commit and tag $TAG exist locally, but nothing
        was pushed. Choose one:
        (a) Abort and undo everything local, then start over:
              git tag -d $TAG && git reset --hard HEAD~1
        (b) Fix the remote state and push again; the tag starts the release workflow:
-             git push --atomic hub $BRANCH $TAG
+             git push hub $TAG
 EOF
     exit 1
 fi
@@ -299,22 +302,22 @@ if [ -z "$run_id" ]; then
     exit 0
 fi
 
-echo "==> Watching run $run_id (Ctrl-C stops watching, not the release)"
-if ! gh run watch "$run_id" --exit-status; then
+echo "==> Following run $run_id (Ctrl-C stops following, not the release)"
+if ! bash tools/release/follow-run.sh "$run_id"; then
     # A pushed tag is never moved or pushed again: the version is burned, and the fix is
-    # released under the next patch version, whose notes must also carry the burned one's
-    # changes (the release commit has already promoted them out of [Unreleased]).
+    # released under the next patch version. hub's $BRANCH never got the release commit, so
+    # its [Unreleased] section still carries the burned version's changes.
     next="X.Y.Z+1"
     [[ "$VERSION" =~ $XYZ ]] && next="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
     cat >&2 <<EOF
 ERROR: the release workflow (run $run_id) failed: $TAG is pushed but not published.
        See why:           gh run view $run_id --log-failed
        Transient failure: gh run rerun $run_id --failed
-       Needs a code fix:  this version is burned: fix it on $BRANCH and release $next
-                          (make release VERSION=$next); $TAG stays as it is. Merge
-                          the [$VERSION] section of $CHANGELOG back into [Unreleased],
-                          with the fix's entry, so $next's notes carry its changes,
-                          and note at the top of $CHANGELOG that $TAG has no release
+       Needs a code fix:  this version is burned: drop the local release commit
+                          (git reset --hard hub/$BRANCH), fix it on $BRANCH and release
+                          $next (make release VERSION=$next); $TAG stays as it is. Add
+                          the fix's entry to [Unreleased] in $CHANGELOG and note at its
+                          top that $TAG has no release
 EOF
     exit 1
 fi

@@ -176,7 +176,7 @@ check-c: ## Static analysis of the launcher's C sources (clang --analyze; inform
 # VERSION=X.Y.Z sets the version in the release commit itself (no separate bump commit to push
 # first); without it the current version is released. Only a VERSION given on the make command
 # line counts: an exported one (another tool's) is ignored.
-release: ## Cut a release: promote CHANGELOG, tag + push; the tag makes CI build, attest and publish it (VERSION=X.Y.Z: bump to it in the same commit)
+release: ## Cut a release: promote CHANGELOG, tag, push the tag; CI builds, attests and publishes it, then moves main (VERSION=X.Y.Z: bump to it in the same commit)
 	@bash tools/release/release.sh$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
 
 clean: ## Remove dist/

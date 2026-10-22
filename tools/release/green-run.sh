@@ -8,7 +8,7 @@
 # A release needs a green release.yml run (build, smoke test, checks, core tests) and a green
 # full-suite.yml run (the whole suite) of the commit it is made from. release.sh checks HEAD
 # before it commits; the publish job checks the release commit's parent. A run still in
-# progress is followed with `gh run watch --exit-status`, as release.sh follows the tag's run.
+# progress is followed with follow-run.sh, as release.sh follows the tag's run.
 # Exit 1: no run for that commit, a failed one, or one that fails while watched. The reason
 # goes to stderr, the URL to stdout. Needs gh, authenticated (GH_TOKEN in CI).
 set -euo pipefail
@@ -42,8 +42,8 @@ case "$state" in
         echo "       Fix $BRANCH and push; release once that push's runs are green" >&2
         exit 1 ;;
     *)
-        echo "==> $workflow is still running for $BRANCH at $short; watching run $id" >&2
-        gh run watch "$id" --exit-status >&2 \
+        echo "==> $workflow is still running for $BRANCH at $short; following run $id" >&2
+        bash "$(dirname "${BASH_SOURCE[0]}")/follow-run.sh" "$id" >&2 \
             || { echo "ERROR: $workflow's run for $BRANCH at $short failed: $url" >&2; exit 1; } ;;
 esac
 echo "$url"

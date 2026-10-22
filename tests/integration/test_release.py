@@ -1,10 +1,11 @@
 """release.sh and release-notes.sh against throwaway git repos, a bare origin and a fake gh.
 
 release.sh only tags: it promotes the CHANGELOG (and, given a new version, bumps pyproject.toml,
-src/fsbpyr/__init__.py and uv.lock to it), makes one commit, tags it and pushes both atomically.
-The pushed tag triggers .github/workflows/release.yml, which builds, attests and publishes;
-release.sh then just follows that run. Every guard must stop the release before anything is
-committed, tagged or pushed. Everything lives under ``tmp_path``; nothing reaches GitHub.
+src/fsbpyr/__init__.py and uv.lock to it), makes one commit, tags it and pushes the tag alone.
+The pushed tag triggers .github/workflows/release.yml, which builds, attests, publishes and moves
+main to the release commit; release.sh then just follows that run. Every guard must stop the
+release before anything is committed, tagged or pushed. Everything lives under ``tmp_path``;
+nothing reaches GitHub.
 """
 
 from __future__ import annotations
@@ -57,6 +58,7 @@ def run_script(
 
 RELEASE_SH = ROOT / "tools" / "release" / "release.sh"
 GREEN_RUN_SH = ROOT / "tools" / "release" / "green-run.sh"
+FOLLOW_RUN_SH = ROOT / "tools" / "release" / "follow-run.sh"
 RELEASE_NOTES_SH = ROOT / "tools" / "release" / "release-notes.sh"
 TAG = f"v{VERSION}"
 RUN_ID = "4242"
@@ -69,8 +71,9 @@ REPO_URL = "https://github.com/devitops-com/fsbpyr"
 # A gh that is authenticated, logs every call and knows no release. `run list --branch main`
 # (HEAD's run of a workflow on main, as "ID STATUS/CONCLUSION URL") answers $FAKE_GH_MAIN_RUN
 # for release.yml and $FAKE_GH_FULL_RUN for full-suite.yml, nothing when it is empty; any other
-# `run list` answers $FAKE_GH_RUN_ID from its (FAKE_GH_RUN_AFTER + 1)th call on. `run watch` of
-# one of those runs (4000 too) exits FAKE_GH_CHECK_WATCH_RC, any other FAKE_GH_WATCH_RC.
+# `run list` answers $FAKE_GH_RUN_ID from its (FAKE_GH_RUN_AFTER + 1)th call on. `run view` of
+# one of those runs (4000 too) shows it completed with FAKE_GH_CHECK_CONCLUSION, any other run
+# with FAKE_GH_TAG_CONCLUSION (both "success" by default), as follow-run.sh's --jq prints it.
 # Anything else (such as `release create`) is not expected from release.sh and fails.
 FAKE_GH = """\
 echo "$*" >> "$FAKE_GH_LOG"
@@ -91,11 +94,12 @@ case "$1 $2" in
     calls=$(cat "$FAKE_GH_LOG.runs" 2>/dev/null || echo 0)
     echo $((calls + 1)) > "$FAKE_GH_LOG.runs"
     if [ "$calls" -ge "${FAKE_GH_RUN_AFTER:-0}" ]; then echo "$FAKE_GH_RUN_ID"; fi ;;
-  "run watch")
+  "run view")
     case "$3" in
-      4000|4141|4343) exit "${FAKE_GH_CHECK_WATCH_RC:-0}" ;;
-      *) exit "${FAKE_GH_WATCH_RC:-0}" ;;
-    esac ;;
+      4000|4141|4343) conclusion="${FAKE_GH_CHECK_CONCLUSION:-success}" ;;
+      *) conclusion="${FAKE_GH_TAG_CONCLUSION:-success}" ;;
+    esac
+    printf '%s\n%s\tbuild\n' "$conclusion" "$conclusion" ;;
   *) exit 64 ;;
 esac
 """
@@ -126,6 +130,7 @@ def release_env(tmp_path: Path) -> dict[str, str]:
         "FAKE_GH_MAIN_RUN": f"{MAIN_RUN_ID} {DONE} {RUN_URL}/{MAIN_RUN_ID}",
         "FAKE_GH_FULL_RUN": f"{FULL_RUN_ID} {DONE} {RUN_URL}/{FULL_RUN_ID}",
         "FSBPYR_RELEASE_WATCH_WAIT": "0",
+        "FSBPYR_RELEASE_FOLLOW_POLL": "0",
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_AUTHOR_NAME": "Test",
         "GIT_AUTHOR_EMAIL": "test@example.invalid",
@@ -181,6 +186,7 @@ def make_release_repo(
     shutil.copy2(RELEASE_SH, repo / "tools" / "release" / "release.sh")
     shutil.copy2(RELEASE_NOTES_SH, repo / "tools" / "release" / "release-notes.sh")
     shutil.copy2(GREEN_RUN_SH, repo / "tools" / "release" / "green-run.sh")
+    shutil.copy2(FOLLOW_RUN_SH, repo / "tools" / "release" / "follow-run.sh")
     for name, text in version_files(version).items():
         (repo / name).parent.mkdir(parents=True, exist_ok=True)
         (repo / name).write_text(text)
@@ -224,12 +230,17 @@ def gh_calls(tmp_path: Path) -> list[str]:
 
 def tag_run_calls(tmp_path: Path, prefix: str = "run ") -> list[str]:
     """gh's calls about the tag's workflow run: not the check of main's runs before the commit."""
-    checks = tuple(f"run watch {i}" for i in (MAIN_RUN_ID, FULL_RUN_ID, "4000"))
+    checks = tuple(f"run view {i}" for i in (MAIN_RUN_ID, FULL_RUN_ID, "4000"))
     return [
         c
         for c in gh_calls(tmp_path)
         if c.startswith(prefix) and "--branch main " not in c and not c.startswith(checks)
     ]
+
+
+def followed(tmp_path: Path) -> list[str]:
+    """The runs follow-run.sh looked at, as "run view ID"."""
+    return [" ".join(c.split()[:3]) for c in gh_calls(tmp_path) if c.startswith("run view ")]
 
 
 def assert_nothing_built_or_published(tmp_path: Path) -> None:
@@ -250,8 +261,8 @@ def assert_nothing_committed_or_pushed(repo: Path, tmp_path: Path, env: dict[str
 def assert_released_at_origin(
     repo: Path, tmp_path: Path, env: dict[str, str], tag: str = TAG
 ) -> None:
-    """One release commit on top of the last one and the annotated tag, both on origin, both
-    at HEAD."""
+    """One release commit on top of the last one and the annotated tag at HEAD; origin has the
+    tag and still the old main, which the release workflow moves once it has published."""
     assert git(repo, "log", "--format=%s", env=env).splitlines() == [
         f"chore: release {tag}",
         "initial",
@@ -260,7 +271,8 @@ def assert_released_at_origin(
     assert git(repo, "tag", "-l", "--format=%(contents:subject)", tag, env=env) == f"fsbpyr {tag}"
     head = git(repo, "rev-parse", "HEAD", env=env)
     origin = tmp_path / "origin.git"
-    assert git(origin, "rev-parse", "main", f"{tag}^{{commit}}", env=env).split() == [head, head]
+    assert git(origin, "rev-parse", f"{tag}^{{commit}}", env=env) == head
+    assert git(origin, "rev-parse", "main", env=env) == git(repo, "rev-parse", "HEAD^", env=env)
 
 
 def released_files(repo: Path, env: dict[str, str]) -> list[str]:
@@ -396,7 +408,7 @@ def test_release_waits_for_a_run_in_progress_and_goes_on_when_it_passes(
     result = run_release(repo, release_env | {variable: f"4000 in_progress/ {RUN_URL}/4000"})
 
     assert result.returncode == 0, result.stderr
-    assert "run watch 4000 --exit-status" in gh_calls(tmp_path)
+    assert "run view 4000" in followed(tmp_path)
     assert_released_at_origin(repo, tmp_path, release_env)
 
 
@@ -406,12 +418,12 @@ def test_release_refuses_when_the_run_it_waited_for_fails(
 ) -> None:
     repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
     env = release_env | {"FAKE_GH_FULL_RUN": f"4000 {state} {RUN_URL}/4000",
-                         "FAKE_GH_CHECK_WATCH_RC": "1"}  # fmt: skip
+                         "FAKE_GH_CHECK_CONCLUSION": "failure"}  # fmt: skip
 
     result = run_release(repo, env)
 
     assert result.returncode == 1
-    assert "run watch 4000 --exit-status" in gh_calls(tmp_path)
+    assert "run view 4000" in followed(tmp_path)
     assert "full-suite.yml's run for main" in result.stderr
     assert "failed" in result.stderr
     assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
@@ -513,7 +525,7 @@ def test_release_commits_tags_and_pushes_without_building_or_publishing(
     (run_list,) = tag_run_calls(tmp_path, "run list")
     for option in ("--workflow release.yml", f"--branch {TAG}", f"--commit {head}", "--event push"):
         assert option in run_list
-    assert f"run watch {RUN_ID} --exit-status" in gh_calls(tmp_path)
+    assert f"run view {RUN_ID}" in followed(tmp_path)
     assert f"{REPO_URL}/releases/tag/{TAG}" in result.stdout
 
 
@@ -528,7 +540,7 @@ def test_release_waits_for_the_workflow_run_to_show_up(
 
     assert result.returncode == 0, result.stderr
     assert len(tag_run_calls(tmp_path, "run list")) == 2
-    assert f"run watch {RUN_ID} --exit-status" in gh_calls(tmp_path)
+    assert f"run view {RUN_ID}" in followed(tmp_path)
 
 
 @pytest.mark.parametrize("answer", ["", "null"], ids=["empty", "null"])
@@ -543,36 +555,38 @@ def test_release_succeeds_when_no_workflow_run_shows_up(
     assert result.returncode == 0, result.stderr
     assert_released_at_origin(repo, tmp_path, release_env)
     assert f"{REPO_URL}/actions/workflows/release.yml" in result.stdout
-    assert not [call for call in gh_calls(tmp_path) if call.startswith("run watch")]
+    assert not followed(tmp_path)
 
 
 def test_release_reports_a_failed_workflow_run_with_its_recovery(
     tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    """A pushed tag is never moved: its version is burned, and the fix is released as the next."""
+    """A pushed tag is never moved: its version is burned, and the fix is released as the next.
+    main never got the release commit, so its [Unreleased] section still has the changes."""
     repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
     major, minor, patch = VERSION.split(".")
     following = f"{major}.{minor}.{int(patch) + 1}"
 
-    result = run_release(repo, release_env | {"FAKE_GH_WATCH_RC": "1"})
+    result = run_release(repo, release_env | {"FAKE_GH_TAG_CONCLUSION": "failure"})
 
     assert result.returncode == 1
     assert_released_at_origin(repo, tmp_path, release_env)  # the tag stays pushed
     assert f"{TAG} is pushed but not published" in result.stderr
     assert f"gh run view {RUN_ID} --log-failed" in result.stderr
     assert f"gh run rerun {RUN_ID} --failed" in result.stderr
-    assert f"this version is burned: fix it on main and release {following}" in result.stderr
+    assert "this version is burned: drop the local release commit" in result.stderr
+    assert "(git reset --hard hub/main), fix it on main and release" in result.stderr
     assert f"make release VERSION={following}" in result.stderr
-    assert f"the [{VERSION}] section of CHANGELOG.md back into [Unreleased]" in result.stderr
-    assert f"the top of CHANGELOG.md that {TAG} has no release" in result.stderr
+    assert "the fix's entry to [Unreleased] in CHANGELOG.md" in result.stderr
+    assert f"top that {TAG} has no release" in result.stderr
     assert "refs/tags" not in result.stderr
     assert "git tag" not in result.stderr
 
 
-def test_release_pushes_commit_and_tag_atomically(
+def test_release_reports_a_refused_tag_push_with_its_recovery(
     tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    """origin refuses the tag: main must not move either, or a half-release would sit on main."""
+    """origin refuses the tag: nothing reaches origin, and the local commit and tag can go."""
     repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
     write_program(
         tmp_path / "origin.git" / "hooks" / "update",
@@ -588,10 +602,89 @@ def test_release_pushes_commit_and_tag_atomically(
     assert git(origin, "tag", "--list", env=release_env) == ""
     assert git(repo, "log", "-1", "--format=%s", env=release_env) == f"chore: release {TAG}"
     assert f"git tag -d {TAG} && git reset --hard HEAD~1" in result.stderr
-    assert f"git push --atomic hub main {TAG}" in result.stderr
+    assert f"git push hub {TAG}\n" in result.stderr
     assert "gh release create" not in result.stderr
     assert_nothing_built_or_published(tmp_path)
     assert not tag_run_calls(tmp_path)
+
+
+# ---------------------------------------------------------------------------------- follow-run.sh
+
+# A gh whose nth `run view` prints the file state-n of $FAKE_GH_DIR (the last one again once
+# they run out), as follow-run.sh's --jq does: the run's state, then a "STATE<TAB>JOB" line per
+# job. A file that says "error" is a failed request.
+FAKE_GH_STATES = """\
+n=$(($(cat "$FAKE_GH_DIR/calls" 2>/dev/null || echo 0) + 1))
+echo "$n" > "$FAKE_GH_DIR/calls"
+while [ ! -e "$FAKE_GH_DIR/state-$n" ]; do n=$((n - 1)); done
+[ "$(cat "$FAKE_GH_DIR/state-$n")" != error ] || exit 1
+cat "$FAKE_GH_DIR/state-$n"
+"""
+
+
+def follow_run(tmp_path: Path, *states: str) -> subprocess.CompletedProcess[str]:
+    fake = tmp_path / "gh-bin"
+    write_program(fake / "gh", FAKE_GH_STATES)
+    for n, state in enumerate(states, 1):
+        (fake / f"state-{n}").write_text(state + "\n")
+    env = {"PATH": f"{fake}:{SYSTEM_PATH}", "FAKE_GH_DIR": str(fake),
+           "FSBPYR_RELEASE_FOLLOW_POLL": "0"}  # fmt: skip
+    return run_script(["bash", str(FOLLOW_RUN_SH), "7"], env)
+
+
+def progress(result: subprocess.CompletedProcess[str]) -> list[str]:
+    """The lines without their time, which each line starts with."""
+    lines = result.stdout.splitlines()
+    assert all(re.fullmatch(r"\d\d:\d\d:\d\d  \S.*", line) for line in lines), lines
+    return [line[10:] for line in lines]
+
+
+def test_follow_run_prints_a_plain_line_when_a_job_starts_and_when_it_ends(
+    tmp_path: Path,
+) -> None:
+    """No terminal control: a line per change, nothing redrawn. The run's state ends the wait:
+    GitHub has left jobs of a finished run in_progress. A new run has no jobs yet."""
+    result = follow_run(
+        tmp_path,
+        "queued",
+        "queued\nqueued\tbuild (a)\nqueued\tbuild (b)",
+        "in_progress\nin_progress\tbuild (a)\nqueued\tbuild (b)",
+        "in_progress\nin_progress\tbuild (a)\nqueued\tbuild (b)",
+        "in_progress\nsuccess\tbuild (a)\nin_progress\tbuild (b)",
+        "success\nsuccess\tbuild (a)\nin_progress\tbuild (b)",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert progress(result) == [
+        "in_progress  build (a)",
+        "success  build (a)",
+        "in_progress  build (b)",
+        "run 7 succeeded",
+    ]
+    assert "\x1b" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("conclusion", ["failure", "cancelled", "timed_out"])
+def test_follow_run_fails_when_the_run_does_not_succeed(conclusion: str, tmp_path: Path) -> None:
+    result = follow_run(tmp_path, f"{conclusion}\nsuccess\tbuild (a)\n{conclusion}\tbuild (b)")
+
+    assert result.returncode == 1
+    assert progress(result) == [
+        "success  build (a)",
+        f"{conclusion}  build (b)",
+        f"run 7: {conclusion}",
+    ]
+
+
+def test_follow_run_rides_out_a_failed_request_and_gives_up_after_five(tmp_path: Path) -> None:
+    passing = follow_run(tmp_path / "once", "error", "success\nsuccess\tbuild (a)")
+    failing = follow_run(tmp_path / "always", "error")
+
+    assert passing.returncode == 0, passing.stderr
+    assert progress(passing)[-1] == "run 7 succeeded"
+    assert failing.returncode == 1
+    assert "ERROR: cannot read run 7" in failing.stderr
+    assert (tmp_path / "always" / "gh-bin" / "calls").read_text() == "5\n"
 
 
 # ------------------------------------------------------------ release.sh X.Y.Z: bump and release
@@ -877,6 +970,21 @@ def test_the_image_is_pinned_by_digest_in_the_workflow_and_the_containerfile() -
     for path in pins:
         text = (ROOT / path).read_text(encoding="utf-8")
         assert not re.search(r"debian:trixie$", text, re.MULTILINE), path
+
+
+def test_the_publish_job_moves_main_to_the_release_commit_once_it_is_released() -> None:
+    """release.sh pushes the tag alone, so a release starts one workflow run: a push with the
+    job's own token starts none. Fast-forward only, and only after the release is created."""
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    publish = workflow.split("\n  publish:\n")[1]
+    step = publish.split("- name: Move main to the release commit\n", 1)[1]
+
+    assert publish.index("gh release create") < publish.index("Move main to the release commit")
+    assert "contents: write" in publish
+    assert "GH_TOKEN: ${{ github.token }}" in step
+    assert '--method PATCH "repos/$GH_REPO/git/refs/heads/main"' in step
+    assert '-f sha="$(git rev-parse HEAD)" -F force=false' in step
+    assert "git push" not in RELEASE_SH.read_text(encoding="utf-8").replace("git push hub", "")
 
 
 def test_the_publish_job_checks_the_parent_commits_runs_and_names_the_suite_run() -> None:
