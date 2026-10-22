@@ -422,10 +422,13 @@ jobs:
             sh -c 'umask 077; bash tools/bootstrap.sh --from-source $BOOTSTRAP_ARGS'
 
       # The SBOM of the rebuild, as build makes it of its executable. Both files are written to
-      # one directory, so that the artifact keeps their names.
+      # one directory, so that the artifact keeps their names. Run as root, so the caches go
+      # under root's home as in build: GitHub's HOME belongs to the runner's user, and fsbpyr
+      # refuses a cache there (3.12's and 3.13's extract backports.zstd's native module).
       - name: Make the SBOM of the rebuild
         env:
           MATRIX_PYTHON: ${{ matrix.python }}
+          XDG_CACHE_HOME: /root/.cache
         working-directory: rebuild
         run: |
           dist/stage3$SUFFIX/fsbpyr inspect --verify --json dist/stage3$SUFFIX/fsbpyr \

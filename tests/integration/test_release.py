@@ -1144,6 +1144,10 @@ def test_build_and_reproduce_make_the_sbom_from_their_executable_and_compare_com
     assert "inspect --verify --json dist/fsbpyr$SUFFIX" in build
     assert "tools/release/sbom.py" in build and '-o "dist/$ASSET.cdx.json"' in build
     assert "stage3$SUFFIX/fsbpyr inspect --verify --json" in reproduce
+    # run as root with GitHub's HOME, which another user owns: 3.12's and 3.13's fsbpyr extract
+    # backports.zstd into a cache, and a cache under that HOME is refused
+    step = reproduce.split("name: Make the SBOM of the rebuild")[1].split("- name:")[0]
+    assert "XDG_CACHE_HOME: /root/.cache" in step
     assert "tools/release/sbom.py" in reproduce
     assert "stage3$SUFFIX/fsbpyr.cdx.json" in reproduce
     upload = reproduce.split("name: Upload the rebuilt executable")[1]
