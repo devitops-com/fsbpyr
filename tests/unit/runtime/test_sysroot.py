@@ -119,7 +119,7 @@ def test_fetch_verifies_extracts_once_and_reuses(tmp_path: Path) -> None:
     cache = tmp_path / "cache"
     (cache / "downloads").mkdir(parents=True)
     (cache / "downloads" / "libc6-dev.deb").write_bytes(deb)  # as if downloaded before
-    pin = SysrootPin(name="test-sysroot", glibc="2.28",
+    pin = SysrootPin(name="test-sysroot", glibc="2.36", manylinux="2.34",
                      packages=(("https://example.invalid/libc6-dev.deb",
                                 hashlib.sha256(deb).hexdigest()),))  # fmt: skip
 
@@ -136,7 +136,7 @@ def test_fetch_rejects_a_tampered_download(tmp_path: Path) -> None:
     cache = tmp_path / "cache"
     (cache / "downloads").mkdir(parents=True)
     (cache / "downloads" / "libc6-dev.deb").write_bytes(b"tampered")
-    pin = SysrootPin(name="test-sysroot", glibc="2.28",
+    pin = SysrootPin(name="test-sysroot", glibc="2.36", manylinux="2.34",
                      packages=(("https://example.invalid/libc6-dev.deb", "0" * 64),))  # fmt: skip
 
     with pytest.raises(SysrootError, match="SHA-256"):
@@ -144,13 +144,13 @@ def test_fetch_rejects_a_tampered_download(tmp_path: Path) -> None:
 
 
 def test_pin_identity_covers_the_package_hashes() -> None:
-    pin = SysrootPin(name="s", glibc="2.28",
+    pin = SysrootPin(name="s", glibc="2.36", manylinux="2.34",
                      packages=(("https://example.invalid/a.deb", "1" * 64),))  # fmt: skip
-    changed = SysrootPin(name="s", glibc="2.28",
+    changed = SysrootPin(name="s", glibc="2.36", manylinux="2.34",
                          packages=(("https://example.invalid/a.deb", "2" * 64),))  # fmt: skip
 
     assert pin.identity.startswith("s-") and pin.identity != changed.identity
-    assert pin.baseline == (2, 28)
+    assert pin.baseline == (2, 34)  # the apps', below the sysroot's own glibc
 
 
 def test_downloads_must_use_https(tmp_path: Path) -> None:

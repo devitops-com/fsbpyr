@@ -11,6 +11,23 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Changed
+- **The glibc baseline is 2.34 (manylinux_2_34), and the launcher links against Debian 12.**
+  fsbpyr takes its sysroot from the oldest Debian release still in LTS, Debian 12 (owner,
+  2026-10-22): glibc 2.36, libgcc 12 and Linux 6.1 headers from Debian's own repository
+  (bookworm's main suite, unchanged since its last point release), no longer Debian 10's from
+  archive.debian.org. What links against it needs glibc 2.34, the version glibc moved
+  `pthread_create`, `dlopen` and `__libc_start_main` to; the launcher binds `hypot` to its
+  pre-2.35 version to stay there (`--wrap=hypot`). uv picks manylinux_2_34 wheels, and the build
+  warns about native files above auditwheel's manylinux_2_34 limits (per target: libgcc_s's GCC
+  version differs). An executable needs glibc 2.34 or newer: RHEL/Rocky/Alma 9 and 10, Amazon
+  Linux 2023, Ubuntu 22.04 and newer, Debian 12 and newer. **Debian 10 and 11, RHEL/Rocky 8,
+  Ubuntu 20.04 and SLES/openSUSE Leap 15 are no longer supported.** The portability tests run
+  on Rocky 9, Amazon Linux 2023, Ubuntu 22.04, 24.04 and 26.04, Debian 12 and 13, AlmaLinux 10,
+  openSUSE Leap 16.0, Fedora and Arch. Runtime ids, old → new:
+  - x86-64: 3.12 `a9a5adbe3f13` → `097611fb04e0`, 3.13 `4d0cc0e40f7d` → `dda2a588bdad`,
+    3.14 `97b0d36b1b68` → `44cf68b761b5`;
+  - aarch64: 3.12 `a09051735e25` → `2db7eb5df4d1`, 3.13 `2dda88f1c21f` → `17767120cc07`,
+    3.14 `6d88769e0109` → `73f9baa92087`.
 - **Every test and check runs in the full suite; a release only builds and publishes.** The
   release build is one reusable workflow, `build.yml`. The full suite calls it with its checks on
   every push to main: the build is checked against stage 3, smoke-tested, its `.xz` unpacked,

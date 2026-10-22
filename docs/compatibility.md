@@ -26,12 +26,13 @@ Each row gives what you see, why, and what to do.
 The executable carries CPython, the standard library and the locked distributions. It needs
 these from the machine:
 
-- **glibc 2.28 or newer** on Linux x86-64. `fsbpyr inspect` shows the glibc the executable
-  actually needs, which can be older. Only 2.28 and newer is tested.
+- **glibc 2.34 or newer** on Linux x86-64 or aarch64 (RHEL 9, Amazon Linux 2023, Ubuntu
+  22.04, Debian 12 and newer). `fsbpyr inspect` shows the glibc the executable actually needs.
+  Only 2.34 and newer is tested: the distributions below, releases their vendors support.
 - **The libraries native code links and the build did not bundle.** `fsbpyr build` prints
   `target needs: glibc >= X.Y; libstdc++.so.6 (GLIBCXX_..., CXXABI_...), libgcc_s.so.1`, and
   `fsbpyr inspect` shows it again. Install those libraries on the target. A build warns when a
-  native file needs a `GLIBCXX`, `CXXABI`, `GCC` or `ZLIB` version newer than manylinux_2_28
+  native file needs a `GLIBCXX`, `CXXABI`, `GCC` or `ZLIB` version newer than manylinux_2_34
   systems provide.
 - **To check a target before deploying,** run the app there with `FSBPYR_SELFTEST=natives`. It
   extracts every native extension into the cache and runs the dynamic loader of the target the
@@ -63,17 +64,15 @@ each of these distributions with podman and runs every check there.
 
 | Distribution | glibc |
 |---|---|
-| `docker.io/library/debian:10` | 2.28 |
-| `docker.io/library/rockylinux:8` | 2.28 |
-| `docker.io/library/debian:11` | 2.31 |
-| `docker.io/library/ubuntu:20.04` | 2.31 |
 | `docker.io/library/rockylinux:9` | 2.34 |
 | `docker.io/library/amazonlinux:2023` | 2.34 |
 | `docker.io/library/ubuntu:22.04` | 2.35 |
 | `docker.io/library/debian:12` | 2.36 |
-| `docker.io/opensuse/leap:15.6` | 2.38 |
 | `docker.io/library/ubuntu:24.04` | 2.39 |
+| `docker.io/library/almalinux:10` | 2.39 |
+| `docker.io/opensuse/leap:16.0` | 2.40 |
 | `docker.io/library/debian:13` | 2.41 |
+| `docker.io/library/ubuntu:26.04` | 2.43 |
 | `docker.io/library/fedora:latest` | 2.43 |
 | `docker.io/library/archlinux:latest` | 2.44 |
 
@@ -138,6 +137,6 @@ investigated further*).
 |---|---|---|
 | `refusing cache directory <path>: owned by another user`, or `... other users may write to it`, in a CI container | The way from `/` to the cache passes a directory that another user owns or others can write to. Mounted home directories (GitHub's `/github/home` in a job container) are the usual case | Put the cache under the user's own tree: set `FSBPYR_CACHE_DIR`, or `XDG_CACHE_HOME` as `.github/workflows/release.yml` does for its job container |
 | `ImportError: ... noexec mount ... set FSBPYR_CACHE_DIR to another directory` | The cache is on a file system mounted `noexec` | Point `FSBPYR_CACHE_DIR` at a directory on a file system that allows execution |
-| `ImportError: ... version 'GLIBC_2.xx' not found`, followed by what the build required and what the system has | A native file needs a newer glibc, libstdc++ or libgcc_s than the target has | Build on the baseline (wheels, or `fsbpyr build` against the 2.28 sysroot), or run on a newer system |
-| A C++ or Fortran dependency without a manylinux wheel is built from its sdist, and the build warns about the glibc it needs | The sysroot has no libstdc++, so such a build cannot be redone against glibc 2.28 and keeps the build host's | Build the dependency as a `manylinux_2_28` wheel (for example with cibuildwheel) and point uv at it |
+| `ImportError: ... version 'GLIBC_2.xx' not found`, followed by what the build required and what the system has | A native file needs a newer glibc, libstdc++ or libgcc_s than the target has | Build on the baseline (manylinux_2_34 wheels, or `fsbpyr build` against the Debian 12 sysroot), or run on a newer system |
+| A C++ or Fortran dependency without a manylinux wheel is built from its sdist, and the build warns about the glibc it needs | The sysroot has no libstdc++, so such a build cannot be redone against Debian 12's glibc and keeps the build host's | Build the dependency as a `manylinux_2_34` wheel (for example with cibuildwheel) and point uv at it |
 | The shell says the executable is "not found" although the file exists | The target has no glibc loader at the path the executable names (musl, such as Alpine) | Run it on a glibc system; musl is not a supported target |

@@ -385,7 +385,7 @@ def test_runtime_from_a_modified_executable_is_refused(tmp_path: Path) -> None:
 
 INPUTS: dict[str, object] = {
     "pbs": {"release": "20261009", "name": "cpython-3.14.8+20261009-x", "sha256": "ab" * 32},
-    "sysroot": "debian10-glibc2.28-x86_64-0123456789ab",
+    "sysroot": "debian12-glibc2.36-x86_64-0123456789ab",
     "layout": registry.LAYOUT_VERSION,
 }
 COMPONENTS = {"openssl": "OpenSSL 3.5.9 29 Sep 2026", "sqlite": "3.53.1"}

@@ -20,13 +20,13 @@ from tests.support.elf import make_elf
 
 X86_GNU = Target("x86_64-linux-gnu", "x86_64-unknown-linux-gnu", "pgo+lto-full", "x86-64",
                  62, "ld-linux-x86-64.so.2", "glibc", lzma.FILTER_X86,
-                 "x86_64-linux-gnu", "x86_64-manylinux_2_28")  # fmt: skip
+                 "x86_64-linux-gnu", "x86_64-manylinux_2_34")  # fmt: skip
 DEB_ARCH = {"x86-64": "amd64", "aarch64": "arm64"}  # Debian's names of the machines
 EXPECTED = (
     X86_GNU,
     Target("aarch64-linux-gnu", "aarch64-unknown-linux-gnu", "pgo+lto-full", "aarch64",
            183, "ld-linux-aarch64.so.1", "glibc", None,
-           "aarch64-linux-gnu", "aarch64-manylinux_2_28"),
+           "aarch64-linux-gnu", "aarch64-manylinux_2_34"),
     Target("x86_64-linux-musl", "x86_64-unknown-linux-musl", "lto-full", "x86-64",
            62, "ld-musl-x86_64.so.1", "musl", lzma.FILTER_X86,
            "x86_64-linux-musl", "x86_64-unknown-linux-musl"),
@@ -140,8 +140,12 @@ def test_a_glibc_target_has_pins_for_every_python_and_a_sysroot(target: Target) 
         assert re.fullmatch(r"[0-9a-f]{64}", pin.sha256)
         assert pin.url.endswith(f"-{target.triple}-{target.flavor.replace('+', '%2B')}.tar.zst")
     sysroot = pins.sysroot_for(target.triple)
-    assert sysroot.baseline == (2, 28)
+    assert (sysroot.glibc, sysroot.baseline) == ("2.36", (2, 34))
+    assert target.uv_platform == f"{target.triple.partition('-')[0]}-manylinux_2_34"
     assert all(url.endswith(f"_{DEB_ARCH[target.arch]}.deb") for url, _ in sysroot.packages)
+    # Debian's own repository: no snapshot, no archive of a release out of support
+    assert all(url.startswith("https://deb.debian.org/debian/pool/main/")
+               for url, _ in sysroot.packages)  # fmt: skip
 
 
 def test_the_aarch64_sysroot_is_the_x86_64_ones_packages_for_arm64() -> None:
@@ -198,7 +202,7 @@ def test_each_target_picks_its_loader_filter_and_machine(
 
 def test_sysroot_names_of_every_libc_are_ours_to_collect() -> None:
     names = collect.NAMES["sysroots"]
-    assert names.fullmatch("debian10-glibc2.28-x86_64-0123456789ab")
-    assert names.fullmatch("debian10-glibc2.28-aarch64")
+    assert names.fullmatch("debian12-glibc2.36-x86_64-0123456789ab")
+    assert names.fullmatch("debian10-glibc2.28-aarch64")  # a sysroot of an older fsbpyr
     assert names.fullmatch("alpine314-musl1.2.2-aarch64")
     assert not names.fullmatch("debian10-bionic2.28-x86_64")

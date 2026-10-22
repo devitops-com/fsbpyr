@@ -36,10 +36,10 @@ class Target:
 TARGETS = (
     Target("x86_64-linux-gnu", "x86_64-unknown-linux-gnu", "pgo+lto-full", "x86-64",
            EM_X86_64, "ld-linux-x86-64.so.2", "glibc", lzma.FILTER_X86,
-           "x86_64-linux-gnu", "x86_64-manylinux_2_28"),
+           "x86_64-linux-gnu", "x86_64-manylinux_2_34"),
     Target("aarch64-linux-gnu", "aarch64-unknown-linux-gnu", "pgo+lto-full", "aarch64",
            EM_AARCH64, "ld-linux-aarch64.so.1", "glibc", None,
-           "aarch64-linux-gnu", "aarch64-manylinux_2_28"),
+           "aarch64-linux-gnu", "aarch64-manylinux_2_34"),
     Target("x86_64-linux-musl", "x86_64-unknown-linux-musl", "lto-full", "x86-64",
            EM_X86_64, "ld-musl-x86_64.so.1", "musl", lzma.FILTER_X86,
            "x86_64-linux-musl", "x86_64-unknown-linux-musl"),

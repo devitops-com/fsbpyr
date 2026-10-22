@@ -21,6 +21,7 @@ LAUNCHER_SOURCES = (
     "cache.c",
     "due.c",
     "way.c",
+    "glibc.c",
 )
 LAUNCHER_FILES = (
     *LAUNCHER_SOURCES,
@@ -48,10 +49,12 @@ COMPILE_FLAGS = (
 # Export only the Python C API that extension modules link against: exporting everything would
 # let wheel libraries bind to the static zlib, OpenSSL or libffi linked into the stub.
 # libgcc is linked in: the launcher needs glibc's libraries only. Without it, the libcalls
-# LTO adds on aarch64 (__extenddftf2, __trunctfdf2) bound to libgcc_s.so.1.
+# LTO adds on aarch64 (__extenddftf2, __trunctfdf2) bound to libgcc_s.so.1. --wrap=hypot: the
+# pre-2.35 hypot (glibc.c), so that the stub stays within the glibc 2.34 baseline.
 LINK_FLAGS = (
     "-Wl,--export-dynamic-symbol=Py*", "-Wl,--export-dynamic-symbol=_Py*",
     "-Wl,-z,noexecstack", "-Wl,-z,relro", "-Wl,-z,now", "-s", "-static-libgcc",
+    "-Wl,--wrap=hypot",
 )  # fmt: skip
 
 
@@ -80,8 +83,9 @@ class StubBuildError(RuntimeError):
 
 def outlined_atomics(toolchain: Toolchain, triple: str) -> Path | None:
     """The library with the outlined atomics (``__aarch64_cas4_acq_rel`` and the like) that
-    PBS's aarch64 objects call: clang's compiler-rt builtins. The sysroot's libgcc 8 predates
-    them (GCC 10), so the link needs them from the toolchain; x86-64 needs nothing."""
+    PBS's aarch64 objects call: clang's compiler-rt builtins, which the link takes them from
+    (Debian 10's libgcc 8 predated them; Debian 12's libgcc 12 has them too, but later in the
+    link); x86-64 needs nothing."""
     if not triple.startswith("aarch64-"):
         return None
     command = [os.fspath(toolchain.clang), f"--target={triple}", "-rtlib=compiler-rt",

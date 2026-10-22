@@ -1,4 +1,4 @@
-"""Phase 6c exit criteria: executables run on older distributions (glibc 2.28 baseline, D25).
+"""Phase 6c exit criteria: executables run on older distributions (glibc 2.34 baseline, D25).
 
 Needs podman with the images below (pulled on first use) and the cached runtime. When
 FSBPYR_PORTABILITY_APPS names a directory with the four built apps (tools/portability-apps.sh,
@@ -32,7 +32,7 @@ OBJDUMP = shutil.which("llvm-objdump-22") or shutil.which("llvm-objdump")
 pytestmark = [pytest.mark.slow, pytest.mark.skipif(PODMAN is None, reason="needs podman")]
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "projects"
-IMAGES = images_for(platform.machine())  # x86-64: all 13; aarch64: those with an arm64 variant
+IMAGES = images_for(platform.machine())  # x86-64: all 11; aarch64: those with an arm64 variant
 COMMANDS = {  # (binary, arguments) -> expected stdout; the HTTP checks need the host's network
     ("hello", "5 x"): "hello ['5', 'x']",
     **{("heavy", check): out for check, out in HEAVY.items()},
@@ -115,7 +115,7 @@ def test_selftest_natives_passes_on_older_distributions(apps: Path, image: str) 
 def test_selftest_natives_names_a_library_the_machine_lacks(apps: Path) -> None:
     script = ("rm -f /usr/lib/*-linux-gnu/libstdc++.so.6* /lib/*-linux-gnu/libstdc++.so.6*; "
               "FSBPYR_CACHE_DIR=/tmp/cache FSBPYR_SELFTEST=natives /apps/heavy")  # fmt: skip
-    result = _podman(apps, IMAGES[0], script)  # debian:10
+    result = _podman(apps, "docker.io/library/debian:12", script)  # the layout the rm names
 
     assert result.returncode != 0
     assert "fsbpyr selftest: missing libstdc++.so.6 (needed by " in result.stderr
@@ -191,4 +191,4 @@ def test_reported_glibc_requirement_matches_the_binary(
     found = [_objdump_glibc(data, tmp_path / "object") for data in objects]
     highest = max((v for v in found if v is not None), default=None)
     assert highest is not None and reported == f"{highest[0]}.{highest[1]}"
-    assert highest <= (2, 28)  # the baseline these distributions provide
+    assert highest <= (2, 34)  # the baseline these distributions provide
