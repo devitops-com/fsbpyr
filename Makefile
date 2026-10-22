@@ -96,16 +96,19 @@ uninstall: ## Remove what `make install` installed
 # --- Checks ---
 
 # The tests' temporary files (gigabytes of builds) go under TESTTMP, on a regular file system:
-# /tmp is often a tmpfs mounted nosuid, where a set-gid start cannot be tested. The runtime's
-# pinned downloads are kept there between runs (tests/support/downloads.py), unless
-# FSBPYR_TEST_DOWNLOADS names another place.
+# /tmp is often a tmpfs mounted nosuid, where a set-gid start cannot be tested. Each run gets a
+# directory of its own there, removed when the run ends (uv and pytest leave files in TMPDIR);
+# after Ctrl-C, the tests' subprocesses may still be writing there, hence the second try.
+# The runtime's pinned downloads are kept in TESTTMP between runs (tests/support/downloads.py),
+# unless FSBPYR_TEST_DOWNLOADS names another place.
 TESTTMP ?= $(HOME)/tmp
-TESTENV := mkdir -p "$(TESTTMP)" && TMPDIR="$(TESTTMP)" \
+TESTENV := mkdir -p "$(TESTTMP)" && tmp=$$(mktemp -d "$(TESTTMP)/fsbpyr-test.XXXXXX") \
+	&& trap 'rm -rf "$${tmp:?}" 2>/dev/null || { sleep 2; rm -rf "$${tmp:?}"; }' EXIT && TMPDIR="$$tmp" \
 	FSBPYR_TEST_DOWNLOADS="$${FSBPYR_TEST_DOWNLOADS:-$(TESTTMP)/fsbpyr-test-downloads}"
 # `make test` runs the tests in JOBS processes (pytest-xdist), each test file in one of them.
 JOBS ?= 8
 
-test: ## Run the test suite in JOBS processes (default 8; temporary files under TESTTMP, ~/tmp)
+test: ## Run the test suite in JOBS processes (default 8; temporary files in a directory under TESTTMP, ~/tmp, removed afterwards)
 	$(TESTENV) $(UVRUN) pytest -n $(JOBS) --dist loadfile
 
 # What CI runs before a release: unit and integration tests, real builds, executables run

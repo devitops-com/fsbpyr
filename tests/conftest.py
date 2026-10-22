@@ -27,7 +27,8 @@ from fsbpyr.project import Project
 # (some reasons carry runtime text).
 EXPECTED_SKIPS = {
     # release.yml's build job: a debian:trixie container, as root with no other group, where
-    # `unshare -r` fails, without podman and with no directory of root's in /tmp. Its cache
+    # `unshare -r` fails (the TMPDIR `make test-ci` makes in /tmp is a directory of root's
+    # there, so the /tmp/.X test gets as far as unshare), without podman. Its cache
     # holds the runtime of its own Python only (the stdlib tests compare all three versions'
     # distributions), and on 3.12 one test is a skipif (the functional resources API)
     "ci": (
@@ -37,7 +38,7 @@ EXPECTED_SKIPS = {
         "needs a supplementary group",
         "needs root's /",
         "tests/unit/boot/test_way.py::test_in_a_user_namespace_owners_outside_it_count_as_roots",
-        "needs unshare, /tmp/.X",
+        "tests/unit/boot/test_way.py::test_below_a_shared_directory_an_owner_outside_the_namespace_is_refused",
         "needs podman",
         "needs a mount that allows set-id bits",
         "needs set-id bits",
