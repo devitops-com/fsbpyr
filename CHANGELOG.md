@@ -10,16 +10,6 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
-### Security
-- **A privileged start is refused, and the multiprocessing and re-exec parent check compares
-  credentials.** An executable run set-uid, set-gid or with file capabilities (the kernel sets
-  AT_SECURE) exits 70 with "refusing a privileged start", because the cache location would
-  still come from the caller's environment. This stops set-gid deployments and uses such as
-  `setcap cap_net_bind_service+ep app`, which ran before. The D22/D23 check of a
-  multiprocessing or `-m`/`-c` child's parent now also needs the parent's real and effective
-  user and group ids to equal the child's. The launcher changed, so the runtime id changes.
-  The new [docs/security.md](docs/security.md) is the threat model.
-
 ### Added
 - **A CycloneDX SBOM for every release executable** (REP-7). Vulnerability scanners cannot see
   the OpenSSL, SQLite, expat and zlib inside an fsbpyr executable. Each long-named asset now has
@@ -40,6 +30,26 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   libstdc++.so.6`. It exits 1 if anything is missing and 0 otherwise. Libraries an extension
   opens later by name are not seen. Documented in docs/compatibility.md, the README and the
   man page. Other values of `FSBPYR_SELFTEST` behave as before.
+
+### Fixed
+- **A build killed with SIGTERM cleans up like one interrupted with Ctrl-C.** `fsbpyr` handles
+  SIGTERM as SIGINT: the build removes the executable it was writing and keeps an existing
+  output, prints "interrupted" and exits 130, where it used to die at once and leave a
+  `.NAME.XXXX.tmp` beside the output.
+
+## [0.21.0] - 2026-10-21
+
+### Security
+- **A privileged start is refused, and the multiprocessing and re-exec parent check compares
+  credentials.** An executable run set-uid, set-gid or with file capabilities (the kernel sets
+  AT_SECURE) exits 70 with "refusing a privileged start", because the cache location would
+  still come from the caller's environment. This stops set-gid deployments and uses such as
+  `setcap cap_net_bind_service+ep app`, which ran before. The D22/D23 check of a
+  multiprocessing or `-m`/`-c` child's parent now also needs the parent's real and effective
+  user and group ids to equal the child's. The launcher changed, so the runtime id changes.
+  The new [docs/security.md](docs/security.md) is the threat model.
+
+### Added
 - **Linux aarch64 with glibc** (Phase 9, platforms step 2). An fsbpyr on an aarch64 host builds
   its runtime and its apps for aarch64, as the x86-64 one does for x86-64 (no cross builds).
   `runtime/pins.py` pins the python-build-standalone 20261009 `pgo+lto-full` archives for
@@ -455,10 +465,6 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   container, as before, and the README's release check no longer runs `uv self update`.
 
 ### Fixed
-- **A build killed with SIGTERM cleans up like one interrupted with Ctrl-C.** `fsbpyr` handles
-  SIGTERM as SIGINT: the build removes the executable it was writing and keeps an existing
-  output, prints "interrupted" and exits 130, where it used to die at once and leave a
-  `.NAME.XXXX.tmp` beside the output.
 - **The build's compile pool forks only when the process runs one thread.** It counted the
   threads `threading` knows; one started by C code (or pytest-xdist's) did not count, and the
   pool forked a multi-threaded process, which may deadlock. It now counts `/proc/self/task`, as

@@ -138,7 +138,7 @@ static size_t next_part(char **at, char *name) {
 /* Whether a ".." is ahead in ``at``. */
 static bool up_ahead(char *at) {
     char name[NAME_MAX + 1];
-    for (size_t length; (length = next_part(&at, name)) != 0;)
+    while (next_part(&at, name) != 0)
         if (strcmp(name, "..") == 0) return true;
     return false;
 }
@@ -169,13 +169,14 @@ static enum fsb_way walk(struct walk *w, const char *root) {
 }
 
 enum fsb_way fsb_way_check(const char *root, char *where, size_t size, int *error) {
-    struct walk w = {.capacity = 2 * PATH_MAX + 2, .fd = -1, .uid = geteuid(), .gid = getegid(),
+    /* the buffers in locals: only these are freed below, whatever the walk wrote */
+    char *pending = malloc(2 * PATH_MAX + 2), *walked = malloc(PATH_MAX + NAME_MAX + 2),
+         *target = malloc(PATH_MAX);
+    struct walk w = {.pending = pending, .capacity = 2 * PATH_MAX + 2, .walked = walked,
+                     .target = target, .fd = -1, .uid = geteuid(), .gid = getegid(),
                      .where = where, .size = size, .error = error};
-    w.pending = malloc(w.capacity);
-    w.walked = malloc(PATH_MAX + NAME_MAX + 2);
-    w.target = malloc(PATH_MAX);
     enum fsb_way way = FSB_WAY_MEMORY;
-    if (w.pending != NULL && w.walked != NULL && w.target != NULL) {
+    if (pending != NULL && walked != NULL && target != NULL) {
         size_t cwd = 0;
         if (root[0] != '/') {
             if (getcwd(w.pending, PATH_MAX) == NULL) {
@@ -193,8 +194,8 @@ enum fsb_way fsb_way_check(const char *root, char *where, size_t size, int *erro
     }
 done:
     if (w.fd >= 0) close(w.fd);
-    free(w.pending);
-    free(w.walked);
-    free(w.target);
+    free(pending);
+    free(walked);
+    free(target);
     return way;
 }
