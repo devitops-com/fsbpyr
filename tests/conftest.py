@@ -2,8 +2,8 @@
 the launcher's background runs would otherwise act on the caches tests use, or the user's.
 
 pytest passes a run however many tests skip. FSBPYR_TESTS_REQUIRE_ALL names one of the lists
-below (CI's test step sets `ci`, the full-suite workflow `full` and `portability`), and a
-skip that the list does not expect fails the run.
+below (the full-suite workflow sets `full` and `portability`, `make test-container`
+`container`), and a skip that the list does not expect fails the run.
 
 At the end, the builds of local projects the run made leave uv's cache: the tests build their
 fixture projects (and fsbpyr) from new temporary copies every time, and uv keeps every build.
@@ -26,25 +26,6 @@ from fsbpyr.project import Project
 # The skips each list's environment cannot avoid, each entry a nodeid or the start of a reason
 # (some reasons carry runtime text).
 EXPECTED_SKIPS = {
-    # release.yml's build job: a debian:trixie container, as root with no other group, where
-    # `unshare -r` fails (the TMPDIR `make test-ci` makes in /tmp is a directory of root's
-    # there, so the /tmp/.X test gets as far as unshare), without podman. Its cache
-    # holds the runtime of its own Python only (the stdlib tests compare all three versions'
-    # distributions), and on 3.12 one test is a skipif (the functional resources API)
-    "ci": (
-        "PBS distribution for",
-        "3.12's takes one resource name",
-        "root ignores file modes",
-        "needs a supplementary group",
-        "needs root's /",
-        "tests/unit/boot/test_way.py::test_in_a_user_namespace_owners_outside_it_count_as_roots",
-        "tests/unit/boot/test_way.py::test_below_a_shared_directory_an_owner_outside_the_namespace_is_refused",
-        "needs podman",
-        "needs a mount that allows set-id bits",
-        "needs set-id bits",
-        "needs busybox",  # install.sh's tests run it under busybox sh and with wget:
-        "needs wget",  # test-setup.sh installs both for the full suite
-    ),
     # `make test-container`: the Containerfile's `test` stage, as `tester` (uid 1000, one
     # supplementary group) with no podman, and the Python of .python-version only
     "container": (
@@ -55,8 +36,8 @@ EXPECTED_SKIPS = {
         "needs podman",
         "needs a mount that allows set-id bits",
         "needs set-id bits",
-        "needs busybox",
-        "needs wget",
+        "needs busybox",  # install.sh's tests run it under busybox sh and with wget:
+        "needs wget",  # test-setup.sh installs both for the full suite
     ),
     # full-suite.yml's job: the same container with rootless podman and /proc/sys opened for
     # user namespaces, as `tester` -- every test the other lists skip runs (the job builds

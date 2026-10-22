@@ -5,7 +5,7 @@
     python3 tools/release/sbom.py INSPECT.json [-o FILE]
 
 A pure function of that JSON, so two byte-identical executables give byte-identical SBOMs
-(release.yml's compare job checks it): no timestamp, no path, and a serial number derived from
+(build.yml's compare job checks it): no timestamp, no path, and a serial number derived from
 the executable's SHA-256. It lists the executable (with that SHA-256), fsbpyr, CPython, the
 libraries the runtime links statically (build_info's runtime_components) and the Python
 distributions from an index. The C libraries carry a CPE, which is what vulnerability

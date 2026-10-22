@@ -8,7 +8,8 @@
 # `Unreleased`. CHANGELOG defaults to the project's CHANGELOG.md. The section runs up to the next
 # `## [` header; leading and trailing blank lines are dropped.
 #
-# Used by release.sh (the [Unreleased] section must not be empty) and by the release workflow
+# Used by prepare.sh (the [Unreleased] section must not be empty), release.sh (the version's
+# section must be there, [Unreleased] empty) and by the release workflow
 # (.github/workflows/release.yml: the notes of the GitHub release for the pushed tag).
 # Exit status: 0 with the notes on stdout, 1 if the section is missing or empty, 2 on bad usage.
 set -euo pipefail

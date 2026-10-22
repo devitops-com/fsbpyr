@@ -1,516 +1,36 @@
 name: Release
 
-# One build definition for both uses:
-#   - pull requests and pushes to main: prove the release build works (`make bootstrap` on
-#     Debian trixie, then the installed fsbpyr builds itself with `make build`, byte for byte
-#     bootstrap's stage 3, then a smoke test) and run the static checks and the core of the
-#     test suite (`make test-ci`), before any tag exists; tools/release/release.sh tags only a
-#     commit whose main run and full-suite.yml's main run (every other test) passed;
-#   - a pushed version tag (tools/release/release.sh pushes it): the same, then attest and
-#     publish the GitHub release. Nothing is released unless the tests pass.
-# One fsbpyr per Python version and per target (Phase 9): build, reproduce and compare run once
-# per (target, Python) entry of their matrix, each target on a runner of its architecture
-# (x86_64-linux-gnu on ubuntu-24.04, aarch64-linux-gnu on ubuntu-24.04-arm) in the same Debian
-# trixie image (a multi-arch index: its digest covers both), and the release carries every
-# variant. Every asset names its Python and its target (owner, 2026-10-22):
-# `fsbpyr-3.14-x86_64-linux-gnu`, `fsbpyr-3.12-aarch64-linux-gnu` and so on, each with its
-# `.xz` and `THIRD_PARTY_LICENSES-3.X-<target>.txt`. Adding a Python version adds an entry to
-# the four `python` lists, adding a target one to the four `target` lists and the `include`
-# entry that names its runner.
-# Each executable also has a CycloneDX SBOM, `<asset>.cdx.json` (tools/release/sbom.py, REP-7):
-# build makes it from its frozen executable, reproduce from its rebuild, compare checks the two
-# are identical, and the sbom job attests it to its executable.
-# GitHub artifact attestations can only be made inside GitHub Actions, so releases are built
-# here and not on the maintainer's machine.
+# For a pushed version tag (tools/release/release.sh pushes it, on a main commit whose
+# full-suite.yml run passed): build the executables from the tag (build.yml, without its
+# checks: the full suite ran them on this very commit), attest them and publish the GitHub
+# release, with every (target, Python) entry's executable, its .xz, licence notices and SBOM.
+# Nothing is tested here. GitHub artifact attestations can only be made inside GitHub Actions,
+# so releases are built here and not on the maintainer's machine.
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-  pull_request:
 
 # A tag is built once: a second run for the same tag waits instead of cancelling the first.
-# Runs for a pull request or for main replace their predecessor.
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: build + smoke test (${{ matrix.target }}, Python ${{ matrix.python }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.12", "3.13", "3.14"]  # one entry per Python version a release is built for
-        target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]  # what the assets are named with
-        include:
-          - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
-          - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
-    # Debian trixie, as `make bootstrap` expects, by digest: the tag alone moves. The digest is
-    # the multi-arch index's, so each runner pulls its own architecture. It installs no tools,
-    # so the job does: clang/lld 22 and the rest from Debian's packages, the pinned uv
-    # (tools/release/uv.version) and the Python of .python-version.
-    container: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
-    timeout-minutes: 75
-    env:
-      TARGET: ${{ matrix.target }}
-      # The names this entry's files are released under (vcs.release_asset).
-      ASSET: fsbpyr-${{ matrix.python }}-${{ matrix.target }}
-      NOTICES: THIRD_PARTY_LICENSES-${{ matrix.python }}-${{ matrix.target }}.txt
-      PREFIX: ${{ github.workspace }}/../prefix
-      # The container runs as root, but GitHub mounts its HOME (/github/home) owned by the
-      # runner's user: fsbpyr refuses a cache whose way from / another user owns. The caches
-      # (fsbpyr's, the executables' and uv's) go under root's own home instead. Not HOME
-      # itself: job env also reaches the runner's docker CLI on the host, which then warns
-      # that it cannot read /root/.docker/config.json.
-      XDG_CACHE_HOME: /root/.cache
-    steps:
-      # git before the checkout: without it actions/checkout downloads a tarball, with no tags.
-      # xz-utils decides fsbpyr.xz's bytes: it comes from the live mirror, here, and the log
-      # records its version. ca-certificates and curl fetch uv.
-      - name: Install git, xz and curl
-        run: |
-          apt-get update -q
-          apt-get install -y -q --no-install-recommends ca-certificates git curl xz-utils
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false  # no later step needs the token in .git/config
-          fetch-depth: 0  # the tags: the executable's --version names the vX.Y.Z tag on HEAD
-
-      # The checkout belongs to another uid than the container's root: fsbpyr's git calls
-      # (the commit and tag it records) would otherwise be refused.
-      - name: Trust the checkout
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      # The newest version (the Python of .python-version) is the default: `make bootstrap`,
-      # dist/fsbpyr, installed under $PREFIX. Another is a variant: `make bootstrap PYTHON=3.X`
-      # builds dist/fsbpyr-3.X in the environment .venv-3.X and installs nothing. SUFFIX and
-      # MAKE_ARGS tell the steps below which; UV_RUN is how they reach that environment.
-      - name: Which variant
-        env:
-          MATRIX_PYTHON: ${{ matrix.python }}
-        run: |
-          if [ "$MATRIX_PYTHON" = "$(cut -d. -f1,2 .python-version)" ]; then
-            echo "SUFFIX=" >> "$GITHUB_ENV"
-            echo "MAKE_ARGS=" >> "$GITHUB_ENV"
-            echo "UV_RUN=uv run --locked" >> "$GITHUB_ENV"
-          else
-            echo "SUFFIX=-$MATRIX_PYTHON" >> "$GITHUB_ENV"
-            echo "MAKE_ARGS=PYTHON=$MATRIX_PYTHON" >> "$GITHUB_ENV"
-            echo "UV_PROJECT_ENVIRONMENT=.venv-$MATRIX_PYTHON" >> "$GITHUB_ENV"
-            echo "UV_RUN=uv run --python $MATRIX_PYTHON --locked" >> "$GITHUB_ENV"
-          fi
-
-      # Before a build is spent on it: the tag must name the version all three files declare.
-      - name: Check the tag against the version
-        if: github.ref_type == 'tag'
-        run: |
-          version="$(awk '/^\[/ { s = ($0 == "[project]") } s && /^version *=/ { print; exit }' pyproject.toml | cut -d'"' -f2)"
-          module="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/fsbpyr/__init__.py)"
-          lock="$(awk '/^\[\[package\]\]/ { s = 0 } /^name = "fsbpyr"$/ { s = 1 } s && /^version *=/ { print; exit }' uv.lock | cut -d'"' -f2)"
-          if [ "$module" != "$version" ] || [ "$lock" != "$version" ]; then
-            echo "::error::versions disagree: pyproject.toml $version, __init__.py $module, uv.lock $lock"
-            exit 1
-          fi
-          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match version $version"
-            exit 1
-          fi
-
-      # A tag is built from a snapshot of the Debian archive (tools/release/apt-snapshot), so
-      # that clang and lld 22 are the versions the release was built with and a rebuild later
-      # finds them; the snapshot replaces the image's sources, a second line beside them would
-      # pin nothing. Main and pull request runs use the live mirror. make runs `make bootstrap`,
-      # clang and lld 22 link the launcher, gcc (the tests' `cc`), strace and groff: tests that
-      # would skip without them run.
-      - name: Use the Debian snapshot
-        if: github.ref_type == 'tag'
-        run: |
-          ts="$(tr -d '[:space:]' < tools/release/apt-snapshot)"
-          cat > /etc/apt/sources.list.d/debian.sources <<EOF
-          Types: deb
-          URIs: http://snapshot.debian.org/archive/debian/$ts/
-          Suites: trixie trixie-updates
-          Components: main
-          Check-Valid-Until: no
-          Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
-
-          Types: deb
-          URIs: http://snapshot.debian.org/archive/debian-security/$ts/
-          Suites: trixie-security
-          Components: main
-          Check-Valid-Until: no
-          Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
-          EOF
-          echo "FSBPYR_APT_SNAPSHOT=$ts" >> "$GITHUB_ENV"
-
-      # snapshot.debian.org is slow now and then: three tries.
-      - name: Install clang, lld and the test tools
-        run: |
-          for try in 1 2 3; do apt-get update -q && break; [ "$try" -lt 3 ] || exit 1; sleep 15; done
-          # libclang-rt-22-dev: compiler-rt's builtins, which the aarch64 launcher links
-          apt-get install -y -q --no-install-recommends make clang-22 lld-22 libclang-rt-22-dev \
-            gcc strace groff-base zstd
-
-      # The uv that tools/release/uv.version names, for this runner's architecture, from its
-      # release tarball and checked against the sha256 recorded there, and the Python of this
-      # entry: the one .python-version pins for the newest version, else the newest patch
-      # release of the minor version. bootstrap.sh installs no tool; with FSBPYR_UV_VERSION set
-      # it fails on any other uv.
-      - name: Install uv and Python
-        env:
-          MATRIX_PYTHON: ${{ matrix.python }}
-        run: |
-          echo "FSBPYR_UV_VERSION=$(sh tools/release/install-uv.sh /usr/local/bin)" >> "$GITHUB_ENV"
-          if [ -z "$SUFFIX" ]; then uv python install "$(cat .python-version)"
-          else uv python install "$MATRIX_PYTHON"; fi
-
-      # What the release was built with, for whoever reproduces it later.
-      - name: Record the toolchain
-        run: |
-          echo "image:    $(grep -o 'debian:trixie@sha256:[0-9a-f]*' .github/workflows/release.yml | head -n1)"
-          echo "snapshot: ${FSBPYR_APT_SNAPSHOT:-none (live mirror)}"
-          echo "uv:       $(uv --version)"
-          echo "llvm:     $(cat tools/release/llvm23) (tools/release/llvm23, the runtime's clang/lld)"
-          dpkg-query -W clang-22 lld-22 libclang-rt-22-dev xz-utils
-          apt-cache policy clang-22 lld-22
-
-      # The locked environment, the runtime, fsbpyr in three stages
-      # (each verified, stages 2 and 3 identical) and, for the newest version, `make install`
-      # under $PREFIX. No cache: the release is built from the lock, never from
-      # files another run cached.
-      - name: make bootstrap
-        run: make bootstrap $MAKE_ARGS
-
-      # The installed fsbpyr builds itself again: what `make build` does once fsbpyr exists.
-      # (A variant is not installed: it builds itself in the next step.)
-      - name: make build
-        if: ${{ env.SUFFIX == '' }}
-        run: make build
-
-      # The installed fsbpyr is stage 3 (stages 2 and 3 were identical), so what it built is
-      # stage 3 again, byte for byte.
-      - name: Compare with stage 3
-        if: ${{ env.SUFFIX == '' }}
-        run: cmp dist/stage3/fsbpyr dist/fsbpyr
-
-      # The same for a variant: dist/fsbpyr-3.X is stage 3, and builds the checkout again.
-      - name: The variant builds itself
-        if: ${{ env.SUFFIX != '' }}
-        run: |
-          dist/fsbpyr$SUFFIX build . --python "${SUFFIX#-}" -o dist/rebuilt$SUFFIX
-          cmp dist/stage3$SUFFIX/fsbpyr dist/rebuilt$SUFFIX
-          cmp dist/stage3$SUFFIX/fsbpyr dist/fsbpyr$SUFFIX
-          rm dist/rebuilt$SUFFIX
-
-      # The executable records the asset it is released as and the Python it runs on: what
-      # `fsbpyr self update` reads to update it to the same Python's build.
-      - name: Smoke test
-        env:
-          MATRIX_PYTHON: ${{ matrix.python }}
-        run: |
-          exe="dist/fsbpyr$SUFFIX"
-          "$exe" --version
-          "$exe" inspect --verify "$exe"
-          report="$("$exe" inspect --json "$exe")"
-          printf '%s\n' "$report" | grep -Eq "^    \"release_asset\": \"$ASSET\",?$" \
-            || { echo "::error::$exe does not record the asset $ASSET"; exit 1; }
-          printf '%s\n' "$report" | grep -Eq "^  \"python\": \"$MATRIX_PYTHON\.[0-9]+\",?$" \
-            || { echo "::error::$exe does not run on Python $MATRIX_PYTHON"; exit 1; }
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            case "$("$exe" --version)" in
-              *"${GITHUB_REF_NAME#v}-"*) ;;
-              *) echo "::error::--version does not name $GITHUB_REF_NAME"; exit 1 ;;
-            esac
-          fi
-          if [ -z "$SUFFIX" ]; then
-            "$PREFIX/bin/fsbpyr" --version
-            for f in share/man/man1/fsbpyr.1 share/bash-completion/completions/fsbpyr \
-                     share/zsh/site-functions/_fsbpyr share/fish/vendor_completions.d/fsbpyr.fish; do
-              test -s "$PREFIX/$f" || { echo "::error::make install left $f empty or missing"; exit 1; }
-            done
-          fi
-
-      # The same executable, about half the download, with the BCJ filter of its architecture
-      # (x86 or ARM64: executable code compresses better after it). One thread: the same input
-      # gives the same .xz with the same xz (multithreaded xz splits the stream by thread count).
-      - name: Compress the executable
-        run: |
-          case "$TARGET" in
-            x86_64-*) filter=--x86 ;;
-            aarch64-*) filter=--arm64 ;;
-            *) echo "::error::no xz filter for $TARGET"; exit 1 ;;
-          esac
-          xz $filter --lzma2=preset=9e --threads=1 --keep dist/fsbpyr$SUFFIX
-          xz --decompress --stdout dist/fsbpyr$SUFFIX.xz | cmp - dist/fsbpyr$SUFFIX
-
-      # The notices the executable carries, as a release asset (REP-4): the runtime's exact, the
-      # dists' best effort. Deterministic, since the executable is. Each variant has its own: the
-      # runtimes differ.
-      - name: Collect the licence notices
-        run: |
-          dist/fsbpyr$SUFFIX inspect --licenses dist/fsbpyr$SUFFIX > "dist/$NOTICES"
-
-      # What the executable contains, for vulnerability scanners (REP-7): the SBOM is a function
-      # of `inspect --verify --json`, so the rebuild below gives the same bytes. Standard library
-      # only, run by the project's Python.
-      - name: Make the SBOM
-        run: |
-          dist/fsbpyr$SUFFIX inspect --verify --json dist/fsbpyr$SUFFIX > "$RUNNER_TEMP/inspect.json"
-          $UV_RUN python tools/release/sbom.py "$RUNNER_TEMP/inspect.json" \
-            -o "dist/$ASSET.cdx.json"
-
-      # The executable and its .xz under the asset name (dist/fsbpyr$SUFFIX is what the build
-      # made).
-      - name: Name the release assets
-        run: |
-          for ext in "" .xz; do
-            cp "dist/fsbpyr$SUFFIX$ext" "dist/$ASSET$ext"
-          done
-
-      # Uploaded before the checks and tests, which run dev dependencies with write access to
-      # dist/: the release is the executable compared above. publish needs this job, so
-      # failing tests still stop the release.
-      - name: Upload the executable
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: built-${{ matrix.python }}-${{ matrix.target }}
-          path: |
-            dist/${{ env.ASSET }}
-            dist/${{ env.ASSET }}.xz
-            dist/${{ env.NOTICES }}
-            dist/${{ env.ASSET }}.cdx.json
-          if-no-files-found: error
-
-      # Static checks and the core of the suite, on the environment `make bootstrap` left (the
-      # .venv, the runtime). The rest of the suite runs locally (`make test`).
-      - name: make check
-        run: make check $MAKE_ARGS
-
-      # pytest alone passes a run however many tests skip: here a skip that tests/conftest.py's
-      # `ci` list does not expect (this container runs the tests as root) fails the step, and so
-      # does a branch coverage below pyproject.toml's fail_under. The tests' files go to /tmp,
-      # not the Makefile's ~/tmp: $HOME here is /github/home, the runner user's, and a cache
-      # under it is refused as owned by another user. The container's /tmp is no tmpfs.
-      - name: make test-ci
-        id: test-ci
-        env:
-          FSBPYR_TESTS_REQUIRE_ALL: ci
-        run: make test-ci TESTTMP=/tmp $MAKE_ARGS
-
-      # IMPLEMENTATION_PLAN.md §7 sets 90% for payload/ and elf.py, above the 80% overall; this
-      # reads the data make test-ci left in .coverage.
-      - name: Coverage of payload/ and elf.py
-        run: |
-          $UV_RUN coverage report --include='src/fsbpyr/payload/*,src/fsbpyr/elf.py' \
-            --fail-under=90
-
-      # Also when a test or a coverage check failed, as long as make test-ci ran.
-      - name: Upload coverage.xml
-        if: ${{ !cancelled() && steps.test-ci.outcome != 'skipped' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: coverage-${{ matrix.python }}-${{ matrix.target }}
-          path: coverage.xml
-          if-no-files-found: error
-
-  # An independent rebuild of what build makes, in parallel with it: another checkout path and
-  # owner, other cache directories, umask 077, on a fresh runner with the same image, snapshot
-  # and uv. build's own stage 2 == stage 3 cannot see the launcher stub or anything that depends
-  # on where it ran (D4); compare checks this job's stage 3 against build's executable.
-  reproduce:
-    name: reproduce (${{ matrix.target }}, Python ${{ matrix.python }})
-    runs-on: ${{ matrix.runner }}
-    container: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
-    timeout-minutes: 75
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.12", "3.13", "3.14"]  # one entry per Python version a release is built for
-        target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
-        include:
-          - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
-          - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
-    env:
-      UV_PYTHON_INSTALL_DIR: /opt/uv-python  # root installs the Python, builder only reads it
-    steps:
-      - name: Install git, xz and curl
-        run: |
-          apt-get update -q
-          apt-get install -y -q --no-install-recommends ca-certificates git curl xz-utils
-
-      # Not build's path (the workspace itself), and owned by another user, so that dist/ is
-      # writable and git still records the same commit and tag.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: rebuild
-          persist-credentials: false
-          fetch-depth: 0
-
-      - name: Make the checkout builder's
-        run: |
-          useradd -m builder
-          chown -R builder: rebuild
-          chmod a+x "$(dirname "$GITHUB_WORKSPACE")" "$GITHUB_WORKSPACE" 2>/dev/null || true
-
-      - name: Use the Debian snapshot
-        if: github.ref_type == 'tag'
-        working-directory: rebuild
-        run: |
-          ts="$(tr -d '[:space:]' < tools/release/apt-snapshot)"
-          cat > /etc/apt/sources.list.d/debian.sources <<EOF
-          Types: deb
-          URIs: http://snapshot.debian.org/archive/debian/$ts/
-          Suites: trixie trixie-updates
-          Components: main
-          Check-Valid-Until: no
-          Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
-
-          Types: deb
-          URIs: http://snapshot.debian.org/archive/debian-security/$ts/
-          Suites: trixie-security
-          Components: main
-          Check-Valid-Until: no
-          Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
-          EOF
-          echo "FSBPYR_APT_SNAPSHOT=$ts" >> "$GITHUB_ENV"
-
-      # bootstrap.sh installs no tool, so the packages are installed here, as build does (zstd
-      # unpacks LLVM's clang/lld 23, which bootstrap.sh fetches).
-      - name: Install clang, lld and the test tools
-        run: |
-          for try in 1 2 3; do apt-get update -q && break; [ "$try" -lt 3 ] || exit 1; sleep 15; done
-          apt-get install -y -q --no-install-recommends make clang-22 lld-22 libclang-rt-22-dev \
-            gcc strace groff-base zstd
-
-      # The Python of this entry as build installs it: .python-version's for the newest version
-      # (bootstrap.sh looks for that very patch release), else the minor version's newest.
-      - name: Install uv and Python
-        working-directory: rebuild
-        env:
-          MATRIX_PYTHON: ${{ matrix.python }}
-        run: |
-          echo "FSBPYR_UV_VERSION=$(sh tools/release/install-uv.sh /usr/local/bin)" >> "$GITHUB_ENV"
-          if [ "$MATRIX_PYTHON" = "$(cut -d. -f1,2 .python-version)" ]; then
-            echo "SUFFIX=" >> "$GITHUB_ENV"
-            echo "BOOTSTRAP_ARGS=" >> "$GITHUB_ENV"
-            uv python install "$(cat .python-version)"
-          else
-            echo "SUFFIX=-$MATRIX_PYTHON" >> "$GITHUB_ENV"
-            echo "BOOTSTRAP_ARGS=--python $MATRIX_PYTHON" >> "$GITHUB_ENV"
-            uv python install "$MATRIX_PYTHON"
-          fi
-          chmod -R a+rX "$UV_PYTHON_INSTALL_DIR"
-
-      - name: Record the toolchain
-        run: |
-          echo "snapshot: ${FSBPYR_APT_SNAPSHOT:-none (live mirror)}"
-          echo "uv:       $(uv --version)"
-          echo "llvm:     $(cat rebuild/tools/release/llvm23) (tools/release/llvm23, the runtime's clang/lld)"
-          dpkg-query -W clang-22 lld-22 libclang-rt-22-dev xz-utils
-
-      # Stage 1 to 3 as build does (a variant's with --python X.Y: dist/stage3-X.Y), as another
-      # user with other caches and umask 077.
-      - name: Rebuild from source as builder
-        working-directory: rebuild
-        run: |
-          runuser -u builder -- env HOME=/home/builder XDG_CACHE_HOME=/home/builder/c \
-            UV_CACHE_DIR=/home/builder/uv UV_PYTHON_INSTALL_DIR="$UV_PYTHON_INSTALL_DIR" \
-            FSBPYR_UV_VERSION="$FSBPYR_UV_VERSION" BOOTSTRAP_ARGS="$BOOTSTRAP_ARGS" \
-            sh -c 'umask 077; bash tools/bootstrap.sh --from-source $BOOTSTRAP_ARGS'
-
-      # The SBOM of the rebuild, as build makes it of its executable. Both files are written to
-      # one directory, so that the artifact keeps their names. Run as root, so the caches go
-      # under root's home as in build: GitHub's HOME belongs to the runner's user, and fsbpyr
-      # refuses a cache there (3.12's and 3.13's extract backports.zstd's native module).
-      - name: Make the SBOM of the rebuild
-        env:
-          MATRIX_PYTHON: ${{ matrix.python }}
-          XDG_CACHE_HOME: /root/.cache
-        working-directory: rebuild
-        run: |
-          dist/stage3$SUFFIX/fsbpyr inspect --verify --json dist/stage3$SUFFIX/fsbpyr \
-            > "$RUNNER_TEMP/inspect.json"
-          uv run --no-project --python "$MATRIX_PYTHON" python tools/release/sbom.py \
-            "$RUNNER_TEMP/inspect.json" -o dist/stage3$SUFFIX/fsbpyr.cdx.json
-
-      - name: Upload the rebuilt executable
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: reproduced-${{ matrix.python }}-${{ matrix.target }}
-          path: |
-            rebuild/dist/stage3${{ env.SUFFIX }}/fsbpyr
-            rebuild/dist/stage3${{ env.SUFFIX }}/fsbpyr.cdx.json
-          if-no-files-found: error
-
-  # build's executable against reproduce's. Nothing is built here, so it runs on the runner (of
-  # the target's architecture: a difference is shown by running the executable).
-  compare:
-    name: compare (${{ matrix.target }}, Python ${{ matrix.python }})
-    needs: [build, reproduce]
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.12", "3.13", "3.14"]
-        target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
-        include:
-          - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
-          - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
-    env:
-      ASSET: fsbpyr-${{ matrix.python }}-${{ matrix.target }}
-    steps:
-      - name: Download both executables
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: built-${{ matrix.python }}-${{ matrix.target }}
-          path: built
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: reproduced-${{ matrix.python }}-${{ matrix.target }}
-          path: rebuilt
-
-      # Artifacts do not keep file modes.
-      - name: Compare byte for byte
-        run: |
-          built="built/$ASSET"
-          chmod +x "$built" rebuilt/fsbpyr
-          if cmp "$built" rebuilt/fsbpyr; then
-            echo "identical: $(sha256sum < "$built" | cut -d' ' -f1)"
-            exit 0
-          fi
-          echo "::error::the rebuild on an independent checkout differs from the release build"
-          ls -l "$built" rebuilt/fsbpyr
-          sha256sum "$built" rebuilt/fsbpyr
-          diff <("$built" inspect --json "$built" | jq -S .) \
-               <("$built" inspect --json rebuilt/fsbpyr | jq -S .) || true
-          exit 1
-
-      # The SBOMs are functions of the executables' inspect output, so identical executables
-      # must give identical ones; a difference is a bug in sbom.py or in what inspect prints.
-      - name: Compare the SBOMs byte for byte
-        run: |
-          sbom="built/$ASSET.cdx.json"
-          if cmp "$sbom" rebuilt/fsbpyr.cdx.json; then
-            echo "identical: $(sha256sum < "$sbom" | cut -d' ' -f1)"
-            exit 0
-          fi
-          echo "::error::the SBOM of the rebuild differs from the release build's"
-          diff "$sbom" rebuilt/fsbpyr.cdx.json || true
-          exit 1
+    uses: ./.github/workflows/build.yml
+    with:
+      checks: false
 
   # One attestation per executable: attest-sbom takes one SBOM and the subjects it describes.
-  # Tags only, like publish, which needs every one of them. It attests the SBOM that build made
-  # (the one publish uploads), whose bytes compare checked against the rebuild's.
+  # publish needs every one of them. It attests the SBOM that build made (the one publish
+  # uploads); the full suite's compare checked that SBOM's bytes against its rebuild's.
   sbom:
     name: attest SBOM (${{ matrix.target }}, Python ${{ matrix.python }})
-    needs: [build, compare]
+    needs: build
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -540,13 +60,13 @@ jobs:
 
   publish:
     name: attest + publish
-    needs: [build, compare, sbom]
+    needs: [build, sbom]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # The only job that may write: the build above ran with a read-only token.
     permissions:
-      actions: read        # the parent commit's workflow runs (gh run list)
+      actions: read        # the tagged commit's full suite run (gh run list)
       contents: write      # create the GitHub release
       id-token: write      # sign the attestation (Sigstore, through the job's OIDC token)
       attestations: write  # store it with the repository
@@ -554,31 +74,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false  # gh gets the token through GH_TOKEN
-          fetch-depth: 2  # the release commit and its parent
 
-      # A release is made from a commit whose release.yml and full-suite.yml runs on main were
-      # green: tools/release/release.sh checks that before it commits, this checks it again for
-      # the parent of the release commit, which release.sh made on top of that commit. The
-      # release commit may change nothing but the version and the changelog.
-      - name: Check the parent commit's runs
+      # A release is made from a main commit whose full-suite.yml run passed:
+      # tools/release/release.sh checks that before it tags, this checks it again for the tagged
+      # commit, and the release notes name the run.
+      - name: Check the commit's full suite run
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          parent="$(git rev-parse HEAD^)"
-          for f in $(git diff --name-only HEAD^ HEAD); do
-            case "$f" in
-              CHANGELOG.md|pyproject.toml|src/fsbpyr/__init__.py|uv.lock) ;;
-              *) echo "::error::the release commit changes $f, which release.sh does not touch"; exit 1 ;;
-            esac
-          done
-          bash tools/release/green-run.sh release.yml "$parent" > /dev/null
-          suite_run="$(bash tools/release/green-run.sh full-suite.yml "$parent")"
+          suite_run="$(bash tools/release/green-run.sh full-suite.yml "$GITHUB_SHA")"
           echo "FULL_SUITE_RUN=$suite_run" >> "$GITHUB_ENV"
 
       # Every target's and variant's files, side by side in dist/ (they have different names).
-      # needs: [build, compare] holds publish back until every (target, Python) entry passed,
-      # the aarch64 ones included.
+      # needs: build holds publish back until every (target, Python) entry is built, the
+      # aarch64 ones included.
       - name: Download the executables
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
