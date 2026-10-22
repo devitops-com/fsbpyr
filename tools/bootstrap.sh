@@ -133,7 +133,8 @@ llvm23() {
         *) cache="$HOME/.cache/fsbpyr/toolchains" ;;
     esac
     dir="$cache/llvm-$version-${sha256:0:12}"
-    if [ ! -x "$dir/bin/clang" ]; then
+    # A tree without llvm-cov is the opt-in switch's of 0.21.0 and 0.22.0: unpacked again.
+    if [ ! -x "$dir/bin/clang" ] || [ ! -x "$dir/bin/llvm-cov" ]; then
         local tool
         for tool in curl zstd tar sha256sum; do
             command -v "$tool" >/dev/null \

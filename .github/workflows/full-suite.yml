@@ -187,7 +187,9 @@ jobs:
       # The clang/lld 23 the bootstrap fetched (LLVM's release tarball, tools/release/llvm23)
       # first on tester's PATH: the runtime builds below and the tests' own link with it.
       - name: clang/lld 23 on PATH
-        run: ln -sfn "$(dirname "$(as-tester bash tools/bootstrap.sh --llvm23)")" /home/tester/llvm23
+        run: |
+          clang="$(as-tester bash tools/bootstrap.sh --llvm23)"
+          ln -sfn "$(dirname "$clang")" /home/tester/llvm23
 
       # tests/integration/test_pbs_stdlib_versions.py compares the distributions of all three
       # versions, and the bootstrap built the runtime of this entry's only; the full suite

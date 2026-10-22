@@ -1284,6 +1284,18 @@ def test_bootstrap_unpacks_only_what_linking_needs_and_fetches_once(tmp_path: Pa
     assert [p.name for p in clang.parent.parent.parent.iterdir()] == [clang.parent.parent.name]
 
 
+def test_bootstrap_unpacks_again_a_tree_without_llvm_cov(tmp_path: Path) -> None:
+    root, _, env = _llvm23_repo(tmp_path)
+    first = run_script(["bash", str(root / "tools/bootstrap.sh"), "--llvm23"], env)
+    clang = Path(first.stdout.splitlines()[-1])
+    (clang.parent / "llvm-cov").unlink()  # as the opt-in switch of 0.21.0 and 0.22.0 left it
+
+    again = run_script(["bash", str(root / "tools/bootstrap.sh"), "--llvm23"], env)
+
+    assert again.returncode == 0, again.stderr
+    assert (clang.parent / "llvm-cov").is_file()
+
+
 def test_bootstrap_fails_when_the_tarball_does_not_match_its_sha256(tmp_path: Path) -> None:
     root, _, env = _llvm23_repo(tmp_path, sha256="0" * 64)
 
