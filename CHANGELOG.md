@@ -10,6 +10,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-22
+
 ### Changed
 - **Breaking: every release asset names its Python.** 0.21.0 published the newest Python's
   builds without a version (`fsbpyr-x86_64-linux-gnu`) beside `fsbpyr-3.12-x86_64-linux-gnu`
