@@ -287,4 +287,19 @@ restored; it stays on 20261009 (SEC-2).
      security-relevant release after 20261009 or trixie gets clang-23.
 8. **Not checked here.** `make test-container` with the switch on and the pin moved (the run
    in step 4-5 used the host, not the container); a release.yml run; candidate (b).
+9. **The switch (2026-10-22, 0.23.0).** pins.py moved to PBS 20261021, and
+   `tools/release/llvm23` pins the aarch64 tarball too, `LLVM-23.1.3-Linux-ARM64.tar.zst`
+   (1,111,058,298 bytes, SHA-256
+   `1154f37ec15b5654fcb8cc3a8a2352a4cc4eef44bdff7ddd47fb10ea85c82f01`, as GitHub lists it; the
+   file downloaded here matches). Its layout is the x86-64 one's: `bin/clang`, `bin/clang-23`,
+   `bin/lld`, `bin/ld.lld`, and `lib/clang/23/lib/aarch64-unknown-linux-gnu/` with
+   `libclang_rt.builtins.a` (the outlined atomics of PBS's aarch64 objects), the ASan, UBSan
+   and profile runtimes. Both tarballs also have `bin/llvm-profdata` and `bin/llvm-cov`, about
+   10 MB each and linked against the system's libraries only, which bootstrap.sh now unpacks
+   as well, so that full-suite.yml reads the profiles of clang 23's instrumented launchers with
+   LLVM 23's own tools. Unlike step 7, the pinned toolchain is the default rather than a
+   switch: bootstrap.sh fetches it unless `FSBPYR_LLVM23=0`, the Makefile puts its `bin/` first
+   on PATH for the targets that build a runtime (the tests, `make build PYTHON=3.X`,
+   `check-c`, `test-container`), and full-suite.yml puts it on tester's PATH. Candidate (b)
+   stays untried.
 

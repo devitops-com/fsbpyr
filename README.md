@@ -577,7 +577,7 @@ check the release's attestation; `gh attestation verify` still does.
 ### Building from source
 
 A source checkout needs `make` and [uv](https://docs.astral.sh/uv/). On Debian trixie it also
-needs the Python pinned in `.python-version` (`uv python install 3.14.8`), and `curl` and
+needs the Python pinned in `.python-version` (`uv python install 3.14.9`), and `curl` and
 `zstd`; on other systems, [podman](https://podman.io) instead (install it with your system's
 package manager). The targets install none of these: when one is missing, they name it and
 stop. `make help` lists all targets.
@@ -605,7 +605,7 @@ environment `.venv-3.12`; the Python must be installed with uv (`uv python insta
 **`make bootstrap`** takes a checkout to an installed fsbpyr. On **Debian trixie** it runs on
 the host:
 
-1. checks for uv and the Python pinned in `.python-version` (3.14.8), which uv may not
+1. checks for uv and the Python pinned in `.python-version` (3.14.9), which uv may not
    download here (`UV_PYTHON_DOWNLOADS=never`), and stops naming what to install if either is
    missing;
 2. installs the locked dependencies into the checkout's `.venv`;

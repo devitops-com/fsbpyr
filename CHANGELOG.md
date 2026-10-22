@@ -11,6 +11,26 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Changed
+- **The runtime is python-build-standalone 20261021's: CPython 3.13.17 and 3.14.9** (3.12.15
+  is unchanged), linked with clang and lld 23.1.3. From 20261013 on PBS ships LLVM 23 bitcode,
+  which Debian trixie's clang 22 cannot link, so the release uses LLVM's own release tarball,
+  pinned by SHA-256 for x86-64 and aarch64 in `tools/release/llvm23`. An executable gets the
+  new CPython when it is rebuilt with this fsbpyr. The licence notices take zstd's text from
+  PBS, which ships it now, and still leave out zlib-ng's, which PBS ships too although its
+  libz.a is classic zlib. Runtime ids, old → new:
+  - x86-64: 3.12 `e6a982fd7d0c` → `a9a5adbe3f13`, 3.13 `344b4f521a8e` → `4d0cc0e40f7d`,
+    3.14 `7c5b262ab766` → `97b0d36b1b68`;
+  - aarch64: 3.12 `57b1c89666ae` → `a09051735e25`, 3.13 `8bc6d338fea0` → `2dda88f1c21f`,
+    3.14 `cdd8f4741e5a` → `6d88769e0109`.
+
+  PBS 20261021 still has SQLite 3.53.1, with CVE-2026-11822 and CVE-2026-11824 (FTS5, fixed in
+  SQLite 3.53.2), and zlib 1.3.2, with CVE-2026-85091 (`gz_vacate`, no fix yet): no PBS release
+  has those fixes yet, and the next runtime update follows the first one that does.
+- **Building from source fetches clang and lld 23.** `make bootstrap` and the targets that build
+  a runtime download LLVM's tarball for the host's architecture once (about 1.2 GB, checked
+  against its SHA-256) and unpack what linking needs, about 600 MB, into
+  `~/.cache/fsbpyr/toolchains`; they need `curl` and `zstd`. `FSBPYR_LLVM23=0` takes a clang and
+  lld 23 or newer on `PATH` instead. A source checkout's Python is 3.14.9 (`.python-version`).
 - **The release is built with uv 0.13.5 (was 0.13.1) on the current Debian trixie image**
   (`debian:trixie@sha256:4c252754…`). A release records its uv (`fsbpyr inspect` shows it),
   and rebuilding it as the README describes needs that uv.
