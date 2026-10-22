@@ -31,6 +31,16 @@ UVRUN := $(UV) run --locked
 BIN   := dist/fsbpyr
 PYTHON_MINOR := $(shell cut -d. -f1,2 .python-version)
 endif
+# What builds a runtime here (`make build PYTHON=3.X`, the tests, check-c) links with clang/lld
+# 23: the pinned python-build-standalone release is LLVM 23 bitcode, and Debian trixie ships
+# clang 22. LLVM's release tarball that tools/release/llvm23 pins, fetched once into fsbpyr's
+# cache by tools/bootstrap.sh --llvm23, comes first on PATH. FSBPYR_LLVM23=0, as for make
+# bootstrap, leaves PATH alone, which then needs a clang/lld 23 or newer of its own.
+ifeq ($(FSBPYR_LLVM23),0)
+WITH_LLVM23 :=
+else
+WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
+endif
 
 .PHONY: help bootstrap build install uninstall test test-ci test-container test-portability check check-c release clean
 
@@ -59,7 +69,7 @@ bootstrap: ## From source to an installed fsbpyr: runtime, build, install (PYTHO
 build: ## Build dist/fsbpyr with the installed fsbpyr (make bootstrap installs one); PYTHON=3.X: dist/fsbpyr-3.X from source
 	@bash tools/bootstrap.sh --uv
 ifeq ($(origin PYTHON),command line)
-	$(UVRUN) fsbpyr runtime build --python $(PYTHON)
+	$(WITH_LLVM23) $(UVRUN) fsbpyr runtime build --python $(PYTHON)
 	$(UVRUN) fsbpyr build . --python $(PYTHON) -o $(BIN)
 else
 	@fsbpyr="$$(command -v $(BINDIR)/fsbpyr || command -v fsbpyr || true)"; \
@@ -102,7 +112,7 @@ uninstall: ## Remove what `make install` installed
 # The runtime's pinned downloads are kept in TESTTMP between runs (tests/support/downloads.py),
 # unless FSBPYR_TEST_DOWNLOADS names another place.
 TESTTMP ?= $(HOME)/tmp
-TESTENV := mkdir -p "$(TESTTMP)" && tmp=$$(mktemp -d "$(TESTTMP)/fsbpyr-test.XXXXXX") \
+TESTENV := $(WITH_LLVM23) mkdir -p "$(TESTTMP)" && tmp=$$(mktemp -d "$(TESTTMP)/fsbpyr-test.XXXXXX") \
 	&& trap 'rm -rf "$${tmp:?}" 2>/dev/null || { sleep 2; rm -rf "$${tmp:?}"; }' EXIT && TMPDIR="$$tmp" \
 	FSBPYR_TEST_DOWNLOADS="$${FSBPYR_TEST_DOWNLOADS:-$(TESTTMP)/fsbpyr-test-downloads}"
 # `make test` runs the tests in JOBS processes (pytest-xdist), each test file in one of them.
@@ -139,6 +149,7 @@ test-container: ## Run the whole suite but the portability tests in a Debian tri
 		-e FSBPYR_TEST_DOWNLOADS=/home/tester/downloads -e FSBPYR_TESTS_REQUIRE_ALL=container \
 		fsbpyr-test bash -c 'tar -C /checkout --exclude="./.venv*" --exclude=./dist -cf - . | tar -xf - \
 			&& uv python install $(if $(filter command line,$(origin PYTHON)),$(PYTHON),"$$(cat .python-version)") \
+			&& clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" \
 			&& $(UVRUN) pytest -n $(JOBS) --dist loadfile --ignore=tests/e2e/test_portability.py'
 
 # The portability matrix (tests/e2e/test_portability.py): 13 images pulled and run with podman,
@@ -158,7 +169,7 @@ check: ## Static checks: ruff + mypy
 # headers (a runtime that is not cached is fetched). Informational: full-suite.yml runs it
 # with continue-on-error; it exits 1 when the analyzer has findings.
 check-c: ## Static analysis of the launcher's C sources (clang --analyze; informational)
-	$(UVRUN) python tools/check-c.py
+	$(WITH_LLVM23) $(UVRUN) python tools/check-c.py
 
 # --- Release ---
 

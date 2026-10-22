@@ -60,7 +60,7 @@ attestation check and building fsbpyr from source are in [Getting fsbpyr](#getti
 
 ## Supported targets
 
-- **Python:** apps run the CPython of the fsbpyr that built them: 3.12.15, 3.13.16 or 3.14.8,
+- **Python:** apps run the CPython of the fsbpyr that built them: 3.12.15, 3.13.17 or 3.14.9,
   the version that fsbpyr embeds, which "Which Python" says how a build chooses. fsbpyr itself
   needs Python 3.12 to 3.14 (D13) and one checkout builds all three variants (`make build
   PYTHON=3.12`, see "Building from source"). Each release carries all three, for every
@@ -577,11 +577,17 @@ check the release's attestation; `gh attestation verify` still does.
 ### Building from source
 
 A source checkout needs `make` and [uv](https://docs.astral.sh/uv/). On Debian trixie it also
-needs the Python pinned in `.python-version` (`uv python install 3.14.8`) and clang and lld 22
-(`sudo apt-get install clang-22 lld-22`; trixie ships them since 13.7); on other systems,
-[podman](https://podman.io) instead (install it with your system's package manager). The
-targets install none of these: when one is missing, they name it and stop. `make help` lists
-all targets.
+needs the Python pinned in `.python-version` (`uv python install 3.14.8`), and `curl` and
+`zstd`; on other systems, [podman](https://podman.io) instead (install it with your system's
+package manager). The targets install none of these: when one is missing, they name it and
+stop. `make help` lists all targets.
+
+The runtime is linked with clang and lld 23 (the pinned python-build-standalone release is
+LLVM 23 bitcode), which trixie does not ship: the targets that build a runtime fetch LLVM's
+release tarball for the host's architecture that `tools/release/llvm23` pins (LLVM 23.1.3,
+about 1.2 GB once, checked against its SHA-256) and unpack what linking needs, about 600 MB,
+into `~/.cache/fsbpyr/toolchains`. With `FSBPYR_LLVM23=0` they use a clang and lld 23 or newer
+on `PATH` instead.
 
 ```
 make bootstrap   # once: from source to an installed fsbpyr
@@ -604,10 +610,10 @@ the host:
    missing;
 2. installs the locked dependencies into the checkout's `.venv`;
 3. builds the runtime (`fsbpyr runtime build`: the pinned CPython from python-build-standalone
-   and a glibc 2.28 sysroot are downloaded, the launcher linked with clang and lld 22, the
-   standard library compiled; a minute or two, cached in `~/.cache/fsbpyr`). Without clang and
-   lld 22 it stops and says so; on aarch64 the link also needs `libclang-rt-22-dev` (clang's
-   compiler-rt builtins, which have the atomics that CPython's aarch64 objects call);
+   and a glibc 2.28 sysroot are downloaded, the launcher linked with LLVM's clang and lld 23
+   (above; on aarch64 with its compiler-rt builtins, which have the atomics that CPython's
+   aarch64 objects call), the standard library compiled; a minute or two, cached in
+   `~/.cache/fsbpyr`);
 4. builds fsbpyr in three stages: fsbpyr run from source builds `dist/stage1/fsbpyr`, that
    executable builds `dist/stage2/fsbpyr`, and that one builds `dist/stage3/fsbpyr`. Each
    stage must pass `fsbpyr inspect --verify` (its digest is recomputed over the whole file),
@@ -616,9 +622,9 @@ the host:
 5. copies stage 3 to `dist/fsbpyr` and runs `make install`.
 
 On **any other Linux x86-64 or aarch64** host steps 1 to 4 run in a Debian trixie podman image
-of the host's architecture (`Containerfile`: clang, lld and compiler-rt 22 from Debian and the
-pinned uv from its release tarball, checked against a SHA-256 per architecture, which installs
-the pinned Python there), on the checkout mounted into it, and `make install` runs on the host. The
+of the host's architecture (`Containerfile`: Debian's packages, LLVM's clang and lld 23
+fetched as above, and the pinned uv from its release tarball, checked against a SHA-256 per
+architecture, which installs the pinned Python there), on the checkout mounted into it, and `make install` runs on the host. The
 container is IPv4-only: on podman's default network, TLS handshakes from Python with GitHub's
 download host time out. A podman volume, `fsbpyr-cache`, keeps uv's cache, its Python and the
 runtime between runs. `FSBPYR_BOOTSTRAP=podman make bootstrap` uses the container on trixie too.
@@ -698,23 +704,25 @@ A rebuild checks the bytes themselves, at two levels:
   carries, copying them from itself ([D4](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)), so a
   changed stub would pass this check.
 - **(b) The runtime.** Only an independent rebuild checks the stub, CPython and the standard
-  library. It compiles the launcher from the tag's sources and links it with clang and lld 22
-  (on Debian trixie, from the archive snapshot below); CPython, which the launcher links in, and
-  the standard library, which is compiled to bytecode, come from the python-build-standalone
-  archive that the tag pins by SHA-256. So (b) proves the stub, and that CPython and the
-  standard library are that pinned build; it does not compile CPython. CI's release is
-  `make build`'s output, so on a clean checkout of the tag `make bootstrap` and `make build`
-  give the released bytes, with the release's uv and clang (`fsbpyr inspect` lists the stub's
-  `.comment` lines as "toolchain"; they name the Debian clang that built the launcher). The
-  launcher's bytes depend on that exact clang and lld: v0.19.0 and v0.20.0 were linked by
-  Debian's `22.1.8-1~deb13u4`, which the snapshot `20261005T000000Z` of the Debian archive
-  serves (a later clang may link other bytes). A release tag's CI run takes its
-  packages from the snapshot in `tools/release/apt-snapshot`, and its log lists the image digest,
-  the snapshot, the uv version and the versions of `clang-22`, `lld-22` and `xz-utils`. To
-  install the same packages, point apt at the snapshot
+  library. It compiles the launcher from the tag's sources and links it with the clang and lld
+  that the tag pins; CPython, which the launcher links in, and the standard library, which is
+  compiled to bytecode, come from the python-build-standalone archive that the tag pins by
+  SHA-256. So (b) proves the stub, and that CPython and the standard library are that pinned
+  build; it does not compile CPython. CI's release is `make build`'s output, so on a clean
+  checkout of the tag `make bootstrap` and `make build` give the released bytes, with the
+  release's uv and clang (`fsbpyr inspect` lists the stub's `.comment` lines as "toolchain";
+  they name the clang that built the launcher). The launcher's bytes depend on that exact clang
+  and lld. From 0.23.0 on they are LLVM's 23.1.3 from its release tarball, which
+  `tools/release/llvm23` pins by SHA-256 and the build fetches itself ("Building from source").
+  v0.19.0 to v0.22.0 were linked by Debian's `22.1.8-1~deb13u4`, which the snapshot
+  `20261005T000000Z` of the Debian archive serves (a later clang may link other bytes): to
+  rebuild one of those, point apt at the snapshot
   (`http://snapshot.debian.org/archive/debian/TIMESTAMP/` for trixie and trixie-updates,
-  `.../debian-security/TIMESTAMP/` for trixie-security) before installing `clang-22 lld-22`,
-  and use the uv named by `tools/release/uv.version` (release CI downloads that release's
+  `.../debian-security/TIMESTAMP/` for trixie-security) before installing `clang-22 lld-22`.
+  A release tag's CI run takes its packages from the snapshot in `tools/release/apt-snapshot`,
+  and its log lists the image digest, the snapshot, the uv version, the LLVM pin and the
+  versions of `clang-22`, `lld-22` and `xz-utils`. Use the uv named by
+  `tools/release/uv.version` (release CI downloads that release's
   tarball for the machine's architecture and checks its SHA-256, `tools/release/install-uv.sh`; `FSBPYR_UV_VERSION=<version>` makes `tools/bootstrap.sh`
   refuse any other uv). `make bootstrap` also installs the result, though,
   so run fsbpyr from source directly in the checkout above: it builds the runtime, then `stage1`,
@@ -728,7 +736,7 @@ A rebuild checks the bytes themselves, at two levels:
 
 ```
 cd src
-uv run --locked fsbpyr runtime build
+uv run --locked fsbpyr runtime build --clang "$(bash tools/bootstrap.sh --llvm23)"
 uv run --locked fsbpyr build . -o ../stage1
 ../stage1 build . -o ../from-source
 cd .. && cmp fsbpyr from-source && echo identical

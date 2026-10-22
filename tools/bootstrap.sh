@@ -14,12 +14,11 @@
 # it is the user's.
 #
 # 1. Prerequisites: uv on PATH and the Python pinned in .python-version, which uv finds but
-#    never downloads; clang and lld 22, which `fsbpyr runtime build` looks for and names if
-#    they are missing. This runs on the host on Debian trixie; anywhere else steps 1-3 run
-#    inside a Debian trixie podman image (Containerfile) that has them all, and podman itself
-#    is the user's to install.
+#    never downloads; curl and zstd, which fetch clang/lld 23 (below). This runs on the host
+#    on Debian trixie; anywhere else steps 1-3 run inside a Debian trixie podman image
+#    (Containerfile) that has them all, and podman itself is the user's to install.
 # 2. The locked environment in the checkout's .venv, then the runtime (`fsbpyr runtime build`,
-#    which links with clang/lld 22).
+#    which links with clang/lld 23).
 # 3. Three stages: fsbpyr from source builds dist/stage1/fsbpyr, which builds
 #    dist/stage2/fsbpyr, which builds dist/stage3/fsbpyr. `inspect --verify` must confirm each
 #    one's digest, and stages 2 and 3 must be identical; stage 3 becomes dist/fsbpyr.
@@ -29,14 +28,16 @@
 # Environment: FSBPYR_UV_VERSION=X.Y.Z (release CI sets it from tools/release/uv.version;
 # a verifier sets the uv a release records) makes the check for uv fail unless uv on PATH is
 # exactly that version. Without it any uv is accepted: user builds keep the user's own uv (D26).
-# FSBPYR_LLVM23=1 links the runtime with clang/lld 23 instead of the Debian clang/lld 22, for
-# python-build-standalone releases from 20261013 on, whose objects are LLVM 23 bitcode (SEC-4).
-# The toolchain is LLVM's release tarball named in tools/release/llvm23 (version and sha256);
-# it is downloaded once into fsbpyr's cache, ${XDG_CACHE_HOME:-~/.cache}/fsbpyr/toolchains,
-# and the bootstrap fails if its sha256 differs. Needs curl and zstd. FSBPYR_LLVM23_URL
-# replaces the download URL (tests).
+# The runtime is linked with clang/lld 23: the pinned python-build-standalone release
+# (src/fsbpyr/runtime/pins.py, 20261021) has LLVM 23 bitcode objects, and Debian trixie ships
+# clang/lld 22 only (SEC-4). The toolchain is LLVM's release tarball for the host's
+# architecture that tools/release/llvm23 names (version, then the sha256 of the x86-64 and of
+# the aarch64 tarball); it is downloaded once into fsbpyr's cache,
+# ${XDG_CACHE_HOME:-~/.cache}/fsbpyr/toolchains, and the bootstrap fails if its sha256
+# differs. FSBPYR_LLVM23=0 links with a clang/lld 23 or newer on PATH instead.
+# FSBPYR_LLVM23_URL replaces the download URL (tests).
 # FSBPYR_BOOTSTRAP=podman builds in the container on Debian trixie too. Linux x86-64 and
-# aarch64 hosts build for themselves (no cross builds); FSBPYR_LLVM23 is x86-64 only.
+# aarch64 hosts build for themselves (no cross builds).
 # PREFIX etc. pass through to `make install`. FSBPYR_BOOTSTRAP_IMAGE names the
 # podman image (default fsbpyr-build); FSBPYR_BOOTSTRAP_VOLUME the volume that keeps uv's
 # cache, its Python and the runtime between container runs (default fsbpyr-cache).
@@ -112,15 +113,20 @@ verify() {
 }
 
 # llvm23: sets CLANG23 to the clang of LLVM's pinned release tarball, fetching it into fsbpyr's
-# cache on the first use. Only what linking the launcher needs is unpacked (about 575 MB of
-# 12 GB): clang, lld and clang's resource directory. The tarball is zstd with a 1 GiB window.
+# cache on the first use. Only what linking the launcher needs is unpacked (about 600 MB of
+# 12 GB): clang, lld and clang's resource directory (compiler-rt's builtins, sanitizer and
+# profile runtimes), and llvm-profdata and llvm-cov, which read the profiles of what this clang
+# instrumented (full-suite.yml). The tarball is zstd with a 1 GiB window.
 llvm23() {
-    local version sha256 url name cache dir tmp
-    [ "$(uname -m)" = x86_64 ] \
-        || die "FSBPYR_LLVM23 is for x86-64 only: tools/release/llvm23 names LLVM's x86-64 tarball"
-    read -r version sha256 _ < tools/release/llvm23 || die "tools/release/llvm23 is empty"
-    [[ "$sha256" =~ ^[0-9a-f]{64}$ ]] || die "tools/release/llvm23 has no sha256"
-    name="LLVM-$version-Linux-X64"
+    local version sha_x86_64 sha_aarch64 sha256 url name cache dir tmp
+    read -r version sha_x86_64 sha_aarch64 _ < tools/release/llvm23 \
+        || die "tools/release/llvm23 is empty"
+    case "$(uname -m)" in
+        x86_64) name="LLVM-$version-Linux-X64" sha256="$sha_x86_64" ;;
+        aarch64) name="LLVM-$version-Linux-ARM64" sha256="$sha_aarch64" ;;
+        *) die "tools/release/llvm23 pins no LLVM tarball for $(uname -m)" ;;
+    esac
+    [[ "$sha256" =~ ^[0-9a-f]{64}$ ]] || die "tools/release/llvm23 has no sha256 for $(uname -m)"
     url="${FSBPYR_LLVM23_URL:-https://github.com/llvm/llvm-project/releases/download/llvmorg-$version/$name.tar.zst}"
     case "${XDG_CACHE_HOME:-}" in
         /*) cache="$XDG_CACHE_HOME/fsbpyr/toolchains" ;;
@@ -131,11 +137,11 @@ llvm23() {
         local tool
         for tool in curl zstd tar sha256sum; do
             command -v "$tool" >/dev/null \
-                || die "$tool is not on PATH; install it and run this again (FSBPYR_LLVM23 needs it)"
+                || die "$tool is not on PATH; install it and run this again (clang/lld 23 needs it)"
         done
         mkdir -p "$cache"
         tmp="$(mktemp -d "$cache/.fetch.XXXXXX")"
-        say "Fetching clang/lld $version ($url)"
+        say "Fetching clang/lld $version ($url)" >&2  # stdout is the clang (--llvm23)
         curl -fsSL --retry 3 -o "$tmp/llvm.tar.zst" "$url" \
             || { rm -rf "$tmp"; die "cannot download $url"; }
         echo "$sha256  $tmp/llvm.tar.zst" | sha256sum -c --status - \
@@ -144,7 +150,7 @@ llvm23() {
         zstd -dc --long=30 "$tmp/llvm.tar.zst" \
             | tar -xf - -C "$tmp/tree" --strip-components=1 --wildcards \
                 "$name/bin/clang" "$name/bin/clang-[0-9]*" "$name/bin/lld" "$name/bin/ld.lld" \
-                "$name/lib/clang" \
+                "$name/bin/llvm-profdata" "$name/bin/llvm-cov" "$name/lib/clang" \
             || { rm -rf "$tmp"; die "cannot unpack $url"; }
         [ -x "$tmp/tree/bin/clang" ] && [ -x "$tmp/tree/bin/ld.lld" ] \
             || { rm -rf "$tmp"; die "$url holds no bin/clang and bin/ld.lld"; }
@@ -158,17 +164,17 @@ llvm23() {
 from_source() {
     need_uv
     need_python
-    local clang_args=() linker=22
-    if [ "${FSBPYR_LLVM23:-}" = 1 ]; then
+    local clang_args=() linker="clang/lld 23 or newer on PATH"
+    if [ "${FSBPYR_LLVM23:-1}" != 0 ]; then
         llvm23
         clang_args=(--clang "$CLANG23")
-        linker=23
+        linker="LLVM's clang/lld $(cut -d' ' -f1 tools/release/llvm23)"
     fi
     local py=() s1="dist/stage1$SUFFIX" s2="dist/stage2$SUFFIX" s3="dist/stage3$SUFFIX"
     [ -z "$PYTHON_VARIANT" ] || py=(--python "$PYTHON_VARIANT")
     say "Locked environment on Python ${PYTHON_VARIANT:-$(cat .python-version)}"
     uv sync "${py[@]}" --locked
-    say "Runtime (links with clang/lld $linker; cached after the first run)"
+    say "Runtime (links with $linker; cached after the first run)"
     uv run "${py[@]}" --locked fsbpyr runtime build "${py[@]}" "${clang_args[@]}"
     rm -rf "$s1" "$s2" "$s3"
     mkdir -p "$s1" "$s2" "$s3"

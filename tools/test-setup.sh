@@ -4,7 +4,8 @@
 # the Containerfile's `test` stage, and by the full-suite workflow on its Debian trixie
 # container. The packages of bootstrap (git, make, curl, clang-22, lld-22) are already there.
 #
-#   - libclang-rt-22-dev and llvm-22: the ASan/UBSan launcher, llvm-objdump, llvm-cov;
+#   - libclang-rt-22-dev and llvm-22: Debian's compiler-rt and llvm-objdump (the runtime, the
+#     ASan/UBSan launcher and llvm-cov use LLVM 23's own, tools/release/llvm23);
 #   - gcc, strace, groff-base, zstd, xz-utils, wget and busybox: tests that skip without them;
 #   - a user `tester` (uid 1000) in one supplementary group (testers), the user the suite runs
 #     as: the ownership tests need a user that is not root and has a group besides its own;

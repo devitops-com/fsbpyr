@@ -1,12 +1,12 @@
-# A Debian trixie build environment with clang and lld 22, for the architecture it is built
-# for (amd64 or arm64): `make bootstrap` uses it on hosts other than Debian trixie
-# (tools/bootstrap.sh). The checkout is mounted at /src and dist/fsbpyr lands in it; a volume
-# keeps uv's cache, its Pythons and fsbpyr's runtime between runs.
+# A Debian trixie build environment, for the architecture it is built for (amd64 or arm64):
+# `make bootstrap` uses it on hosts other than Debian trixie (tools/bootstrap.sh). The checkout
+# is mounted at /src and dist/fsbpyr lands in it; a volume keeps uv's cache, its Pythons,
+# fsbpyr's runtime and the clang/lld 23 bootstrap.sh fetches between runs.
 FROM docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308 AS build
 
-# Everything but uv and Python from Debian's own packages (trixie ships clang and lld 22 since 13.7;
-# zstd is for bootstrap.sh's opt-in clang 23, FSBPYR_LLVM23=1; libclang-rt-22-dev has the
-# compiler-rt builtins that the aarch64 link needs, runtime/stub.py outlined_atomics).
+# Everything but uv, Python and clang/lld 23 from Debian's own packages. The runtime links with
+# LLVM's clang/lld 23, which bootstrap.sh fetches with curl and unpacks with zstd
+# (tools/release/llvm23); trixie's clang, lld and compiler-rt 22 are not used for it.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl git make clang-22 lld-22 libclang-rt-22-dev zstd \
     && rm -rf /var/lib/apt/lists/*

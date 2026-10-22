@@ -48,8 +48,17 @@ def test_zstd_and_hacl_texts_are_supplied_where_pbs_ships_none(tmp_path: Path) -
 
     assert b"Zstandard" in result.texts["LICENSE.zstd.txt"]
     assert b"HACL* Contributors" in result.texts["LICENSE.hacl.txt"]
-    assert result.unshipped == {"LICENSE.zstd.txt", "LICENSE.zlib-ng.txt"}
+    assert result.unshipped == {"LICENSE.zstd.txt"}
     assert "LICENSE.zlib-ng.txt" not in result.texts  # libz.a is classic zlib
+
+
+def test_zlib_ngs_text_is_left_out_also_when_pbs_ships_it(tmp_path: Path) -> None:
+    # PBS ships it from 20261020 on, but libz.a is still classic zlib (LICENSE.zlib.txt)
+    result = notices.collect(_dist(tmp_path, {"LICENSE.cpython.txt", "LICENSE.zlib.txt",
+                                              "LICENSE.zlib-ng.txt"}))  # fmt: skip
+
+    assert "LICENSE.zlib-ng.txt" not in result.texts
+    assert result.texts["LICENSE.zlib.txt"] == b"text of LICENSE.zlib.txt"
 
 
 def test_a_text_pbs_ships_is_not_replaced(tmp_path: Path) -> None:
