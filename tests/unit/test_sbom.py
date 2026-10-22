@@ -30,7 +30,7 @@ INSPECT: dict[str, Any] = {
         "release_asset": "fsbpyr-3.14-x86_64-linux-gnu",
         "python": "3.14.8",
         "runtime_components": {
-            "expat": "2.7.3",
+            "expat": "expat_2.7.3",  # pyexpat.EXPAT_VERSION, as runtime/pbs.py records it
             "libmpdec": "4.0.1",
             "openssl": "OpenSSL 3.5.9 8 Apr 2026",
             "sqlite": "3.53.1",
@@ -103,6 +103,7 @@ def test_openssl_and_sqlite_carry_cpes_with_the_recorded_versions() -> None:
     assert _component(bom, "zlib")["cpe"] == "cpe:2.3:a:zlib:zlib:1.3.2:*:*:*:*:*:*:*"
     assert _component(bom, "expat")["cpe"] == (
         "cpe:2.3:a:libexpat_project:libexpat:2.7.3:*:*:*:*:*:*:*")
+    assert _component(bom, "expat")["version"] == "2.7.3"
     libmpdec = _component(bom, "libmpdec")  # NVD has no mpdecimal product
     assert libmpdec["version"] == "4.0.1" and "cpe" not in libmpdec
 

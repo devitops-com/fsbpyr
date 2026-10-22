@@ -135,7 +135,7 @@ UNPINNED = [t for t in EXPECTED if t.libc != "glibc"]
 def test_a_glibc_target_has_pins_for_every_python_and_a_sysroot(target: Target) -> None:
     for python in ("3.12", "3.13", "3.14"):
         pin = pins.pin_for(python, target.triple)
-        assert (pin.triple, pin.flavor, pin.release) == (target.triple, target.flavor, "20261009")
+        assert (pin.triple, pin.flavor, pin.release) == (target.triple, target.flavor, "20261021")
         assert pin.version.startswith(f"{python}.")
         assert re.fullmatch(r"[0-9a-f]{64}", pin.sha256)
         assert pin.url.endswith(f"-{target.triple}-{target.flavor.replace('+', '%2B')}.tar.zst")

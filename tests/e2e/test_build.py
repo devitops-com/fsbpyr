@@ -101,6 +101,8 @@ def test_hello_from_uv_lock(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert cpes["openssl"] == f"cpe:2.3:a:openssl:openssl:{openssl}:*:*:*:*:*:*:*"
     assert cpes["sqlite"].split(":")[5] == info["runtime_components"]["sqlite"]
     assert cpes["cpython"].split(":")[5] == report["python"]
+    expat = cpes["expat"].split(":")[5]  # "expat_2.9.0", as pyexpat says it, matches no CVE
+    assert expat[:1].isdigit() and info["runtime_components"]["expat"].endswith(expat)
 
 
 def test_readme_quickstart_works_on_a_new_account(tmp_path: Path) -> None:

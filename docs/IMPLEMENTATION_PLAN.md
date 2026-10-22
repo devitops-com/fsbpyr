@@ -1681,6 +1681,10 @@ write, a truncated binary.
     `fsbpyr-<target>.xz`, are reinstalled once with `install.sh`. `fsbpyr self update` keeps
     to the executable's Python (a 3.13 build updates to the latest 3.13 build, never to
     3.14); `install.sh` takes `--python X.Y` and installs the newest Python's otherwise.
+  - 2026-10-22, 0.23.0: the pins move to PBS 20261021 (CPython 3.12.15, 3.13.17, 3.14.9),
+    whose archives are LLVM 23.1.3 bitcode on every target; both targets link them with LLVM's
+    23.1.3 release tarball for their architecture (`tools/release/llvm23`, the aarch64 one by
+    the owner's choice of 2026-10-22). macOS would need upstream LLVM 23 accordingly.
 
   **Steps** (a target is done when, on its own runner, the full suite passes with that
   target's skip list, the three-stage bootstrap is byte-identical and an independent rebuild
@@ -1995,7 +1999,7 @@ import timings; this was accepted in the Phase 2 review, since that party could 
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| No clang/lld ≥ 22 on the build host | Cannot build runtimes | apt.llvm.org packages; podman image with LLVM 22; fallback: build a PBS non-LTO variant with PBS's own build scripts. **Status (0.18.1):** Debian 13.7+ ships clang/lld 22, which `make bootstrap` installs on trixie; elsewhere it builds in a trixie podman image (`Containerfile`); executables carry their runtime, so only a new runtime needs clang (D4); the fallback was not needed |
+| No clang/lld ≥ 22 on the build host | Cannot build runtimes | apt.llvm.org packages; podman image with LLVM 22; fallback: build a PBS non-LTO variant with PBS's own build scripts. **Status (0.18.1):** Debian 13.7+ ships clang/lld 22, which `make bootstrap` installs on trixie; elsewhere it builds in a trixie podman image (`Containerfile`); executables carry their runtime, so only a new runtime needs clang (D4); the fallback was not needed. **Status (0.23.0):** PBS 20261013 and later are LLVM 23 bitcode, which trixie's clang 22 cannot link: since 0.23.0 (PBS 20261021) every runtime links with LLVM's clang/lld 23.1.3 release tarball, pinned by SHA-256 per architecture in `tools/release/llvm23` and fetched into fsbpyr's cache by `make bootstrap` and the targets that build a runtime (SEC-4 of docs/improvement-plan.md); `FSBPYR_LLVM23=0` takes a clang/lld 23 on PATH |
 | Host-linked stub binds to host glibc symbols (S1: needs GLIBC_2.38) | Binaries need a recent glibc | Phase 6c (D25): link against an old glibc sysroot; report the effective glibc requirement at build time. **Done** (Phase 6c, 2026-10-07): executables need at most glibc 2.28 and ran on 13 distributions; since 0.17.0 sdists built above 2.28 are rebuilt against the sysroot |
 | `marshal` output not deterministic (confirmed in S3) | Fixed-point gate fails | D16 canonicalizer; required round-trip and determinism tests. **Done** (Phase 1); stage2 == stage3 since Phase 4, checked by every `make bootstrap` (0.18.1); the same bytes on 1 or 8 cores (0.15.0) |
 | Canonicalizer tied to marshal v5 / 3.14 code layout | Breaks on new Python versions | Version check at build time; Phase 9 adds layouts for other versions. The check is in (`bytecode.SUPPORTED_PYTHON`); since 2026-10-20 it holds 3.12, 3.13 and 3.14, each fsbpyr handling its own version's marshal format |
@@ -2013,7 +2017,7 @@ import timings; this was accepted in the Phase 2 review, since that party could 
 
 | Question | Answer | Effect on this plan |
 |----------|--------|---------------------|
-| Toolchain for runtime stubs | Host clang/lld ≥ 22 (apt.llvm.org) | D2, §3.7, S1. A portable glibc baseline through a container link is deferred to Phase 9 (moved to Phase 6c by D25 and done there: a pinned glibc 2.28 sysroot, no container; since 0.18.1 `make bootstrap` takes clang/lld 22 from Debian trixie, or a trixie podman image elsewhere) |
+| Toolchain for runtime stubs | Host clang/lld ≥ 22 (apt.llvm.org) | D2, §3.7, S1. A portable glibc baseline through a container link is deferred to Phase 9 (moved to Phase 6c by D25 and done there: a pinned glibc 2.28 sysroot, no container; since 0.18.1 `make bootstrap` takes clang/lld 22 from Debian trixie, or a trixie podman image elsewhere; since 0.23.0 LLVM's clang/lld 23 release tarball, `tools/release/llvm23`, as PBS 20261013 and later need LLVM 23) |
 | Python versions in the MVP | 3.14 only | D13. 3.12/3.13 runtimes are deferred to Phase 9 (2026-10-18: 3.12–3.14 there, one fsbpyr per version) |
 | Project scope | Installable projects (pyproject.toml or setup.py). Loose scripts are out of scope | §3.6 step 4. Entry points come from `console_scripts` or `--entry` |
 | Dependency source | Fresh install from the lock into staging | D5, §3.6 step 3, Phase 4 exit criteria |

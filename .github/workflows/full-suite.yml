@@ -55,7 +55,7 @@ jobs:
     # architecture). Privileged: rootless podman for the tests that map
     # a second range of user ids, strace and user namespaces inside the container.
     container:
-      image: docker.io/library/debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
+      image: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
       options: --privileged
     timeout-minutes: 60
     steps:
@@ -113,12 +113,13 @@ jobs:
           # too long", as in `make test-container`.
           mount -t tmpfs -o size=10g,mode=1777 tmpfs /var/tmp
           # What runs as tester from here on: its own clean environment, in its copy.
+          # /home/tester/llvm23 is clang/lld 23 once the bootstrap has fetched them (below).
           cat > /usr/local/bin/as-tester <<'WRAPPER'
           #!/bin/sh
           cd /home/tester/src || exit 1
           exec runuser -u tester -- env -i HOME=/home/tester USER=tester LANG=C.UTF-8 \
             XDG_RUNTIME_DIR=/home/tester/run TMPDIR=/var/tmp \
-            PATH=/home/tester/.local/bin:/usr/local/bin:/usr/bin:/bin "$@"
+            PATH=/home/tester/llvm23:/home/tester/.local/bin:/usr/local/bin:/usr/bin:/bin "$@"
           WRAPPER
           chmod 755 /usr/local/bin/as-tester
 
@@ -183,6 +184,13 @@ jobs:
       - name: make bootstrap
         run: as-tester FSBPYR_UV_VERSION="$FSBPYR_UV_VERSION" make bootstrap $MAKE_ARGS
 
+      # The clang/lld 23 the bootstrap fetched (LLVM's release tarball, tools/release/llvm23)
+      # first on tester's PATH: the runtime builds below and the tests' own link with it.
+      - name: clang/lld 23 on PATH
+        run: |
+          clang="$(as-tester bash tools/bootstrap.sh --llvm23)"
+          ln -sfn "$(dirname "$clang")" /home/tester/llvm23
+
       # tests/integration/test_pbs_stdlib_versions.py compares the distributions of all three
       # versions, and the bootstrap built the runtime of this entry's only; the full suite
       # expects no skip. tests/e2e/test_dispatch.py builds fsbpyr on another Python, which
@@ -230,7 +238,8 @@ jobs:
               --junitxml=full.xml --cov --cov-report=xml
 
       # Informational: the launcher sources (copied by each session, so listed by their temporary
-      # paths) that the probes and the fuzz harness exercised.
+      # paths) that the probes and the fuzz harness exercised. llvm-profdata and llvm-cov are
+      # LLVM 23's (/home/tester/llvm23, first on PATH), as is the clang that instrumented them.
       - name: Launcher coverage (llvm-cov)
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -238,11 +247,11 @@ jobs:
           as-tester bash -c '
             set -eu
             cd /home/tester/llvm-cov
-            llvm-profdata-22 merge -sparse prof/*.profraw -o all.profdata
+            llvm-profdata merge -sparse prof/*.profraw -o all.profdata
             set -- bin/*
             first="$1"; shift
             objects=(); for b in "$@"; do objects+=(-object "$b"); done
-            llvm-cov-22 report "$first" "${objects[@]}" -instr-profile=all.profdata' | tee /home/tester/launcher-coverage.txt
+            llvm-cov report "$first" "${objects[@]}" -instr-profile=all.profdata' | tee /home/tester/launcher-coverage.txt
           { echo '### Launcher coverage (llvm-cov, informational)'; echo '```'
             cat /home/tester/launcher-coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 

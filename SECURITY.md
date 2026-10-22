@@ -43,7 +43,8 @@ executables": an executable built before it keeps the old runtime, and rebuildin
 new fsbpyr is the only fix.
 
 From 20261013 on, PBS releases ship CPython as LLVM 23 bitcode, which fsbpyr links only with
-clang and lld 23 or newer; fsbpyr's releases are built with Debian trixie's clang 22. Until
-fsbpyr can build with clang 23 (SEC-4 in [docs/improvement-plan.md](docs/improvement-plan.md)),
-a fix that needs a PBS release after 20261009 first waits for that toolchain, and can take
+clang and lld 23 or newer. Since 0.23.0 fsbpyr's releases link with LLVM's clang and lld
+23.1.3, from LLVM's release tarball that `tools/release/llvm23` pins by SHA-256 (SEC-4 in
+[docs/improvement-plan.md](docs/improvement-plan.md)), so such a PBS release no longer waits
+for a toolchain. A PBS release on a newer LLVM major needs that pin moved first, and can take
 longer than the targets above.

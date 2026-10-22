@@ -126,8 +126,6 @@ def test_every_linked_static_library_has_a_licence_text(dist: pbs.PbsDist) -> No
 
 
 def test_the_texts_pbs_lists_but_does_not_ship_are_known(dist: pbs.PbsDist) -> None:
-    # a newer PBS that ships zstd's or HACL*'s text, or drops zlib-ng's, needs a look at notices.py
-    expected = {"LICENSE.zlib-ng.txt"}
-    if TARGET_PYTHON == "3.14":
-        expected.add("LICENSE.zstd.txt")
-    assert notices.collect(dist).unshipped == expected
+    # PBS ships every text it lists for what is linked from 20261020 on (zstd's among them); a
+    # PBS that stops shipping one, or ships HACL*'s, needs a look at notices.py
+    assert notices.collect(dist).unshipped == frozenset()

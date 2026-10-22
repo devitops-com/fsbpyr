@@ -27,10 +27,10 @@ from .hold import hold
 from .toolchain import describe, find_toolchain
 
 BOOT_PACKAGES = ("_fsbpyr_boot", "_fsbpyr_rt")  # regenerated for every build, never runtime content
-LAYOUT_VERSION = 8  # bump when the stdlib selection, its canonical bytecode, the layout or the
+LAYOUT_VERSION = 9  # bump when the stdlib selection, its canonical bytecode, the layout or the
 # launcher's link changes (7: a reproducible link; 8: runtime.json records its inputs and
 # components, which build_info carries, REP-3; the stdlib fragment carries the licence notices
-# of what the runtime links, REP-4)
+# of what the runtime links, REP-4; 9: zlib-ng's notice is left out, PBS ships it from 20261020)
 _STUB = "stub"
 _STDLIB = "stdlib.fsbp"
 _META = "runtime.json"

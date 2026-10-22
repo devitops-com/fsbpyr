@@ -69,9 +69,10 @@ if [ "${#problems[@]}" -eq 0 ]; then
 fi
 
 title="Toolchain update: ${#problems[@]} release pin(s) to move"
-body="The release toolchain is pinned (REP-1). To move the pins, edit tools/release/uv.version,
-tools/release/apt-snapshot, and the \`debian:trixie@sha256\` digest in the Containerfile and
-.github/workflows/release.yml, then rebuild and compare:
+body="The release toolchain is pinned (REP-1). To move the pins, edit tools/release/uv.version
+and the Containerfile's \`UV_VERSION\` and \`UV_SHA256_*\`, tools/release/apt-snapshot, and the
+\`debian:trixie@sha256\` digest in the Containerfile, .github/workflows/release.yml and
+.github/workflows/full-suite.yml, then rebuild and compare:
 "
 for problem in "${problems[@]}"; do
     body+="

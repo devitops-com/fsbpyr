@@ -1,12 +1,12 @@
-# A Debian trixie build environment with clang and lld 22, for the architecture it is built
-# for (amd64 or arm64): `make bootstrap` uses it on hosts other than Debian trixie
-# (tools/bootstrap.sh). The checkout is mounted at /src and dist/fsbpyr lands in it; a volume
-# keeps uv's cache, its Pythons and fsbpyr's runtime between runs.
-FROM docker.io/library/debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5 AS build
+# A Debian trixie build environment, for the architecture it is built for (amd64 or arm64):
+# `make bootstrap` uses it on hosts other than Debian trixie (tools/bootstrap.sh). The checkout
+# is mounted at /src and dist/fsbpyr lands in it; a volume keeps uv's cache, its Pythons,
+# fsbpyr's runtime and the clang/lld 23 bootstrap.sh fetches between runs.
+FROM docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308 AS build
 
-# Everything but uv and Python from Debian's own packages (trixie ships clang and lld 22 since 13.7;
-# zstd is for bootstrap.sh's opt-in clang 23, FSBPYR_LLVM23=1; libclang-rt-22-dev has the
-# compiler-rt builtins that the aarch64 link needs, runtime/stub.py outlined_atomics).
+# Everything but uv, Python and clang/lld 23 from Debian's own packages. The runtime links with
+# LLVM's clang/lld 23, which bootstrap.sh fetches with curl and unpacks with zstd
+# (tools/release/llvm23); trixie's clang, lld and compiler-rt 22 are not used for it.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl git make clang-22 lld-22 libclang-rt-22-dev zstd \
     && rm -rf /var/lib/apt/lists/*
@@ -16,9 +16,9 @@ RUN apt-get update \
 # the SHA-256 that astral-sh/uv publishes for it. It installs the Python pinned in
 # .python-version.
 ARG TARGETARCH
-ARG UV_VERSION=0.13.1
-ARG UV_SHA256_AMD64=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
-ARG UV_SHA256_ARM64=9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14
+ARG UV_VERSION=0.13.5
+ARG UV_SHA256_AMD64=f68d291c75783122dad58ab77def0e13f3233f358731db5d6d7e8715603b928f
+ARG UV_SHA256_ARM64=4bb69cf95ed13f23713bb7bc09f241896ea0c75b7c557e615a20604b82f9c403
 RUN case "$TARGETARCH" in \
         amd64) name=uv-x86_64-unknown-linux-gnu; sha256=$UV_SHA256_AMD64 ;; \
         arm64) name=uv-aarch64-unknown-linux-gnu; sha256=$UV_SHA256_ARM64 ;; \

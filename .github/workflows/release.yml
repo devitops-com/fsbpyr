@@ -54,7 +54,7 @@ jobs:
     # the multi-arch index's, so each runner pulls its own architecture. It installs no tools,
     # so the job does: clang/lld 22 and the rest from Debian's packages, the pinned uv
     # (tools/release/uv.version) and the Python of .python-version.
-    container: docker.io/library/debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
+    container: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
     timeout-minutes: 75
     env:
       TARGET: ${{ matrix.target }}
@@ -176,6 +176,7 @@ jobs:
           echo "image:    $(grep -o 'debian:trixie@sha256:[0-9a-f]*' .github/workflows/release.yml | head -n1)"
           echo "snapshot: ${FSBPYR_APT_SNAPSHOT:-none (live mirror)}"
           echo "uv:       $(uv --version)"
+          echo "llvm:     $(cat tools/release/llvm23) (tools/release/llvm23, the runtime's clang/lld)"
           dpkg-query -W clang-22 lld-22 libclang-rt-22-dev xz-utils
           apt-cache policy clang-22 lld-22
 
@@ -325,7 +326,7 @@ jobs:
   reproduce:
     name: reproduce (${{ matrix.target }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.runner }}
-    container: docker.io/library/debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
+    container: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
     timeout-minutes: 75
     strategy:
       fail-fast: false
@@ -379,12 +380,13 @@ jobs:
           EOF
           echo "FSBPYR_APT_SNAPSHOT=$ts" >> "$GITHUB_ENV"
 
-      # bootstrap.sh installs no tool, so the packages are installed here, as build does.
+      # bootstrap.sh installs no tool, so the packages are installed here, as build does (zstd
+      # unpacks LLVM's clang/lld 23, which bootstrap.sh fetches).
       - name: Install clang, lld and the test tools
         run: |
           for try in 1 2 3; do apt-get update -q && break; [ "$try" -lt 3 ] || exit 1; sleep 15; done
           apt-get install -y -q --no-install-recommends make clang-22 lld-22 libclang-rt-22-dev \
-            gcc strace groff-base
+            gcc strace groff-base zstd
 
       # The Python of this entry as build installs it: .python-version's for the newest version
       # (bootstrap.sh looks for that very patch release), else the minor version's newest.
@@ -409,6 +411,7 @@ jobs:
         run: |
           echo "snapshot: ${FSBPYR_APT_SNAPSHOT:-none (live mirror)}"
           echo "uv:       $(uv --version)"
+          echo "llvm:     $(cat rebuild/tools/release/llvm23) (tools/release/llvm23, the runtime's clang/lld)"
           dpkg-query -W clang-22 lld-22 libclang-rt-22-dev xz-utils
 
       # Stage 1 to 3 as build does (a variant's with --python X.Y: dist/stage3-X.Y), as another

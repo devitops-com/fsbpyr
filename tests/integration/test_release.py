@@ -1213,17 +1213,15 @@ def test_publish_waits_for_the_independent_rebuild_to_match() -> None:
     assert IMAGE_PIN.search(jobs["reproduce"])  # REP-1's pinned image
 
 
-# The clang/lld 23 switch (SEC-4): tools/release/llvm23 pins LLVM's release tarball, and
-# bootstrap.sh fetches it into the cache when FSBPYR_LLVM23=1.
+# clang/lld 23 (SEC-4): tools/release/llvm23 pins LLVM's release tarball for each
+# architecture, and bootstrap.sh fetches the host's into the cache unless FSBPYR_LLVM23=0.
 
-LLVM23_NAME = "LLVM-23.1.3-Linux-X64"
+LLVM23_NAME = f"LLVM-23.1.3-Linux-{'ARM64' if platform.machine() == 'aarch64' else 'X64'}"
 
 
 def _llvm23_repo(tmp_path: Path, *, sha256: str | None = None) -> tuple[Path, Path, dict[str, str]]:
     """A copy of tools/ whose pin names a small tarball laid out like LLVM's, the tarball, and
     an environment with a cache under tmp_path and a fake uv that logs its calls."""
-    if platform.machine() != "x86_64":
-        pytest.skip("FSBPYR_LLVM23 is for x86-64 only")  # LLVM's tarball the pin names
     zstd, tar = shutil.which("zstd"), shutil.which("tar")
     if zstd is None or tar is None:
         pytest.skip("zstd is not installed")
@@ -1235,14 +1233,18 @@ def _llvm23_repo(tmp_path: Path, *, sha256: str | None = None) -> tuple[Path, Pa
     (tree / "bin/clang").symlink_to("clang-23")
     write_program(tree / "bin/lld", 'echo "LLD 23.1.3"\n')
     (tree / "bin/ld.lld").symlink_to("lld")
-    write_program(tree / "bin/clang-tidy", "exit 1\n")  # not needed to link: left out
+    write_program(tree / "bin/llvm-profdata", "exit 0\n")  # read clang 23's profiles
+    write_program(tree / "bin/llvm-cov", "exit 0\n")
+    write_program(tree / "bin/clang-tidy", "exit 1\n")  # not needed: left out
     (tree / "lib/clang/23/include").mkdir(parents=True)
     tarball = tmp_path / "llvm.tar.zst"
     packed = subprocess.run([tar, "-C", str(tmp_path / "tree"), "-cf", "-", LLVM23_NAME],
                             capture_output=True, check=True)  # fmt: skip
     subprocess.run([zstd, "-q", "-o", str(tarball)], input=packed.stdout, check=True)
     digest = sha256 or hashlib.sha256(tarball.read_bytes()).hexdigest()
-    (root / "tools/release/llvm23").write_text(f"23.1.3 {digest}\n", encoding="utf-8")
+    other = "0" * 64  # the other architecture's tarball: never fetched here
+    digests = (other, digest) if platform.machine() == "aarch64" else (digest, other)
+    (root / "tools/release/llvm23").write_text(f"23.1.3 {' '.join(digests)}\n", encoding="utf-8")
     bin_dir = tmp_path / "bin"
     write_program(bin_dir / "uv", 'echo "uv $*" >> "$FAKE_UV_LOG"\n'
                                   '[ "$1" = --version ] && echo "uv 0.13.1"\nexit 0\n')  # fmt: skip
@@ -1256,11 +1258,12 @@ def _llvm23_repo(tmp_path: Path, *, sha256: str | None = None) -> tuple[Path, Pa
     return root, tarball, env
 
 
-def test_llvm23_pin_names_a_version_and_a_sha256() -> None:
-    version, sha256 = (ROOT / "tools/release/llvm23").read_text(encoding="utf-8").split()
+def test_llvm23_pin_names_a_version_and_a_sha256_per_architecture() -> None:
+    version, *digests = (ROOT / "tools/release/llvm23").read_text(encoding="utf-8").split()
 
     assert re.fullmatch(r"23\.\d+\.\d+", version)
-    assert re.fullmatch(r"[0-9a-f]{64}", sha256)
+    assert len(digests) == 2  # the x86-64 and the aarch64 tarball
+    assert all(re.fullmatch(r"[0-9a-f]{64}", sha256) for sha256 in digests)
 
 
 def test_bootstrap_unpacks_only_what_linking_needs_and_fetches_once(tmp_path: Path) -> None:
@@ -1275,9 +1278,22 @@ def test_bootstrap_unpacks_only_what_linking_needs_and_fetches_once(tmp_path: Pa
     assert clang.parent.parent.parent == tmp_path / "cache/fsbpyr/toolchains"
     assert clang.is_file() and (clang.parent / "ld.lld").exists()
     assert (clang.parent.parent / "lib/clang/23/include").is_dir()
+    assert (clang.parent / "llvm-profdata").is_file() and (clang.parent / "llvm-cov").is_file()
     assert not (clang.parent / "clang-tidy").exists()
     assert (second.returncode, second.stdout.splitlines()[-1]) == (0, str(clang))
     assert [p.name for p in clang.parent.parent.parent.iterdir()] == [clang.parent.parent.name]
+
+
+def test_bootstrap_unpacks_again_a_tree_without_llvm_cov(tmp_path: Path) -> None:
+    root, _, env = _llvm23_repo(tmp_path)
+    first = run_script(["bash", str(root / "tools/bootstrap.sh"), "--llvm23"], env)
+    clang = Path(first.stdout.splitlines()[-1])
+    (clang.parent / "llvm-cov").unlink()  # as the opt-in switch of 0.21.0 and 0.22.0 left it
+
+    again = run_script(["bash", str(root / "tools/bootstrap.sh"), "--llvm23"], env)
+
+    assert again.returncode == 0, again.stderr
+    assert (clang.parent / "llvm-cov").is_file()
 
 
 def test_bootstrap_fails_when_the_tarball_does_not_match_its_sha256(tmp_path: Path) -> None:
@@ -1295,25 +1311,24 @@ def _runtime_build_call(tmp_path: Path) -> str:
     return next(c for c in calls if "runtime build" in c)
 
 
-def test_bootstrap_links_with_the_system_clang_unless_fsbpyr_llvm23_is_set(
-    tmp_path: Path,
-) -> None:
+def test_bootstrap_links_with_the_pinned_llvm_unless_fsbpyr_llvm23_is_0(tmp_path: Path) -> None:
     root, _, env = _llvm23_repo(tmp_path)
 
     # The fake uv builds nothing, so bootstrap stops at its first verify: only the call to
     # `runtime build` matters here.
-    without = run_script(["bash", str(root / "tools/bootstrap.sh"), "--from-source"], env)
-    plain = _runtime_build_call(tmp_path)
+    pinned = run_script(["bash", str(root / "tools/bootstrap.sh"), "--from-source"], env)
+    with_pin = _runtime_build_call(tmp_path)
     (tmp_path / "uv.log").unlink()
-    with_switch = run_script(
-        ["bash", str(root / "tools/bootstrap.sh"), "--from-source"], {**env, "FSBPYR_LLVM23": "1"}
+    without = run_script(
+        ["bash", str(root / "tools/bootstrap.sh"), "--from-source"], {**env, "FSBPYR_LLVM23": "0"}
     )
-    switched = _runtime_build_call(tmp_path)
+    on_path = _runtime_build_call(tmp_path)
 
-    assert "links with clang/lld 22" in without.stdout and plain.endswith("runtime build")
-    assert "links with clang/lld 23" in with_switch.stdout
-    assert switched.startswith("uv run --locked fsbpyr runtime build --clang ")
-    assert switched.endswith("/bin/clang")
+    assert "links with LLVM's clang/lld 23.1.3" in pinned.stdout
+    assert with_pin.startswith("uv run --locked fsbpyr runtime build --clang ")
+    assert with_pin.endswith("/bin/clang")
+    assert "links with clang/lld 23 or newer on PATH" in without.stdout
+    assert on_path.endswith("runtime build")
 
 
 def test_bootstrap_python_runs_one_variants_stages_in_its_own_environment(tmp_path: Path) -> None:
@@ -1326,7 +1341,8 @@ def test_bootstrap_python_runs_one_variants_stages_in_its_own_environment(tmp_pa
 
     assert "Locked environment on Python 3.12" in result.stdout
     assert "uv sync --python 3.12 --locked" in calls
-    assert "uv run --python 3.12 --locked fsbpyr runtime build --python 3.12" in calls
+    assert any(c.startswith("uv run --python 3.12 --locked fsbpyr runtime build --python 3.12 "
+                            "--clang ") for c in calls)  # fmt: skip
     assert ("uv run --python 3.12 --locked fsbpyr build . --python 3.12 "
             "-o dist/stage1-3.12/fsbpyr") in calls
     assert not (root / "dist/stage1").exists()  # the default's directories stay untouched
