@@ -152,10 +152,10 @@ test-container: ## Run the whole suite but the portability tests in a Debian tri
 			&& clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" \
 			&& $(UVRUN) pytest -n $(JOBS) --dist loadfile --ignore=tests/e2e/test_portability.py'
 
-# The portability matrix (tests/e2e/test_portability.py): 13 images pulled and run with podman,
+# The portability matrix (tests/e2e/test_portability.py): 11 images pulled and run with podman,
 # on $(BIN)'s builds of the fixtures (tools/portability-apps.sh); needs llvm-objdump.
 # FSBPYR_TESTS_REQUIRE_ALL=portability fails any skip. Run `make build` first.
-test-portability: ## Run the portability matrix on 13 distributions (podman, dist/fsbpyr)
+test-portability: ## Run the portability matrix on 11 distributions (podman, dist/fsbpyr)
 	rm -rf dist/portability-apps
 	tools/portability-apps.sh $(BIN) dist/portability-apps $(PYTHON_MINOR)
 	$(TESTENV) FSBPYR_PORTABILITY_APPS="$(CURDIR)/dist/portability-apps" FSBPYR_TESTS_REQUIRE_ALL=portability \
