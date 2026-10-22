@@ -38,7 +38,7 @@ VENV = Path(sys.prefix)  # the development environment: .venv, or .venv-3.X for 
 FIXTURES = ROOT / "tests" / "fixtures" / "projects"
 UV = shutil.which("uv")
 GIT = shutil.which("git")
-RELEASE = "https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr"
+INSTALLER = "https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh"
 
 
 @pytest.fixture(autouse=True)
@@ -101,9 +101,9 @@ def test_hello_from_uv_lock(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
 
 def test_readme_quickstart_works_on_a_new_account(tmp_path: Path) -> None:
     """The README's quickstart in a copy of hello, as on a new account: an empty home, whose
-    new ~/.local/bin is not on PATH. A stand-in for curl puts the fsbpyr under test (not yet
-    executable) where the release would go. uv keeps its cache (XDG_CACHE_HOME) and its
-    Pythons; the runtime is in FSBPYR_CACHE_DIR (conftest)."""
+    new ~/.local/bin is not on PATH. A stand-in for curl serves an installer that puts the
+    fsbpyr under test where the release's would go. uv keeps its cache (XDG_CACHE_HOME) and
+    its Pythons; the runtime is in FSBPYR_CACHE_DIR (conftest)."""
     assert UV is not None
     project = _fixture("hello", tmp_path)
     with (project / "pyproject.toml").open("a") as pyproject:  # builds for the Python tests run on
@@ -115,9 +115,13 @@ def test_readme_quickstart_works_on_a_new_account(tmp_path: Path) -> None:
     under_test = shlex.quote(str(VENV / "bin" / "fsbpyr"))
     fsbpyr.write_text(f'#!/bin/sh\nexec {under_test} "$@"\n')
     (tools / "curl").write_text(
-        f'#!/bin/sh\ntest "$*" = "-fLo $HOME/.local/bin/fsbpyr {RELEASE}" ||\n'
+        f'#!/bin/sh\ntest "$*" = "-LsSf {INSTALLER}" ||\n'
         '  { echo "curl stand-in: unexpected arguments: $*" >&2; exit 2; }\n'
+        "cat <<'EOF'\n"
+        'mkdir -p "$HOME/.local/bin"\n'
         f'cp {shlex.quote(str(fsbpyr))} "$HOME/.local/bin/fsbpyr"\n'
+        'chmod +x "$HOME/.local/bin/fsbpyr"\n'
+        "EOF\n"
     )
     (tools / "curl").chmod(0o755)
     pythons = subprocess.run([UV, "python", "dir"], capture_output=True, text=True, check=True)

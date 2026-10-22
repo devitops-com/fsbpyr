@@ -1661,7 +1661,7 @@ write, a truncated binary.
     x86-64 glibc; nightly and before a release, every target and Python;
   - the short asset names stay: `fsbpyr`, `fsbpyr-3.12` and `fsbpyr-3.13` (each with its
     `.xz`) are copies of the x86-64 glibc builds, so executables already released keep
-    updating.
+    updating. (Superseded 2026-10-22, below.)
   - aarch64 is tested on the development host only with basic checks under user-mode QEMU
     (`podman --arch arm64`); the full suite, the three-stage bootstrap and the portability
     images run on GitHub's `ubuntu-24.04-arm` runners.
@@ -1673,6 +1673,14 @@ write, a truncated binary.
   - the 64 KiB alignment stays untested on 16K- and 64K-page kernels (no such kernel at hand;
     a `qemu-system-aarch64` VM with a 64K kernel would show it): the docs say it was tested on
     4K-page kernels only.
+  - 2026-10-22, after 0.21.0 (whose `fsbpyr-3.12`, `fsbpyr-3.13` and unlabeled
+    `fsbpyr-<target>` side by side confused new users): every asset names its Python and its
+    target, `fsbpyr-3.X-<target>`, the newest Python's too, with `.xz`, notices
+    (`THIRD_PARTY_LICENSES-3.X-<target>.txt`) and SBOM to match. No short or unlabeled names
+    stay, and no transition copy: 0.21.0's 3.14 builds, which update from
+    `fsbpyr-<target>.xz`, are reinstalled once with `install.sh`. `fsbpyr self update` keeps
+    to the executable's Python (a 3.13 build updates to the latest 3.13 build, never to
+    3.14); `install.sh` takes `--python X.Y` and installs the newest Python's otherwise.
 
   **Steps** (a target is done when, on its own runner, the full suite passes with that
   target's skip list, the three-stage bootstrap is byte-identical and an independent rebuild
@@ -1822,7 +1830,9 @@ write, a truncated binary.
     `fsbpyr-aarch64-linux-musl` and `fsbpyr-aarch64-macos`; for the others the version too
     (`fsbpyr-3.12-aarch64-linux-musl`); each with its `.xz`. `fsbpyr` and `fsbpyr.xz` stay,
     copies of `fsbpyr-x86_64-linux-gnu`, so the links in use keep working (and, owner
-    decision 2026-10-21, `fsbpyr-3.12` and `fsbpyr-3.13` as copies of the x86-64 glibc ones);
+    decision 2026-10-21, `fsbpyr-3.12` and `fsbpyr-3.13` as copies of the x86-64 glibc ones;
+    superseded 2026-10-22: every asset is `fsbpyr-3.X-<target>`, no short names, see the
+    owner decisions of step 2);
   - **an installer, `install.sh`, modelled on uv's** (`curl -LsSf
     https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh | sh`, or a
     tag's own `releases/download/vX.Y.Z/install.sh` for that version), built and attested by

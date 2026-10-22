@@ -13,8 +13,6 @@ import subprocess
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from .bytecode import SUPPORTED_PYTHON
-
 _RELEASE = re.compile(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 _HASH_DIGITS = 8
 _TIMEOUT = 10
@@ -104,10 +102,9 @@ def own_version() -> str:
 
 def release_asset(python: str, target: str) -> str:
     """The release asset (without ``.xz``) of the fsbpyr that runs on ``python`` ("3.12") on
-    ``target`` ("x86_64-linux-gnu", a targets.Target.name): the newest supported Python's is
-    ``fsbpyr-x86_64-linux-gnu``, the others' are ``fsbpyr-3.12-x86_64-linux-gnu`` (Phase 9)."""
-    newest = "{}.{}".format(*max(SUPPORTED_PYTHON))
-    return f"fsbpyr-{target}" if python == newest else f"fsbpyr-{python}-{target}"
+    ``target`` ("x86_64-linux-gnu", a targets.Target.name): ``fsbpyr-3.12-x86_64-linux-gnu``.
+    Every asset names its Python, the newest's too (owner, 2026-10-22)."""
+    return f"fsbpyr-{python}-{target}"
 
 
 def release_asset_record(project: str, python: str, target: str) -> tuple[tuple[str, str], ...]:

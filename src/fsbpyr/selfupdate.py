@@ -1,15 +1,14 @@
 """``fsbpyr self update``: replace the running executable with the latest GitHub release.
 
-Settled with the owner on 2026-10-18 (plan, Phase 9): the release's ``fsbpyr-<target>.xz`` (a
-variant's own ``fsbpyr-3.X-<target>.xz``, the asset its build_info says it was released as; an
-executable that recorded a short name such as ``fsbpyr`` or none follows ``fsbpyr.xz``, which
-the release still carries for x86-64 glibc) is unpacked
-in-process with the standard library's lzma into the executable's own directory, verified
+Settled with the owner on 2026-10-18 (plan, Phase 9) and 2026-10-22 (every asset names its
+Python): the release's ``fsbpyr-3.X-<target>.xz`` of the Python the executable runs on (the
+asset its build_info says it was released as), so an update never moves to another Python, is
+unpacked in-process with the standard library's lzma into the executable's own directory, verified
 in-process (``inspect --verify``, so no byte of it runs before it passes) and renamed over the
 executable's real path, keeping its mode. A man page and completions found under the
 executable's prefix are written again by the new executable and renamed into place after it.
 Only released executables update themselves: a developer build (``untagged-<commit>``) is
-refused with the ``curl`` command that downloads the latest release.
+refused with the installer command that installs the latest release for its Python.
 """
 
 import contextlib
@@ -19,6 +18,7 @@ import os
 import re
 import stat
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.request
@@ -28,14 +28,14 @@ from pathlib import Path
 
 from .inspection import InspectError, read
 from .targets import TARGETS, host_target
-from .vcs import own_version
+from .vcs import own_version, release_asset
 
 REPO = "devitops-com/fsbpyr"
 API_VARIABLE = "FSBPYR_RELEASE_API"  # the release document's URL; tests serve their own
 DEFAULT_API = f"https://api.github.com/repos/{REPO}/releases/latest"
-ASSET = "fsbpyr"  # the short name: the newest Python's on x86-64 glibc (Phase 9)
+INSTALLER = f"https://github.com/{REPO}/releases/latest/download/install.sh"
 _TARGETS = "|".join(re.escape(t.name) for t in TARGETS)
-_ASSET_NAME = re.compile(rf"fsbpyr(-3\.\d+)?(-({_TARGETS}))?")  # short and long names
+_ASSET_NAME = re.compile(rf"fsbpyr-3\.\d+-({_TARGETS})")
 _TIMEOUT_S = 60
 _CHUNK = 1 << 20
 _RELEASE = re.compile(r"v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
@@ -61,11 +61,14 @@ class Release:
     asset_url: str
 
 
-def curl_hint() -> str:
-    """The command that downloads the latest release of the newest Python for this host."""
-    asset = f"fsbpyr-{host_target().name}"
-    url = f"https://github.com/{REPO}/releases/latest/download/{asset}"
-    return f"curl -fLo ~/.local/bin/fsbpyr {url}\nchmod +x ~/.local/bin/fsbpyr"
+def _running_python() -> str:
+    return f"{sys.version_info.major}.{sys.version_info.minor}"
+
+
+def curl_hint(python: str = "") -> str:
+    """The command that installs the latest release for ``python`` (by default the one this
+    runs on) on this host."""
+    return f"curl -LsSf {INSTALLER} | sh -s -- --python {python or _running_python()}"
 
 
 def running_executable() -> Path:
@@ -98,13 +101,14 @@ def own_release() -> tuple[int, int, int]:
 
 
 def own_asset() -> str:
-    """The asset (without ``.xz``) this executable was released as, from its build_info;
-    ``fsbpyr`` for one built before the record existed, which were all the one asset. A short
-    name (``fsbpyr``, ``fsbpyr-3.12``) stays the short name."""
+    """The asset (without ``.xz``) this executable was released as, from its build_info; when
+    it records none of today's names, the asset of the Python it runs on for this host."""
     import _fsbpyr  # noqa: PLC0415  # only in executables
 
     asset = json.loads(_fsbpyr.info()["build_info"]).get("release_asset")
-    return asset if isinstance(asset, str) and _ASSET_NAME.fullmatch(asset) else ASSET
+    if isinstance(asset, str) and _ASSET_NAME.fullmatch(asset):
+        return asset
+    return release_asset(_running_python(), host_target().name)
 
 
 def latest_release(asset: str) -> Release:
@@ -123,7 +127,8 @@ def latest_release(asset: str) -> Release:
         raise UpdateError(f"the latest release has no vX.Y.Z tag ({tag!r})")
     name = f"{asset}.xz"
     if name not in assets:
-        raise UpdateError(f"the latest release ({tag}) has no {name}")
+        raise UpdateError(f"the latest release ({tag}) has no {name}; to install its fsbpyr "
+                          f"for another Python:\n{curl_hint('3.X')}")  # fmt: skip
     return Release(tag, numbers, assets[name])
 
 
@@ -198,7 +203,8 @@ def update(
     directory = executable.parent
     if not os.access(directory, os.W_OK | os.X_OK):
         raise UpdateError(f"cannot write to {directory}; update with the owner's rights, or "
-                          f"download the latest release there:\n{curl_hint()}")  # fmt: skip
+                          f"run the installer with FSBPYR_INSTALL_DIR={directory}:\n"
+                          f"{curl_hint()}")  # fmt: skip
     release = latest_release(own_asset())
     if release.numbers <= own:
         log(f"fsbpyr is up to date ({own_version()}; latest release {release.tag})")

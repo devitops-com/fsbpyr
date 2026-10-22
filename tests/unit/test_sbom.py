@@ -27,7 +27,7 @@ INSPECT: dict[str, Any] = {
     "build_info": {
         "schema": 1,
         "fsbpyr": "0.20.0",
-        "release_asset": "fsbpyr-x86_64-linux-gnu",
+        "release_asset": "fsbpyr-3.14-x86_64-linux-gnu",
         "python": "3.14.8",
         "runtime_components": {
             "expat": "2.7.3",
@@ -90,7 +90,7 @@ def test_the_executable_is_the_described_component_with_its_plain_sha256() -> No
     executable = _bom()["metadata"]["component"]
 
     assert executable["type"] == "application"
-    assert (executable["name"], executable["version"]) == ("fsbpyr-x86_64-linux-gnu", "0.20.0")
+    assert (executable["name"], executable["version"]) == ("fsbpyr-3.14-x86_64-linux-gnu", "0.20.0")
     assert executable["hashes"] == [{"alg": "SHA-256", "content": SHA256}]
 
 
