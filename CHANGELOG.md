@@ -10,6 +10,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Changed
+- **The release is built with uv 0.13.5 (was 0.13.1) on the current Debian trixie image**
+  (`debian:trixie@sha256:4c252754…`). A release records its uv (`fsbpyr inspect` shows it),
+  and rebuilding it as the README describes needs that uv.
+
 ### Fixed
 - **The SBOMs name expat's version so that scanners match it.** 0.22.0's SBOMs recorded expat
   as `expat_2.9.0`, as Python reports it, so its CPE

@@ -54,7 +54,7 @@ jobs:
     # the multi-arch index's, so each runner pulls its own architecture. It installs no tools,
     # so the job does: clang/lld 22 and the rest from Debian's packages, the pinned uv
     # (tools/release/uv.version) and the Python of .python-version.
-    container: docker.io/library/debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
+    container: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
     timeout-minutes: 75
     env:
       TARGET: ${{ matrix.target }}
@@ -325,7 +325,7 @@ jobs:
   reproduce:
     name: reproduce (${{ matrix.target }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.runner }}
-    container: docker.io/library/debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
+    container: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
     timeout-minutes: 75
     strategy:
       fail-fast: false
