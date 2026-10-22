@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from fsbpyr import __version__
 from fsbpyr.build import TARGET_PYTHON, rebuild_on_baseline
 from fsbpyr.cli import main
 from fsbpyr.compat import zstd
@@ -74,9 +75,12 @@ def test_hello_from_uv_lock(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert (result.returncode, result.stdout) == (5, "hello ['5', 'x y']\n")
     assert f"built {executable}" in capsys.readouterr().out
     assert main(["inspect", str(executable)]) == 0
+    # inspect shows the release number when this fsbpyr cannot see its commit (a worktree's
+    # copy in make test-container, whose .git points outside the container)
+    unseen = own_version() == version_string(None)
     assert capsys.readouterr().out.splitlines()[:2] == [
         "app        hello 1.0.0",  # a copy outside any repository: no commit
-        f"built with fsbpyr {own_version()}",
+        f"built with fsbpyr {__version__ if unseen else own_version()}",
     ]
     assert main(["inspect", "--json", "--verify", str(executable)]) == 0
     report = json.loads(capsys.readouterr().out)
