@@ -2,17 +2,20 @@
 # The fsbpyr installer, modelled on uv's:
 #
 #     curl -LsSf https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh | sh
+#     curl -LsSf .../install.sh | sh -s -- --python 3.13    # the fsbpyr that runs on 3.13
 #
 # This is the template. tools/release/make-install.sh fills in the release's version, the
-# targets it has and the SHA-256 and recorded glibc of every asset when the release is made
-# (release.yml's publish job), so a download is checked against what the release built before
-# anything of it runs. Plain POSIX sh (dash, busybox); nothing runs until the last line, so a
-# truncated download does nothing.
+# targets and Pythons it has and the SHA-256 and recorded glibc of every asset when the release
+# is made (release.yml's publish job), so a download is checked against what the release built
+# before anything of it runs. Plain POSIX sh (dash, busybox); nothing runs until the last line,
+# so a truncated download does nothing.
 
 set -u
 
 APP_VERSION='@VERSION@'
 TARGETS='@TARGETS@'
+# The Pythons it has a build for, oldest first.
+PYTHONS='@PYTHONS@'
 # One asset per line: its name, its SHA-256 and, for an executable, the glibc it needs
 # (`fsbpyr inspect`: "glibc >= X.Y"; - where there is none).
 RELEASE_ASSETS='
@@ -27,6 +30,8 @@ BASE_URL="${FSBPYR_INSTALLER_BASE_URL:-https://github.com/$REPO/releases/downloa
 QUIET=0
 VERBOSE=0
 NO_MODIFY_PATH=0
+PYTHON=
+ASSET=
 WORK_DIR=
 STAGE=
 
@@ -52,7 +57,7 @@ fsbpyr-installer.sh
 The installer for fsbpyr $APP_VERSION
 
 This script detects the platform it runs on, downloads the matching fsbpyr executable of the
-release (https://github.com/$REPO/releases),
+release (https://github.com/$REPO/releases) for the newest Python or the one --python names,
 checks it against the SHA-256 recorded in this script and with \`fsbpyr inspect --verify\`, and
 installs it, with its man page and shell completions, into the first of
 \$FSBPYR_INSTALL_DIR, \$XDG_BIN_HOME, \$XDG_DATA_HOME/../bin and \$HOME/.local/bin.
@@ -60,6 +65,9 @@ installs it, with its man page and shell completions, into the first of
 Usage: install.sh [OPTIONS]
 
 Options:
+      --python X.Y
+          Install the fsbpyr that runs on Python X.Y (this release has: $PYTHONS); by
+          default the newest. \`fsbpyr self update\` keeps to the Python installed.
   -v, --verbose
           Print more while installing
   -q, --quiet
@@ -121,6 +129,18 @@ check_target() {
     fi
 }
 
+# The asset of this host for the Python asked for, the newest when none was.
+choose_asset() {
+    if [ -z "$PYTHON" ]; then
+        for PYTHON in $PYTHONS; do :; done
+    fi
+    in_list "$PYTHON" "$PYTHONS" \
+        || err "fsbpyr $APP_VERSION has no build for Python $PYTHON; its Pythons are: ${PYTHONS:-none}"
+    ASSET="fsbpyr-$PYTHON-$TARGET"
+    [ -n "$(asset_field "$ASSET" 2)" ] \
+        || err "fsbpyr $APP_VERSION has no Python $PYTHON build for this host ($TARGET)"
+}
+
 asset_field() { # asset, field (2: SHA-256, 3: glibc)
     printf '%s\n' "$RELEASE_ASSETS" | awk -v a="$1" -v f="$2" '$1 == a { print $f; exit }'
 }
@@ -128,7 +148,7 @@ asset_field() { # asset, field (2: SHA-256, 3: glibc)
 # True when the host's glibc is at least X.Y: the release records the newest glibc symbol its
 # executable uses, and a host with an older one cannot start it.
 check_glibc() {
-    needed="$(asset_field "fsbpyr-$TARGET" 3)"
+    needed="$(asset_field "$ASSET" 3)"
     case "$needed" in "" | -) return 0 ;; esac
     host="$(ldd --version 2>&1 | sed -n '1s/.* \([0-9][0-9]*\.[0-9][0-9]*\)[^ ]*$/\1/p')"
     if [ -z "$host" ]; then
@@ -194,7 +214,7 @@ check_attestation() { # file
 # Downloads the executable into $STAGE (in the install directory, so that the rename is atomic
 # and no mount option of /tmp matters) and checks it three ways before it is installed.
 fetch_executable() {
-    asset="fsbpyr-$TARGET"
+    asset="$ASSET"
     WORK_DIR="$(mktemp -d)" || err "cannot make a temporary directory"
     STAGE="$INSTALL_DIR/.fsbpyr.$$.tmp"
     if have xz && [ -n "$(asset_field "$asset.xz" 2)" ]; then
@@ -350,14 +370,21 @@ add_to_path() {
 # --- Main ---
 
 main() {
-    for arg in "$@"; do
-        case "$arg" in
+    while [ $# -gt 0 ]; do
+        case "$1" in
             -h | --help) usage; exit 0 ;;
             -q | --quiet) QUIET=1 ;;
             -v | --verbose) VERBOSE=1 ;;
             --no-modify-path) NO_MODIFY_PATH=1 ;;
-            *) printf 'error: unknown option: %s\n\n' "$arg" >&2; usage >&2; exit 1 ;;
+            --python=*) PYTHON="${1#--python=}" ;;
+            --python)
+                [ $# -ge 2 ] || { printf 'error: --python needs a version, such as 3.13\n\n' >&2; usage >&2; exit 1; }
+                PYTHON="$2"
+                shift
+                ;;
+            *) printf 'error: unknown option: %s\n\n' "$1" >&2; usage >&2; exit 1 ;;
         esac
+        shift
     done
     [ "${FSBPYR_NO_MODIFY_PATH:-}" != 1 ] || NO_MODIFY_PATH=1
     trap cleanup EXIT
@@ -365,13 +392,14 @@ main() {
 
     detect_target
     check_target
+    choose_asset
     case "$TARGET" in *-gnu) check_glibc ;; esac
     if [ "${FSBPYR_VERIFY:-}" = 1 ] && ! have gh; then
         err "FSBPYR_VERIFY=1 needs the GitHub CLI (gh) to check the attestation, and it is not installed"
     fi
 
     choose_install_dir
-    say "downloading fsbpyr $APP_VERSION $TARGET"
+    say "downloading fsbpyr $APP_VERSION for Python $PYTHON ($TARGET)"
     fetch_executable
     say "installing to $INSTALL_DIR"
     mv -f "$STAGE" "$INSTALL_DIR/fsbpyr" || err "cannot install $INSTALL_DIR/fsbpyr"

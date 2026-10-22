@@ -10,6 +10,48 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Changed
+- **Breaking: every release asset names its Python.** 0.21.0 published the newest Python's
+  builds without a version (`fsbpyr-x86_64-linux-gnu`) beside `fsbpyr-3.12-x86_64-linux-gnu`
+  and `fsbpyr-3.13-x86_64-linux-gnu`, and copies of the x86-64 ones under the short names
+  `fsbpyr`, `fsbpyr-3.12` and `fsbpyr-3.13`. Each executable is now `fsbpyr-3.X-<target>`
+  (`fsbpyr-3.14-x86_64-linux-gnu`) with its `.xz`, `THIRD_PARTY_LICENSES-3.X-<target>.txt`
+  and SBOM, and there are no other names. `fsbpyr self update` keeps to the Python the
+  executable runs on: a 3.13 build updates to the latest 3.13 build, and a 3.14 build stays
+  on 3.14 when a newer Python arrives. `install.sh` takes `--python X.Y` and installs the
+  newest Python's build otherwise; the README's quickstart now uses it.
+  **From 0.21.0:** its 3.14 builds look for `fsbpyr-<target>.xz`, which this release does
+  not have, so `fsbpyr self update` fails on them; run the installer once instead
+  (`curl -LsSf https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh | sh`).
+  Its 3.12 and 3.13 builds update as before. Links to `releases/latest/download/fsbpyr` (the
+  instructions of 0.20.0 and older) no longer work.
+
+### Added
+- **A CycloneDX SBOM for every release executable** (REP-7). Vulnerability scanners cannot see
+  the OpenSSL, SQLite, expat and zlib inside an fsbpyr executable. Each executable now has
+  `<asset>.cdx.json` (CycloneDX 1.6) beside it, made by `tools/release/sbom.py` from
+  `fsbpyr inspect --verify --json`: the executable with its plain SHA-256, fsbpyr
+  (`pkg:github/devitops-com/fsbpyr@vX.Y.Z`), CPython and the runtime components with their
+  NVD CPEs, and the Python distributions from an index as `pkg:pypi` purls with the lock's
+  hashes. The file is a function of that output: no timestamp, and a serial number derived
+  from the SHA-256. `build` and `reproduce` each make one, `compare` checks them byte for
+  byte, and a new `sbom` job attests each to its executable with `actions/attest-sbom`
+  (predicate `https://cyclonedx.org/bom`). See
+  [Verifying a release](README.md#verifying-a-release).
+- **`FSBPYR_SELFTEST=natives` checks a machine before you deploy.** Run an app with it set
+  and fsbpyr extracts every native extension, runs the target's dynamic loader in trace mode
+  on each (no initialization code runs), and prints one line per missing library or symbol
+  version, such as `missing libstdc++.so.6` or `missing version `GLIBCXX_3.4.32' of
+  libstdc++.so.6`. It exits 1 if anything is missing and 0 otherwise. Libraries an extension
+  opens later by name are not seen. Documented in docs/compatibility.md, the README and the
+  man page. Other values of `FSBPYR_SELFTEST` behave as before.
+
+### Fixed
+- **A build killed with SIGTERM cleans up like one interrupted with Ctrl-C.** `fsbpyr` handles
+  SIGTERM as SIGINT: the build removes the executable it was writing and keeps an existing
+  output, prints "interrupted" and exits 130, where it used to die at once and leave a
+  `.NAME.XXXX.tmp` beside the output.
+
 ## [0.21.0] - 2026-10-21
 
 ### Security

@@ -1215,6 +1215,7 @@ waits.
   - A unit test with faked loader output, copied from those real lines, passes.
   - In CI-6, heavy exits 0 on debian:10. In a `--rm` debian:10 container with /usr/lib/x86_64-linux-gnu/libstdc++.so.6* removed, it exits non-zero and names libstdc++.so.6. (busybox:glibc lacks the stub's libdl, libutil and librt, so heavy fails in ld.so before boot.)
 - Effort: M. Depends on: NAT-2, CI-6, DOC-1. Owner decision: none.
+- Done 2026-10-21: `_fsbpyr_rt/selftest.py`, called from the boot code for `FSBPYR_SELFTEST=natives` (any other value keeps its meaning). The loader is the executable's own PT_INTERP, read from /proc/self/exe, so aarch64 and x86-64 need no table. Missing items are reported once each, with the extensions that need them. Unit tests with faked loader output: tests/unit/boot/test_selftest.py. End to end: tests/e2e/test_natives.py runs heavy on this host (exit 0). The debian:10 checks (heavy passes on every image; with libstdc++.so.6 removed it exits non-zero naming it) are in tests/e2e/test_portability.py and were NOT run (podman matrix). Not run either: glibc 2.28's loader in trace mode (untested, as noted above), and an aarch64 host.
 
 ### REP-7 Publish a CycloneDX SBOM for fsbpyr's release
 - Why: vulnerability scanners cannot see the statically linked OpenSSL, SQLite, expat or libffi inside fsbpyr. Gaps: repro/no-sbom, security/no-component-inventory-or-sbom part (b) (medium); maturity/release-artifact-extras (low). eval.md asks for a manifest (eval:280), not an SBOM by name. It is below the cut line because REP-3's build_info, with `runtime_components`, already tells users what the release embeds and when to rebuild. This is the same reason §4 gives for deferring app SBOMs. Revisit when a user's scanner asks for an SBOM.
@@ -1232,6 +1233,7 @@ waits.
   - `jq -r '.components[] | select(.name == "openssl") | .cpe' fsbpyr.cdx.json` prints a CPE with the embedded OpenSSL version, and the same holds for SQLite.
   - `grype sbom:` on a copy whose OpenSSL version is set to 3.0.0 lists OpenSSL vulnerabilities (a manual check, recorded in the commit).
 - Effort: M. Depends on: REP-3, REP-2, REP-6 (the plain sha256). Owner decision: none.
+- Done 2026-10-21 (not yet released): tools/release/sbom.py, tests/unit/test_sbom.py (a fixed inspect JSON: determinism, CPEs, purls, the fsbpyr component) and an SBOM of the hello executable in tests/e2e/test_build.py; release.yml makes the SBOM in `build` and `reproduce`, `compare` checks the two, and a new matrix job `sbom` attests each to its executable with actions/attest-sbom v4.1.0 (one SBOM per call, hence a job per executable and not a step in `publish`, which needs it); workflow-text tests in tests/integration/test_release.py. Since the plan: one SBOM per executable (`<asset>.cdx.json`, six per release; every asset is `fsbpyr-3.X-<target>` since 2026-10-22). The CPE names were checked against NVD's CPE dictionary on 2026-10-22: it has no mpdecimal product, so libmpdec is listed without a CPE. Only a release run shows: `gh attestation verify ... --predicate-type https://cyclonedx.org/bom`, the published files, byte-identical SBOMs in `compare`, `jq` on the published file, and the grype check (OpenSSL set to 3.0.0). attest-sbom is deprecated upstream in favour of actions/attest, which v4.1.0 wraps.
 
 ### CI-7 Close the remaining low test gaps
 - Why: five low-severity gaps: tests/thin-property-based-testing, security/fuzz-scope-and-corpus (build-time parsers), tests/no-interrupted-build-or-kill-tests (signal part), security/layer4-interrupted-build-and-low-disk, security/no-tsan-no-c-static-analysis (static-analysis part). eval:355-357, 365-367. It is below the cut line because all five are low. BLD-1 already covers a failed write, and CI-3 fuzzes continuously and keeps the corpus.
@@ -1246,6 +1248,11 @@ waits.
   - Each test exists and runs: in test-ci where cheap, otherwise in full-suite.
   - The analyzer report appears in the nightly log.
 - Effort: M. Depends on: CI-3. Owner decision: none.
+- Done 2026-10-21:
+  - tests/conftest.py registers the derandomized Hypothesis profile `ci`, loaded when CI is set. tests/unit/test_elf_mutation.py mutates the bytes of four small ELFs and requires every elf.py reader to return or raise ElfError (test-ci).
+  - cli.py's `main` handles SIGTERM as SIGINT (exit 130), restoring the old handler on return. A unit test in test_cli.py (test-ci) and tests/e2e/test_interrupted_build.py, which kills a real `fsbpyr build` with SIGTERM while the new executable's smoke run waits (full-suite).
+  - The same file runs a build under RLIMIT_FSIZE (1 MiB, SIGXFSZ ignored): exit 1 with "File too large", the old output kept, no temporary.
+  - `make check-c` (tools/check-c.py) runs `clang --analyze` over the eight launcher sources with the launcher's flags and the cached PBS headers; full-suite.yml's suite job runs it informationally (continue-on-error), so its report goes to that job's log, not a nightly run's. First local run: four findings (cache.c:471, cache.c:915, way.c:66, way.c:141). None was a reachable defect, but the code was changed so the analyzer can see that (0.21.0's housekeeping, f519835), and the launcher now has no findings. The step stays informational.
 
 ---
 

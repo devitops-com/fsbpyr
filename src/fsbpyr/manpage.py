@@ -33,8 +33,11 @@ ENVIRONMENT = (
     ("FSBPYR_TRACE", "Built executables only. Set: print what the run loaded and extracted, "
                      "and how long the integrity check took, as JSON on standard error."),
     ("FSBPYR_IMPORTTIME", "Built executables only. Set: print CPython's import-time table."),
-    ("FSBPYR_SELFTEST", "Built executables only. Set: import the entry point, check it, and "
-                        "exit without running the app."),
+    ("FSBPYR_SELFTEST", "Built executables only. `natives`: check that this machine provides "
+                        "every library and symbol version the native extensions need, print "
+                        "one line per missing one and exit 1 if any (glibc targets). Any other "
+                        "value: import the entry point, check it, and exit without running "
+                        "the app."),
     ("XDG_CACHE_HOME", "The base of the cache directories when it is an absolute path; "
                        "otherwise `~/.cache` is used."),
 )

@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from fsbpyr import __version__
 from fsbpyr.build import TARGET_PYTHON, rebuild_on_baseline
 from fsbpyr.cli import main
 from fsbpyr.compat import zstd
@@ -29,6 +30,7 @@ from fsbpyr.staging import StagingPlan
 from fsbpyr.vcs import git_state, own_version, version_string
 
 from ..support.readme import quickstart
+from ..support.sbom import load as load_sbom
 
 pytestmark = pytest.mark.slow
 
@@ -37,7 +39,7 @@ VENV = Path(sys.prefix)  # the development environment: .venv, or .venv-3.X for 
 FIXTURES = ROOT / "tests" / "fixtures" / "projects"
 UV = shutil.which("uv")
 GIT = shutil.which("git")
-RELEASE = "https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr"
+INSTALLER = "https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh"
 
 
 @pytest.fixture(autouse=True)
@@ -73,9 +75,12 @@ def test_hello_from_uv_lock(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert (result.returncode, result.stdout) == (5, "hello ['5', 'x y']\n")
     assert f"built {executable}" in capsys.readouterr().out
     assert main(["inspect", str(executable)]) == 0
+    # inspect shows the release number when this fsbpyr cannot see its commit (a worktree's
+    # copy in make test-container, whose .git points outside the container)
+    unseen = own_version() == version_string(None)
     assert capsys.readouterr().out.splitlines()[:2] == [
         "app        hello 1.0.0",  # a copy outside any repository: no commit
-        f"built with fsbpyr {own_version()}",
+        f"built with fsbpyr {__version__ if unseen else own_version()}",
     ]
     assert main(["inspect", "--json", "--verify", str(executable)]) == 0
     report = json.loads(capsys.readouterr().out)
@@ -88,13 +93,21 @@ def test_hello_from_uv_lock(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert {"name": "hello", "version": "1.0.0", "source": "local"} in info["dists"]
     assert info["runtime_components"]["openssl"].startswith("OpenSSL 3.")
     assert report["shared_libraries"] == [] and "json" in report["runtime_modules"]
+    bom = json.loads(load_sbom().render(report))  # REP-7: the SBOM of this very executable
+    assert bom["metadata"]["component"]["hashes"] == [
+        {"alg": "SHA-256", "content": hashlib.sha256(executable.read_bytes()).hexdigest()}]
+    cpes = {c["name"]: c["cpe"] for c in bom["components"] if "cpe" in c}
+    openssl = info["runtime_components"]["openssl"].split()[1]
+    assert cpes["openssl"] == f"cpe:2.3:a:openssl:openssl:{openssl}:*:*:*:*:*:*:*"
+    assert cpes["sqlite"].split(":")[5] == info["runtime_components"]["sqlite"]
+    assert cpes["cpython"].split(":")[5] == report["python"]
 
 
 def test_readme_quickstart_works_on_a_new_account(tmp_path: Path) -> None:
     """The README's quickstart in a copy of hello, as on a new account: an empty home, whose
-    new ~/.local/bin is not on PATH. A stand-in for curl puts the fsbpyr under test (not yet
-    executable) where the release would go. uv keeps its cache (XDG_CACHE_HOME) and its
-    Pythons; the runtime is in FSBPYR_CACHE_DIR (conftest)."""
+    new ~/.local/bin is not on PATH. A stand-in for curl serves an installer that puts the
+    fsbpyr under test where the release's would go. uv keeps its cache (XDG_CACHE_HOME) and
+    its Pythons; the runtime is in FSBPYR_CACHE_DIR (conftest)."""
     assert UV is not None
     project = _fixture("hello", tmp_path)
     with (project / "pyproject.toml").open("a") as pyproject:  # builds for the Python tests run on
@@ -106,9 +119,13 @@ def test_readme_quickstart_works_on_a_new_account(tmp_path: Path) -> None:
     under_test = shlex.quote(str(VENV / "bin" / "fsbpyr"))
     fsbpyr.write_text(f'#!/bin/sh\nexec {under_test} "$@"\n')
     (tools / "curl").write_text(
-        f'#!/bin/sh\ntest "$*" = "-fLo $HOME/.local/bin/fsbpyr {RELEASE}" ||\n'
+        f'#!/bin/sh\ntest "$*" = "-LsSf {INSTALLER}" ||\n'
         '  { echo "curl stand-in: unexpected arguments: $*" >&2; exit 2; }\n'
+        "cat <<'EOF'\n"
+        'mkdir -p "$HOME/.local/bin"\n'
         f'cp {shlex.quote(str(fsbpyr))} "$HOME/.local/bin/fsbpyr"\n'
+        'chmod +x "$HOME/.local/bin/fsbpyr"\n'
+        "EOF\n"
     )
     (tools / "curl").chmod(0o755)
     pythons = subprocess.run([UV, "python", "dir"], capture_output=True, text=True, check=True)

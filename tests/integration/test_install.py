@@ -37,6 +37,7 @@ SCRIPT_TIMEOUT_S = 60.0
 BASH = shutil.which("bash") or "/bin/bash"
 GNU = "x86_64-linux-gnu"
 MUSL = "x86_64-linux-musl"
+NEWEST = "3.14"  # the Python the installer takes when not told one
 
 # What the installer uses besides shell builtins; xz, curl, wget and gh are added per test.
 BASE_TOOLS = (
@@ -122,12 +123,14 @@ class Release:
     def assets(self) -> Path:
         return self.root / "assets"
 
-    def add(self, target: str, *, inspect: str = "echo verified") -> None:
-        """Both files of a target's executable; the server serves what was written."""
-        body = FAKE_FSBPYR.format(marker=target, inspect=inspect, version=VERSION).encode()
+    def add(self, target: str, *, python: str = NEWEST, inspect: str = "echo verified") -> None:
+        """Both files of a target's executable for ``python``; the server serves what was
+        written."""
+        marker = f"{python} {target}"
+        body = FAKE_FSBPYR.format(marker=marker, inspect=inspect, version=VERSION).encode()
         self.assets.mkdir(parents=True, exist_ok=True)
-        (self.assets / f"fsbpyr-{target}").write_bytes(body)
-        (self.assets / f"fsbpyr-{target}.xz").write_bytes(lzma.compress(body))
+        (self.assets / f"fsbpyr-{python}-{target}").write_bytes(body)
+        (self.assets / f"fsbpyr-{python}-{target}.xz").write_bytes(lzma.compress(body))
 
     def serve(self) -> None:
         for asset in self.assets.iterdir():
@@ -155,6 +158,7 @@ class Release:
 @pytest.fixture
 def release(tmp_path: Path, server: Server) -> Release:
     made = Release(tmp_path / "release", server)
+    made.add(GNU, python="3.13")
     made.add(GNU)
     made.add("aarch64-linux-gnu")
     made.add(MUSL)
@@ -243,10 +247,10 @@ def test_installs_the_xz_when_xz_is_there(
     result = install(shell, script, host)
 
     assert result.returncode == 0, result.stderr
-    assert installed(host).read_bytes() == (release.assets / f"fsbpyr-{GNU}").read_bytes()
+    assert installed(host).read_bytes() == (release.assets / f"fsbpyr-{NEWEST}-{GNU}").read_bytes()
     assert os.access(installed(host), os.X_OK)
-    assert server.requests == [f"/fsbpyr-{GNU}.xz"]
-    assert f"downloading fsbpyr {VERSION} {GNU}" in result.stdout
+    assert server.requests == [f"/fsbpyr-{NEWEST}-{GNU}.xz"]
+    assert f"downloading fsbpyr {VERSION} for Python {NEWEST} ({GNU})" in result.stdout
     assert f"installing to {host.install_dir}" in result.stdout
     assert "everything's installed!" in result.stdout
     assert sorted(p.name for p in host.install_dir.iterdir() if p.name.startswith(".")) == []
@@ -264,8 +268,8 @@ def test_installs_the_plain_asset_without_xz(
     result = install(shell, script, host)
 
     assert result.returncode == 0, result.stderr
-    assert installed(host).read_bytes() == (release.assets / f"fsbpyr-{GNU}").read_bytes()
-    assert server.requests == [f"/fsbpyr-{GNU}"]
+    assert installed(host).read_bytes() == (release.assets / f"fsbpyr-{NEWEST}-{GNU}").read_bytes()
+    assert server.requests == [f"/fsbpyr-{NEWEST}-{GNU}"]
 
 
 def test_installs_with_wget_when_there_is_no_curl(
@@ -283,7 +287,7 @@ def test_installs_with_wget_when_there_is_no_curl(
     result = install(shell, script, host)
 
     assert result.returncode == 0, result.stderr
-    assert server.requests == [f"/fsbpyr-{GNU}.xz"]
+    assert server.requests == [f"/fsbpyr-{NEWEST}-{GNU}.xz"]
     assert installed(host).exists()
 
 
@@ -341,7 +345,7 @@ def test_a_checksum_mismatch_stops(
     compressed: bool,
 ) -> None:
     script = release.make()
-    served = f"/fsbpyr-{GNU}.xz" if compressed else f"/fsbpyr-{GNU}"
+    served = f"/fsbpyr-{NEWEST}-{GNU}.xz" if compressed else f"/fsbpyr-{NEWEST}-{GNU}"
     if not compressed:
         host.drop("xz")
     server.files[served] = server.files[served][:-1] + b"X"
@@ -379,7 +383,7 @@ def test_an_existing_install_survives_a_failed_one(
     host.install_dir.mkdir(parents=True)
     installed(host).write_text("old")
     script = release.make()
-    release.server.files[f"/fsbpyr-{GNU}.xz"] = b"garbage"
+    release.server.files[f"/fsbpyr-{NEWEST}-{GNU}.xz"] = b"garbage"
 
     result = install(shell, script, host)
 
@@ -417,6 +421,57 @@ def test_macos_on_intel_is_unsupported(shell: list[str], release: Release, host:
     assert "x86_64-macos" in result.stderr
 
 
+@pytest.mark.parametrize("form", [["--python", "3.13"], ["--python=3.13"]])
+def test_python_installs_that_pythons_build(
+    shell: list[str], release: Release, host: Host, server: Server, form: list[str]
+) -> None:
+    script = release.make()
+
+    result = install(shell, script, host, *form)
+
+    assert result.returncode == 0, result.stderr
+    assert installed(host).read_bytes() == (release.assets / f"fsbpyr-3.13-{GNU}").read_bytes()
+    assert server.requests == [f"/fsbpyr-3.13-{GNU}.xz"]
+    assert f"downloading fsbpyr {VERSION} for Python 3.13 ({GNU})" in result.stdout
+
+
+def test_a_python_the_release_lacks_stops_naming_its_pythons(
+    shell: list[str], release: Release, host: Host, server: Server
+) -> None:
+    script = release.make()
+
+    result = install(shell, script, host, "--python", "3.11")
+
+    assert result.returncode == 1
+    assert f"fsbpyr {VERSION} has no build for Python 3.11; its Pythons are: 3.13 3.14" in (
+        result.stderr)
+    assert server.requests == []
+    assert not host.install_dir.exists()
+
+
+def test_a_python_without_a_build_for_this_host_stops(
+    shell: list[str], release: Release, host: Host, server: Server
+) -> None:
+    script = release.make()
+    host.fake("uname", 'case "$1" in -s) echo Linux ;; -m) echo aarch64 ;; esac')
+
+    result = install(shell, script, host, "--python", "3.13")  # 3.13: x86-64 only
+
+    assert result.returncode == 1
+    assert "has no Python 3.13 build for this host (aarch64-linux-gnu)" in result.stderr
+    assert server.requests == []
+
+
+def test_python_needs_a_version(shell: list[str], release: Release, host: Host) -> None:
+    script = release.make()
+
+    result = install(shell, script, host, "--python")
+
+    assert result.returncode == 1
+    assert "--python needs a version" in result.stderr
+    assert not host.install_dir.exists()
+
+
 def test_aarch64_is_detected(
     shell: list[str],
     release: Release,
@@ -429,7 +484,7 @@ def test_aarch64_is_detected(
     result = install(shell, script, host)
 
     assert result.returncode == 0, result.stderr
-    assert server.requests == ["/fsbpyr-aarch64-linux-gnu.xz"]
+    assert server.requests == [f"/fsbpyr-{NEWEST}-aarch64-linux-gnu.xz"]
 
 
 def test_musl_is_detected_from_ldd(
@@ -444,7 +499,7 @@ def test_musl_is_detected_from_ldd(
     result = install(shell, script, host)
 
     assert result.returncode == 0, result.stderr
-    assert server.requests == [f"/fsbpyr-{MUSL}.xz"]
+    assert server.requests == [f"/fsbpyr-{NEWEST}-{MUSL}.xz"]
 
 
 def test_a_too_old_glibc_stops(
@@ -784,6 +839,7 @@ def test_help_and_unknown_options(shell: list[str], release: Release, host: Host
     assert helped.returncode == 0
     assert f"The installer for fsbpyr {VERSION}" in helped.stdout
     assert "--no-modify-path" in helped.stdout
+    assert "--python X.Y" in helped.stdout and "(this release has: 3.13 3.14)" in helped.stdout
     assert wrong.returncode == 1
     assert "unknown option: --frobnicate" in wrong.stderr
     assert not host.install_dir.exists()
@@ -827,42 +883,43 @@ def test_the_generator_writes_version_targets_checksums_and_glibc(release: Relea
 
     assert f"APP_VERSION='{VERSION}'" in text
     assert f"TARGETS='{GNU} aarch64-linux-gnu {MUSL}'" in text
-    for target, glibc in ((GNU, "2.28"), ("aarch64-linux-gnu", "2.25"), (MUSL, "-")):
+    assert "PYTHONS='3.13 3.14'" in text
+    for asset, glibc in ((f"fsbpyr-3.13-{GNU}", "2.28"), (f"fsbpyr-3.14-{GNU}", "2.28"),
+                         ("fsbpyr-3.14-aarch64-linux-gnu", "2.25"), (f"fsbpyr-3.14-{MUSL}", "-")):
         for suffix, shown in (("", glibc), (".xz", "-")):
-            data = (release.assets / f"fsbpyr-{target}{suffix}").read_bytes()
-            assert f"fsbpyr-{target}{suffix} {hashlib.sha256(data).hexdigest()} {shown}\n" in text
-    assert "@VERSION@" not in text and "@TARGETS@" not in text and "@ASSETS@" not in text
+            data = (release.assets / f"{asset}{suffix}").read_bytes()
+            assert f"{asset}{suffix} {hashlib.sha256(data).hexdigest()} {shown}\n" in text
+    assert "@" not in text.partition("RELEASE_ASSETS=")[0]  # every placeholder filled
+    assert "@ASSETS@" not in text
     assert os.access(release.root / "install.sh", os.X_OK)
 
 
 def test_the_generator_lists_both_linux_targets_of_a_release_directory(tmp_path: Path) -> None:
-    """The publish job's dist/: x86-64 glibc and aarch64 glibc builds of two Pythons, the short
-    names (copies, x86-64 only), the .xz files and the notices. Only the long names of the
-    newest Python's executables are the installer's."""
+    """The publish job's dist/: x86-64 glibc and aarch64 glibc builds of three Pythons, each
+    with its .xz, SBOM and notices. Every executable and .xz is the installer's, oldest Python
+    first, and the default inspector is the newest Python's x86-64 build."""
     assets = tmp_path / "dist"
     assets.mkdir()
-    for suffix in ("", "-3.12"):
-        for ext in ("", ".xz"):
-            (assets / f"fsbpyr{suffix}-x86_64-linux-gnu{ext}").write_text(f"x86{suffix}{ext}")
-            (assets / f"fsbpyr{suffix}-aarch64-linux-gnu{ext}").write_text(f"arm{suffix}{ext}")
-            (assets / f"fsbpyr{suffix}{ext}").write_text(f"x86{suffix}{ext}")
-        for name in (f"THIRD_PARTY_LICENSES{suffix}.txt",
-                     f"THIRD_PARTY_LICENSES{suffix}-x86_64-linux-gnu.txt",
-                     f"THIRD_PARTY_LICENSES{suffix}-aarch64-linux-gnu.txt"):
-            (assets / name).write_text("notices")  # fmt: skip
-    inspector = tmp_path / "inspector"
+    for python in ("3.14", "3.12", "3.13"):
+        for target in ("x86_64-linux-gnu", "aarch64-linux-gnu"):
+            for ext in ("", ".xz", ".cdx.json"):
+                (assets / f"fsbpyr-{python}-{target}{ext}").write_text(f"{python}{target}{ext}")
+            (assets / f"THIRD_PARTY_LICENSES-{python}-{target}.txt").write_text("notices")
+    inspector = assets / "fsbpyr-3.14-x86_64-linux-gnu"
     inspector.write_text("#!/bin/sh\necho '  \"glibc\": \"2.28\",'\n")
     inspector.chmod(0o755)
     out = tmp_path / "install.sh"
 
-    result = run_generator(VERSION, assets, out, inspector)
+    result = run_generator(VERSION, assets, out)
 
     assert result.returncode == 0, result.stderr
     text = out.read_text()
     assert "TARGETS='x86_64-linux-gnu aarch64-linux-gnu'" in text
+    assert "PYTHONS='3.12 3.13 3.14'" in text
     listed = re.findall(r"^(fsbpyr-\S+) [0-9a-f]{64} \S+$", text, re.MULTILINE)
-    assert listed == ["fsbpyr-x86_64-linux-gnu", "fsbpyr-x86_64-linux-gnu.xz",
-                      "fsbpyr-aarch64-linux-gnu", "fsbpyr-aarch64-linux-gnu.xz"]  # fmt: skip
+    assert listed == [f"fsbpyr-{python}-{target}{ext}"
+                      for target in ("x86_64-linux-gnu", "aarch64-linux-gnu")
+                      for python in ("3.12", "3.13", "3.14") for ext in ("", ".xz")]  # fmt: skip
 
 
 def test_the_generator_without_targets_warns_and_makes_an_installer_with_none(
@@ -875,7 +932,7 @@ def test_the_generator_without_targets_warns_and_makes_an_installer_with_none(
     result = run_generator(VERSION, tmp_path / "assets", out)
 
     assert result.returncode == 0, result.stderr
-    assert "no fsbpyr-<target> executable" in result.stderr
+    assert "no fsbpyr-3.X-<target> executable" in result.stderr
     assert "TARGETS=''" in out.read_text()
 
 

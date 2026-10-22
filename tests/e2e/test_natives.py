@@ -100,6 +100,21 @@ def test_help_loads_and_extracts_nothing_native(heavy: Path, tmp_path: Path) -> 
     assert not (tmp_path / "cache").exists()
 
 
+def test_selftest_natives_loads_every_extension_without_running_the_app(
+    heavy: Path, tmp_path: Path
+) -> None:
+    """NAT-4: the loader's trace of each extension finds everything this host provides."""
+    env = {**os.environ, "FSBPYR_CACHE_DIR": str(tmp_path / "cache"), "FSBPYR_SELFTEST": "natives"}
+    result = subprocess.run([heavy], env=env, capture_output=True, text=True, timeout=300,
+                            check=False)  # fmt: skip
+
+    assert result.returncode == 0, result.stderr
+    assert re.fullmatch(r"fsbpyr selftest: all natives load \([1-9]\d* extensions\)\n",
+                        result.stdout)  # fmt: skip
+    assert result.stderr == ""
+    assert len(list((tmp_path / "cache").rglob("*.so*"))) >= 5  # synced, none of them imported
+
+
 def test_first_run_extracts_only_the_closure_it_needs(heavy: Path, tmp_path: Path) -> None:
     stdout, first = _run(heavy, tmp_path / "cache", "np")
 

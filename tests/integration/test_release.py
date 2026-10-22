@@ -1082,10 +1082,9 @@ def test_toolchain_watch_is_silent_when_the_pins_are_current(tmp_path: Path) -> 
 
 def test_the_workflows_build_every_supported_python_and_the_release_publishes_each_variant(
 ) -> None:
-    """The matrices list the Pythons fsbpyr supports (bytecode.SUPPORTED_PYTHON); the newest is
-    the plain asset (`fsbpyr-x86_64-linux-gnu`), the others carry their version
-    (`fsbpyr-3.12-x86_64-linux-gnu`), each with its .xz and licence notices, also published
-    under the short names (`fsbpyr`, `fsbpyr-3.12`), all in SHA256SUMS and attested."""
+    """The matrices list the Pythons fsbpyr supports (bytecode.SUPPORTED_PYTHON); every asset
+    names its Python and target (`fsbpyr-3.14-x86_64-linux-gnu`), each with its .xz, SBOM and
+    licence notices, all in SHA256SUMS and attested. No short or unlabeled names."""
     supported = sorted("{}.{}".format(*version) for version in SUPPORTED_PYTHON)
     newest = (ROOT / ".python-version").read_text(encoding="utf-8").strip().rpartition(".")[0]
     assert newest == supported[-1]
@@ -1102,76 +1101,104 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
     assert "make bootstrap $MAKE_ARGS" in build
     assert 'echo "MAKE_ARGS=PYTHON=$MATRIX_PYTHON"' in build
     assert "xz $filter --lzma2=preset=9e --threads=1 --keep dist/fsbpyr$SUFFIX" in build
-    assert all("TARGET: ${{ matrix.target }}" in jobs[job] for job in ("build", "compare"))
-    assert "> dist/THIRD_PARTY_LICENSES$SUFFIX-$TARGET.txt" in build
-    assert 'cp "dist/fsbpyr$SUFFIX$ext" "dist/fsbpyr$SUFFIX-$TARGET$ext"' in build  # long names
-    assert ('cp "dist/THIRD_PARTY_LICENSES$SUFFIX-$TARGET.txt" '
-            '"dist/THIRD_PARTY_LICENSES$SUFFIX.txt"') in build
+    asset = "ASSET: fsbpyr-${{ matrix.python }}-${{ matrix.target }}"
+    assert all(asset in jobs[job] for job in ("build", "compare", "sbom"))
+    assert "NOTICES: THIRD_PARTY_LICENSES-${{ matrix.python }}-${{ matrix.target }}.txt" in build
+    assert '> "dist/$NOTICES"' in build
+    assert 'cp "dist/fsbpyr$SUFFIX$ext" "dist/$ASSET$ext"' in build
     uploads = re.findall(r"upload-artifact@.*\n\s+with:\n\s+name: (.+)\n\s+path: \|\n"
                          r"((?:            dist/.*\n)+)", build)
     assert [(name, [line.strip() for line in paths.splitlines()]) for name, paths in uploads] == [
         ("built-${{ matrix.python }}-${{ matrix.target }}", [
-            "dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}",
-            "dist/fsbpyr${{ env.SUFFIX }}-${{ env.TARGET }}.xz",
-            "dist/THIRD_PARTY_LICENSES${{ env.SUFFIX }}-${{ env.TARGET }}.txt",
-        ]),
-        ("built-short-${{ matrix.python }}", [  # copies of the x86-64 glibc builds only
-            "dist/fsbpyr${{ env.SUFFIX }}",
-            "dist/fsbpyr${{ env.SUFFIX }}.xz",
-            "dist/THIRD_PARTY_LICENSES${{ env.SUFFIX }}.txt",
+            "dist/${{ env.ASSET }}",
+            "dist/${{ env.ASSET }}.xz",
+            "dist/${{ env.NOTICES }}",
+            "dist/${{ env.ASSET }}.cdx.json",
         ]),
     ]
-    for step in ("Name the short licence notices", "Upload the short-name copies"):
-        header = build.split(f"- name: {step}\n")[1].split("\n")[0]
-        assert header.strip() == "if: ${{ matrix.target == 'x86_64-linux-gnu' }}", step
-    assert 'release_asset\\": \\"fsbpyr$SUFFIX-$TARGET' in build  # each records its long asset
-    assert "-name \"fsbpyr*-$TARGET\" ! -name '*.xz'" in jobs["compare"]
+    assert "short" not in workflow
+    assert 'release_asset\\": \\"$ASSET\\"' in build  # each records its asset
+    assert 'built="built/$ASSET"' in jobs["compare"]
     assert "pattern: built-*" in publish and "merge-multiple: true" in publish
     assert "sha256sum fsbpyr* THIRD_PARTY_LICENSES*.txt install.sh > SHA256SUMS" in publish
     assert "dist/fsbpyr*\n            dist/THIRD_PARTY_LICENSES*.txt" in publish  # attested
     assert "dist/fsbpyr* dist/THIRD_PARTY_LICENSES*.txt dist/install.sh dist/SHA256SUMS" in publish
     # install.sh is made from the downloaded assets before they are attested, and attested too
-    assert "tools/release/make-install.sh" in publish and "dist/install.sh dist/fsbpyr" in publish
+    assert 'make-install.sh "${TAG#v}" dist dist/install.sh\n' in publish
     assert publish.index("make-install.sh") < publish.index("attest-build-provenance")
     assert "dist/THIRD_PARTY_LICENSES*.txt\n            dist/install.sh" in publish
 
 
-@pytest.mark.parametrize(("suffix", "long_name"), [
-    ("", "fsbpyr-x86_64-linux-gnu"), ("-3.12", "fsbpyr-3.12-x86_64-linux-gnu"),
-])  # fmt: skip
-def test_the_release_assets_are_named_with_the_target_and_the_short_names_are_copies(
-    suffix: str, long_name: str, tmp_path: Path
+def _jobs() -> dict[str, str]:
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    return dict(re.findall(r"^  ([a-z]+):\n(.*?)(?=^  [a-z]+:\n|\Z)", workflow, re.M | re.S))
+
+
+def test_build_and_reproduce_make_the_sbom_from_their_executable_and_compare_compares_them(
 ) -> None:
-    """The workflow's naming step and the compare job's selection, run under sh."""
+    """REP-7: one CycloneDX file per long-named executable, from `inspect --verify --json`,
+    made by build from its frozen artifact and by reproduce from its rebuild, byte for byte."""
+    jobs = _jobs()
+    build, reproduce, compare = jobs["build"], jobs["reproduce"], jobs["compare"]
+
+    assert "inspect --verify --json dist/fsbpyr$SUFFIX" in build
+    assert "tools/release/sbom.py" in build and '-o "dist/$ASSET.cdx.json"' in build
+    assert "stage3$SUFFIX/fsbpyr inspect --verify --json" in reproduce
+    # run as root with GitHub's HOME, which another user owns: 3.12's and 3.13's fsbpyr extract
+    # backports.zstd into a cache, and a cache under that HOME is refused
+    step = reproduce.split("name: Make the SBOM of the rebuild")[1].split("- name:")[0]
+    assert "XDG_CACHE_HOME: /root/.cache" in step
+    assert "tools/release/sbom.py" in reproduce
+    assert "stage3$SUFFIX/fsbpyr.cdx.json" in reproduce
+    upload = reproduce.split("name: Upload the rebuilt executable")[1]
+    assert upload.count("rebuild/dist/stage3${{ env.SUFFIX }}/fsbpyr") == 2  # one directory
+    assert 'sbom="built/$ASSET.cdx.json"' in compare
+    assert "cmp " in compare.split("Compare the SBOMs byte for byte")[1]
+    assert "rebuilt/fsbpyr.cdx.json" in compare
+
+
+def test_each_sbom_is_attested_to_its_executable_by_a_pinned_action_and_published() -> None:
+    jobs = _jobs()
+    sbom, publish = jobs["sbom"], jobs["publish"]
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+    assert "needs: [build, compare]" in sbom
+    assert "if: github.event_name == 'push' && github.ref_type == 'tag'" in sbom
+    assert "id-token: write" in sbom and "attestations: write" in sbom
+    assert "name: built-${{ matrix.python }}-${{ matrix.target }}" in sbom
+    assert re.search(r"uses: actions/attest-sbom@[0-9a-f]{40} # v\d+\.\d+\.\d+\n", sbom)
+    assert "subject-path: built/${{ env.ASSET }}\n" in sbom
+    assert "sbom-path: built/${{ env.ASSET }}.cdx.json" in sbom
+    assert "needs: [build, compare, sbom]" in publish  # nothing is released unattested
+    assert "id-token: write" in publish  # still its own provenance
+    assert "dist/fsbpyr*" in publish  # the SBOMs travel with the executables
+    assert "actions/attest-sbom" in workflow and workflow.count("attest-sbom@") == 1
+    assert "spdx" not in workflow.lower()
+
+
+@pytest.mark.parametrize(("suffix", "python"), [("", "3.14"), ("-3.12", "3.12")])
+def test_every_release_asset_is_named_with_its_python_and_target(
+    suffix: str, python: str, tmp_path: Path
+) -> None:
+    """The workflow's naming step, run under sh: the newest Python's build is labeled too."""
     workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     naming = re.search(r"- name: Name the release assets\n\s+run: \|\n((?:          .*\n)+)",
                        workflow)
     assert naming is not None
     dist = tmp_path / "dist"
     dist.mkdir()
-    for name, content in ((f"fsbpyr{suffix}", "exe"), (f"fsbpyr{suffix}.xz", "xz"),
-                          (f"THIRD_PARTY_LICENSES{suffix}-x86_64-linux-gnu.txt", "notices")):
-        (dist / name).write_text(content)
-    env = {"PATH": os.environ["PATH"], "SUFFIX": suffix, "TARGET": "x86_64-linux-gnu"}
-    short = re.search(r"- name: Name the short licence notices\n\s+if: .*\n\s+run: (.*)\n",
-                      workflow)
-    assert short is not None
+    (dist / f"fsbpyr{suffix}").write_text("exe")
+    (dist / f"fsbpyr{suffix}.xz").write_text("xz")
+    asset = f"fsbpyr-{python}-x86_64-linux-gnu"
+    env = {"PATH": os.environ["PATH"], "SUFFIX": suffix, "ASSET": asset}
 
-    sh, find = shutil.which("sh") or "sh", shutil.which("find") or "find"
-    done = subprocess.run([sh, "-ec", textwrap.dedent(naming.group(1)) + short.group(1)],
+    sh = shutil.which("sh") or "sh"
+    done = subprocess.run([sh, "-ec", textwrap.dedent(naming.group(1))],
                           cwd=tmp_path, env=env, capture_output=True, text=True, check=False)
 
     assert done.returncode == 0, done.stderr
-    assert sorted(p.name for p in dist.iterdir()) == sorted([
-        f"fsbpyr{suffix}", f"fsbpyr{suffix}.xz", long_name, f"{long_name}.xz",
-        f"THIRD_PARTY_LICENSES{suffix}.txt", f"THIRD_PARTY_LICENSES{suffix}-x86_64-linux-gnu.txt",
-    ])
-    assert (dist / long_name).read_text() == (dist / f"fsbpyr{suffix}").read_text() == "exe"
-    assert (dist / f"{long_name}.xz").read_text() == "xz"
-    selected = subprocess.run(
-        [find, str(dist), "-maxdepth", "1", "-type", "f", "-name", "fsbpyr*-x86_64-linux-gnu",
-         "!", "-name", "*.xz"], capture_output=True, text=True, check=True)
-    assert selected.stdout.split() == [str(dist / long_name)]  # compare's one executable
+    assert (dist / asset).read_text() == "exe"
+    assert (dist / f"{asset}.xz").read_text() == "xz"
 
 
 def test_publish_waits_for_the_independent_rebuild_to_match() -> None:
@@ -1337,7 +1364,7 @@ def test_publish_job_makes_the_inspector_executable_before_building_install_sh()
     """download-artifact drops the executable bit, and make-install.sh runs the inspector."""
     workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     step = workflow.split("- name: Make install.sh", 1)[1].split("\n      # ", 1)[0]
-    chmod = step.find("chmod +x dist/fsbpyr-x86_64-linux-gnu")
+    chmod = step.find("chmod +x dist/fsbpyr-3.*-x86_64-linux-gnu")
     assert 0 <= chmod < step.find("make-install.sh")
 
 

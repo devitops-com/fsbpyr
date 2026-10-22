@@ -5,6 +5,7 @@ help text, the shell completions and the man page (D40)."""
 import errno
 import functools
 import shlex
+import signal
 import sys
 import traceback
 from collections.abc import Sequence
@@ -366,8 +367,9 @@ def self_group() -> None:
 
 
 @self_group.command("update", help="replace this executable with the latest release\n\n"
-                    "Downloads `fsbpyr-TARGET.xz` (a variant's own `fsbpyr-3.X-TARGET.xz`) from "
-                    "the latest GitHub release when it is newer, verifies it as `inspect --verify` "
+                    "Downloads the latest GitHub release's build for the Python this executable "
+                    "runs on, `fsbpyr-3.X-TARGET.xz`, when it is newer (it never moves to another "
+                    "Python: install.sh --python does), verifies it as `inspect --verify` "
                     "does before anything runs it, and "
                     "renames it over this executable. The man page and the completions that "
                     "`make install` put under the same prefix are written again. Only "
@@ -499,7 +501,20 @@ def _internal_error(exc: Exception) -> int:
     return 1
 
 
+def _terminate(signum: int, frame: object) -> None:
+    """SIGTERM, like SIGINT: the unwinding removes what a build was writing."""
+    raise KeyboardInterrupt
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    previous = signal.signal(signal.SIGTERM, _terminate)
+    try:
+        return _run(argv)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def _run(argv: Sequence[str] | None) -> int:
     try:
         code: int = cli.main(args=argv, prog_name=PROG, complete_var=COMPLETE_VAR,
                              standalone_mode=False,
