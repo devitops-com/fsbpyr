@@ -10,6 +10,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-22
+
 ### Changed
 - **The runtime is python-build-standalone 20261021's: CPython 3.13.17 and 3.14.9** (3.12.15
   is unchanged), linked with clang and lld 23.1.3. From 20261013 on PBS ships LLVM 23 bitcode,
