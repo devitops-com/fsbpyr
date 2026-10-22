@@ -9,7 +9,8 @@ A pure function of that JSON, so two byte-identical executables give byte-identi
 the executable's SHA-256. It lists the executable (with that SHA-256), fsbpyr, CPython, the
 libraries the runtime links statically (build_info's runtime_components) and the Python
 distributions from an index. The C libraries carry a CPE, which is what vulnerability
-scanners match them by; the vendor and product names are NVD's, not checked against it here.
+scanners match them by; the vendor and product names are NVD's (checked against its CPE
+dictionary on 2026-10-22). NVD has no mpdecimal product, so libmpdec is listed without one.
 Standard library only: the release jobs run it with whatever Python they have.
 """
 
@@ -27,7 +28,6 @@ REPOSITORY = "devitops-com/fsbpyr"
 # build_info's runtime_components key -> (vendor, product) of its CPE
 CPES = {
     "expat": ("libexpat_project", "libexpat"),
-    "libmpdec": ("mpdecimal_project", "mpdecimal"),
     "openssl": ("openssl", "openssl"),
     "sqlite": ("sqlite", "sqlite"),
     "zlib": ("zlib", "zlib"),

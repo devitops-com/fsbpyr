@@ -15,7 +15,7 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   the OpenSSL, SQLite, expat and zlib inside an fsbpyr executable. Each long-named asset now has
   `<asset>.cdx.json` (CycloneDX 1.6) beside it, made by `tools/release/sbom.py` from
   `fsbpyr inspect --verify --json`: the executable with its plain SHA-256, fsbpyr
-  (`pkg:github/devitops-com/fsbpyr@vX.Y.Z`), CPython and each runtime component with a CPE, and
+  (`pkg:github/devitops-com/fsbpyr@vX.Y.Z`), CPython and the runtime components with their NVD CPEs, and
   the Python distributions from an index as `pkg:pypi` purls with the lock's hashes. The file is
   a function of that output: no timestamp, and a serial number derived from the SHA-256. `build`
   and `reproduce` each make one, `compare` checks them byte for byte, and a new `sbom` job
