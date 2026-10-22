@@ -1,7 +1,7 @@
 name: Release
 
 # One build definition for both uses:
-#   - pull requests and pushes to main: prove the release build works (`make bootstrap` on
+#   - pushes to main: prove the release build works (`make bootstrap` on
 #     Debian trixie, then the installed fsbpyr builds itself with `make build`, byte for byte
 #     bootstrap's stage 3, then a smoke test) and run the static checks and the core of the
 #     test suite (`make test-ci`), before any tag exists; tools/release/release.sh tags only a
@@ -28,10 +28,10 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-  pull_request:
+# No pull_request: anyone can open one, and a branch is tested locally before its pull request.
 
 # A tag is built once: a second run for the same tag waits instead of cancelling the first.
-# Runs for a pull request or for main replace their predecessor.
+# Runs for main replace their predecessor.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
@@ -126,7 +126,7 @@ jobs:
       # A tag is built from a snapshot of the Debian archive (tools/release/apt-snapshot), so
       # that clang and lld 22 are the versions the release was built with and a rebuild later
       # finds them; the snapshot replaces the image's sources, a second line beside them would
-      # pin nothing. Main and pull request runs use the live mirror. make runs `make bootstrap`,
+      # pin nothing. Main runs use the live mirror. make runs `make bootstrap`,
       # clang and lld 22 link the launcher, gcc (the tests' `cc`), strace and groff: tests that
       # would skip without them run.
       - name: Use the Debian snapshot

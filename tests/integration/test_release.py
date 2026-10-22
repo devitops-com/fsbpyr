@@ -972,6 +972,18 @@ def test_the_image_is_pinned_by_digest_in_the_workflow_and_the_containerfile() -
         assert not re.search(r"debian:trixie$", text, re.MULTILINE), path
 
 
+def test_the_release_workflow_runs_for_pushes_to_main_and_tags_only() -> None:
+    """Not for pull requests: anyone can open one, and a branch is tested locally first."""
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    triggers = workflow.split("\non:\n", 1)[1].split("\n\n", 1)[0]
+
+    assert [line for line in triggers.splitlines() if not line.startswith("#")] == [
+        "  push:",
+        "    branches: [main]",
+        '    tags: ["v*"]',
+    ]
+
+
 def test_the_publish_job_moves_main_to_the_release_commit_once_it_is_released() -> None:
     """release.sh pushes the tag alone, so a release starts one workflow run: a push with the
     job's own token starts none. Fast-forward only, and only after the release is created."""
