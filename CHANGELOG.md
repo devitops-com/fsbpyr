@@ -10,6 +10,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-22
+
 ### Changed
 - **The glibc baseline is 2.34 (manylinux_2_34), and the launcher links against Debian 12.**
   fsbpyr takes its sysroot from the oldest Debian release still in LTS, Debian 12 (owner,
