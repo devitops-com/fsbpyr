@@ -16,9 +16,12 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   every push to main: the build is checked against stage 3, smoke-tested, its `.xz` unpacked,
   and an independent rebuild compared with it byte for byte, SBOM included. The full suite also
   takes the coverage gate of `payload/` and `elf.py`. `release.yml` runs for a pushed tag only and
-  calls `build.yml` without the checks, then attests and publishes. Builds use the Debian snapshot
-  in the full suite as in a release. Pull requests and pushes to main no longer start
-  `release.yml`.
+  calls `build.yml` without the checks, then attests and publishes. Pull requests and pushes to
+  main no longer start `release.yml`.
+- **No build downloads from snapshot.debian.org.** The build installs git, curl, xz-utils, make
+  and zstd from Debian's own repository, and nothing else: clang/lld 22 and the test tools are
+  gone from it, since LLVM's pinned clang/lld 23 link. `tools/release/apt-snapshot` and its
+  check in `tools/toolchain-watch.sh` are removed.
 - **A release is two steps.** `make release-prep VERSION=X.Y.Z` ends a branch with the release
   commit (the version and the changelog), so the full suite tests exactly what is released once
   the branch is merged. `make release` then tags main's HEAD, once its full suite run has passed,

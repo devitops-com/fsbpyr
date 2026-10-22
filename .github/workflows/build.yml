@@ -45,7 +45,7 @@ jobs:
           - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
     # Debian trixie, as `make bootstrap` expects, by digest: the tag alone moves. The digest is
     # the multi-arch index's, so each runner pulls its own architecture. It installs no tools,
-    # so the job does: clang/lld 22 and the rest from Debian's packages, the pinned uv
+    # so the job does: a few packages from Debian's own repository, the pinned uv
     # (tools/release/uv.version) and the Python of .python-version.
     container: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
     timeout-minutes: 75
@@ -63,12 +63,14 @@ jobs:
       XDG_CACHE_HOME: /root/.cache
     steps:
       # git before the checkout: without it actions/checkout downloads a tarball, with no tags.
-      # xz-utils decides fsbpyr.xz's bytes: it comes from the live mirror, here, and the log
-      # records its version. ca-certificates and curl fetch uv.
-      - name: Install git, xz and curl
+      # xz-utils decides fsbpyr.xz's bytes; the log records its version. ca-certificates and
+      # curl fetch uv and LLVM's clang/lld 23 (tools/release/llvm23), which zstd unpacks and
+      # which link the runtime and the launcher against fsbpyr's pinned sysroot; make runs the
+      # bootstrap. Nothing else: the build uses no other tool of the image's.
+      - name: Install git, xz, curl, make and zstd
         run: |
           apt-get update -q
-          apt-get install -y -q --no-install-recommends ca-certificates git curl xz-utils
+          apt-get install -y -q --no-install-recommends ca-certificates git curl xz-utils make zstd
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -115,38 +117,6 @@ jobs:
             exit 1
           fi
 
-      # From a snapshot of the Debian archive (tools/release/apt-snapshot), for the full suite as
-      # for a release: the release is built with the packages the full suite's build had, and a
-      # rebuild later finds them. The snapshot replaces the image's sources, a second line beside
-      # them would pin nothing.
-      - name: Use the Debian snapshot
-        run: |
-          ts="$(tr -d '[:space:]' < tools/release/apt-snapshot)"
-          cat > /etc/apt/sources.list.d/debian.sources <<EOF
-          Types: deb
-          URIs: http://snapshot.debian.org/archive/debian/$ts/
-          Suites: trixie trixie-updates
-          Components: main
-          Check-Valid-Until: no
-          Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
-
-          Types: deb
-          URIs: http://snapshot.debian.org/archive/debian-security/$ts/
-          Suites: trixie-security
-          Components: main
-          Check-Valid-Until: no
-          Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
-          EOF
-          echo "FSBPYR_APT_SNAPSHOT=$ts" >> "$GITHUB_ENV"
-
-      # snapshot.debian.org is slow now and then: three tries.
-      - name: Install clang, lld and the test tools
-        run: |
-          for try in 1 2 3; do apt-get update -q && break; [ "$try" -lt 3 ] || exit 1; sleep 15; done
-          # libclang-rt-22-dev: compiler-rt's builtins, which the aarch64 launcher links
-          apt-get install -y -q --no-install-recommends make clang-22 lld-22 libclang-rt-22-dev \
-            gcc strace groff-base zstd
-
       # The uv that tools/release/uv.version names, for this runner's architecture, from its
       # release tarball and checked against the sha256 recorded there, and the Python of this
       # entry: the one .python-version pins for the newest version, else the newest patch
@@ -164,11 +134,9 @@ jobs:
       - name: Record the toolchain
         run: |
           echo "image:    $(grep -o 'debian:trixie@sha256:[0-9a-f]*' .github/workflows/build.yml | head -n1)"
-          echo "snapshot: ${FSBPYR_APT_SNAPSHOT:-none (live mirror)}"
           echo "uv:       $(uv --version)"
           echo "llvm:     $(cat tools/release/llvm23) (tools/release/llvm23, the runtime's clang/lld)"
-          dpkg-query -W clang-22 lld-22 libclang-rt-22-dev xz-utils
-          apt-cache policy clang-22 lld-22
+          dpkg-query -W xz-utils
 
       # The locked environment, the runtime, fsbpyr in three stages
       # (each verified, stages 2 and 3 identical) and, for the newest version, `make install`
@@ -275,7 +243,7 @@ jobs:
           if-no-files-found: error
 
   # An independent rebuild of what build makes, in parallel with it: another checkout path and
-  # owner, other cache directories, umask 077, on a fresh runner with the same image, snapshot
+  # owner, other cache directories, umask 077, on a fresh runner with the same image, packages
   # and uv. build's own stage 2 == stage 3 cannot see the launcher stub or anything that depends
   # on where it ran (D4); compare checks this job's stage 3 against build's executable.
   reproduce:
@@ -295,10 +263,10 @@ jobs:
     env:
       UV_PYTHON_INSTALL_DIR: /opt/uv-python  # root installs the Python, builder only reads it
     steps:
-      - name: Install git, xz and curl
+      - name: Install git, xz, curl, make and zstd
         run: |
           apt-get update -q
-          apt-get install -y -q --no-install-recommends ca-certificates git curl xz-utils
+          apt-get install -y -q --no-install-recommends ca-certificates git curl xz-utils make zstd
 
       # Not build's path (the workspace itself), and owned by another user, so that dist/ is
       # writable and git still records the same commit and tag.
@@ -313,35 +281,6 @@ jobs:
           useradd -m builder
           chown -R builder: rebuild
           chmod a+x "$(dirname "$GITHUB_WORKSPACE")" "$GITHUB_WORKSPACE" 2>/dev/null || true
-
-      - name: Use the Debian snapshot
-        working-directory: rebuild
-        run: |
-          ts="$(tr -d '[:space:]' < tools/release/apt-snapshot)"
-          cat > /etc/apt/sources.list.d/debian.sources <<EOF
-          Types: deb
-          URIs: http://snapshot.debian.org/archive/debian/$ts/
-          Suites: trixie trixie-updates
-          Components: main
-          Check-Valid-Until: no
-          Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
-
-          Types: deb
-          URIs: http://snapshot.debian.org/archive/debian-security/$ts/
-          Suites: trixie-security
-          Components: main
-          Check-Valid-Until: no
-          Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
-          EOF
-          echo "FSBPYR_APT_SNAPSHOT=$ts" >> "$GITHUB_ENV"
-
-      # bootstrap.sh installs no tool, so the packages are installed here, as build does (zstd
-      # unpacks LLVM's clang/lld 23, which bootstrap.sh fetches).
-      - name: Install clang, lld and the test tools
-        run: |
-          for try in 1 2 3; do apt-get update -q && break; [ "$try" -lt 3 ] || exit 1; sleep 15; done
-          apt-get install -y -q --no-install-recommends make clang-22 lld-22 libclang-rt-22-dev \
-            gcc strace groff-base zstd
 
       # The Python of this entry as build installs it: .python-version's for the newest version
       # (bootstrap.sh looks for that very patch release), else the minor version's newest.
@@ -364,10 +303,9 @@ jobs:
 
       - name: Record the toolchain
         run: |
-          echo "snapshot: ${FSBPYR_APT_SNAPSHOT:-none (live mirror)}"
           echo "uv:       $(uv --version)"
           echo "llvm:     $(cat rebuild/tools/release/llvm23) (tools/release/llvm23, the runtime's clang/lld)"
-          dpkg-query -W clang-22 lld-22 libclang-rt-22-dev xz-utils
+          dpkg-query -W xz-utils
 
       # Stage 1 to 3 as build does (a variant's with --python X.Y: dist/stage3-X.Y), as another
       # user with other caches and umask 077.

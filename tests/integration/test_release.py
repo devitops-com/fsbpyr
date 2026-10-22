@@ -1130,19 +1130,16 @@ def test_uv_version_names_a_uv_that_the_build_backend_accepts() -> None:
     assert backend.specifier.contains(version)  # uv_build is released with uv: same numbering
 
 
-def test_the_apt_snapshot_is_a_timestamp_every_build_uses() -> None:
-    """build and reproduce, in the full suite as for a release: the release is built with the
-    packages the full suite's build had."""
-    snapshot = (ROOT / "tools/release/apt-snapshot").read_text(encoding="utf-8").strip()
-    workflow = (ROOT / ".github/workflows/build.yml").read_text(encoding="utf-8")
-
-    assert re.fullmatch(r"\d{8}T\d{6}Z", snapshot)
-    steps = [step.split("- name:")[0]
-             for step in workflow.split("- name: Use the Debian snapshot")[1:]]  # fmt: skip
-    assert len(steps) == 2
-    for step in steps:
-        assert "if:" not in step
-        assert "tools/release/apt-snapshot" in step and "debian-security" in step
+def test_no_build_uses_a_snapshot_of_the_debian_archive() -> None:
+    """The build jobs take Debian's released packages from the image's own sources, and only
+    the few the build uses: the runtime and the launcher are linked by the pinned LLVM."""
+    for name in ("build.yml", "full-suite.yml", "release.yml"):
+        workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
+        assert "snapshot.debian.org" not in workflow and "apt-snapshot" not in workflow, name
+    assert not (ROOT / "tools/release/apt-snapshot").exists()
+    build = (ROOT / ".github/workflows/build.yml").read_text(encoding="utf-8")
+    installs = re.findall(r"apt-get install -y -q --no-install-recommends (.+)", build)
+    assert installs == ["ca-certificates git curl xz-utils make zstd"] * 2  # build, reproduce
 
 
 def _fake_uv(directory: Path, version: str) -> dict[str, str]:
@@ -1202,15 +1199,12 @@ def test_the_containerfile_installs_the_pinned_uv_for_both_architectures() -> No
     assert "uv-aarch64-unknown-linux-gnu" in containerfile and "sha256sum -c" in containerfile
 
 
-def _watch_env(
-    tmp_path: Path, *, uv: str, snapshot: str, image: str
-) -> tuple[Path, dict[str, str]]:
+def _watch_env(tmp_path: Path, *, uv: str, image: str) -> tuple[Path, dict[str, str]]:
     """A copy of tools/ and the Containerfile with these pins, a gh that knows the newest uv
     and logs its calls, and a curl that answers like the registry."""
     root = tmp_path / "repo"
     shutil.copytree(ROOT / "tools", root / "tools", ignore=shutil.ignore_patterns("__pycache__"))
     (root / "tools/release/uv.version").write_text(f"{uv} {'0' * 64}\n", encoding="utf-8")
-    (root / "tools/release/apt-snapshot").write_text(snapshot + "\n", encoding="utf-8")
     (root / "Containerfile").write_text(f"FROM docker.io/library/debian:trixie@{image}\n",
                                         encoding="utf-8")  # fmt: skip
     bin_dir = tmp_path / "bin"
@@ -1241,30 +1235,21 @@ esac
     return root, env
 
 
-def _today_snapshot(days_ago: int) -> str:
-    day = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days_ago)
-    return day.strftime("%Y%m%dT000000Z")
-
-
 def test_toolchain_watch_opens_an_issue_for_old_pins(tmp_path: Path) -> None:
-    root, env = _watch_env(
-        tmp_path, uv="0.13.1", snapshot=_today_snapshot(120), image="sha256:" + "b" * 64
-    )
+    root, env = _watch_env(tmp_path, uv="0.13.1", image="sha256:" + "b" * 64)
 
     result = run_script(["bash", str(root / "tools/toolchain-watch.sh")], env)
 
     log = (tmp_path / "gh.log").read_text(encoding="utf-8")
     assert result.returncode == 0, result.stderr
     assert "issue create" in log and "--label toolchain-update" in log
-    assert "3 release pin(s)" in log
-    assert "not the newest release, 0.13.3" in log and "days old" in log
+    assert "2 release pin(s)" in log
+    assert "not the newest release, 0.13.3" in log and "snapshot" not in log.lower()
     assert "sha256:" + "b" * 64 in log and "sha256:" + "a" * 64 in log
 
 
 def test_toolchain_watch_is_silent_when_the_pins_are_current(tmp_path: Path) -> None:
-    root, env = _watch_env(
-        tmp_path, uv="0.13.3", snapshot=_today_snapshot(5), image="sha256:" + "a" * 64
-    )
+    root, env = _watch_env(tmp_path, uv="0.13.3", image="sha256:" + "a" * 64)
 
     result = run_script(["bash", str(root / "tools/toolchain-watch.sh")], env)
 

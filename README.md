@@ -719,20 +719,21 @@ A rebuild checks the bytes themselves, at two levels:
   rebuild one of those, point apt at the snapshot
   (`http://snapshot.debian.org/archive/debian/TIMESTAMP/` for trixie and trixie-updates,
   `.../debian-security/TIMESTAMP/` for trixie-security) before installing `clang-22 lld-22`.
-  A release tag's CI run takes its packages from the snapshot in `tools/release/apt-snapshot`,
-  and its log lists the image digest, the snapshot, the uv version, the LLVM pin and the
-  versions of `clang-22`, `lld-22` and `xz-utils`. Use the uv named by
+  Since 0.23.0 the build installs nothing from Debian but git, curl, xz-utils, make and zstd,
+  from Debian's own repository; a release's log lists the image digest, the uv version, the
+  LLVM pin and the version of `xz-utils`. Use the uv named by
   `tools/release/uv.version` (release CI downloads that release's
   tarball for the machine's architecture and checks its SHA-256, `tools/release/install-uv.sh`; `FSBPYR_UV_VERSION=<version>` makes `tools/bootstrap.sh`
   refuse any other uv). `make bootstrap` also installs the result, though,
   so run fsbpyr from source directly in the checkout above: it builds the runtime, then `stage1`,
   and `stage1` builds the file to compare. A runtime already in the cache under the same id is
   reused, not built again; an empty cache (`XDG_CACHE_HOME` set to a new directory) builds it
-  afresh. (b) is checked on every tag, for each of the three variants, by the `reproduce` job of
-  the release workflow, which rebuilds from a second checkout (another path and user, other
-  caches, umask 077) and whose stage 3 the `compare` job checks against the release build byte
-  for byte; the release is published only if all are identical. The same two jobs run on every push to main and pull
-  request, with the live mirror instead of the snapshot.
+  afresh. (b) is checked on every push to main, for each of the three variants and both
+  targets, by the full suite's `reproduce` job (`.github/workflows/build.yml`), which rebuilds
+  from a second checkout (another path and user, other caches, umask 077) and whose stage 3 the
+  `compare` job checks against the build byte for byte; a release is made only from a commit
+  whose full suite run passed, and its own build differs from that build only in the tag it
+  records.
 
 ```
 cd src
