@@ -61,7 +61,10 @@ def _component(name: str, version: str, *, purl: str = "", cpe: str = "",
 
 
 def _version(name: str, value: str) -> str:
-    """OpenSSL reports "OpenSSL 3.5.9 8 Apr 2026"; its version is the second word."""
+    """OpenSSL reports "OpenSSL 3.5.9 8 Apr 2026"; its version is the second word. expat
+    reports "expat_2.9.0" (pyexpat.EXPAT_VERSION), and its CPE needs "2.9.0"."""
+    if name == "expat":
+        return value.removeprefix("expat_")
     match = re.fullmatch(r"OpenSSL (\S+)(?: .*)?", value) if name == "openssl" else None
     return match.group(1) if match else value
 

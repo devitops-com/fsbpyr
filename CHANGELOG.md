@@ -11,6 +11,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Fixed
+- **The SBOMs name expat's version so that scanners match it.** 0.22.0's SBOMs recorded expat
+  as `expat_2.9.0`, as Python reports it, so its CPE
+  (`cpe:2.3:a:libexpat_project:libexpat:expat_2.9.0:…`) matched no vulnerability; it is now
+  `2.9.0`. Checked with grype: an SBOM whose OpenSSL is set to 3.0.0 and expat to 2.4.0 lists
+  their known vulnerabilities.
 - **`make test` cleans up after itself.** `make test`, `make test-ci` and `make
   test-portability` give each run a directory of its own under `TESTTMP` (`~/tmp`) as
   `TMPDIR` and remove it when the run ends, also when it fails or is interrupted: uv's lock
