@@ -152,7 +152,8 @@ def test_a_release_without_the_variants_asset_is_an_error_not_another_variant(
 
     err = capsys.readouterr().err
     assert "the latest release (v1.2.0) has no fsbpyr-3.12-x86_64-linux-gnu.xz" in err
-    assert "install.sh | sh -s -- --python 3.X" in err  # how to move to another Python
+    assert "another with --python X.Y" in err
+    assert err.rstrip().endswith("/releases/latest/download/install.sh | sh")  # the newest
     assert installed.read_bytes() == b"old"
 
 
@@ -248,7 +249,10 @@ def test_an_unwritable_directory_is_an_error_saying_how_to_update(
     finally:
         installed.parent.chmod(0o755)
 
-    assert "cannot write to" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "cannot write to" in err
+    directory = installed.parent
+    assert f"install.sh | FSBPYR_INSTALL_DIR={directory} sh -s -- --python {RUNNING}" in err
     assert github.requests == []
 
 

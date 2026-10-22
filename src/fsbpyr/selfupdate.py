@@ -16,6 +16,7 @@ import json
 import lzma
 import os
 import re
+import shlex
 import stat
 import subprocess
 import sys
@@ -65,10 +66,12 @@ def _running_python() -> str:
     return f"{sys.version_info.major}.{sys.version_info.minor}"
 
 
-def curl_hint(python: str = "") -> str:
-    """The command that installs the latest release for ``python`` (by default the one this
-    runs on) on this host."""
-    return f"curl -LsSf {INSTALLER} | sh -s -- --python {python or _running_python()}"
+def curl_hint(*, newest: bool = False, directory: Path | None = None) -> str:
+    """The command that installs the latest release on this host: for the Python this runs on,
+    or with ``newest`` the release's newest Python; into ``directory`` when given."""
+    install_dir = f"FSBPYR_INSTALL_DIR={shlex.quote(str(directory))} " if directory else ""
+    python = "" if newest else f" -s -- --python {_running_python()}"
+    return f"curl -LsSf {INSTALLER} | {install_dir}sh{python}"
 
 
 def running_executable() -> Path:
@@ -127,8 +130,9 @@ def latest_release(asset: str) -> Release:
         raise UpdateError(f"the latest release has no vX.Y.Z tag ({tag!r})")
     name = f"{asset}.xz"
     if name not in assets:
-        raise UpdateError(f"the latest release ({tag}) has no {name}; to install its fsbpyr "
-                          f"for another Python:\n{curl_hint('3.X')}")  # fmt: skip
+        raise UpdateError(f"the latest release ({tag}) has no {name}; install its fsbpyr for "
+                          "the newest Python (or another with --python X.Y):\n"
+                          f"{curl_hint(newest=True)}")  # fmt: skip
     return Release(tag, numbers, assets[name])
 
 
@@ -203,8 +207,8 @@ def update(
     directory = executable.parent
     if not os.access(directory, os.W_OK | os.X_OK):
         raise UpdateError(f"cannot write to {directory}; update with the owner's rights, or "
-                          f"run the installer with FSBPYR_INSTALL_DIR={directory}:\n"
-                          f"{curl_hint()}")  # fmt: skip
+                          f"install the latest release there:\n"
+                          f"{curl_hint(directory=directory)}")  # fmt: skip
     release = latest_release(own_asset())
     if release.numbers <= own:
         log(f"fsbpyr is up to date ({own_version()}; latest release {release.tag})")
