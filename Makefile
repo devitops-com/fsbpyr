@@ -42,7 +42,7 @@ else
 WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-container test-portability check check-c release clean
+.PHONY: help bootstrap build install uninstall test test-ci test-container test-portability check check-c release-prep release clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -121,13 +121,13 @@ JOBS ?= 8
 test: ## Run the test suite in JOBS processes (default 8; temporary files in a directory under TESTTMP, ~/tmp, removed afterwards)
 	$(TESTENV) $(UVRUN) pytest -n $(JOBS) --dist loadfile
 
-# What CI runs before a release: unit and integration tests, real builds, executables run
-# with the release launcher, and a real executable's boot imports and cache-sync contract
-# (D37). Left to `make test`: the ASan/UBSan launcher variant, the portability tests (podman)
-# and the other end-to-end tests. -k also matches marker names, so it keeps the release half of
+# The core of the suite, quicker than `make test`: unit and integration tests, real builds,
+# executables run with the release launcher, and a real executable's boot imports and
+# cache-sync contract (D37). Left to `make test`: the ASan/UBSan launcher variant, the
+# portability tests (podman) and the other end-to-end tests. -k also matches marker names, so it keeps the release half of
 # the tests marked `sanitized`. Branch coverage below pyproject.toml's fail_under fails the run;
-# coverage.xml is the report CI keeps.
-test-ci: ## Run the core of the test suite, as CI does
+# coverage.xml is the report.
+test-ci: ## Run the core of the test suite
 	$(TESTENV) $(UVRUN) pytest tests/unit tests/integration tests/e2e/test_build.py \
 		tests/e2e/test_runtime_app.py tests/e2e/test_imports.py \
 		tests/e2e/test_stub_hardening.py \
@@ -173,10 +173,16 @@ check-c: ## Static analysis of the launcher's C sources (clang --analyze; inform
 
 # --- Release ---
 
-# VERSION=X.Y.Z sets the version in the release commit itself (no separate bump commit to push
-# first); without it the current version is released. Only a VERSION given on the make command
-# line counts: an exported one (another tool's) is ignored.
-release: ## Cut a release: promote CHANGELOG, tag, push the tag; CI builds, attests and publishes it, then moves main (VERSION=X.Y.Z: bump to it in the same commit)
+# A release is two steps. release-prep ends a branch with the release commit (VERSION=X.Y.Z
+# sets the version in it; without, the current version is released), so that the full suite
+# tests exactly what is released once the branch is merged. release then tags main's HEAD, that
+# commit, once its full suite run passed, and pushes the tag: CI builds and publishes it (a
+# VERSION there must be HEAD's). Only a VERSION given on the make command line counts: an
+# exported one (another tool's) is ignored.
+release-prep: ## End this branch with the release commit: set the version (VERSION=X.Y.Z), promote CHANGELOG
+	@bash tools/release/prepare.sh$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
+
+release: ## Tag main's tested HEAD and push the tag; CI builds, attests and publishes the release
 	@bash tools/release/release.sh$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
 
 clean: ## Remove dist/

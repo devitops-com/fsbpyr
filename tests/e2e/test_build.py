@@ -190,7 +190,7 @@ def test_builds_do_not_depend_on_the_build_environment(
     with Executable.open(first) as executable:  # installer-made scripts name a host Python
         assert not [f.path for f in executable.payload.files() if f.path.startswith("bin/")]
 
-    # What the reproduce job of release.yml varies (REP-2): the checkout's path, the umask, the
+    # What the reproduce job of build.yml varies (REP-2): the checkout's path, the umask, the
     # cache directories and the number of cores. The runtime is the one already built.
     elsewhere = _fixture("clicky", tmp_path / "another" / "checkout", drop=drop)
     third = tmp_path / "third"

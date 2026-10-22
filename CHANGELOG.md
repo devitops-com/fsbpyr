@@ -11,13 +11,20 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Changed
-- `make release` pushes the release tag alone, and the release workflow moves main to the
-  release commit once it has published the release. A release now starts one workflow run, not
-  three: pushing main as well ran `release.yml` and `full-suite.yml` again for a commit that
-  changes only the version and the changelog. It follows the run with a plain line for each job
+- **Every test and check runs in the full suite; a release only builds and publishes.** The
+  release build is one reusable workflow, `build.yml`. The full suite calls it with its checks on
+  every push to main: the build is checked against stage 3, smoke-tested, its `.xz` unpacked,
+  and an independent rebuild compared with it byte for byte, SBOM included. The full suite also
+  takes the coverage gate of `payload/` and `elf.py`. `release.yml` runs for a pushed tag only and
+  calls `build.yml` without the checks, then attests and publishes. Builds use the Debian snapshot
+  in the full suite as in a release. Pull requests and pushes to main no longer start
+  `release.yml`.
+- **A release is two steps.** `make release-prep VERSION=X.Y.Z` ends a branch with the release
+  commit (the version and the changelog), so the full suite tests exactly what is released once
+  the branch is merged. `make release` then tags main's HEAD, once its full suite run has passed,
+  and pushes the tag alone; it makes no commit, and a VERSION given to it must be HEAD's. A
+  release now starts one workflow run. `make release` follows it with a plain line for each job
   that starts or ends, where `gh run watch` redrew the terminal.
-- Pull requests no longer start the release workflow: anyone can open one, and a branch is
-  tested locally before its pull request. A push to main still runs it, before any release.
 
 ## [0.23.0] - 2026-10-22
 

@@ -1,27 +1,27 @@
 name: Full suite
 
-# The whole test suite but the portability tests (tests/e2e/test_portability.py, which need
-# `podman run` on the runner host: the portability job below), as an unprivileged user in a
-# Debian trixie container:
-#   - on every push to main (main goes to GitHub for a release only, so this is the run before
-#     a release), so that tools/release/release.sh and the publish job of release.yml can
-#     require a green run for the commit a release is made from;
-#   - weekly, with a longer fuzzing run (below); no nightly run: main changes for a release only,
-#     so one would test the same commit night after night (owner, 2026-10-21);
-#   - on request.
-# release.yml runs the core of the suite as root before a release; this runs the rest: natives,
-# compatibility, the ASan/UBSan launcher, the fuzzer, the cache-directory and GC tests, and the
-# ownership checks that have nothing to test as root. Nothing is published from here, so the
-# fuzz corpus is kept in actions/cache (release.yml stays cache-free).
-# One fsbpyr per Python version and per target (Phase 9): the suite and the portability matrix
-# run once per (target, Python) entry, the development environment on that Python and that
-# variant's executable (dist/fsbpyr for the newest version, the one .python-version pins;
-# dist/fsbpyr-3.X for the others), each target on a runner of its architecture
-# (x86_64-linux-gnu on ubuntu-24.04, aarch64-linux-gnu on ubuntu-24.04-arm). Every trigger runs
-# every target and Python: the owner's plan (a push runs the newest Python on every target and
-# every Python on x86-64; nightly and before a release, everything) meets "main is pushed for a
-# release only". Adding a Python version adds an entry to both `python` lists, adding a target
-# one to both `target` lists and the `include` entry that names its runner.
+# Every test and check there is, so that a release only builds and publishes (release.yml tests
+# nothing):
+#   - build (build.yml, with its checks): the release build, its smoke test and an independent
+#     rebuild compared byte for byte, exactly as release.yml then builds the tagged commit;
+#   - suite: the whole test suite but the portability tests, as an unprivileged user in a Debian
+#     trixie container: natives, compatibility, the ASan/UBSan launcher, the fuzzer, the
+#     cache-directory and GC tests, the ownership checks, and the coverage gates;
+#   - portability: the portability tests (tests/e2e/test_portability.py, which need `podman run`
+#     on the runner host).
+# It runs on every push to main, which is a merge: tools/release/release.sh tags only a main
+# commit whose run passed, and the publish job of release.yml checks that run again. Also
+# weekly, with a longer fuzzing run (below), and on request; no nightly run: main changes by
+# merges only, so one would test the same commit night after night (owner, 2026-10-21). Pull
+# requests start nothing: a branch is tested locally before its pull request. The fuzz corpus
+# is kept in actions/cache (release.yml stays cache-free).
+# One fsbpyr per Python version and per target (Phase 9): every job runs once per (target,
+# Python) entry, the development environment on that Python and that variant's executable
+# (dist/fsbpyr for the newest version, the one .python-version pins; dist/fsbpyr-3.X for the
+# others), each target on a runner of its architecture (x86_64-linux-gnu on ubuntu-24.04,
+# aarch64-linux-gnu on ubuntu-24.04-arm). Every trigger runs every target and Python. Adding a
+# Python version adds an entry to both `python` lists here and to build.yml's, adding a target
+# one to those `target` lists and the `include` entries that name its runner.
 
 on:
   push:
@@ -40,6 +40,13 @@ permissions:
   contents: read
 
 jobs:
+  # The release build and its checks: what release.yml builds from the tag, built and checked
+  # here first.
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      checks: true
+
   suite:
     name: suite (${{ matrix.target }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.runner }}
@@ -51,7 +58,7 @@ jobs:
         include:
           - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
           - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
-    # Debian trixie by digest, as release.yml (a multi-arch index: one image per runner
+    # Debian trixie by digest, as build.yml (a multi-arch index: one image per runner
     # architecture). Privileged: rootless podman for the tests that map
     # a second range of user ids, strace and user namespaces inside the container.
     container:
@@ -76,7 +83,7 @@ jobs:
       - name: Trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      # The uv that tools/release/uv.version names, as release.yml installs it. The tester's
+      # The uv that tools/release/uv.version names, as build.yml installs it. The tester's
       # Python and caches are its own (below); only the uv executable is shared.
       - name: Install uv
         run: |
@@ -236,6 +243,13 @@ jobs:
             LLVM_PROFILE_FILE=/home/tester/llvm-cov/prof/%p-%m.profraw \
             $UV_RUN pytest --ignore=tests/e2e/test_portability.py --durations=30 \
               --junitxml=full.xml --cov --cov-report=xml
+
+      # IMPLEMENTATION_PLAN.md §7 sets 90% for payload/ and elf.py, above the 80% overall; this
+      # reads the data the suite left in .coverage.
+      - name: Coverage of payload/ and elf.py
+        run: |
+          as-tester $UV_ENV $UV_RUN coverage report \
+            --include='src/fsbpyr/payload/*,src/fsbpyr/elf.py' --fail-under=90
 
       # Informational: the launcher sources (copied by each session, so listed by their temporary
       # paths) that the probes and the fuzz harness exercised. llvm-profdata and llvm-cov are

@@ -8,7 +8,7 @@
 # only move when someone moves them (REP-1 in docs/improvement-plan.md):
 #   - the uv of tools/release/uv.version, against astral-sh/uv's newest release;
 #   - the Debian snapshot of tools/release/apt-snapshot, flagged when older than 90 days;
-#   - the debian:trixie image digest of the Containerfile and release.yml, against the digest
+#   - the debian:trixie image digest of the Containerfile and build.yml, against the digest
 #     the registry serves for the tag now.
 # Any of them opens an issue labelled toolchain-update, or updates the open one; it stays
 # open until the pins move (closed earlier, it is opened again on the next run).
@@ -60,7 +60,7 @@ current_image="$(curl -fsSI -H "Authorization: Bearer $token" -H "Accept: $MANIF
 [ -n "$current_image" ] || die "the registry gave no digest for debian:trixie"
 say "image: pinned $pinned_image, registry $current_image"
 if [ "$pinned_image" != "$current_image" ]; then
-    problems+=("**debian:trixie** is pinned to \`$pinned_image\` (Containerfile, release.yml); the registry serves \`$current_image\`.")
+    problems+=("**debian:trixie** is pinned to \`$pinned_image\` (Containerfile, build.yml); the registry serves \`$current_image\`.")
 fi
 
 if [ "${#problems[@]}" -eq 0 ]; then
@@ -71,7 +71,7 @@ fi
 title="Toolchain update: ${#problems[@]} release pin(s) to move"
 body="The release toolchain is pinned (REP-1). To move the pins, edit tools/release/uv.version
 and the Containerfile's \`UV_VERSION\` and \`UV_SHA256_*\`, tools/release/apt-snapshot, and the
-\`debian:trixie@sha256\` digest in the Containerfile, .github/workflows/release.yml and
+\`debian:trixie@sha256\` digest in the Containerfile, .github/workflows/build.yml and
 .github/workflows/full-suite.yml, then rebuild and compare:
 "
 for problem in "${problems[@]}"; do

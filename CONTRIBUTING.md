@@ -12,8 +12,8 @@ once it exists. A bug found once stays tested.
 
 ## Running the tests
 
-`make check` runs the static checks (ruff and mypy), `make test-ci` the part of the suite that
-CI runs, and `make test` all of it. The end-to-end tests use a cached runtime or build one,
+`make check` runs the static checks (ruff and mypy), `make test-ci` the core of the suite,
+and `make test` all of it. The end-to-end tests use a cached runtime or build one,
 which needs clang and lld 23 or newer: the `make` targets put LLVM's clang and lld 23 that
 `tools/release/llvm23` pins first on PATH (fetched once, see the README's "Building from
 source"); run directly, pytest skips them without a clang 23 on PATH. `make test-ci` also fails when
@@ -22,15 +22,17 @@ the end-to-end tests, so a run where they skip can fail on coverage alone.
 
 The tiers, from fastest to most complete:
 
-- `make test-ci`: unit and integration tests and the core end-to-end tests, as CI runs them
-  before a release.
-- The full suite in CI (`.github/workflows/full-suite.yml`): everything but the portability
-  tests, as the user `tester` in a privileged Debian trixie container with rootless podman, so
-  the root-only, supplementary-group and `podman unshare` tests run. It runs on every push to
-  main (which is pushed to GitHub for a release only), weekly and on request, once per target
-  (x86-64 on `ubuntu-24.04`, aarch64 on `ubuntu-24.04-arm`) and Python, with
-  `FSBPYR_TESTS_REQUIRE_ALL=full` (no skip is expected), and `make release` and the publish
-  job require a green run, aarch64 jobs included, for the commit a release is made from. The
+- `make test-ci`: unit and integration tests and the core end-to-end tests.
+- The full suite in CI (`.github/workflows/full-suite.yml`): every test and check there is, so
+  that a release (`.github/workflows/release.yml`) only builds and publishes. The release build
+  (`.github/workflows/build.yml`) with its smoke test and an independent rebuild compared byte
+  for byte; everything but the portability tests, as the user `tester` in a privileged Debian
+  trixie container with rootless podman, so the root-only, supplementary-group and `podman
+  unshare` tests run; and the portability tests. It runs on every push to main (a merge; pull
+  requests start no CI), weekly and on request, once per target (x86-64 on `ubuntu-24.04`,
+  aarch64 on `ubuntu-24.04-arm`) and Python, with `FSBPYR_TESTS_REQUIRE_ALL=full` (no skip is
+  expected), and `make release` and the publish job require a green run, aarch64 jobs
+  included, for the commit a release is made from. The
   fuzzer runs for 600 s (`FSBPYR_FUZZ_SECONDS`) when `src/fsbpyr/launcher` or
   `tests/fuzz` changed since the last tag and on the weekly run, else for 30 s; the corpus it
   finds (`FSBPYR_FUZZ_CORPUS`) is kept in the Actions cache. The launcher programs the tests

@@ -57,23 +57,24 @@ def run_script(
 
 
 RELEASE_SH = ROOT / "tools" / "release" / "release.sh"
+PREPARE_SH = ROOT / "tools" / "release" / "prepare.sh"
+VERSION_FILES_SH = ROOT / "tools" / "release" / "version-files.sh"
 GREEN_RUN_SH = ROOT / "tools" / "release" / "green-run.sh"
 FOLLOW_RUN_SH = ROOT / "tools" / "release" / "follow-run.sh"
 RELEASE_NOTES_SH = ROOT / "tools" / "release" / "release-notes.sh"
 TAG = f"v{VERSION}"
 RUN_ID = "4242"
-MAIN_RUN_ID = "4141"
 FULL_RUN_ID = "4343"
 RUN_URL = "https://github.com/devitops-com/fsbpyr/actions/runs"
 DONE = "completed/success"
 REPO_URL = "https://github.com/devitops-com/fsbpyr"
 
 # A gh that is authenticated, logs every call and knows no release. `run list --branch main`
-# (HEAD's run of a workflow on main, as "ID STATUS/CONCLUSION URL") answers $FAKE_GH_MAIN_RUN
-# for release.yml and $FAKE_GH_FULL_RUN for full-suite.yml, nothing when it is empty; any other
-# `run list` answers $FAKE_GH_RUN_ID from its (FAKE_GH_RUN_AFTER + 1)th call on. `run view` of
-# one of those runs (4000 too) shows it completed with FAKE_GH_CHECK_CONCLUSION, any other run
-# with FAKE_GH_TAG_CONCLUSION (both "success" by default), as follow-run.sh's --jq prints it.
+# answers $FAKE_GH_FULL_RUN for full-suite.yml (HEAD's run on main, as "ID STATUS/CONCLUSION
+# URL"), nothing for another workflow or when it is empty; any other `run list` answers
+# $FAKE_GH_RUN_ID from its (FAKE_GH_RUN_AFTER + 1)th call on. `run view` of the full suite's
+# run (4000 too) shows it completed with FAKE_GH_CHECK_CONCLUSION, any other run with
+# FAKE_GH_TAG_CONCLUSION (both "success" by default), as follow-run.sh's --jq prints it.
 # Anything else (such as `release create`) is not expected from release.sh and fails.
 FAKE_GH = """\
 echo "$*" >> "$FAKE_GH_LOG"
@@ -89,14 +90,14 @@ case "$1 $2" in
     case "$*" in
       *"--branch main "*"--workflow full-suite.yml"*|*"--workflow full-suite.yml"*"--branch main "*)
         echo "$FAKE_GH_FULL_RUN"; exit ;;
-      *"--branch main "*) echo "$FAKE_GH_MAIN_RUN"; exit ;;
+      *"--branch main "*) exit ;;
     esac
     calls=$(cat "$FAKE_GH_LOG.runs" 2>/dev/null || echo 0)
     echo $((calls + 1)) > "$FAKE_GH_LOG.runs"
     if [ "$calls" -ge "${FAKE_GH_RUN_AFTER:-0}" ]; then echo "$FAKE_GH_RUN_ID"; fi ;;
   "run view")
     case "$3" in
-      4000|4141|4343) conclusion="${FAKE_GH_CHECK_CONCLUSION:-success}" ;;
+      4000|4343) conclusion="${FAKE_GH_CHECK_CONCLUSION:-success}" ;;
       *) conclusion="${FAKE_GH_TAG_CONCLUSION:-success}" ;;
     esac
     printf '%s\n%s\tbuild\n' "$conclusion" "$conclusion" ;;
@@ -105,9 +106,10 @@ esac
 """
 
 
-# ---------------------------------------------------------------------------------- release.sh
+# ------------------------------------------------------------------- release.sh and prepare.sh
 
 RELEASED_ENTRY = "### Added\n- The first thing.\n- The second thing."
+PREPARED_DAY = "2026-10-22"
 
 
 def git(repo: Path, *args: str, env: dict[str, str]) -> str:
@@ -127,7 +129,6 @@ def release_env(tmp_path: Path) -> dict[str, str]:
         "TMPDIR": str(tmp_path),
         "FAKE_GH_LOG": str(tmp_path / "gh.log"),
         "FAKE_GH_RUN_ID": RUN_ID,
-        "FAKE_GH_MAIN_RUN": f"{MAIN_RUN_ID} {DONE} {RUN_URL}/{MAIN_RUN_ID}",
         "FAKE_GH_FULL_RUN": f"{FULL_RUN_ID} {DONE} {RUN_URL}/{FULL_RUN_ID}",
         "FSBPYR_RELEASE_WATCH_WAIT": "0",
         "FSBPYR_RELEASE_FOLLOW_POLL": "0",
@@ -140,7 +141,7 @@ def release_env(tmp_path: Path) -> dict[str, str]:
 
 
 def pyproject_toml(version: str) -> str:
-    """Only [project]'s version is the release version (the one the tag check in release.yml
+    """Only [project]'s version is the release version (the one the tag check in build.yml
     reads): another table's `version` key, even an earlier one, is neither read nor bumped."""
     return (
         '[tool.example]\nversion = "0.0.0"\n\n'
@@ -176,32 +177,6 @@ def assert_version_files(repo: Path, version: str) -> None:
         assert (repo / name).read_text() == text, name
 
 
-def make_release_repo(
-    tmp_path: Path, env: dict[str, str], unreleased: str, version: str = VERSION
-) -> Path:
-    """A repo on main at ``version``, in sync with a bare 'origin' under tmp_path, carrying the
-    real release scripts."""
-    repo, origin = tmp_path / "repo", tmp_path / "origin.git"
-    (repo / "tools" / "release").mkdir(parents=True)
-    shutil.copy2(RELEASE_SH, repo / "tools" / "release" / "release.sh")
-    shutil.copy2(RELEASE_NOTES_SH, repo / "tools" / "release" / "release-notes.sh")
-    shutil.copy2(GREEN_RUN_SH, repo / "tools" / "release" / "green-run.sh")
-    shutil.copy2(FOLLOW_RUN_SH, repo / "tools" / "release" / "follow-run.sh")
-    for name, text in version_files(version).items():
-        (repo / name).parent.mkdir(parents=True, exist_ok=True)
-        (repo / name).write_text(text)
-    (repo / "README.md").write_text("fsbpyr\n")
-    (repo / ".gitignore").write_text("dist/\n")
-    (repo / "CHANGELOG.md").write_text(changelog(unreleased))
-    run_script(["git", "init", "-q", "--bare", "-b", "main", str(origin)], env)
-    git(repo.parent, "init", "-q", "-b", "main", str(repo), env=env)
-    git(repo, "add", ".", env=env)
-    git(repo, "commit", "-q", "-m", "initial", env=env)
-    git(repo, "remote", "add", "hub", str(origin), env=env)
-    git(repo, "push", "-q", "hub", "main", env=env)
-    return repo
-
-
 def changelog(unreleased: str) -> str:
     return (
         "# Changelog\n\nIntro.\n\n## [Unreleased]\n\n"
@@ -215,6 +190,43 @@ def promoted_changelog(day: str, version: str = VERSION) -> str:
     )
 
 
+def make_release_repo(
+    tmp_path: Path, env: dict[str, str], changelog_text: str | None = None, version: str = VERSION
+) -> Path:
+    """A repo on main at ``version``, in sync with a bare 'origin' under tmp_path, carrying the
+    real release scripts. Its one commit, "initial", is that version's release commit (the
+    version's CHANGELOG section, an empty [Unreleased]) unless ``changelog_text`` says
+    otherwise."""
+    repo, origin = tmp_path / "repo", tmp_path / "origin.git"
+    (repo / "tools" / "release").mkdir(parents=True)
+    for script in (RELEASE_SH, PREPARE_SH, VERSION_FILES_SH, RELEASE_NOTES_SH, GREEN_RUN_SH,
+                   FOLLOW_RUN_SH):  # fmt: skip
+        shutil.copy2(script, repo / "tools" / "release" / script.name)
+    for name, text in version_files(version).items():
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text(text)
+    (repo / "README.md").write_text("fsbpyr\n")
+    (repo / ".gitignore").write_text("dist/\n")
+    (repo / "CHANGELOG.md").write_text(changelog_text or promoted_changelog(PREPARED_DAY, version))
+    run_script(["git", "init", "-q", "--bare", "-b", "main", str(origin)], env)
+    git(repo.parent, "init", "-q", "-b", "main", str(repo), env=env)
+    git(repo, "add", ".", env=env)
+    git(repo, "commit", "-q", "-m", "initial", env=env)
+    git(repo, "remote", "add", "hub", str(origin), env=env)
+    git(repo, "push", "-q", "hub", "main", env=env)
+    return repo
+
+
+def make_branch_repo(
+    tmp_path: Path, env: dict[str, str], unreleased: str, version: str = VERSION
+) -> Path:
+    """A repo at ``version`` with ``unreleased`` under [Unreleased], on a new branch 'feature' off
+    main: where make release-prep runs."""
+    repo = make_release_repo(tmp_path, env, changelog(unreleased), version)
+    git(repo, "checkout", "-q", "-b", "feature", env=env)
+    return repo
+
+
 def run_release(repo: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
     return run_script(
         ["bash", "tools/release/release.sh", *args],
@@ -223,14 +235,18 @@ def run_release(repo: Path, env: dict[str, str], *args: str) -> subprocess.Compl
     )
 
 
+def run_prepare(repo: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+    return run_script(["bash", "tools/release/prepare.sh", *args], env, cwd=repo)
+
+
 def gh_calls(tmp_path: Path) -> list[str]:
     log = tmp_path / "gh.log"
     return log.read_text().splitlines() if log.exists() else []
 
 
 def tag_run_calls(tmp_path: Path, prefix: str = "run ") -> list[str]:
-    """gh's calls about the tag's workflow run: not the check of main's runs before the commit."""
-    checks = tuple(f"run view {i}" for i in (MAIN_RUN_ID, FULL_RUN_ID, "4000"))
+    """gh's calls about the tag's workflow run: not the check of main's runs before the tag."""
+    checks = tuple(f"run view {i}" for i in (FULL_RUN_ID, "4000"))
     return [
         c
         for c in gh_calls(tmp_path)
@@ -247,32 +263,27 @@ def assert_nothing_built_or_published(tmp_path: Path) -> None:
     assert not [call for call in gh_calls(tmp_path) if call.startswith("release create")]
 
 
-def assert_nothing_committed_or_pushed(repo: Path, tmp_path: Path, env: dict[str, str]) -> None:
+def assert_nothing_tagged_or_pushed(repo: Path, tmp_path: Path, env: dict[str, str]) -> None:
     assert git(repo, "tag", "--list", env=env) == ""
     assert git(repo, "status", "--porcelain", env=env) == ""
     assert git(repo, "log", "--format=%s", env=env) == "initial"
     origin = tmp_path / "origin.git"
-    assert git(origin, "log", "--format=%s", "main", env=env) == "initial"
-    assert git(origin, "tag", "--list", env=env) == ""
+    assert git(origin, "for-each-ref", "--format=%(refname) %(subject)", env=env) == (
+        "refs/heads/main initial"
+    )
     assert_nothing_built_or_published(tmp_path)
     assert not tag_run_calls(tmp_path)
 
 
-def assert_released_at_origin(
-    repo: Path, tmp_path: Path, env: dict[str, str], tag: str = TAG
-) -> None:
-    """One release commit on top of the last one and the annotated tag at HEAD; origin has the
-    tag and still the old main, which the release workflow moves once it has published."""
-    assert git(repo, "log", "--format=%s", env=env).splitlines() == [
-        f"chore: release {tag}",
-        "initial",
-    ]
-    assert git(repo, "cat-file", "-t", tag, env=env) == "tag"  # annotated
-    assert git(repo, "tag", "-l", "--format=%(contents:subject)", tag, env=env) == f"fsbpyr {tag}"
+def assert_released_at_origin(repo: Path, tmp_path: Path, env: dict[str, str]) -> None:
+    """No commit: the annotated tag is on HEAD, the tested release commit, here and on origin,
+    whose main is HEAD as before."""
+    assert git(repo, "log", "--format=%s", env=env) == "initial"
+    assert git(repo, "cat-file", "-t", TAG, env=env) == "tag"  # annotated
+    assert git(repo, "tag", "-l", "--format=%(contents:subject)", TAG, env=env) == f"fsbpyr {TAG}"
     head = git(repo, "rev-parse", "HEAD", env=env)
     origin = tmp_path / "origin.git"
-    assert git(origin, "rev-parse", f"{tag}^{{commit}}", env=env) == head
-    assert git(origin, "rev-parse", "main", env=env) == git(repo, "rev-parse", "HEAD^", env=env)
+    assert git(origin, "rev-parse", "main", f"{TAG}^{{commit}}", env=env).split() == [head, head]
 
 
 def released_files(repo: Path, env: dict[str, str]) -> list[str]:
@@ -280,7 +291,7 @@ def released_files(repo: Path, env: dict[str, str]) -> list[str]:
 
 
 def test_release_refuses_to_run_off_main(tmp_path: Path, release_env: dict[str, str]) -> None:
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    repo = make_release_repo(tmp_path, release_env)
     git(repo, "checkout", "-q", "-b", "feature", env=release_env)
 
     result = run_release(repo, release_env)
@@ -288,12 +299,11 @@ def test_release_refuses_to_run_off_main(tmp_path: Path, release_env: dict[str, 
     assert result.returncode == 1
     assert "not on 'main' (currently on 'feature')" in result.stderr
     git(repo, "checkout", "-q", "main", env=release_env)
-    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
-    assert_nothing_built_or_published(tmp_path)
+    assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
 
 
 def test_release_refuses_a_dirty_tree(tmp_path: Path, release_env: dict[str, str]) -> None:
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    repo = make_release_repo(tmp_path, release_env)
     (repo / "README.md").write_text("# edited\n")
 
     result = run_release(repo, release_env)
@@ -301,8 +311,7 @@ def test_release_refuses_a_dirty_tree(tmp_path: Path, release_env: dict[str, str
     assert result.returncode == 1
     assert "working tree is not clean" in result.stderr
     git(repo, "checkout", "--", "README.md", env=release_env)
-    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
-    assert_nothing_built_or_published(tmp_path)
+    assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
 
 
 def test_release_refuses_untracked_files_that_git_status_is_told_to_hide(
@@ -310,7 +319,7 @@ def test_release_refuses_untracked_files_that_git_status_is_told_to_hide(
 ) -> None:
     """The build packs untracked files under src/ into the executable: it would ship code that
     is not in the tag."""
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    repo = make_release_repo(tmp_path, release_env)
     git(repo, "config", "status.showUntrackedFiles", "no", env=release_env)
     (repo / "tools" / "extra.py").write_text("print('not committed')\n")
 
@@ -319,15 +328,14 @@ def test_release_refuses_untracked_files_that_git_status_is_told_to_hide(
     assert result.returncode == 1
     assert "working tree is not clean" in result.stderr
     (repo / "tools" / "extra.py").unlink()
-    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
-    assert_nothing_built_or_published(tmp_path)
+    assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
 
 
 @pytest.mark.parametrize("flag", ["--assume-unchanged", "--skip-worktree"])
 def test_release_refuses_local_edits_hidden_from_git_status(
     flag: str, tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    repo = make_release_repo(tmp_path, release_env)
     git(repo, "update-index", flag, "README.md", env=release_env)
     (repo / "README.md").write_text("# edited\n")
 
@@ -343,7 +351,7 @@ def test_release_refuses_local_edits_hidden_from_git_status(
 def test_release_refuses_when_main_is_not_in_sync_with_origin(
     tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    repo = make_release_repo(tmp_path, release_env)
     git(repo, "commit", "-q", "--allow-empty", "-m", "unpushed", env=release_env)
 
     result = run_release(repo, release_env)
@@ -360,52 +368,46 @@ def check_calls(tmp_path: Path, workflow: str) -> list[str]:
             and "--branch main " in c]  # fmt: skip
 
 
-@pytest.mark.parametrize(
-    ("variable", "workflow"),
-    [("FAKE_GH_MAIN_RUN", "release.yml"), ("FAKE_GH_FULL_RUN", "full-suite.yml")],
-)
-def test_release_refuses_a_head_without_a_run_of_each_workflow_on_main(
-    variable: str, workflow: str, tmp_path: Path, release_env: dict[str, str]
+def test_release_refuses_a_head_without_a_full_suite_run_on_main(
+    tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    """release.yml and full-suite.yml run on every push to main; only a commit both passed is
-    tagged, so a failure shows on main before any tag exists."""
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    """full-suite.yml runs on every push to main, the release build and its checks included;
+    only a commit it passed is tagged. release.yml does not run on main: nothing asks for it."""
+    repo = make_release_repo(tmp_path, release_env)
     head = git(repo, "rev-parse", "HEAD", env=release_env)
 
-    result = run_release(repo, release_env | {variable: ""})
+    result = run_release(repo, release_env | {"FAKE_GH_FULL_RUN": ""})
 
     assert result.returncode == 1
-    assert f"main at {head[:7]} has no {workflow} run" in result.stderr
-    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
-    (check,) = check_calls(tmp_path, workflow)
+    assert f"main at {head[:7]} has no full-suite.yml run" in result.stderr
+    assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
+    (check,) = check_calls(tmp_path, "full-suite.yml")
     for option in ("--branch main", "--event push", f"--commit {head}"):
         assert option in check
+    assert not check_calls(tmp_path, "release.yml")
 
 
-@pytest.mark.parametrize("workflow", ["release.yml", "full-suite.yml"])
 @pytest.mark.parametrize("state", ["completed/failure", "completed/cancelled"])
-def test_release_refuses_a_head_whose_run_did_not_succeed(
-    workflow: str, state: str, tmp_path: Path, release_env: dict[str, str]
+def test_release_refuses_a_head_whose_full_suite_run_did_not_succeed(
+    state: str, tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
-    variable = "FAKE_GH_FULL_RUN" if workflow == "full-suite.yml" else "FAKE_GH_MAIN_RUN"
+    repo = make_release_repo(tmp_path, release_env)
 
-    result = run_release(repo, release_env | {variable: f"4000 {state} {RUN_URL}/4000"})
+    result = run_release(repo, release_env | {"FAKE_GH_FULL_RUN": f"4000 {state} {RUN_URL}/4000"})
 
     assert result.returncode == 1
-    assert f"{workflow}'s run for main" in result.stderr
+    assert "full-suite.yml's run for main" in result.stderr
     assert f"did not succeed ({state}): {RUN_URL}/4000" in result.stderr
-    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
+    assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
 
 
-@pytest.mark.parametrize("workflow", ["release.yml", "full-suite.yml"])
-def test_release_waits_for_a_run_in_progress_and_goes_on_when_it_passes(
-    workflow: str, tmp_path: Path, release_env: dict[str, str]
+def test_release_waits_for_a_full_suite_run_in_progress_and_goes_on_when_it_passes(
+    tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
-    variable = "FAKE_GH_FULL_RUN" if workflow == "full-suite.yml" else "FAKE_GH_MAIN_RUN"
+    repo = make_release_repo(tmp_path, release_env)
+    running = f"4000 in_progress/ {RUN_URL}/4000"
 
-    result = run_release(repo, release_env | {variable: f"4000 in_progress/ {RUN_URL}/4000"})
+    result = run_release(repo, release_env | {"FAKE_GH_FULL_RUN": running})
 
     assert result.returncode == 0, result.stderr
     assert "run view 4000" in followed(tmp_path)
@@ -416,7 +418,7 @@ def test_release_waits_for_a_run_in_progress_and_goes_on_when_it_passes(
 def test_release_refuses_when_the_run_it_waited_for_fails(
     state: str, tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    repo = make_release_repo(tmp_path, release_env)
     env = release_env | {"FAKE_GH_FULL_RUN": f"4000 {state} {RUN_URL}/4000",
                          "FAKE_GH_CHECK_CONCLUSION": "failure"}  # fmt: skip
 
@@ -426,14 +428,14 @@ def test_release_refuses_when_the_run_it_waited_for_fails(
     assert "run view 4000" in followed(tmp_path)
     assert "full-suite.yml's run for main" in result.stderr
     assert "failed" in result.stderr
-    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
+    assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
 
 
 @pytest.mark.parametrize("where", ["local", "origin", "github"])
 def test_release_refuses_a_version_that_is_already_tagged_or_released(
     where: str, tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    repo = make_release_repo(tmp_path, release_env)
     if where in ("local", "origin"):
         git(repo, "tag", TAG, env=release_env)
     if where == "origin":
@@ -454,71 +456,74 @@ def test_release_refuses_a_version_that_is_already_tagged_or_released(
     assert_nothing_built_or_published(tmp_path)
 
 
-def test_release_refuses_an_empty_unreleased_section(
+def test_release_refuses_a_head_that_is_not_a_release_commit(
     tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    repo = make_release_repo(tmp_path, release_env, "")
+    """The release notes are the version's CHANGELOG section, which make release-prep makes."""
+    repo = make_release_repo(tmp_path, release_env, changelog(RELEASED_ENTRY))
 
     result = run_release(repo, release_env)
 
     assert result.returncode == 1
-    assert "'## [Unreleased]' section in CHANGELOG.md is empty" in result.stderr
-    assert (repo / "CHANGELOG.md").read_text() == changelog("")
-    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
-    assert_nothing_built_or_published(tmp_path)
+    assert f"no release notes for {VERSION}: make release-prep makes them" in result.stderr
+    assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
+
+
+def test_release_refuses_changes_merged_after_the_release_commit(
+    tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    """They would ship in the tag without being in its notes."""
+    later = promoted_changelog(PREPARED_DAY).replace(
+        "## [Unreleased]\n", "## [Unreleased]\n\n- A later change.\n"
+    )
+    repo = make_release_repo(tmp_path, release_env, later)
+
+    result = run_release(repo, release_env)
+
+    assert result.returncode == 1
+    assert "CHANGELOG.md has changes under [Unreleased]" in result.stderr
+    assert f"they would ship in {TAG} without being in its notes" in result.stderr
+    assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
+
+
+def test_release_refuses_a_version_other_than_the_one_head_declares(
+    tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    repo = make_release_repo(tmp_path, release_env)
+
+    result = run_release(repo, release_env, "9.9.9")
+
+    assert result.returncode == 1
+    assert f"HEAD declares version {VERSION}, not 9.9.9" in result.stderr
+    assert "make release-prep VERSION=9.9.9" in result.stderr
+    assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
 
 
 def test_release_refuses_without_confirmation_off_a_tty(
     tmp_path: Path, release_env: dict[str, str]
 ) -> None:
     """No controlling terminal: /dev/tty exists but cannot be opened."""
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    repo = make_release_repo(tmp_path, release_env)
 
     result = run_script(["bash", "tools/release/release.sh"], release_env, cwd=repo)
 
     assert result.returncode == 1
     assert "FSBPYR_RELEASE_ASSUME_YES=1" in result.stderr
-    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
-    assert_nothing_built_or_published(tmp_path)
+    assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
 
 
-def test_release_promotes_unreleased_and_reverts_it_when_the_commit_fails(
-    tmp_path: Path, release_env: dict[str, str]
-) -> None:
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
-    write_program(
-        repo / ".git" / "hooks" / "pre-commit",
-        "cp CHANGELOG.md ../changelog-at-commit.md\nexit 1\n",
-    )
-    before = datetime.date.today().isoformat()
-
-    result = run_release(repo, release_env)
-
-    after = datetime.date.today().isoformat()
-    assert result.returncode == 1
-    promoted = (tmp_path / "changelog-at-commit.md").read_text()
-    assert promoted in {promoted_changelog(day) for day in (before, after)}
-    assert "Reverted CHANGELOG.md" in result.stderr
-    assert (repo / "CHANGELOG.md").read_text() == changelog(RELEASED_ENTRY)
-    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
-
-
-@pytest.mark.parametrize("args", [[], [VERSION]], ids=["no-version", "the-current-version"])
-def test_release_commits_tags_and_pushes_without_building_or_publishing(
+@pytest.mark.parametrize("args", [[], [VERSION]], ids=["no-version", "heads-version"])
+def test_release_tags_head_and_pushes_the_tag_without_building_or_publishing(
     args: list[str], tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    """The tag push is the release: CI builds, attests and publishes. release.sh follows the
-    workflow run the tag triggered and prints the release URL. Given the version pyproject.toml
-    already has, nothing is bumped."""
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    """The tag push is the release: CI builds, attests and publishes. release.sh makes no
+    commit, follows the workflow run the tag triggered and prints the release URL."""
+    repo = make_release_repo(tmp_path, release_env)
 
     result = run_release(repo, release_env, *args)
 
     assert result.returncode == 0, result.stderr
-    assert f"## [{VERSION}] - " in (repo / "CHANGELOG.md").read_text()
     assert_released_at_origin(repo, tmp_path, release_env)
-    assert released_files(repo, release_env) == ["CHANGELOG.md"]
-    assert_version_files(repo, VERSION)
     assert f"version : {VERSION}\n" in result.stdout
     assert_nothing_built_or_published(tmp_path)
     head = git(repo, "rev-parse", "HEAD", env=release_env)
@@ -533,7 +538,7 @@ def test_release_waits_for_the_workflow_run_to_show_up(
     tmp_path: Path, release_env: dict[str, str]
 ) -> None:
     """GitHub creates the run a few seconds after the push."""
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    repo = make_release_repo(tmp_path, release_env)
     env = release_env | {"FAKE_GH_RUN_AFTER": "1", "FSBPYR_RELEASE_WATCH_WAIT": "30"}
 
     result = run_release(repo, env)
@@ -548,7 +553,7 @@ def test_release_succeeds_when_no_workflow_run_shows_up(
     answer: str, tmp_path: Path, release_env: dict[str, str]
 ) -> None:
     """The tag is pushed and the workflow will run; only following it is not possible."""
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    repo = make_release_repo(tmp_path, release_env)
 
     result = run_release(repo, release_env | {"FAKE_GH_RUN_ID": answer})
 
@@ -561,9 +566,9 @@ def test_release_succeeds_when_no_workflow_run_shows_up(
 def test_release_reports_a_failed_workflow_run_with_its_recovery(
     tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    """A pushed tag is never moved: its version is burned, and the fix is released as the next.
-    main never got the release commit, so its [Unreleased] section still has the changes."""
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    """A pushed tag is never moved: its version is burned, and the fix is released as the next,
+    whose notes carry the burned version's changes too."""
+    repo = make_release_repo(tmp_path, release_env)
     major, minor, patch = VERSION.split(".")
     following = f"{major}.{minor}.{int(patch) + 1}"
 
@@ -574,11 +579,10 @@ def test_release_reports_a_failed_workflow_run_with_its_recovery(
     assert f"{TAG} is pushed but not published" in result.stderr
     assert f"gh run view {RUN_ID} --log-failed" in result.stderr
     assert f"gh run rerun {RUN_ID} --failed" in result.stderr
-    assert "this version is burned: drop the local release commit" in result.stderr
-    assert "(git reset --hard hub/main), fix it on main and release" in result.stderr
-    assert f"make release VERSION={following}" in result.stderr
-    assert "the fix's entry to [Unreleased] in CHANGELOG.md" in result.stderr
-    assert f"top that {TAG} has no release" in result.stderr
+    assert f"this version is burned: {TAG} stays as it is" in result.stderr
+    assert f"the [{VERSION}] section of CHANGELOG.md into [Unreleased]" in result.stderr
+    assert f"top of CHANGELOG.md that {TAG} has no release" in result.stderr
+    assert f"make release-prep VERSION={following}" in result.stderr
     assert "refs/tags" not in result.stderr
     assert "git tag" not in result.stderr
 
@@ -586,8 +590,8 @@ def test_release_reports_a_failed_workflow_run_with_its_recovery(
 def test_release_reports_a_refused_tag_push_with_its_recovery(
     tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    """origin refuses the tag: nothing reaches origin, and the local commit and tag can go."""
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY)
+    """origin refuses the tag: nothing reaches origin, and the local tag can go."""
+    repo = make_release_repo(tmp_path, release_env)
     write_program(
         tmp_path / "origin.git" / "hooks" / "update",
         'case "$1" in refs/tags/*) echo "tags are frozen" >&2; exit 1 ;; esac\n',
@@ -598,14 +602,46 @@ def test_release_reports_a_refused_tag_push_with_its_recovery(
     assert result.returncode == 1
     assert "push failed" in result.stderr
     origin = tmp_path / "origin.git"
-    assert git(origin, "log", "--format=%s", "main", env=release_env) == "initial"
     assert git(origin, "tag", "--list", env=release_env) == ""
-    assert git(repo, "log", "-1", "--format=%s", env=release_env) == f"chore: release {TAG}"
-    assert f"git tag -d {TAG} && git reset --hard HEAD~1" in result.stderr
+    assert git(repo, "tag", "--list", env=release_env) == TAG
+    assert f"(a) Abort: git tag -d {TAG}\n" in result.stderr
     assert f"git push hub {TAG}\n" in result.stderr
-    assert "gh release create" not in result.stderr
     assert_nothing_built_or_published(tmp_path)
     assert not tag_run_calls(tmp_path)
+
+
+@pytest.mark.parametrize("name", ["src/fsbpyr/__init__.py", "uv.lock"])
+@pytest.mark.parametrize("script", ["release.sh", "prepare.sh"])
+def test_release_and_prepare_refuse_versions_that_disagree(
+    script: str, name: str, tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    repo = make_release_repo(tmp_path, release_env, version="1.9.2")
+    if script == "prepare.sh":
+        git(repo, "checkout", "-q", "-b", "feature", env=release_env)
+    (repo / name).write_text(version_files("1.9.1")[name])
+    git(repo, "commit", "-q", "-am", "drift", env=release_env)
+
+    result = run_script(["bash", f"tools/release/{script}"], release_env, cwd=repo)
+
+    assert result.returncode == 1
+    assert f"{name} has version 1.9.1, pyproject.toml has 1.9.2" in result.stderr
+    assert git(repo, "tag", "--list", env=release_env) == ""
+    assert git(repo, "log", "-1", "--format=%s", env=release_env) == "drift"
+    assert_nothing_built_or_published(tmp_path)
+
+
+@pytest.mark.parametrize("script", ["release.sh", "prepare.sh"])
+def test_release_and_prepare_take_at_most_one_version(
+    script: str, tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    repo = make_release_repo(tmp_path, release_env)
+
+    result = run_script(["bash", f"tools/release/{script}", "1.9.3", "1.9.4"], release_env,
+                        cwd=repo)  # fmt: skip
+
+    assert result.returncode == 2
+    assert f"usage: {script} [X.Y.Z]" in result.stderr
+    assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
 
 
 # ---------------------------------------------------------------------------------- follow-run.sh
@@ -686,26 +722,67 @@ def test_follow_run_rides_out_a_failed_request_and_gives_up_after_five(tmp_path:
     assert "ERROR: cannot read run 7" in failing.stderr
     assert (tmp_path / "always" / "gh-bin" / "calls").read_text() == "5\n"
 
-
-# ------------------------------------------------------------ release.sh X.Y.Z: bump and release
+# ---------------------------------------------------------- prepare.sh: the release commit
 
 CURRENT = "1.9.2"  # pyproject.toml's version before a bump
 
 
+def assert_nothing_committed(repo: Path, tmp_path: Path, env: dict[str, str]) -> None:
+    """The branch as it was, nothing tagged, nothing pushed, no gh call."""
+    assert git(repo, "status", "--porcelain", env=env) == ""
+    assert git(repo, "log", "--format=%s", env=env) == "initial"
+    assert git(repo, "tag", "--list", env=env) == ""
+    origin = tmp_path / "origin.git"
+    assert git(origin, "for-each-ref", "--format=%(refname) %(subject)", env=env) == (
+        "refs/heads/main initial"
+    )
+    assert gh_calls(tmp_path) == []
+
+
+@pytest.mark.parametrize("args", [[], [VERSION]], ids=["no-version", "the-current-version"])
+def test_prepare_commits_the_release_commit_on_the_branch_without_pushing(
+    args: list[str], tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    """The last commit of the branch: its pull request merges it, and the full suite then tests
+    exactly what is released. Given the version pyproject.toml already has, nothing is bumped."""
+    repo = make_branch_repo(tmp_path, release_env, RELEASED_ENTRY)
+    before = datetime.date.today().isoformat()
+
+    result = run_prepare(repo, release_env, *args)
+
+    after = datetime.date.today().isoformat()
+    assert result.returncode == 0, result.stderr
+    assert git(repo, "log", "--format=%s", env=release_env).splitlines() == [
+        f"chore: release {TAG}",
+        "initial",
+    ]
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD", env=release_env) == "feature"
+    assert released_files(repo, release_env) == ["CHANGELOG.md"]
+    assert (repo / "CHANGELOG.md").read_text() in {
+        promoted_changelog(day) for day in (before, after)
+    }
+    assert_version_files(repo, VERSION)
+    assert git(repo, "tag", "--list", env=release_env) == ""
+    origin = tmp_path / "origin.git"
+    assert git(origin, "for-each-ref", "--format=%(refname) %(subject)", env=release_env) == (
+        "refs/heads/main initial"
+    )
+    assert gh_calls(tmp_path) == []
+    assert "make release" in result.stdout
+
+
 @pytest.mark.parametrize("new", ["1.9.3", "1.9.10", "1.10.0", "2.0.0"])
-def test_release_bumps_the_version_in_the_one_release_commit(
+def test_prepare_bumps_the_version_in_the_one_release_commit(
     new: str, tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    """No separate bump commit (and no separate CI runs for it): the release commit carries the
-    new version and its CHANGELOG section. Versions compare as numbers: 1.9.10 > 1.9.2."""
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY, version=CURRENT)
-    tag = f"v{new}"
+    """No separate bump commit: the release commit carries the new version and its CHANGELOG
+    section. Versions compare as numbers: 1.9.10 > 1.9.2."""
+    repo = make_branch_repo(tmp_path, release_env, RELEASED_ENTRY, version=CURRENT)
 
-    result = run_release(repo, release_env, new)
+    result = run_prepare(repo, release_env, new)
 
     assert result.returncode == 0, result.stderr
-    assert f"version : {CURRENT} -> {new}\n" in result.stdout
-    assert_released_at_origin(repo, tmp_path, release_env, tag)
+    assert git(repo, "log", "-1", "--format=%s", env=release_env) == f"chore: release v{new}"
     assert released_files(repo, release_env) == [
         "CHANGELOG.md",
         "pyproject.toml",
@@ -715,77 +792,68 @@ def test_release_bumps_the_version_in_the_one_release_commit(
     assert_version_files(repo, new)
     day = git(repo, "log", "-1", "--format=%cs", env=release_env)
     assert (repo / "CHANGELOG.md").read_text() == promoted_changelog(day, new)
-    (run_list,) = tag_run_calls(tmp_path, "run list")
-    assert f"--branch {tag}" in run_list
-    assert_nothing_built_or_published(tmp_path)
 
 
 @pytest.mark.parametrize(
     "new",
     ["", "1.9", "1.9.3.0", "v1.9.3", "1.9.3rc1", "01.9.3", "1.09.3", "1.9.x", " 1.9.3", "1.9.3\n"],
 )
-def test_release_refuses_a_version_that_is_not_x_y_z(
+def test_prepare_refuses_a_version_that_is_not_x_y_z(
     new: str, tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY, version=CURRENT)
+    repo = make_branch_repo(tmp_path, release_env, RELEASED_ENTRY, version=CURRENT)
 
-    result = run_release(repo, release_env, new)
+    result = run_prepare(repo, release_env, new)
 
     assert result.returncode == 1
     assert "is not a version X.Y.Z" in result.stderr
-    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
+    assert_nothing_committed(repo, tmp_path, release_env)
 
 
 @pytest.mark.parametrize("new", ["1.9.1", "1.9.0", "1.8.10", "0.10.0"])
-def test_release_refuses_a_version_lower_than_the_current_one(
+def test_prepare_refuses_a_version_lower_than_the_current_one(
     new: str, tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY, version=CURRENT)
+    repo = make_branch_repo(tmp_path, release_env, RELEASED_ENTRY, version=CURRENT)
 
-    result = run_release(repo, release_env, new)
+    result = run_prepare(repo, release_env, new)
 
     assert result.returncode == 1
     assert f"version {new} is lower than the current version {CURRENT}" in result.stderr
-    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
+    assert_nothing_committed(repo, tmp_path, release_env)
 
 
-@pytest.mark.parametrize("where", ["local", "origin", "github"])
-def test_release_refuses_a_new_version_that_is_already_tagged_or_released(
+@pytest.mark.parametrize("where", ["local", "origin"])
+def test_prepare_refuses_a_version_that_is_already_tagged(
     where: str, tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY, version=CURRENT)
+    repo = make_branch_repo(tmp_path, release_env, RELEASED_ENTRY, version=CURRENT)
     tag = "v1.9.3"
-    if where in ("local", "origin"):
-        git(repo, "tag", tag, env=release_env)
+    git(repo, "tag", tag, env=release_env)
     if where == "origin":
         git(repo, "push", "-q", "hub", tag, env=release_env)
         git(repo, "tag", "-d", tag, env=release_env)
-    env = release_env | ({"FAKE_GH_RELEASE_EXISTS": "1"} if where == "github" else {})
 
-    result = run_release(repo, env, "1.9.3")
+    result = run_prepare(repo, release_env, "1.9.3")
 
-    expected = {
-        "local": f"tag {tag} already exists locally",
-        "origin": f"tag {tag} already exists on hub",
-        "github": f"a GitHub release for {tag} already exists",
-    }[where]
+    expected = {"local": f"tag {tag} already exists locally",
+                "origin": f"tag {tag} already exists on hub"}[where]  # fmt: skip
     assert result.returncode == 1
     assert expected in result.stderr
     assert git(repo, "log", "--format=%s", env=release_env) == "initial"
     assert git(repo, "status", "--porcelain", env=release_env) == ""
-    assert_nothing_built_or_published(tmp_path)
 
 
-def test_release_reverts_the_bump_and_the_changelog_when_the_commit_fails(
+def test_prepare_reverts_the_bump_and_the_changelog_when_the_commit_fails(
     tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY, version=CURRENT)
+    repo = make_branch_repo(tmp_path, release_env, RELEASED_ENTRY, version=CURRENT)
     write_program(
         repo / ".git" / "hooks" / "pre-commit",
         "cp pyproject.toml ../pyproject-at-commit.toml\nexit 1\n",
     )
 
-    result = run_release(repo, release_env, "1.9.3")
+    result = run_prepare(repo, release_env, "1.9.3")
 
     assert result.returncode == 1
     assert (tmp_path / "pyproject-at-commit.toml").read_text() == pyproject_toml("1.9.3")
@@ -794,29 +862,47 @@ def test_release_reverts_the_bump_and_the_changelog_when_the_commit_fails(
         assert name in reverted
     assert_version_files(repo, CURRENT)
     assert (repo / "CHANGELOG.md").read_text() == changelog(RELEASED_ENTRY)
-    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
+    assert_nothing_committed(repo, tmp_path, release_env)
 
 
-@pytest.mark.parametrize("name", ["src/fsbpyr/__init__.py", "uv.lock"])
-def test_release_refuses_versions_that_disagree(
-    name: str, tmp_path: Path, release_env: dict[str, str]
-) -> None:
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY, version=CURRENT)
-    (repo / name).write_text(version_files("1.9.1")[name])
-    git(repo, "commit", "-q", "-am", "drift", env=release_env)
-    git(repo, "push", "-q", "hub", "main", env=release_env)
+def test_prepare_refuses_main(tmp_path: Path, release_env: dict[str, str]) -> None:
+    """main changes by pull requests only: the release commit ends the branch that one merges."""
+    repo = make_release_repo(tmp_path, release_env, changelog(RELEASED_ENTRY))
 
-    result = run_release(repo, release_env, "1.9.3")
+    result = run_prepare(repo, release_env)
 
     assert result.returncode == 1
-    assert f"{name} has version 1.9.1, pyproject.toml has {CURRENT}" in result.stderr
-    assert git(repo, "tag", "--list", env=release_env) == ""
-    assert git(repo, "status", "--porcelain", env=release_env) == ""
-    assert_nothing_built_or_published(tmp_path)
+    assert "on 'main': make the release commit on the branch" in result.stderr
+    assert_nothing_committed(repo, tmp_path, release_env)
+
+
+def test_prepare_refuses_a_dirty_tree(tmp_path: Path, release_env: dict[str, str]) -> None:
+    repo = make_branch_repo(tmp_path, release_env, RELEASED_ENTRY)
+    (repo / "README.md").write_text("# edited\n")
+
+    result = run_prepare(repo, release_env)
+
+    assert result.returncode == 1
+    assert "working tree is not clean" in result.stderr
+    git(repo, "checkout", "--", "README.md", env=release_env)
+    assert_nothing_committed(repo, tmp_path, release_env)
+
+
+def test_prepare_refuses_an_empty_unreleased_section(
+    tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    repo = make_branch_repo(tmp_path, release_env, "")
+
+    result = run_prepare(repo, release_env)
+
+    assert result.returncode == 1
+    assert "'## [Unreleased]' section in CHANGELOG.md is empty" in result.stderr
+    assert (repo / "CHANGELOG.md").read_text() == changelog("")
+    assert_nothing_committed(repo, tmp_path, release_env)
 
 
 def test_the_projects_versions_agree() -> None:
-    """What release.sh checks before a release, checked on every change."""
+    """What prepare.sh and release.sh check, checked on every change."""
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     (locked,) = [p["version"] for p in lock["package"] if p["name"] == "fsbpyr"]
     init = (ROOT / "src" / "fsbpyr" / "__init__.py").read_text(encoding="utf-8")
@@ -825,33 +911,25 @@ def test_the_projects_versions_agree() -> None:
     assert f'__version__ = "{VERSION}"' in init
 
 
-def test_release_takes_at_most_one_version(tmp_path: Path, release_env: dict[str, str]) -> None:
-    repo = make_release_repo(tmp_path, release_env, RELEASED_ENTRY, version=CURRENT)
-
-    result = run_release(repo, release_env, "1.9.3", "1.9.4")
-
-    assert result.returncode == 2
-    assert "usage: release.sh [X.Y.Z]" in result.stderr
-    assert_nothing_committed_or_pushed(repo, tmp_path, release_env)
-
-
+@pytest.mark.parametrize(("target", "script"), [("release", "release.sh"),
+                                                ("release-prep", "prepare.sh")])  # fmt: skip
 @pytest.mark.parametrize(
-    ("args", "env", "command"),
+    ("args", "env", "version"),
     [
-        ([], {}, "bash tools/release/release.sh"),
-        (["VERSION=1.2.3"], {}, "bash tools/release/release.sh '1.2.3'"),
-        # An exported VERSION (another tool's) is not a request to bump.
-        ([], {"VERSION": "1.2.3"}, "bash tools/release/release.sh"),
+        ([], {}, ""),
+        (["VERSION=1.2.3"], {}, " '1.2.3'"),
+        # An exported VERSION (another tool's) is not a request for a version.
+        ([], {"VERSION": "1.2.3"}, ""),
     ],
     ids=["plain", "command-line", "environment"],
 )
-def test_make_release_passes_only_a_command_line_version_to_release_sh(
-    args: list[str], env: dict[str, str], command: str
+def test_make_passes_only_a_command_line_version_to_the_release_scripts(
+    target: str, script: str, args: list[str], env: dict[str, str], version: str
 ) -> None:
-    result = run_script(["make", "-n", "release", *args], {"PATH": SYSTEM_PATH} | env, ROOT)
+    result = run_script(["make", "-n", target, *args], {"PATH": SYSTEM_PATH} | env, ROOT)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == [command]
+    assert result.stdout.splitlines() == [f"bash tools/release/{script}{version}"]
 
 
 # --------------------------------------------------------------------------- release-notes.sh
@@ -958,13 +1036,13 @@ def test_the_image_is_pinned_by_digest_in_the_workflow_and_the_containerfile() -
     pins = {
         path: IMAGE_PIN.findall((ROOT / path).read_text(encoding="utf-8"))
         for path in (
-            ".github/workflows/release.yml",
+            ".github/workflows/build.yml",
             ".github/workflows/full-suite.yml",
             "Containerfile",
         )
     }
 
-    # build and reproduce (REP-2) use the image, the Containerfile once
+    # build and reproduce (REP-2) use the image, the suite job and the Containerfile once
     assert [len(found) for found in pins.values()] == [2, 1, 1], pins
     assert len({digest for found in pins.values() for digest in found}) == 1  # the same digest
     for path in pins:
@@ -972,44 +1050,34 @@ def test_the_image_is_pinned_by_digest_in_the_workflow_and_the_containerfile() -
         assert not re.search(r"debian:trixie$", text, re.MULTILINE), path
 
 
-def test_the_release_workflow_runs_for_pushes_to_main_and_tags_only() -> None:
-    """Not for pull requests: anyone can open one, and a branch is tested locally first."""
-    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    triggers = workflow.split("\non:\n", 1)[1].split("\n\n", 1)[0]
+def test_a_release_is_one_run_and_a_pull_request_starts_none() -> None:
+    """release.yml runs for a pushed tag only and pushes nothing; release.sh pushes the tag
+    alone, on the main commit the full suite tested. full-suite.yml runs for pushes to main
+    (merges), weekly and on request. Neither runs for pull requests: anyone can open one, and a
+    branch is tested locally first."""
+    triggers = {}
+    for name in ("release.yml", "full-suite.yml"):
+        workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
+        block = workflow.split("\non:\n", 1)[1].split("\n\n", 1)[0]
+        triggers[name] = [line for line in block.splitlines() if not line.lstrip().startswith("#")]
 
-    assert [line for line in triggers.splitlines() if not line.startswith("#")] == [
-        "  push:",
-        "    branches: [main]",
-        '    tags: ["v*"]',
-    ]
-
-
-def test_the_publish_job_moves_main_to_the_release_commit_once_it_is_released() -> None:
-    """release.sh pushes the tag alone, so a release starts one workflow run: a push with the
-    job's own token starts none. Fast-forward only, and only after the release is created."""
-    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    publish = workflow.split("\n  publish:\n")[1]
-    step = publish.split("- name: Move main to the release commit\n", 1)[1]
-
-    assert publish.index("gh release create") < publish.index("Move main to the release commit")
-    assert "contents: write" in publish
-    assert "GH_TOKEN: ${{ github.token }}" in step
-    assert '--method PATCH "repos/$GH_REPO/git/refs/heads/main"' in step
-    assert '-f sha="$(git rev-parse HEAD)" -F force=false' in step
-    assert "git push" not in RELEASE_SH.read_text(encoding="utf-8").replace("git push hub", "")
+    assert triggers["release.yml"] == ["  push:", '    tags: ["v*"]']
+    assert triggers["full-suite.yml"][:2] == ["  push:", "    branches: [main]"]
+    assert not [line for lines in triggers.values() for line in lines if "pull_request" in line]
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "refs/heads/main" not in release and "git push" not in release
+    script = RELEASE_SH.read_text(encoding="utf-8")
+    assert script.count("git push") == script.count("git push hub $TAG") + script.count(
+        'git push hub "$TAG"') == 2
 
 
-def test_the_publish_job_checks_the_parent_commits_runs_and_names_the_suite_run() -> None:
-    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    publish = workflow.split("\n  publish:\n")[1]
+def test_the_publish_job_checks_the_tagged_commits_full_suite_run_and_names_it() -> None:
+    """The tag is on the main commit the full suite tested: no release commit after it."""
+    publish = workflow_jobs("release.yml")["publish"]
 
     assert "actions: read" in publish
-    assert "fetch-depth: 2" in publish
-    for workflow_name in ("release.yml", "full-suite.yml"):
-        assert f'tools/release/green-run.sh {workflow_name} "$parent"' in publish
-    assert "parent=\"$(git rev-parse HEAD^)\"" in publish
-    assert "git diff --name-only HEAD^ HEAD" in publish
-    assert "CHANGELOG.md|pyproject.toml|src/fsbpyr/__init__.py|uv.lock)" in publish
+    assert 'tools/release/green-run.sh full-suite.yml "$GITHUB_SHA"' in publish
+    assert "green-run.sh release.yml" not in publish and "HEAD^" not in publish
     assert "Full suite: %s" in publish
 
 
@@ -1062,14 +1130,19 @@ def test_uv_version_names_a_uv_that_the_build_backend_accepts() -> None:
     assert backend.specifier.contains(version)  # uv_build is released with uv: same numbering
 
 
-def test_the_apt_snapshot_is_a_timestamp_used_on_tag_runs_only() -> None:
+def test_the_apt_snapshot_is_a_timestamp_every_build_uses() -> None:
+    """build and reproduce, in the full suite as for a release: the release is built with the
+    packages the full suite's build had."""
     snapshot = (ROOT / "tools/release/apt-snapshot").read_text(encoding="utf-8").strip()
-    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/build.yml").read_text(encoding="utf-8")
 
     assert re.fullmatch(r"\d{8}T\d{6}Z", snapshot)
-    step = workflow.split("- name: Use the Debian snapshot")[1].split("- name:")[0]
-    assert "if: github.ref_type == 'tag'" in step
-    assert "tools/release/apt-snapshot" in step and "debian-security" in step
+    steps = [step.split("- name:")[0]
+             for step in workflow.split("- name: Use the Debian snapshot")[1:]]  # fmt: skip
+    assert len(steps) == 2
+    for step in steps:
+        assert "if:" not in step
+        assert "tools/release/apt-snapshot" in step and "debian-security" in step
 
 
 def _fake_uv(directory: Path, version: str) -> dict[str, str]:
@@ -1209,14 +1282,15 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
     newest = (ROOT / ".python-version").read_text(encoding="utf-8").strip().rpartition(".")[0]
     assert newest == supported[-1]
     listed = ", ".join(f'"{version}"' for version in supported)
-    for name in ("release.yml", "full-suite.yml"):
+    for name in ("build.yml", "release.yml", "full-suite.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
         assert f"python: [{listed}]" in workflow, name
     suite = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
     assert f"for version in {' '.join(supported)}; do" in suite  # the other runtimes
 
-    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    jobs = dict(re.findall(r"^  ([a-z]+):\n(.*?)(?=^  [a-z]+:\n|\Z)", workflow, re.M | re.S))
+    workflow = "".join((ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
+                       for name in ("build.yml", "release.yml"))  # fmt: skip
+    jobs = _jobs()
     build, publish = jobs["build"], jobs["publish"]
     assert "make bootstrap $MAKE_ARGS" in build
     assert 'echo "MAKE_ARGS=PYTHON=$MATRIX_PYTHON"' in build
@@ -1250,8 +1324,9 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
 
 
 def _jobs() -> dict[str, str]:
-    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    return dict(re.findall(r"^  ([a-z]+):\n(.*?)(?=^  [a-z]+:\n|\Z)", workflow, re.M | re.S))
+    """build.yml's build, reproduce and compare, and release.yml's sbom and publish."""
+    release = workflow_jobs("release.yml")
+    return workflow_jobs("build.yml") | {"sbom": release["sbom"], "publish": release["publish"]}
 
 
 def test_build_and_reproduce_make_the_sbom_from_their_executable_and_compare_compares_them(
@@ -1282,14 +1357,14 @@ def test_each_sbom_is_attested_to_its_executable_by_a_pinned_action_and_publishe
     sbom, publish = jobs["sbom"], jobs["publish"]
     workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
-    assert "needs: [build, compare]" in sbom
+    assert "needs: build\n" in sbom
     assert "if: github.event_name == 'push' && github.ref_type == 'tag'" in sbom
     assert "id-token: write" in sbom and "attestations: write" in sbom
     assert "name: built-${{ matrix.python }}-${{ matrix.target }}" in sbom
     assert re.search(r"uses: actions/attest-sbom@[0-9a-f]{40} # v\d+\.\d+\.\d+\n", sbom)
     assert "subject-path: built/${{ env.ASSET }}\n" in sbom
     assert "sbom-path: built/${{ env.ASSET }}.cdx.json" in sbom
-    assert "needs: [build, compare, sbom]" in publish  # nothing is released unattested
+    assert "needs: [build, sbom]" in publish  # nothing is released unattested
     assert "id-token: write" in publish  # still its own provenance
     assert "dist/fsbpyr*" in publish  # the SBOMs travel with the executables
     assert "actions/attest-sbom" in workflow and workflow.count("attest-sbom@") == 1
@@ -1301,7 +1376,7 @@ def test_every_release_asset_is_named_with_its_python_and_target(
     suffix: str, python: str, tmp_path: Path
 ) -> None:
     """The workflow's naming step, run under sh: the newest Python's build is labeled too."""
-    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/build.yml").read_text(encoding="utf-8")
     naming = re.search(r"- name: Name the release assets\n\s+run: \|\n((?:          .*\n)+)",
                        workflow)
     assert naming is not None
@@ -1321,16 +1396,39 @@ def test_every_release_asset_is_named_with_its_python_and_target(
     assert (dist / f"{asset}.xz").read_text() == "xz"
 
 
-def test_publish_waits_for_the_independent_rebuild_to_match() -> None:
-    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-    jobs = dict(re.findall(r"^  ([a-z]+):\n(.*?)(?=^  [a-z]+:\n|\Z)", workflow, re.M | re.S))
+def test_the_full_suite_checks_the_build_against_an_independent_rebuild() -> None:
+    """build.yml is the one build: the full suite calls it with its checks, the independent
+    rebuild and its comparison included; a release calls it without."""
+    jobs = workflow_jobs("build.yml")
 
     assert "    needs:" not in jobs["reproduce"]  # in parallel with build
     assert "needs: [build, reproduce]" in jobs["compare"]
-    assert "needs: [build, compare]" in jobs["publish"]
+    for job in ("reproduce", "compare"):
+        assert "\n    if: inputs.checks\n" in jobs[job], job
     for job in ("build", "reproduce", "compare"):
         assert 'python: ["3.12", "3.13", "3.14"]' in jobs[job], job
     assert IMAGE_PIN.search(jobs["reproduce"])  # REP-1's pinned image
+    call = "    uses: ./.github/workflows/build.yml\n    with:\n      checks: {}\n"
+    assert call.format("true") in workflow_jobs("full-suite.yml")["build"]
+    assert call.format("false") in workflow_jobs("release.yml")["build"]
+
+
+def test_the_release_build_runs_no_check_and_the_full_suite_runs_them_all() -> None:
+    """Every check of the build is the full suite's (inputs.checks); what a release publishes is
+    made either way. The full suite also takes the tests the build job ran before, the coverage
+    gate of payload/ and elf.py included."""
+    build = workflow_jobs("build.yml")["build"]
+    steps = {step.split("\n", 1)[0]: step for step in build.split("\n      - name: ")[1:]}
+    checks = {"Compare with stage 3", "The variant builds itself", "Smoke test",
+              "The .xz decompresses to the executable"}  # fmt: skip
+
+    for name, step in steps.items():
+        assert ("inputs.checks" in step.split("run:", 1)[0]) == (name in checks), name
+    assert checks <= steps.keys()
+    assert "make test-ci" not in build and "make check" not in build
+    suite = workflow_jobs("full-suite.yml")["suite"]
+    assert "--include='src/fsbpyr/payload/*,src/fsbpyr/elf.py' --fail-under=90" in suite
+    assert suite.index("- name: The whole suite") < suite.index("--fail-under=90")
 
 
 # clang/lld 23 (SEC-4): tools/release/llvm23 pins LLVM's release tarball for each
@@ -1510,7 +1608,7 @@ def test_publish_job_makes_the_inspector_executable_before_building_install_sh()
 
 RUNNERS = {"x86_64-linux-gnu": "ubuntu-24.04", "aarch64-linux-gnu": "ubuntu-24.04-arm"}
 MATRIX_JOBS = [
-    ("release.yml", "build"), ("release.yml", "reproduce"), ("release.yml", "compare"),
+    ("build.yml", "build"), ("build.yml", "reproduce"), ("build.yml", "compare"),
     ("full-suite.yml", "suite"), ("full-suite.yml", "portability"),
 ]  # fmt: skip
 
@@ -1540,13 +1638,13 @@ def test_each_job_runs_every_target_and_python_on_a_runner_of_the_targets_archit
 
 
 def test_a_run_needs_every_job_to_pass_for_the_commit_to_be_released() -> None:
-    """No job tolerates a failure, publish needs every build and compare entry (aarch64 too)
-    and green-run.sh requires the run's conclusion, which is that of all its jobs."""
-    for name in ("release.yml", "full-suite.yml"):
+    """No job tolerates a failure, publish needs every build and SBOM attestation (aarch64
+    too) and green-run.sh requires the run's conclusion, which is that of all its jobs."""
+    for name in ("build.yml", "release.yml", "full-suite.yml"):
         for job, text in workflow_jobs(name).items():
             header = text.split("    steps:", 1)[0]
             assert "continue-on-error" not in header, (name, job)
-    assert "needs: [build, compare]" in workflow_jobs("release.yml")["publish"]
+    assert "needs: [build, sbom]" in workflow_jobs("release.yml")["publish"]
     assert "needs: suite" in workflow_jobs("full-suite.yml")["portability"]
     gate = GREEN_RUN_SH.read_text(encoding="utf-8")
     assert "completed/success) ;;" in gate and "--jobs" not in gate
@@ -1564,14 +1662,14 @@ def test_every_trigger_of_the_full_suite_runs_every_target_and_python() -> None:
 
 
 def test_the_artifacts_of_a_matrix_entry_carry_its_target() -> None:
-    for name in ("release.yml", "full-suite.yml"):
+    for name in ("build.yml", "full-suite.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
         for artifact in re.findall(r"^\s+name: ((?:built|reproduced|coverage|fsbpyr|full-suite|"
                                    r"portability)-\S.*)$", workflow, re.MULTILINE):
             if "matrix.python" in artifact:
                 assert artifact.endswith("-${{ matrix.target }}") or artifact.startswith(
                     "built-short-"), artifact
-    compare = workflow_jobs("release.yml")["compare"]
+    compare = workflow_jobs("build.yml")["compare"]
     assert "built-${{ matrix.python }}-${{ matrix.target }}" in compare
     assert "fuzz-corpus-${{ matrix.target }}-${{ matrix.python }}-" in (
         ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
@@ -1585,7 +1683,7 @@ def test_the_release_xz_uses_the_filter_of_the_targets_architecture(
     target: str, filter_option: str | None, tmp_path: Path
 ) -> None:
     """The compress step under dash with an xz that records its arguments."""
-    build = workflow_jobs("release.yml")["build"]
+    build = workflow_jobs("build.yml")["build"]
     step = re.search(r"- name: Compress the executable\n\s+run: \|\n((?:          .*\n)+)", build)
     assert step is not None
     write_program(tmp_path / "bin" / "xz", 'echo "$*" >> "$XZ_LOG"\n')
@@ -1601,8 +1699,7 @@ def test_the_release_xz_uses_the_filter_of_the_targets_architecture(
         assert not (tmp_path / "xz.log").exists()
         return
     calls = (tmp_path / "xz.log").read_text().splitlines()
-    assert calls[0] == f"{filter_option} --lzma2=preset=9e --threads=1 --keep dist/fsbpyr-3.12"
-    assert calls[1:2] == ["--decompress --stdout dist/fsbpyr-3.12.xz"]
+    assert calls == [f"{filter_option} --lzma2=preset=9e --threads=1 --keep dist/fsbpyr-3.12"]
 
 
 UV_RELEASE_URL = "https://github.com/astral-sh/uv/releases/download"
@@ -1694,7 +1791,7 @@ def test_install_uv_takes_one_directory(tmp_path: Path) -> None:
 
 
 def test_the_workflows_install_uv_with_the_script_and_not_the_x86_64_tarball() -> None:
-    for name in ("release.yml", "full-suite.yml"):
+    for name in ("build.yml", "full-suite.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
         assert "uv-x86_64-unknown-linux-gnu" not in workflow, name
         assert "sh tools/release/install-uv.sh" in workflow, name

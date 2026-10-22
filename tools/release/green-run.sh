@@ -5,9 +5,9 @@
 #
 #     bash tools/release/green-run.sh WORKFLOW COMMIT
 #
-# A release needs a green release.yml run (build, smoke test, checks, core tests) and a green
-# full-suite.yml run (the whole suite) of the commit it is made from. release.sh checks HEAD
-# before it commits; the publish job checks the release commit's parent. A run still in
+# A release needs a green full-suite.yml run (the release build and its checks, the whole
+# suite) of the commit it is made from. release.sh checks HEAD before it tags it; the publish
+# job checks the tagged commit. A run still in
 # progress is followed with follow-run.sh, as release.sh follows the tag's run.
 # Exit 1: no run for that commit, a failed one, or one that fails while watched. The reason
 # goes to stderr, the URL to stdout. Needs gh, authenticated (GH_TOKEN in CI).
