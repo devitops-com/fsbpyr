@@ -10,6 +10,13 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Fixed
+- **`make test` cleans up after itself.** `make test`, `make test-ci` and `make
+  test-portability` give each run a directory of its own under `TESTTMP` (`~/tmp`) as
+  `TMPDIR` and remove it when the run ends, also when it fails or is interrupted: uv's lock
+  files and pytest's directories, which piled up in `~/tmp` (about 300 files a run), go with
+  it. The runtime's pinned downloads stay in `~/tmp/fsbpyr-test-downloads`.
+
 ## [0.22.0] - 2026-10-22
 
 ### Changed
