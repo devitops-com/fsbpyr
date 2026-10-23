@@ -26,6 +26,7 @@ def _project(tmp_path: Path, requires: str | None, pin: str | None = None) -> Pr
     (">=3.12", "3.12"),
     (">=3.13", "3.13"),
     (">=3.14", "3.14"),
+    (">=3.15", "3.15"),
     (">3.12", "3.12"),  # 3.12.15 is above 3.12
     (">=3.12,<3.14", "3.12"),
     (">=3.13,<3.15", "3.13"),
@@ -34,11 +35,13 @@ def _project(tmp_path: Path, requires: str | None, pin: str | None = None) -> Pr
     ("<3.14", "3.13"),  # only an upper bound: the highest below it
     ("<=3.13", "3.12"),  # 3.13.16 is above 3.13
     ("<3.13", "3.12"),
-    ("<4", "3.14"),
+    ("<4", "3.15"),
+    ("<3.16", "3.15"),
     ("<3.15", "3.14"),
     ("==3.12.*", "3.12"),  # a pinned minor as pinned
     ("==3.13.*", "3.13"),
     ("==3.14.*", "3.14"),
+    ("==3.15.*", "3.15"),
     ("~=3.12.0", "3.12"),
     ("!=3.12.*", "3.14"),  # no bound that picks one: the Python of the running fsbpyr
     (None, "3.14"),
@@ -49,7 +52,7 @@ def test_requires_python_gives_the_runtime(
     assert resolve(_project(tmp_path, requires), None, own="3.14").version == version
 
 
-@pytest.mark.parametrize("own", ["3.12", "3.13", "3.14"])
+@pytest.mark.parametrize("own", ["3.12", "3.13", "3.14", "3.15"])
 def test_a_project_without_a_picking_bound_uses_the_running_fsbpyrs_python(
     tmp_path: Path, own: str
 ) -> None:
@@ -57,11 +60,11 @@ def test_a_project_without_a_picking_bound_uses_the_running_fsbpyrs_python(
     assert resolve(_project(tmp_path, "!=3.11.*"), None, own=own).version == own
 
 
-@pytest.mark.parametrize("requires", ["<3.12", ">=3.15", "==3.11.*", "<3.12,>=3.10", "==3.99.*"])
+@pytest.mark.parametrize("requires", ["<3.12", ">=3.16", "==3.11.*", "<3.12,>=3.10", "==3.99.*"])
 def test_no_supported_version_is_an_error_naming_the_supported_ones(
     tmp_path: Path, requires: str
 ) -> None:
-    with pytest.raises(ProjectError, match=rf"{requires!r}.*3\.12, 3\.13 and 3\.14"):
+    with pytest.raises(ProjectError, match=rf"{requires!r}.*3\.12, 3\.13, 3\.14 and 3\.15"):
         resolve(_project(tmp_path, requires), None, own="3.14")
 
 
@@ -81,8 +84,8 @@ def test_the_requested_version_wins_over_the_pin_and_the_rule(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(("requested", "message"), [
-    ("3.11", "not supported; fsbpyr builds for 3.12, 3.13 and 3.14"),
-    ("3.15", "not supported"),
+    ("3.11", "not supported; fsbpyr builds for 3.12, 3.13, 3.14 and 3.15"),
+    ("3.16", "not supported"),
     ("3", "not a version X.Y"),
     ("3.13.1", "not a version X.Y"),
     ("latest", "not a version X.Y"),
@@ -136,7 +139,7 @@ def test_an_unsupported_pin_is_a_warning_and_the_rule_applies(tmp_path: Path, pi
     assert choice.version == "3.12"
     assert len(choice.warnings) == 1
     assert f".python-version pins {pin}" in choice.warnings[0]
-    assert "3.12, 3.13 and 3.14" in choice.warnings[0]
+    assert "3.12, 3.13, 3.14 and 3.15" in choice.warnings[0]
 
 
 def test_the_request_is_not_second_guessed_by_the_pin(tmp_path: Path) -> None:

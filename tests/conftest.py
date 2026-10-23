@@ -41,10 +41,11 @@ EXPECTED_SKIPS = {
     ),
     # full-suite.yml's job: the same container with rootless podman and /proc/sys opened for
     # user namespaces, as `tester` -- every test the other lists skip runs (the job builds
-    # the other versions' runtimes), except the one 3.12 skips by version
-    "full": ("3.12's takes one resource name",),
+    # the other versions' runtimes), except the one 3.12 skips by version and what needs a
+    # package without a wheel for the Python (tests/support/no-wheels.txt)
+    "full": ("3.12's takes one resource name", "no wheel for Python "),
     # full-suite.yml's portability job: podman on the runner host, and every image pulled
-    "portability": (),
+    "portability": ("no wheel for Python ",),
 }
 # The corpus projects (TST-3) carry test files of their own, which their built apps run
 collect_ignore_glob = ["corpus/*"]

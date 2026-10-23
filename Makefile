@@ -17,7 +17,7 @@ export PATH := $(HOME)/.local/bin:$(PATH)
 # .python-version pins is the user's to install (`uv python install`).
 export UV_PYTHON_DOWNLOADS := never
 
-# PYTHON=3.12 (3.12, 3.13 or 3.14, on the command line only: an exported one is ignored) runs the
+# PYTHON=3.12 (3.12 to 3.15, on the command line only: an exported one is ignored) runs the
 # checks, the tests and `make build` on that Python's variant of fsbpyr (Phase 9), in the locked
 # environment .venv-3.12; without it nothing changes. A variant's executable is dist/fsbpyr-3.12.
 UV  := uv
@@ -85,7 +85,7 @@ endif
 
 # The man page and the completions come from the executable being installed (one source, D40).
 install: ## Install dist/fsbpyr, its man page and completions under PREFIX (default ~/.local)
-	@[ "$(origin PYTHON)" != "command line" ] || { echo "ERROR: install puts the newest variant's dist/fsbpyr in place; PYTHON is for builds and tests" >&2; exit 1; }
+	@[ "$(origin PYTHON)" != "command line" ] || { echo "ERROR: install puts the default variant's dist/fsbpyr in place; PYTHON is for builds and tests" >&2; exit 1; }
 	@[ -x $(BIN) ] || $(MAKE) --no-print-directory build
 	@mkdir -p dist/share
 	$(BIN) man > dist/share/fsbpyr.1

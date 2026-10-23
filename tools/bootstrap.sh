@@ -6,7 +6,7 @@
 #     bash tools/bootstrap.sh --from-source only steps 1-3 (what the podman container runs)
 #     bash tools/bootstrap.sh --uv          only the check for uv (what `make build` needs)
 #     bash tools/bootstrap.sh --llvm23      only the fetch of clang/lld 23, printing its clang
-#     bash tools/bootstrap.sh --python 3.12 the variant for another Python (3.12, 3.13 or 3.14):
+#     bash tools/bootstrap.sh --python 3.12 the variant for another Python (3.12 to 3.15):
 #                                           steps 1-3 only, in .venv-3.12, into dist/stage1-3.12
 #                                           ... and dist/fsbpyr-3.12; no install (Phase 9)
 #
@@ -56,7 +56,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --python)
             [ $# -ge 2 ] && [[ "$2" =~ ^3\.[0-9]+$ ]] \
-                || { echo "usage: bootstrap.sh --python X.Y (3.12, 3.13 or 3.14)" >&2; exit 2; }
+                || { echo "usage: bootstrap.sh --python X.Y (3.12 to 3.15)" >&2; exit 2; }
             PYTHON_VARIANT="$2"
             SUFFIX="-$2"
             shift 2 ;;

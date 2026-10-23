@@ -1089,7 +1089,7 @@ def test_the_full_suite_runs_on_main_and_weekly_once_per_python_version() -> Non
     assert "workflow_dispatch:" in workflow
     assert f'WEEKLY="{weekly}"' in workflow  # the fuzzing time reads the weekly schedule
     # the suite and the portability matrix
-    assert len(re.findall(r'python: \["3.12", "3.13", "3.14"\]', workflow)) == 2
+    assert len(re.findall(r'python: \["3.12", "3.13", "3.14", "3.15"\]', workflow)) == 2
     assert len(re.findall(r'target: \["x86_64-linux-gnu", "aarch64-linux-gnu"\]', workflow)) == 2
     assert "options: --privileged" in workflow and "timeout-minutes: 60" in workflow
     assert "--ignore=tests/e2e/test_portability.py" in workflow
@@ -1264,8 +1264,8 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
     names its Python and target (`fsbpyr-3.14-x86_64-linux-gnu`), each with its .xz, SBOM and
     licence notices, all in SHA256SUMS and attested. No short or unlabeled names."""
     supported = sorted("{}.{}".format(*version) for version in SUPPORTED_PYTHON)
-    newest = (ROOT / ".python-version").read_text(encoding="utf-8").strip().rpartition(".")[0]
-    assert newest == supported[-1]
+    default = (ROOT / ".python-version").read_text(encoding="utf-8").strip().rpartition(".")[0]
+    assert default in supported  # 3.14 stays the default while 3.15 is new (owner, 2026-10-23)
     listed = ", ".join(f'"{version}"' for version in supported)
     for name in ("build.yml", "release.yml", "full-suite.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
@@ -1391,7 +1391,7 @@ def test_the_full_suite_checks_the_build_against_an_independent_rebuild() -> Non
     for job in ("reproduce", "compare"):
         assert "\n    if: inputs.checks\n" in jobs[job], job
     for job in ("build", "reproduce", "compare"):
-        assert 'python: ["3.12", "3.13", "3.14"]' in jobs[job], job
+        assert 'python: ["3.12", "3.13", "3.14", "3.15"]' in jobs[job], job
     assert IMAGE_PIN.search(jobs["reproduce"])  # REP-1's pinned image
     call = "    uses: ./.github/workflows/build.yml\n    with:\n      checks: {}\n"
     assert call.format("true") in workflow_jobs("full-suite.yml")["build"]
@@ -1557,7 +1557,7 @@ def test_bootstrap_python_takes_a_minor_version(tmp_path: Path) -> None:
     result = run_script(["bash", str(root / "tools/bootstrap.sh"), "--python", "latest"], env)
 
     assert result.returncode == 2
-    assert result.stderr == "usage: bootstrap.sh --python X.Y (3.12, 3.13 or 3.14)\n"
+    assert result.stderr == "usage: bootstrap.sh --python X.Y (3.12 to 3.15)\n"
 
 
 def test_make_runs_on_the_python_given_on_its_command_line_only() -> None:
@@ -1614,7 +1614,7 @@ def test_each_job_runs_every_target_and_python_on_a_runner_of_the_targets_archit
 
     assert "    runs-on: ${{ matrix.runner }}\n" in text
     assert 'target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]' in matrix
-    assert 'python: ["3.12", "3.13", "3.14"]' in matrix
+    assert 'python: ["3.12", "3.13", "3.14", "3.15"]' in matrix
     assert "fail-fast: false" in matrix
     includes = re.findall(r'- \{target: "([^"]+)", runner: "([^"]+)"\}', matrix)
     assert dict(includes) == RUNNERS and len(includes) == 2

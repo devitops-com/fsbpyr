@@ -35,7 +35,7 @@ def test_startup_set_matches_spike_s2(dist: pbs.PbsDist) -> None:
     names = stdlib.startup_names(dist.interpreter)
 
     expected = {"encodings", "encodings.aliases", "encodings.utf_8"}
-    assert set(names) == expected | ({"linecache"} if TARGET_PYTHON != "3.12" else set())  # 3.13+
+    assert set(names) == expected | ({"linecache"} if TARGET_PYTHON in ("3.13", "3.14") else set())
 
 
 def test_compile_worker_uses_the_target_interpreter(dist: pbs.PbsDist) -> None:
@@ -84,7 +84,8 @@ def test_a_stdlib_module_that_does_not_compile_is_named(dist: pbs.PbsDist, tmp_p
 
 
 # the objects of HACL*'s hashes PBS leaves out (3.14's 128- and 256-bit vector ones are x86-64's)
-HACL_OBJECTS = {"3.12": 1, "3.13": 1, "3.14": 11 if host_target().arch == "x86-64" else 9}
+_HACL_314 = 11 if host_target().arch == "x86-64" else 9  # 3.15 links the same objects
+HACL_OBJECTS = {"3.12": 1, "3.13": 1, "3.14": _HACL_314, "3.15": _HACL_314}
 
 
 def test_link_plan_adds_only_hacl_objects(dist: pbs.PbsDist) -> None:
@@ -95,7 +96,7 @@ def test_link_plan_adds_only_hacl_objects(dist: pbs.PbsDist) -> None:
     assert len(inputs.extra_objects) == HACL_OBJECTS[TARGET_PYTHON]
     assert "_tkinter" not in dist.builtin_modules()
     assert {"_ssl", "_sqlite3", "_ctypes"} <= set(dist.builtin_modules())
-    assert ("_zstd" in dist.builtin_modules()) == (TARGET_PYTHON == "3.14")
+    assert ("_zstd" in dist.builtin_modules()) == (TARGET_PYTHON not in ("3.12", "3.13"))
     assert {p.name for p in inputs.static_libs} >= {"libssl.a", "libcrypto.a", "libzstd.a"}
 
 

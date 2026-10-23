@@ -17,7 +17,7 @@ name: Full suite
 # is kept in actions/cache (release.yml stays cache-free).
 # One fsbpyr per Python version and per target (Phase 9): every job runs once per (target,
 # Python) entry, the development environment on that Python and that variant's executable
-# (dist/fsbpyr for the newest version, the one .python-version pins; dist/fsbpyr-3.X for the
+# (dist/fsbpyr for the default version, the one .python-version pins; dist/fsbpyr-3.X for the
 # others), each target on a runner of its architecture (x86_64-linux-gnu on ubuntu-24.04,
 # aarch64-linux-gnu on ubuntu-24.04-arm). Every trigger runs every target and Python. Adding a
 # Python version adds an entry to both `python` lists here and to build.yml's, adding a target
@@ -53,7 +53,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12", "3.13", "3.14"]  # one entry per Python version a release is built for
+        python: ["3.12", "3.13", "3.14", "3.15"]  # one entry per Python version a release is built for
         target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
         include:
           - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
@@ -163,7 +163,7 @@ jobs:
           echo "corpus files:  $(find /home/tester/fuzz-corpus -type f | wc -l)"
           chown -R tester: /home/tester/fuzz-corpus
 
-      # The newest version (the Python of .python-version) is the default: `make bootstrap`,
+      # The default version (the Python of .python-version) is no variant: `make bootstrap`,
       # dist/fsbpyr, installed under ~/.local. Another is a variant: `make bootstrap PYTHON=3.X`
       # builds dist/fsbpyr-3.X in the environment .venv-3.X and installs nothing. SUFFIX,
       # MAKE_ARGS, UV_ENV and UV_RUN tell the steps below which; the Python is installed for
@@ -187,7 +187,7 @@ jobs:
           fi
 
       # The packages are present, so no sudo: the locked environment, the runtime, fsbpyr in
-      # three stages and, for the newest version, `make install` under tester's ~/.local.
+      # three stages and, for the default version, `make install` under tester's ~/.local.
       - name: make bootstrap
         run: as-tester FSBPYR_UV_VERSION="$FSBPYR_UV_VERSION" make bootstrap $MAKE_ARGS
 
@@ -198,7 +198,7 @@ jobs:
           clang="$(as-tester bash tools/bootstrap.sh --llvm23)"
           ln -sfn "$(dirname "$clang")" /home/tester/llvm23
 
-      # tests/integration/test_pbs_stdlib_versions.py compares the distributions of all three
+      # tests/integration/test_pbs_stdlib_versions.py compares the distributions of all the
       # versions, and the bootstrap built the runtime of this entry's only; the full suite
       # expects no skip. tests/e2e/test_dispatch.py builds fsbpyr on another Python, which
       # needs that Python installed as well. Each runtime is built by fsbpyr on its own Python:
@@ -207,7 +207,7 @@ jobs:
         env:
           MATRIX_PYTHON: ${{ matrix.python }}
         run: |
-          for version in 3.12 3.13 3.14; do
+          for version in 3.12 3.13 3.14 3.15; do
             [ "$version" = "$MATRIX_PYTHON" ] || {
               as-tester uv python install "$version"
               as-tester UV_PROJECT_ENVIRONMENT=".venv-$version" \
@@ -294,7 +294,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12", "3.13", "3.14"]  # as in the suite job
+        python: ["3.12", "3.13", "3.14", "3.15"]  # as in the suite job
         target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
         include:
           - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
@@ -305,7 +305,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # The newest version's executable is dist/fsbpyr, another's dist/fsbpyr-3.X.
+      # The default version's executable is dist/fsbpyr, another's dist/fsbpyr-3.X.
       - name: Which variant
         env:
           MATRIX_PYTHON: ${{ matrix.python }}

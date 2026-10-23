@@ -35,6 +35,7 @@ UNKNOWN = "unknown"
 RUNTIME = "standard library and fsbpyr"  # modules of no distribution
 _INDENT = "  "
 _PLAIN_SO = re.compile(r"[^.]+\.so")  # no ABI tag: a library or an extension, the file can tell
+_URLSAFE_BASE64 = re.compile(r"[A-Za-z0-9_-]+={0,2}")
 
 
 class InspectError(RuntimeError):
@@ -119,9 +120,10 @@ def _toolchain(stub: bytes) -> tuple[str, ...]:
 
 
 def _record_hash(value: str) -> str | None:
-    """RECORD's ``sha256=<urlsafe base64>`` as hex; None for another or a missing digest."""
+    """RECORD's ``sha256=<urlsafe base64>`` as hex; None for another or a missing digest.
+    The alphabet is checked first: 3.15's decoder skips characters outside it."""
     algorithm, _, encoded = value.partition("=")
-    if algorithm != "sha256" or not encoded:
+    if algorithm != "sha256" or not _URLSAFE_BASE64.fullmatch(encoded):
         return None
     try:
         return base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).hex()

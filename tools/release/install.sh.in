@@ -14,8 +14,9 @@ set -u
 
 APP_VERSION='@VERSION@'
 TARGETS='@TARGETS@'
-# The Pythons it has a build for, oldest first.
+# The Pythons it has a build for, oldest first, and the one it installs when not told one.
 PYTHONS='@PYTHONS@'
+DEFAULT_PYTHON='@DEFAULT_PYTHON@'
 # One asset per line: its name, its SHA-256 and, for an executable, the glibc it needs
 # (`fsbpyr inspect`: "glibc >= X.Y"; - where there is none).
 RELEASE_ASSETS='
@@ -57,7 +58,7 @@ fsbpyr-installer.sh
 The installer for fsbpyr $APP_VERSION
 
 This script detects the platform it runs on, downloads the matching fsbpyr executable of the
-release (https://github.com/$REPO/releases) for the newest Python or the one --python names,
+release (https://github.com/$REPO/releases) for Python $DEFAULT_PYTHON or the one --python names,
 checks it against the SHA-256 recorded in this script and with \`fsbpyr inspect --verify\`, and
 installs it, with its man page and shell completions, into the first of
 \$FSBPYR_INSTALL_DIR, \$XDG_BIN_HOME, \$XDG_DATA_HOME/../bin and \$HOME/.local/bin.
@@ -67,7 +68,7 @@ Usage: install.sh [OPTIONS]
 Options:
       --python X.Y
           Install the fsbpyr that runs on Python X.Y (this release has: $PYTHONS); by
-          default the newest. \`fsbpyr self update\` keeps to the Python installed.
+          default $DEFAULT_PYTHON. \`fsbpyr self update\` keeps to the Python installed.
   -v, --verbose
           Print more while installing
   -q, --quiet
@@ -129,11 +130,9 @@ check_target() {
     fi
 }
 
-# The asset of this host for the Python asked for, the newest when none was.
+# The asset of this host for the Python asked for, DEFAULT_PYTHON when none was.
 choose_asset() {
-    if [ -z "$PYTHON" ]; then
-        for PYTHON in $PYTHONS; do :; done
-    fi
+    [ -n "$PYTHON" ] || PYTHON="$DEFAULT_PYTHON"
     in_list "$PYTHON" "$PYTHONS" \
         || err "fsbpyr $APP_VERSION has no build for Python $PYTHON; its Pythons are: ${PYTHONS:-none}"
     ASSET="fsbpyr-$PYTHON-$TARGET"

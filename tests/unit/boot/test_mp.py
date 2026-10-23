@@ -27,7 +27,8 @@ else:
         "main(%d, %d, %r, sys_argv=sys.argv[1:], **%r)"
     )
     SYS_ARGV = True
-AUTHKEY = sys.version_info >= (3, 14)  # only 3.14's forkserver authenticates with authkey_r
+AUTHKEY = sys.version_info >= (3, 14)  # 3.14's forkserver and later authenticate with authkey_r
+ON_ERROR = sys.version_info >= (3, 15)  # 3.15's sends on_error when the preload names one
 
 
 # Under user-mode QEMU (the development host's basic aarch64 checks) /proc/<pid>/exe names the
@@ -127,7 +128,27 @@ def test_forkserver_command_lines_of_other_versions_are_refused(mp: ModuleType) 
     assert mp.child_command([EXE, "-c", other]) is None
     assert (mp.child_command([EXE, "-c", FORKSERVER % (3, 4, [], {"authkey_r": 9})]) is None) is (
         not AUTHKEY
-    )  # only 3.14's forkserver sends authkey_r
+    )  # 3.12's and 3.13's forkserver send no authkey_r
+    on_error = FORKSERVER % (3, 4, [], {"on_error": "fail"})
+    assert (mp.child_command([EXE, "-c", on_error]) is None) is not ON_ERROR  # 3.15 sends it
+
+
+def test_forkserver_on_error_is_passed_on_where_cpython_sends_it(
+    mp: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bad = FORKSERVER % (3, 4, [], {"on_error": "explode"})
+    assert mp.child_command([EXE, "-c", bad]) is None  # only the values CPython knows
+    if not ON_ERROR:
+        return  # 3.12 to 3.14 send none
+    monkeypatch.setattr(resource_tracker, "ensure_running", lambda: None)
+    monkeypatch.setattr(spawn, "get_preparation_data", lambda name: {"sys_path": [EXE]})
+    server = forkserver.ForkServer()
+    server.set_forkserver_preload(["__main__"], on_error="fail")  # type: ignore[call-arg]
+    argv = _captured_command(monkeypatch, server.ensure_running)
+
+    command = mp.child_command(argv)
+
+    assert command is not None and command[3]["on_error"] == "fail"
 
 
 def test_resource_tracker_command_from_cpython_is_recognized(

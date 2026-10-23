@@ -334,7 +334,7 @@ def build_runtime(
         python_version=dist.version,
         hexversion=dist.hexversion,
         bytecode_magic=dist.bytecode_magic,
-        extension_suffixes=dist.extension_suffixes,
+        extension_suffixes=pbs.extension_suffixes(dist.interpreter),
         stub=stub_bytes,
         modules=modules,
         files=files,

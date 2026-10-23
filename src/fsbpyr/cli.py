@@ -83,7 +83,7 @@ def cli(ctx: click.Context) -> None:
 @click.argument("project", required=False, default=".",
                 type=click.Path(file_okay=False, path_type=Path))  # fmt: skip
 @click.option("--python", metavar="X.Y",
-              help="the Python to build for, 3.12 to 3.14, inside `requires-python` "
+              help="the Python to build for, 3.12 to 3.15, inside `requires-python` "
                    "(default: `python` in `[tool.fsbpyr]`, else `.python-version`, else "
                    "`requires-python` decides)")  # fmt: skip
 @click.option("--entry", metavar="NAME", shell_complete=_complete_entry,
@@ -459,7 +459,7 @@ def man() -> int:
 
 
 def _unsupported_python() -> bool:
-    """True, with the error printed, on any Python but 3.12 to 3.14 (D13, D16: the canonical
+    """True, with the error printed, on any Python but 3.12 to 3.15 (D13, D16: the canonical
     bytecode knows their marshal formats). pip refuses to install fsbpyr on others, but
     `uv pip install` and `uv tool install` ignore the upper bound of its requires-python, and
     the build would fail only after staging."""

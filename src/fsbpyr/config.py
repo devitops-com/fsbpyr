@@ -126,7 +126,7 @@ CONFIG_KEYS = (
               "List of strings. Arguments to run the new executable with after the smoke "
               "test; it must exit 0. Off unless set; as `--smoke-args`."),
     ConfigKey("python", "python", _string,
-              "String. The Python version to build for, `X.Y` (3.12 to 3.14), inside "
+              "String. The Python version to build for, `X.Y` (3.12 to 3.15), inside "
               "`requires-python`; as `--python`. Without it `.python-version` and "
               "`requires-python` decide."),
     ConfigKey("strict", "strict", _flag,

@@ -66,11 +66,11 @@ def _running_python() -> str:
     return f"{sys.version_info.major}.{sys.version_info.minor}"
 
 
-def curl_hint(*, newest: bool = False, directory: Path | None = None) -> str:
+def curl_hint(*, default: bool = False, directory: Path | None = None) -> str:
     """The command that installs the latest release on this host: for the Python this runs on,
-    or with ``newest`` the release's newest Python; into ``directory`` when given."""
+    or with ``default`` the installer's default Python; into ``directory`` when given."""
     install_dir = f"FSBPYR_INSTALL_DIR={shlex.quote(str(directory))} " if directory else ""
-    python = "" if newest else f" -s -- --python {_running_python()}"
+    python = "" if default else f" -s -- --python {_running_python()}"
     return f"curl -LsSf {INSTALLER} | {install_dir}sh{python}"
 
 
@@ -131,8 +131,8 @@ def latest_release(asset: str) -> Release:
     name = f"{asset}.xz"
     if name not in assets:
         raise UpdateError(f"the latest release ({tag}) has no {name}; install its fsbpyr for "
-                          "the newest Python (or another with --python X.Y):\n"
-                          f"{curl_hint(newest=True)}")  # fmt: skip
+                          "the default Python (or another with --python X.Y):\n"
+                          f"{curl_hint(default=True)}")  # fmt: skip
     return Release(tag, numbers, assets[name])
 
 
