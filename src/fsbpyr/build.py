@@ -72,7 +72,7 @@ class BuildResult:
     size: int
     warnings: tuple[str, ...]
     glibc: str | None = None  # the oldest glibc the app runs on, "2.25"
-    target_needs: str | None = None  # "glibc >= 2.28; libstdc++.so.6 (...)"
+    target_needs: str | None = None  # "glibc >= 2.34; libstdc++.so.6 (...)"
 
 
 def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:

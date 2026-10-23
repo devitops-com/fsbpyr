@@ -275,7 +275,7 @@ def test_stub_command_links_statically_as_pie(tmp_path: Path) -> None:
         "-Wl,--export-dynamic-symbol=Py*",
         "-Wl,--export-dynamic-symbol=_Py*",
         "-DFSBPYR_BYTECODE_MAGIC=0x0a0d0e2bu",
-        "--sysroot=/s/sysroot",  # glibc 2.28, not the build host's (Phase 6c)
+        "--sysroot=/s/sysroot",  # Debian 12's glibc, not the build host's (Phase 6c)
         "-s",
     ):
         assert flag in cmd

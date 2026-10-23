@@ -2,9 +2,10 @@
 
 Fast single-binary Python CLI runtime: `fsbpyr build` turns a Python project (uv or pip) into one
 executable that carries CPython (3.12, 3.13 or 3.14), the project and its locked dependencies. The executable
-needs nothing on the target machine but Linux x86-64 with glibc 2.28 or newer (the baseline
-every build targets and the tests run on; `fsbpyr inspect` shows the glibc an executable
-actually needs, which can be older), plus the system libraries its native dependencies link
+needs nothing on the target machine but Linux x86-64 or aarch64 with glibc 2.34 or newer (the
+baseline every build targets and the tests run on: RHEL 9, Amazon Linux 2023, Ubuntu 22.04,
+Debian 12 and newer; `fsbpyr inspect` shows the glibc an executable actually needs), plus the
+system libraries its native dependencies link
 (often libstdc++ and libgcc_s; `fsbpyr inspect` lists them): no Python, no virtual
 environment, no installation step.
 Modules are imported straight from the file, so startup stays close to plain CPython.
@@ -89,10 +90,11 @@ time (uv fetches the Python it builds with and the locked dependencies; later bu
 with `--offline`). git is optional: with it, the executable records the commit it was built
 from. The output defaults to `dist/<console-script-name>`.
 
-uv picks wheels that run on glibc 2.28. A dependency without one is built from its sdist with
-the build host's C compiler, against the host's glibc. When such a build needs a newer glibc
-than 2.28, fsbpyr builds it again against the glibc 2.28 sysroot it links the launcher with
-(downloaded once), so the executable keeps the baseline; uv's cached build of it is replaced.
+uv picks wheels that run on glibc 2.34 (manylinux_2_34). A dependency without one is built
+from its sdist with the build host's C compiler, against the host's glibc. When such a build
+needs a newer glibc than 2.34, fsbpyr builds it again against the Debian 12 sysroot (glibc 2.36)
+it links the launcher with (downloaded once); uv's cached build of it is replaced. What that
+build still needs above 2.34 (a function glibc 2.35 or 2.36 added) the build warns about.
 If that build fails, as a C++ extension does (the sysroot has no libstdc++), or the build is
 offline, the host's build is packaged and the build warns which glibc it needs.
 
@@ -200,7 +202,7 @@ line without `==` gets a warning. With it, uv also gets `--require-hashes`, so e
 needs `==` and a `--hash`. uv checks the hashes in a `pylock.toml` on its own,
 `--strict` or not (a changed hash in a `pylock.toml` fails the build; verified with uv 0.13.1).
 
-`--strict` does not check the glibc the executable needs. To fail unless it is 2.28 or
+`--strict` does not check the glibc the executable needs. To fail unless it is 2.34 or
 older (`jq -e` exits 1 on `false`):
 
 ```sh
@@ -288,16 +290,16 @@ executable as the asset `THIRD_PARTY_LICENSES-3.X-<target>.txt`, one per executa
 `THIRD_PARTY_LICENSES-3.14-x86_64-linux-gnu.txt`).
 
 A build warns when a native file needs a `GLIBCXX`, `CXXABI`, `GCC` or `ZLIB` version newer
-than the manylinux_2_28 policy allows, since such a library fails to import on a target with
-an older libstdc++ (Debian 10, RHEL 8); the warning names the file and the version. The list
+than the manylinux_2_34 policy allows, since such a library fails to import on a target with
+an older libstdc++ (RHEL 9, Ubuntu 22.04); the warning names the file and the version. The list
 covers the native files an extension module loads, and the launcher.
 
 The glibc shown (`glibc >= X.Y`) is the newest glibc symbol version the launcher and the
-bundled native files use, so the oldest glibc this executable starts on. It can be older
-than the 2.28 baseline: the launcher itself needs 2.25 (`getentropy`), so an app without
-native files shows `glibc >= 2.25`, fsbpyr's own executable included. Native files from
-wheels or from the glibc 2.28 sysroot need at most 2.28; one built against the host's glibc
-can need more, and the build warns about it. Only 2.28 and newer is tested.
+bundled native files use, so the oldest glibc this executable starts on. The launcher needs
+2.34 (glibc moved `pthread_create`, `dlopen` and `__libc_start_main` there), so an app without
+native files shows `glibc >= 2.34`, fsbpyr's own executable included. Native files from
+manylinux_2_34 wheels need at most 2.34; one built from source can need more, and the build
+warns about it. Only 2.34 and newer is tested.
 
 ## Shell completion and the man page
 
@@ -610,7 +612,7 @@ the host:
    missing;
 2. installs the locked dependencies into the checkout's `.venv`;
 3. builds the runtime (`fsbpyr runtime build`: the pinned CPython from python-build-standalone
-   and a glibc 2.28 sysroot are downloaded, the launcher linked with LLVM's clang and lld 23
+   and a Debian 12 sysroot (glibc 2.36) are downloaded, the launcher linked with LLVM's clang and lld 23
    (above; on aarch64 with its compiler-rt builtins, which have the atomics that CPython's
    aarch64 objects call), the standard library compiled; a minute or two, cached in
    `~/.cache/fsbpyr`);

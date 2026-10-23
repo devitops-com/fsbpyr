@@ -347,8 +347,9 @@ def test_build_errors_are_reported(
 def test_the_projects_own_extension_is_rebuilt_against_the_glibc_sysroot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """cext's extension starts a thread. Built on a host with glibc 2.34 or newer (trixie has
-    2.41), it binds pthread_create to GLIBC_2.34; against the 2.28 sysroot, to GLIBC_2.2.5.
+    """cext's extension parses its argument with strtol. Built on a host with glibc 2.38 or
+    newer (trixie has 2.41), it binds __isoc23_strtol (GLIBC_2.38), above the 2.34 baseline;
+    against Debian 12's sysroot, strtol (GLIBC_2.2.5).
     The build gets a uv cache of its own: `uv run`, which runs the tests, holds its cache shared
     until pytest exits, and the rebuild's `uv cache clean` waits to hold it alone."""
     if shutil.which("cc") is None:
@@ -369,13 +370,13 @@ def test_the_projects_own_extension_is_rebuilt_against_the_glibc_sysroot(
     assert main(["build", str(project), "-o", str(executable)]) == 0
 
     out, err = capsys.readouterr()
-    assert "rebuilding cext against the glibc 2.28 sysroot" in out
+    assert "rebuilding cext against the glibc 2.36 sysroot" in out
     [host_build] = host_builds
-    assert host_build is not None and host_build > (2, 28)
+    assert host_build is not None and host_build > (2, 34)
     assert "glibc" not in err
     assert main(["inspect", "--json", str(executable)]) == 0
     glibc = json.loads(capsys.readouterr().out)["glibc"]
-    assert tuple(map(int, glibc.split("."))) <= (2, 28)
+    assert tuple(map(int, glibc.split("."))) <= (2, 34)
     assert _run(executable, "21").stdout == "cext 42\n"
 
 

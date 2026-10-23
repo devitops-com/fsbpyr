@@ -5,8 +5,9 @@ import struct
 import pytest
 
 from fsbpyr.elf import VersionNeed, version_requirements
-from fsbpyr.natives import SystemUse, closures
+from fsbpyr.natives import SystemUse, closures, manylinux_limits
 from fsbpyr.system import STUB, system_info, system_report, target_needs
+from fsbpyr.targets import target_named
 
 from ...support.elf import make_elf
 
@@ -89,8 +90,8 @@ def test_the_summary_line_names_what_is_not_glibc() -> None:
     assert target_needs({}, None) is None
 
 
-def test_glibcxx_above_the_manylinux_2_28_floor_warns_naming_the_file() -> None:
-    new = ("libstdc++.so.6", ("GLIBCXX_3.4.30", "CXXABI_1.3.13"))
+def test_glibcxx_above_the_manylinux_2_34_floor_warns_naming_the_file() -> None:
+    new = ("libstdc++.so.6", ("GLIBCXX_3.4.30", "CXXABI_1.3.14"))
     natives = {EXT: make_elf(needed=("libstdc++.so.6",), versions=(new,))}
     use, _ = _reach(natives)
 
@@ -98,8 +99,21 @@ def test_glibcxx_above_the_manylinux_2_28_floor_warns_naming_the_file() -> None:
 
     assert len(warnings) == 2
     assert any(w.startswith(f"{EXT} needs GLIBCXX_3.4.30 from libstdc++.so.6, newer than "
-                            "GLIBCXX_3.4.24") for w in warnings)  # fmt: skip
-    assert any("CXXABI_1.3.13" in w and "CXXABI_1.3.11" in w for w in warnings)
+                            "GLIBCXX_3.4.29 that manylinux_2_34 systems (RHEL 9, Ubuntu 22.04)")
+               for w in warnings)  # fmt: skip
+    assert any("CXXABI_1.3.14" in w and "CXXABI_1.3.13" in w for w in warnings)
+
+
+@pytest.mark.parametrize(("target", "gcc"), [("x86_64-linux-gnu", (7, 0, 0)),
+                                             ("aarch64-linux-gnu", (11, 0))])  # fmt: skip
+def test_each_target_has_auditwheels_manylinux_2_34_limits(
+    target: str, gcc: tuple[int, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """auditwheel's policy differs between the targets in libgcc_s's GCC version only."""
+    monkeypatch.setattr("fsbpyr.natives.host_target", lambda: target_named(target))
+
+    assert manylinux_limits() == {"GLIBCXX": (3, 4, 29), "CXXABI": (1, 3, 13), "GCC": gcc,
+                                  "ZLIB": (1, 2, 9)}  # fmt: skip
 
 
 def test_numpy_and_onnxruntime_needs_are_within_the_floors() -> None:

@@ -1,7 +1,8 @@
 """The glibc sysroot the stub links against: a portable baseline (plan Phase 6c, D25).
 
 Linking against the build host's glibc ties every app to it (spike S1 found GLIBC_2.38).
-The sysroot is extracted from pinned Debian 10 packages (glibc 2.28, the manylinux_2_28
+The sysroot is extracted from pinned packages of Debian 12, the oldest Debian release in LTS
+(glibc 2.36; what links against it needs no glibc newer than 2.34, the manylinux_2_34
 baseline), so no container is needed and the same pins always give the same sysroot.
 """
 

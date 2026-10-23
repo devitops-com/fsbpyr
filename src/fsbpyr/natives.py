@@ -54,15 +54,25 @@ def glibc_libraries() -> frozenset[str]:
     return _with_loader(_GLIBC_LIBRARIES)
 
 
-# The newest symbol version per namespace that auditwheel's manylinux_2_28 x86_64 policy
-# allows (libstdc++ 8.x, libgcc_s, libz), and the non-numeric CXXABI versions it allows.
-# Taken from the improvement plan's reading of auditwheel's policy file (NAT-2). The aarch64
-# policy has the same numeric limits (compared with auditwheel's file on 2026-10-21) and lists
-# CXXABI_TM_1 but not CXXABI_FLOAT128; both targets use these.
-MANYLINUX_2_28_LIMITS = {
-    "GLIBCXX": (3, 4, 24), "CXXABI": (1, 3, 11), "GCC": (7, 0, 0), "ZLIB": (1, 2, 9),
+# The newest symbol version per namespace that auditwheel's manylinux_2_34 policy allows
+# (libstdc++ 11.x, libgcc_s, libz), per target, and the non-numeric CXXABI versions it allows:
+# auditwheel's policy file read on 2026-10-22 (NAT-2). The targets differ in GCC only; the
+# aarch64 policy lists CXXABI_TM_1 but not CXXABI_FLOAT128, and both use these markers.
+MANYLINUX = "manylinux_2_34"
+MANYLINUX_LIMITS: dict[str, dict[str, tuple[int, ...]]] = {
+    "x86_64-linux-gnu": {
+        "GLIBCXX": (3, 4, 29), "CXXABI": (1, 3, 13), "GCC": (7, 0, 0), "ZLIB": (1, 2, 9),
+    },
+    "aarch64-linux-gnu": {
+        "GLIBCXX": (3, 4, 29), "CXXABI": (1, 3, 13), "GCC": (11, 0), "ZLIB": (1, 2, 9),
+    },
 }  # fmt: skip
-MANYLINUX_2_28_MARKERS = frozenset({"CXXABI_TM_1", "CXXABI_FLOAT128"})
+MANYLINUX_MARKERS = frozenset({"CXXABI_TM_1", "CXXABI_FLOAT128"})
+
+
+def manylinux_limits() -> dict[str, tuple[int, ...]]:
+    """The host target's limits: fsbpyr builds for the host it runs on."""
+    return MANYLINUX_LIMITS[host_target().name]
 _LIBPYTHON = re.compile(r"^libpython3")
 _ORIGIN = re.compile(r"\$(ORIGIN(?![A-Za-z0-9_])|\{ORIGIN\})")  # as ld.so tokenizes it
 

@@ -263,18 +263,18 @@ STUB_2_25 = make_elf(versions=(("libc.so.6", ("GLIBC_2.2.5", "GLIBC_2.25")),))
     [
         (None, "2.25", False),
         (((2, 17), "a/_x.so"), "2.25", False),
-        (((2, 28), "a/_x.so"), "2.28", False),  # within the baseline the wheels were chosen for
-        (((2, 34), "a/_new.so"), "2.34", True),
+        (((2, 34), "a/_x.so"), "2.34", False),  # within the baseline the wheels were chosen for
+        (((2, 36), "a/_new.so"), "2.36", True),
     ],
 )
 def test_glibc_requirement_is_the_highest_of_stub_and_natives(
     natives: tuple[tuple[int, int], str] | None, expected: str, warns: bool
 ) -> None:
-    requirement, warnings = glibc_report(STUB_2_25, natives, baseline=(2, 28))
+    requirement, warnings = glibc_report(STUB_2_25, natives, baseline=(2, 34))
 
     assert requirement == expected
     assert bool(warnings) is warns
-    assert not warnings or "a/_new.so needs glibc 2.34, more than the 2.28 baseline" in warnings[0]
+    assert not warnings or "a/_new.so needs glibc 2.36, more than the 2.34 baseline" in warnings[0]
 
 
 def test_glibc_requirement_of_an_unreadable_stub_is_unknown() -> None:
@@ -325,7 +325,7 @@ def test_a_failed_rebuild_keeps_the_hosts_build_with_a_warning(
     monkeypatch.setattr("fsbpyr.build.rebuild", failed)
 
     assert _rebuild(tmp_path) == [
-        "cxx-ext: building from source against the glibc 2.28 sysroot failed, the build host's "
+        "cxx-ext: building from source against the glibc 2.36 sysroot failed, the build host's "
         "builds are packaged: error: command 'g++' failed"
     ]
 
@@ -368,7 +368,7 @@ def test_an_offline_build_rebuilds_nothing(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr("fsbpyr.build.rebuild", lambda *_: pytest.fail("rebuild"))
 
     assert _rebuild(tmp_path, offline=True) == [
-        "cxx-ext: not rebuilt against the glibc 2.28 sysroot: the build is offline"
+        "cxx-ext: not rebuilt against the glibc 2.36 sysroot: the build is offline"
     ]
 
 

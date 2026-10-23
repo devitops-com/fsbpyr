@@ -89,7 +89,10 @@ def pin_for(python: str, triple: str) -> PbsPin:
     raise LookupError(f"no pinned CPython {python} for {triple}; supported: {supported}")
 
 
-_DEBIAN = "https://archive.debian.org/debian/pool/main"
+# Debian 12 (bookworm), the oldest Debian release still in LTS (owner, 2026-10-22), from
+# Debian's own repository: bookworm's main suite has not changed since its last point release
+# (12.15, 2026-07-11); LTS updates go to bookworm-security, so these files stay where they are.
+_DEBIAN = "https://deb.debian.org/debian/pool/main"
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +101,7 @@ class SysrootPin:
 
     name: str  # part of the runtime id
     glibc: str  # version of the headers and libraries
+    manylinux: str  # the glibc the apps are built for: manylinux_2_X wheels, the stub's need
     packages: tuple[tuple[str, str], ...]  # (url, sha256)
 
     @property
@@ -109,41 +113,46 @@ class SysrootPin:
 
     @property
     def baseline(self) -> tuple[int, int]:
-        major, minor = self.glibc.split(".")
+        """The glibc the apps are built for, below the sysroot's own: linked against glibc
+        2.36, the stub needs no symbol newer than 2.34 (pthread_create, dlopen and
+        __libc_start_main moved there), which RHEL 9 and Ubuntu 22.04 provide."""
+        major, minor = self.manylinux.split(".")
         return int(major), int(minor)
 
 
 SYSROOTS = {
     "x86_64-unknown-linux-gnu": SysrootPin(
-        name="debian10-glibc2.28-x86_64",
-        glibc="2.28",
+        name="debian12-glibc2.36-x86_64",
+        glibc="2.36",
+        manylinux="2.34",
         packages=tuple((f"{_DEBIAN}/{path}", sha256) for path, sha256 in (
-            ("g/glibc/libc6_2.28-10+deb10u1_amd64.deb",
-             "0ee0f0bfcd7b59ffda1dbc76ef58fa79512913204f2a336206467bfbf45bc69f"),
-            ("g/glibc/libc6-dev_2.28-10+deb10u1_amd64.deb",
-             "76b8413920d91a9a4289f99839933d0d30095e0ec12b05bb4f1a7f27e5ef4a55"),
-            ("g/gcc-8/libgcc1_8.3.0-6_amd64.deb",
-             "b1bb7611f3372732889d502cb1d09fe572b5fbb5288a4a8b1ed0363fecc3555a"),
-            ("g/gcc-8/libgcc-8-dev_8.3.0-6_amd64.deb",
-             "a52d5216858c7185bc245e52ad95a6ad515d087bc25e8556df06c5626b41a837"),
-            ("l/linux/linux-libc-dev_4.19.249-2_amd64.deb",
-             "c512f30f5abe413464b79ed23b54958df8cc104446c3ae93d83d28e23728a571"),
+            ("g/glibc/libc6_2.36-9+deb12u14_amd64.deb",
+             "ba4f88f73dbc3ae9055f3c20f4523bfdbaf1ad13ff95e258924f77d20b4fbedf"),
+            ("g/glibc/libc6-dev_2.36-9+deb12u14_amd64.deb",
+             "0218fc2befcd784c1b0c6292c0a137ce89fad054efaa579ad083bee0f2c01aae"),
+            ("g/gcc-12/libgcc-s1_12.2.0-14+deb12u1_amd64.deb",
+             "3016e62cb4b7cd8038822870601f5ed131befe942774d0f745622cc77d8a88f7"),
+            ("g/gcc-12/libgcc-12-dev_12.2.0-14+deb12u1_amd64.deb",
+             "d720259380a84f2ffc6fe516eff5cbe9c8a005138e8d6a5748747ba4b3404a82"),
+            ("l/linux/linux-libc-dev_6.1.176-1_amd64.deb",
+             "8bb258735b9dffbb111da778ebdd024750878e435ffd9dfcadcb6762ede6b4cf"),
         )),
     ),
     "aarch64-unknown-linux-gnu": SysrootPin(
-        name="debian10-glibc2.28-aarch64",
-        glibc="2.28",
+        name="debian12-glibc2.36-aarch64",
+        glibc="2.36",
+        manylinux="2.34",
         packages=tuple((f"{_DEBIAN}/{path}", sha256) for path, sha256 in (
-            ("g/glibc/libc6_2.28-10+deb10u1_arm64.deb",
-             "09f5e92b1527cdc06b757499bb4d97ddf1b064fc3d163f978e5de18b131cd330"),
-            ("g/glibc/libc6-dev_2.28-10+deb10u1_arm64.deb",
-             "04097716018288cef8b82339faa1a9847838b89f39574b5b169f4657da8bf269"),
-            ("g/gcc-8/libgcc1_8.3.0-6_arm64.deb",
-             "2851ac25d12958586c035de5ec4f2fc17272dec48f776dd0dd24c62f62674fd9"),
-            ("g/gcc-8/libgcc-8-dev_8.3.0-6_arm64.deb",
-             "d8385c0106d4ac559ada75b162aecb9d507a67da3ac8742eb32258f501d07c7e"),
-            ("l/linux/linux-libc-dev_4.19.249-2_arm64.deb",
-             "e9a92d71d62655f673433c345a03fecaa4292f93c6572b28fd3d16dcfd1cc7f6"),
+            ("g/glibc/libc6_2.36-9+deb12u14_arm64.deb",
+             "01f4330719fd4f65580e16ea5a0527f372fca750e8f588d26deaf09f2d3b1cf4"),
+            ("g/glibc/libc6-dev_2.36-9+deb12u14_arm64.deb",
+             "8bc395bf2ee9939f1a6ae395f974cffdcf541d98f99adfe89ce7e4bef36d159e"),
+            ("g/gcc-12/libgcc-s1_12.2.0-14+deb12u1_arm64.deb",
+             "576926b283613db80168ddf76380a3bd877602778cf0d226caa7bfbfa71eacf3"),
+            ("g/gcc-12/libgcc-12-dev_12.2.0-14+deb12u1_arm64.deb",
+             "c83d28b7c3397c25f15ae17783fce78716a3d7cd415940940cc2af8dc4db8d6d"),
+            ("l/linux/linux-libc-dev_6.1.176-1_arm64.deb",
+             "eeca5ec13bed7206f8171fab9a48e84119dcc20cc79557f104628447a524ad10"),
         )),
     ),
 }  # fmt: skip

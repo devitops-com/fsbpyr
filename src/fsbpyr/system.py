@@ -1,5 +1,5 @@
 """What the target must provide beyond what is bundled: system libraries and their symbol
-versions, checked against the manylinux_2_28 floors the baseline wheels were built for (NAT-2).
+versions, checked against the manylinux_2_34 floors the baseline wheels were built for (NAT-2).
 
 glibc has its own report and warning (``build.glibc_report``); here are the libraries around
 it: libstdc++ (GLIBCXX, CXXABI), libgcc_s (GCC), libz (ZLIB), X11 and the like, and the
@@ -10,10 +10,11 @@ from collections.abc import Mapping
 
 from .elf import ElfError, VersionNeed, dynamic_info, version_requirements
 from .natives import (
-    MANYLINUX_2_28_LIMITS,
-    MANYLINUX_2_28_MARKERS,
+    MANYLINUX,
+    MANYLINUX_MARKERS,
     SystemUse,
     glibc_libraries,
+    manylinux_limits,
 )
 
 STUB = "(stub)"  # the launcher, in "needed by"
@@ -76,14 +77,15 @@ def target_needs(libraries: Mapping[str, Mapping[str, object]], glibc: str | Non
 
 def _over_floor(use: SystemUse) -> list[str]:
     """Warnings for the files that need a newer libstdc++, libgcc_s or libz than the
-    manylinux_2_28 systems the wheels were chosen for provide, one per namespace: the
+    manylinux_2_34 systems the wheels were chosen for provide, one per namespace: the
     newest need, with how many other files go over too."""
+    limits = manylinux_limits()
     over: dict[tuple[str, str], list[tuple[tuple[int, ...], str]]] = {}
     warnings = []
     for path in sorted(use.versions):
         for library, namespaces in use.versions[path].items():
             for namespace, need in namespaces.items():
-                limit = MANYLINUX_2_28_LIMITS.get(namespace)
+                limit = limits.get(namespace)
                 if need.highest is not None and limit is not None and need.highest > limit:
                     over.setdefault((library, namespace), []).append((need.highest, path))
                 for marker in need.markers:
@@ -92,12 +94,10 @@ def _over_floor(use: SystemUse) -> list[str]:
                             f"{path} needs {_PRIVATE} from {library}, which has no "
                             "compatibility promise; it may fail on other glibc releases"
                         )
-                    elif (
-                        namespace in MANYLINUX_2_28_LIMITS and marker not in MANYLINUX_2_28_MARKERS
-                    ):
+                    elif namespace in limits and marker not in MANYLINUX_MARKERS:
                         warnings.append(
                             f"{path} needs {marker} from {library}, which "
-                            "manylinux_2_28 systems may not provide"
+                            f"{MANYLINUX} systems may not provide"
                         )
     for (library, namespace), found in sorted(over.items()):
         version, path = max(found)
@@ -109,15 +109,15 @@ def _over_floor(use: SystemUse) -> list[str]:
         )
         warnings.append(
             f"{path} needs {namespace}_{_dotted(version)} from {library}, newer than "
-            f"{namespace}_{_dotted(MANYLINUX_2_28_LIMITS[namespace])} that manylinux_2_28 "
-            f"systems (Debian 10, RHEL 8) provide{more}; on older systems it fails when imported"
+            f"{namespace}_{_dotted(limits[namespace])} that {MANYLINUX} systems "
+            f"(RHEL 9, Ubuntu 22.04) provide{more}; on older systems it fails when imported"
         )
     return warnings
 
 
 def system_report(stub: bytes, use: SystemUse) -> tuple[dict[str, dict[str, object]], list[str]]:
     """The libraries of the build information (sorted), and the warnings for needs above the
-    manylinux_2_28 floors."""
+    manylinux_2_34 floors."""
     return _merged(use, stub), _over_floor(use)
 
 

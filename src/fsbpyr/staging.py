@@ -53,7 +53,7 @@ class StagingOptions:
     extras: tuple[str, ...] = ()
     offline: bool = False
     requirements: str | None = None
-    # uv's --python-platform (x86_64-manylinux_2_28): wheels for the runtime's glibc baseline
+    # uv's --python-platform (x86_64-manylinux_2_34): wheels for the runtime's glibc baseline
     # rather than the build host's. A dependency without such a wheel is built from its sdist.
     platform: str | None = None
     strict: bool = False  # requirements files must pin and hash every line (uv --require-hashes)
