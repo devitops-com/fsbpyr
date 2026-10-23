@@ -191,7 +191,6 @@ def test_dist_properties(tmp_path: Path) -> None:
     assert dist.bytecode_magic == b"+\x0e\r\n"
     assert dist.llvm_major == 22
     assert dist.interpreter == dist.root / "install/bin/python3.14"
-    assert dist.extension_suffixes == (".cpython-314-x86_64-linux-gnu.so", ".abi3.so", ".so")
 
 
 def test_link_inputs_cover_builtin_modules_only(tmp_path: Path) -> None:

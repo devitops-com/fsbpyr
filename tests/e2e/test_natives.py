@@ -14,11 +14,13 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.boot._fsbpyr_rt import gc
+from fsbpyr.build import TARGET_PYTHON
 from fsbpyr.cli import main
 from fsbpyr.payload.format import NATIVE_KINDS, Codec
 from fsbpyr.payload.reader import Executable
 from fsbpyr.runtime.registry import Runtime
 
+from ..support import wheels
 from ..support.differential import assert_same, make_venv
 from ..support.stderr import NO_HOSTNAME, ONNX_HOST, TRACE_LINE, noise
 
@@ -45,6 +47,7 @@ def _build(project: Path, out: Path) -> Path:  # named like the console script (
 
 @pytest.fixture(scope="module")
 def project(tmp_path_factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
+    wheels.skip_without("onnxruntime", TARGET_PYTHON)
     copy = tmp_path_factory.mktemp("heavy") / "heavy"
     shutil.copytree(FIXTURE, copy)
     return copy

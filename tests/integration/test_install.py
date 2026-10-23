@@ -37,7 +37,8 @@ SCRIPT_TIMEOUT_S = 60.0
 BASH = shutil.which("bash") or "/bin/bash"
 GNU = "x86_64-linux-gnu"
 MUSL = "x86_64-linux-musl"
-NEWEST = "3.14"  # the Python the installer takes when not told one
+# the Python the installer takes when not told one: .python-version's, not the newest
+DEFAULT = (ROOT / ".python-version").read_text(encoding="utf-8").strip().rpartition(".")[0]
 
 # What the installer uses besides shell builtins; xz, curl, wget and gh are added per test.
 BASE_TOOLS = (
@@ -123,7 +124,7 @@ class Release:
     def assets(self) -> Path:
         return self.root / "assets"
 
-    def add(self, target: str, *, python: str = NEWEST, inspect: str = "echo verified") -> None:
+    def add(self, target: str, *, python: str = DEFAULT, inspect: str = "echo verified") -> None:
         """Both files of a target's executable for ``python``; the server serves what was
         written."""
         marker = f"{python} {target}"
@@ -236,6 +237,20 @@ def installed(host: Host) -> Path:
     return host.install_dir / "fsbpyr"
 
 
+def test_without_python_it_installs_the_default_not_the_newest(
+    shell: list[str], release: Release, host: Host, server: Server
+) -> None:
+    release.add(GNU, python="3.99")
+    release.serve()
+    script = release.make()
+
+    result = install(shell, script, host)
+
+    assert result.returncode == 0, result.stderr
+    assert f"DEFAULT_PYTHON='{DEFAULT}'" in script.read_text(encoding="utf-8")
+    assert server.requests == [f"/fsbpyr-{DEFAULT}-{GNU}.xz"]
+
+
 def test_installs_the_xz_when_xz_is_there(
     shell: list[str],
     release: Release,
@@ -247,10 +262,10 @@ def test_installs_the_xz_when_xz_is_there(
     result = install(shell, script, host)
 
     assert result.returncode == 0, result.stderr
-    assert installed(host).read_bytes() == (release.assets / f"fsbpyr-{NEWEST}-{GNU}").read_bytes()
+    assert installed(host).read_bytes() == (release.assets / f"fsbpyr-{DEFAULT}-{GNU}").read_bytes()
     assert os.access(installed(host), os.X_OK)
-    assert server.requests == [f"/fsbpyr-{NEWEST}-{GNU}.xz"]
-    assert f"downloading fsbpyr {VERSION} for Python {NEWEST} ({GNU})" in result.stdout
+    assert server.requests == [f"/fsbpyr-{DEFAULT}-{GNU}.xz"]
+    assert f"downloading fsbpyr {VERSION} for Python {DEFAULT} ({GNU})" in result.stdout
     assert f"installing to {host.install_dir}" in result.stdout
     assert "everything's installed!" in result.stdout
     assert sorted(p.name for p in host.install_dir.iterdir() if p.name.startswith(".")) == []
@@ -268,8 +283,8 @@ def test_installs_the_plain_asset_without_xz(
     result = install(shell, script, host)
 
     assert result.returncode == 0, result.stderr
-    assert installed(host).read_bytes() == (release.assets / f"fsbpyr-{NEWEST}-{GNU}").read_bytes()
-    assert server.requests == [f"/fsbpyr-{NEWEST}-{GNU}"]
+    assert installed(host).read_bytes() == (release.assets / f"fsbpyr-{DEFAULT}-{GNU}").read_bytes()
+    assert server.requests == [f"/fsbpyr-{DEFAULT}-{GNU}"]
 
 
 def test_installs_with_wget_when_there_is_no_curl(
@@ -287,7 +302,7 @@ def test_installs_with_wget_when_there_is_no_curl(
     result = install(shell, script, host)
 
     assert result.returncode == 0, result.stderr
-    assert server.requests == [f"/fsbpyr-{NEWEST}-{GNU}.xz"]
+    assert server.requests == [f"/fsbpyr-{DEFAULT}-{GNU}.xz"]
     assert installed(host).exists()
 
 
@@ -345,7 +360,7 @@ def test_a_checksum_mismatch_stops(
     compressed: bool,
 ) -> None:
     script = release.make()
-    served = f"/fsbpyr-{NEWEST}-{GNU}.xz" if compressed else f"/fsbpyr-{NEWEST}-{GNU}"
+    served = f"/fsbpyr-{DEFAULT}-{GNU}.xz" if compressed else f"/fsbpyr-{DEFAULT}-{GNU}"
     if not compressed:
         host.drop("xz")
     server.files[served] = server.files[served][:-1] + b"X"
@@ -383,7 +398,7 @@ def test_an_existing_install_survives_a_failed_one(
     host.install_dir.mkdir(parents=True)
     installed(host).write_text("old")
     script = release.make()
-    release.server.files[f"/fsbpyr-{NEWEST}-{GNU}.xz"] = b"garbage"
+    release.server.files[f"/fsbpyr-{DEFAULT}-{GNU}.xz"] = b"garbage"
 
     result = install(shell, script, host)
 
@@ -484,7 +499,7 @@ def test_aarch64_is_detected(
     result = install(shell, script, host)
 
     assert result.returncode == 0, result.stderr
-    assert server.requests == [f"/fsbpyr-{NEWEST}-aarch64-linux-gnu.xz"]
+    assert server.requests == [f"/fsbpyr-{DEFAULT}-aarch64-linux-gnu.xz"]
 
 
 def test_musl_is_detected_from_ldd(
@@ -499,7 +514,7 @@ def test_musl_is_detected_from_ldd(
     result = install(shell, script, host)
 
     assert result.returncode == 0, result.stderr
-    assert server.requests == [f"/fsbpyr-{NEWEST}-{MUSL}.xz"]
+    assert server.requests == [f"/fsbpyr-{DEFAULT}-{MUSL}.xz"]
 
 
 def test_a_too_old_glibc_stops(

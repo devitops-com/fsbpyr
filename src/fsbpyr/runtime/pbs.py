@@ -96,10 +96,6 @@ class PbsDist:
     def include(self) -> Path:
         return self.root / str(self.info["python_paths"]["include"])
 
-    @property
-    def extension_suffixes(self) -> tuple[str, ...]:
-        return tuple(self.info["python_suffixes"]["extension"])
-
     def builtin_modules(self) -> list[str]:
         """Modules registered in the inittab that PBS compiled into libpython."""
         inittab = (self.root / self.info["build_info"]["inittab_source"]).read_text()
@@ -124,8 +120,8 @@ def link_inputs(dist: PbsDist, archive_members: set[str]) -> LinkInputs:
                 static.append(dist.root / link["path_static"])
             elif link.get("system") and link["name"] not in system:
                 system.append(link["name"])
-    # The launcher decodes zstd itself. 3.14's _zstd links libzstd.a; 3.12 and 3.13 have no
-    # _zstd, so no entry names the archive that PBS still ships (Phase 9 spike).
+    # The launcher decodes zstd itself. 3.14's and 3.15's _zstd link libzstd.a; 3.12 and 3.13
+    # have no _zstd, so no entry names the archive that PBS still ships (Phase 9 spike).
     zstd = dist.root / _LIBZSTD
     if zstd.is_file() and zstd not in static:
         static.append(zstd)
@@ -137,28 +133,50 @@ def link_inputs(dist: PbsDist, archive_members: set[str]) -> LinkInputs:
     )
 
 
-_COMPONENTS_TIMEOUT = 60
+_ASK_TIMEOUT = 60
 _COMPONENTS = """\
 import decimal, json, pyexpat, sqlite3, ssl, zlib
 print(json.dumps({"expat": pyexpat.EXPAT_VERSION, "libmpdec": decimal.__libmpdec_version__,
                   "openssl": ssl.OPENSSL_VERSION, "sqlite": sqlite3.sqlite_version,
                   "zlib": zlib.ZLIB_RUNTIME_VERSION}))
 """
+_EXTENSION_SUFFIXES = """\
+import importlib.machinery, json
+print(json.dumps(importlib.machinery.EXTENSION_SUFFIXES))
+"""
+
+
+def _ask(interpreter: Path, script: str, what: str) -> object:
+    """What ``script``, run by ``interpreter``, prints as JSON."""
+    try:
+        result = subprocess.run([interpreter, "-I", "-c", script], capture_output=True,
+                                text=True, timeout=_ASK_TIMEOUT, check=False)  # fmt: skip
+        answer = json.loads(result.stdout) if result.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        raise PbsError(f"cannot run {interpreter} to read its {what}: {exc}") from exc
+    if answer is None:
+        raise PbsError(f"{interpreter} did not report its {what}: "
+                       f"{result.stderr.strip()[-500:]}")  # fmt: skip
+    return answer
 
 
 def component_versions(interpreter: Path) -> dict[str, str]:
     """The versions of the libraries ``interpreter`` carries, as it reports them: the ones a
     security fix concerns, recorded in the runtime and in every app (REP-3)."""
-    try:
-        result = subprocess.run([interpreter, "-I", "-c", _COMPONENTS], capture_output=True,
-                                text=True, timeout=_COMPONENTS_TIMEOUT, check=False)  # fmt: skip
-        versions = json.loads(result.stdout) if result.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
-        raise PbsError(f"cannot run {interpreter} to read its library versions: {exc}") from exc
+    versions = _ask(interpreter, _COMPONENTS, "library versions")
     if not isinstance(versions, dict):
-        raise PbsError(f"{interpreter} did not report its library versions: "
-                       f"{result.stderr.strip()[-500:]}")  # fmt: skip
+        raise PbsError(f"{interpreter} did not report its library versions: {versions!r}")
     return {key: str(value) for key, value in versions.items()}
+
+
+def extension_suffixes(interpreter: Path) -> tuple[str, ...]:
+    """The file name suffixes ``interpreter`` imports extension modules by, in its order.
+    PYTHON.json lists them too, but its list lags: 3.15.1's names neither ``.abi3t.so``
+    nor the abi3 suffixes with the architecture, which wheels for 3.15 use."""
+    suffixes = _ask(interpreter, _EXTENSION_SUFFIXES, "extension suffixes")
+    if not isinstance(suffixes, list) or not all(isinstance(s, str) for s in suffixes):
+        raise PbsError(f"{interpreter} did not report its extension suffixes: {suffixes!r}")
+    return tuple(suffixes)
 
 
 def sha256_of(path: Path) -> str:

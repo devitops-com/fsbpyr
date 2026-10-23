@@ -896,7 +896,7 @@ def test_startup_reads_the_same_with_a_large_unused_dist(runtime: Runtime, tmp_p
 
 
 # The no-op app's size on each version's pinned runtime (D15 makes it deterministic).
-NOOP_SIZES = {"3.12": 27_454_194, "3.13": 26_668_657, "3.14": 27_773_792}
+NOOP_SIZES = {"3.12": 27_454_194, "3.13": 26_668_657, "3.14": 27_773_792, "3.15": 29_687_520}
 NOOP_SIZE_TOLERANCE = 0.03
 
 

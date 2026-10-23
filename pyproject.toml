@@ -1,11 +1,11 @@
 [project]
 name = "fsbpyr"
-version = "0.24.0"
+version = "0.25.0"
 description = "Fast single-binary Python CLI runtime and packager"
 authors = [{ name = "Kresimir Sparavec", email = "ksparavec@devitops.com" }]
 license = "LicenseRef-fsbpyr-MIT-with-runtime-exception"
 license-files = ["LICENSE"]
-requires-python = ">=3.12,<3.15"
+requires-python = ">=3.12,<3.16"
 dependencies = [
     "backports.zstd; python_version < '3.14'",
     "click>=8.5",

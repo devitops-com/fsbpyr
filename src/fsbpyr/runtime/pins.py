@@ -53,6 +53,14 @@ PINS = (
         sha256="92f6abbce0283ed317873615396b5c43ccdcdf13ae9c7d68c9a07651df527528",
     ),
     PbsPin(
+        python="3.15",
+        version="3.15.1",
+        release="20261021",
+        triple="x86_64-unknown-linux-gnu",
+        flavor="pgo+lto-full",
+        sha256="ed8c818ad80faeb7cb3a37f5d2283bd5f8350350b007bdda092026b9048ccb33",
+    ),
+    PbsPin(
         python="3.12",
         version="3.12.15",
         release="20261021",
@@ -75,6 +83,14 @@ PINS = (
         triple="aarch64-unknown-linux-gnu",
         flavor="pgo+lto-full",
         sha256="f5726037fbea57a8d83ddb6bbe26242eeb96928fb396da2f6d9dbf3641aaff61",
+    ),
+    PbsPin(
+        python="3.15",
+        version="3.15.1",
+        release="20261021",
+        triple="aarch64-unknown-linux-gnu",
+        flavor="pgo+lto-full",
+        sha256="9e208dab28830673758bdf2af2623756646aa39481cc246360c5465ba7156afb",
     ),
 )
 

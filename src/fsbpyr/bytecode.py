@@ -16,8 +16,9 @@ resolve to the same node) and re-emits it with a policy that depends only on the
 
 ``marshal.loads`` of the canonical stream yields objects equal to the original. Supported
 formats: marshal version 4 as written by CPython 3.12 and 3.13, version 5 (which adds the slice
-type) as written by 3.14. The code object layout is the same in all three; each fsbpyr handles
-the version it runs on.
+type) as written by 3.14, and version 6 as written by 3.15, which adds frozendict: compile() never
+puts one among a code object's constants, so a stream with one is refused like any other unknown
+type. The code object layout is the same in all four; each fsbpyr handles the version it runs on.
 """
 
 import marshal
@@ -25,7 +26,7 @@ import struct
 import sys
 from types import CodeType
 
-SUPPORTED_PYTHON = frozenset({(3, 12), (3, 13), (3, 14)})
+SUPPORTED_PYTHON = frozenset({(3, 12), (3, 13), (3, 14), (3, 15)})
 FLAG_REF = 0x80
 TYPE_REF = ord("r")
 MAX_DEPTH = 100  # nesting limit; compile() output stays far below (stdlib maximum: 11)
@@ -284,5 +285,5 @@ def canonicalize(data: bytes) -> bytes:
 def dumps(code: CodeType) -> bytes:
     """``marshal.dumps`` followed by ``canonicalize``; only for the supported CPython version."""
     if sys.version_info[:2] not in SUPPORTED_PYTHON:  # pragma: no cover - the CLI stops them
-        raise BytecodeError("canonical bytecode supports CPython 3.12, 3.13 and 3.14 only")
+        raise BytecodeError("canonical bytecode supports CPython 3.12 to 3.15 only")
     return canonicalize(marshal.dumps(code))

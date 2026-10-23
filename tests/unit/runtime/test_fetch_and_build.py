@@ -2,6 +2,7 @@
 
 import dataclasses
 import hashlib
+import importlib.machinery
 import io
 import json
 import sys
@@ -243,6 +244,8 @@ def test_build_runtime_orchestrates_and_caches(
     monkeypatch.setattr(pbs, "fetch", fetch)
     components = {"openssl": "OpenSSL 3.5.9 29 Sep 2026", "sqlite": "3.53.1"}
     monkeypatch.setattr(pbs, "component_versions", lambda interpreter: components)
+    suffixes = (".cpython-314-x86_64-linux-gnu.so", ".abi3.so", ".so")
+    monkeypatch.setattr(pbs, "extension_suffixes", lambda interpreter: suffixes)
     monkeypatch.setattr(registry, "find_toolchain", lambda major, explicit: Toolchain(
         Path("/usr/bin/clang-22"), Path("/usr/bin/ld.lld-22"), major))  # fmt: skip
     linked_against: list[Path] = []
@@ -279,6 +282,7 @@ def test_build_runtime_orchestrates_and_caches(
     assert registry.find_runtime("3.14", cache=tmp_path) == runtime
     pin = pins.pin_for("3.14", registry.host_triple())
     assert runtime.components == components
+    assert runtime.extension_suffixes == suffixes  # the interpreter's, not PYTHON.json's [".so"]
     assert runtime.inputs == {
         "pbs": {"release": pin.release, "name": pin.name, "sha256": pin.sha256},
         "sysroot": pins.sysroot_for(pin.triple).identity,
@@ -364,3 +368,19 @@ def test_component_versions_name_an_interpreter_that_fails(tmp_path: Path) -> No
         pbs.component_versions(Path("/bin/false"))
     with pytest.raises(pbs.PbsError, match="cannot run"):
         pbs.component_versions(tmp_path / "missing")
+
+
+def test_extension_suffixes_come_from_running_the_interpreter() -> None:
+    """In the interpreter's order, which the import system tries them in; 3.15's PYTHON.json
+    lacks .abi3t.so."""
+    found = pbs.extension_suffixes(Path(sys.executable))
+
+    assert found == tuple(importlib.machinery.EXTENSION_SUFFIXES)
+    assert found[-1] == ".so" and ".abi3.so" in found
+
+
+def test_extension_suffixes_name_an_interpreter_that_fails(tmp_path: Path) -> None:
+    with pytest.raises(pbs.PbsError, match="did not report its extension suffixes"):
+        pbs.extension_suffixes(Path("/bin/false"))
+    with pytest.raises(pbs.PbsError, match="cannot run"):
+        pbs.extension_suffixes(tmp_path / "missing")

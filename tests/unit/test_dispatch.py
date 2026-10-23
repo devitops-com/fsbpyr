@@ -242,7 +242,7 @@ def test_a_project_no_supported_python_fits_stops_before_any_fetch(
 
     assert main(["build", str(project)]) == 1
 
-    assert "allows none of the Python versions fsbpyr builds for (3.12, 3.13 and 3.14)" in (
+    assert "allows none of the Python versions fsbpyr builds for (3.12, 3.13, 3.14 and 3.15)" in (
         capsys.readouterr().err)
     assert releases.requests == [] and ran.commands == []
 

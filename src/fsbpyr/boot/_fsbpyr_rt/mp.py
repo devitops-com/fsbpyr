@@ -19,7 +19,8 @@ import sys
 
 _SPAWN = re.compile(r"from multiprocessing\.spawn import spawn_main; spawn_main\((.*)\)")
 # The forkserver command line differs per version: 3.12 has no sys_argv and no authkey_r,
-# 3.13 adds sys_argv, 3.14 adds authkey_r (multiprocessing/forkserver.py of each).
+# 3.13 adds sys_argv, 3.14 adds authkey_r, 3.15 on_error, sent when set_forkserver_preload names
+# one (multiprocessing/forkserver.py of each).
 _FORKSERVER_3_12 = re.compile(
     r"from multiprocessing\.forkserver import main; "
     r"main\((\d+), (\d+), (\[[^\]]*\]), \*\*(\{.*\})\)"
@@ -29,9 +30,12 @@ _FORKSERVER_3_13 = re.compile(
     r"main\((\d+), (\d+), (\[[^\]]*\]), sys_argv=sys\.argv\[1:\], \*\*(\{.*\})\)"
 )
 _FORKSERVER = _FORKSERVER_3_12 if sys.version_info < (3, 13) else _FORKSERVER_3_13
-_FORKSERVER_KEYS = {"sys_path", "main_path"} | (
-    {"authkey_r"} if sys.version_info >= (3, 14) else set()
+_FORKSERVER_KEYS = (
+    {"sys_path", "main_path"}
+    | ({"authkey_r"} if sys.version_info >= (3, 14) else set())
+    | ({"on_error"} if sys.version_info >= (3, 15) else set())
 )
+_ON_ERROR = ("ignore", "warn", "fail")
 _FORKSERVER_SYS_ARGV = sys.version_info >= (3, 13)
 _TRACKER = re.compile(r"from multiprocessing\.resource_tracker import main;main\((\d+)\)")
 _FIRST_INHERITED_FD = 3  # parents hand pipes over with pass_fds; stdio is the caller's
@@ -77,14 +81,18 @@ def _forkserver(match: re.Match[str], rest: list[str]) -> Command | None:
         return None
     if not keywords.keys() <= _FORKSERVER_KEYS:
         return None
-    if keywords.get("main_path") is not None or not _fd(keywords.get("authkey_r", 3)):
+    if (
+        keywords.get("main_path") is not None
+        or not _fd(keywords.get("authkey_r", 3))
+        or keywords.get("on_error", "ignore") not in _ON_ERROR
+    ):
         return None
     # sys_path is dropped: the forkserver keeps the payload-only sys.path set by the boot code
     # (its workers still receive the parent's sys.path through the authenticated pipe).
-    authkey = {"authkey_r": keywords["authkey_r"]} if "authkey_r" in keywords else {}
+    passed = {name: keywords[name] for name in ("authkey_r", "on_error") if name in keywords}
     if not _FORKSERVER_SYS_ARGV:  # 3.12's command line has no arguments after the code
-        return None if rest else _forkserver_command(listener, alive, preload, authkey, [])
-    return _forkserver_command(listener, alive, preload, {**authkey, "sys_argv": rest}, rest)
+        return None if rest else _forkserver_command(listener, alive, preload, passed, [])
+    return _forkserver_command(listener, alive, preload, {**passed, "sys_argv": rest}, rest)
 
 
 def _forkserver_command(

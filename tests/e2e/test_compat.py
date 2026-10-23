@@ -19,10 +19,12 @@ from pathlib import Path
 
 import pytest
 
+from fsbpyr.build import TARGET_PYTHON
 from fsbpyr.cli import main
 from fsbpyr.payload.reader import Executable
 from fsbpyr.runtime.registry import Runtime
 
+from ..support import wheels
 from ..support.differential import assert_same, make_venv
 from ..support.stderr import noise
 
@@ -122,6 +124,7 @@ def _run(executable: Path, cache: Path, *args: str) -> subprocess.CompletedProce
 def test_compatibility_matrix(
     compat: Path, compat_venv: Path, url: str, tmp_path: Path, check: str
 ) -> None:
+    wheels.skip_without(check, TARGET_PYTHON)  # a check is named after the package it exercises
     env = {"FSBPYR_CACHE_DIR": str(tmp_path / "cache")}
 
     result = assert_same(compat_venv, compat, [check, url], env=env)

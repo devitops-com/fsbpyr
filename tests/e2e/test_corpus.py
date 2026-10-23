@@ -16,10 +16,11 @@ from pathlib import Path
 
 import pytest
 
+from fsbpyr.build import TARGET_PYTHON
 from fsbpyr.cli import main
 from fsbpyr.runtime.registry import Runtime
 
-from ..support import corpus
+from ..support import corpus, wheels
 from ..support.differential import Outcome, make_venv, run_both
 
 pytestmark = pytest.mark.slow
@@ -72,6 +73,7 @@ def test_corpus_app_matches_its_venv(
     app: str, runtime: Runtime, tmp_path_factory: pytest.TempPathFactory,
     request: pytest.FixtureRequest,
 ) -> None:
+    wheels.skip_without(app, TARGET_PYTHON)  # an app is named after the package it exercises
     if reason := corpus.known_failure(app):
         request.applymarker(pytest.mark.xfail(reason=reason, strict=True))
     tmp = tmp_path_factory.mktemp(app)

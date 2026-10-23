@@ -1,4 +1,4 @@
-"""What differs between the Python versions fsbpyr itself runs on (3.12 to 3.14)."""
+"""What differs between the Python versions fsbpyr itself runs on (3.12 to 3.15)."""
 
 import os
 import sys

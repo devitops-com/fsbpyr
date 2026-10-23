@@ -2,7 +2,9 @@
 
 Needs podman with the images below (pulled on first use) and the cached runtime. When
 FSBPYR_PORTABILITY_APPS names a directory with the four built apps (tools/portability-apps.sh,
-`make test-portability`), they are used as they are and no runtime is needed.
+`make test-portability`), they are used as they are and no runtime is needed. On a Python that
+onnxruntime has no wheel for (tests/support/no-wheels.txt), heavy and heavy-pip are not built
+and what runs them is skipped; so are the compat checks of packages without a wheel.
 """
 
 import json
@@ -15,12 +17,14 @@ from pathlib import Path
 
 import pytest
 
+from fsbpyr.build import TARGET_PYTHON
 from fsbpyr.cli import main
 from fsbpyr.natives import glibc_libraries
 from fsbpyr.payload.format import NATIVE_KINDS
 from fsbpyr.payload.reader import Executable
 from fsbpyr.project import LockSource
 
+from ..support import wheels
 from ..support.images import images_for
 from ..support.stderr import NO_HOSTNAME, ONNX_HOST
 from .test_compat import MATRIX
@@ -33,14 +37,28 @@ pytestmark = [pytest.mark.slow, pytest.mark.skipif(PODMAN is None, reason="needs
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "projects"
 IMAGES = images_for(platform.machine())  # x86-64: all 11; aarch64: those with an arm64 variant
+
+
+def _apps_python() -> str:
+    """The Python the apps are built for (X.Y): a prebuilt set's, which a variant built, else
+    this run's."""
+    if prebuilt := os.environ.get("FSBPYR_PORTABILITY_APPS"):
+        with Executable.open(Path(prebuilt) / "hello") as executable:
+            return str(json.loads(executable.payload.build_info)["python"]).rpartition(".")[0]
+    return TARGET_PYTHON
+
+
+APPS_PYTHON = _apps_python()
+HEAVY_APPS = () if wheels.missing("onnxruntime", APPS_PYTHON) else ("heavy", "heavy-pip")
 COMMANDS = {  # (binary, arguments) -> expected stdout; the HTTP checks need the host's network
     ("hello", "5 x"): "hello ['5', 'x']",
-    **{("heavy", check): out for check, out in HEAVY.items()},
-    **{("heavy-pip", check): out for check, out in HEAVY.items()},  # requirements.txt project
+    # heavy-pip is heavy kept with pip (requirements.txt); a compat check is named after the
+    # package it exercises
+    **{(app, check): out for app in HEAVY_APPS for check, out in HEAVY.items()},
     **{
         ("compat", check): out
         for check, out in MATRIX.items()
-        if check not in ("requests", "httpx")
+        if check not in ("requests", "httpx") and not wheels.missing(check, APPS_PYTHON)
     },
 }
 _GLIBC = re.compile(r"GLIBC_(\d+)\.(\d+)")
@@ -54,10 +72,12 @@ def apps(tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureReques
         return Path(prebuilt)
     request.getfixturevalue("runtime")
     directory = tmp_path_factory.mktemp("portable")
-    for name in ("hello", "heavy", "compat"):
+    for name in ("hello", "heavy", "compat") if HEAVY_APPS else ("hello", "compat"):
         project = directory / "src" / name
         shutil.copytree(FIXTURES / name, project)
         assert main(["build", str(project), "-o", str(directory / name)]) == 0
+    if not HEAVY_APPS:
+        return directory
     pip_project = directory / "src" / "heavy-pip"  # maintained with pip: hash-pinned, no uv.lock
     shutil.copytree(FIXTURES / "heavy", pip_project)
     subprocess.run([UV or "uv", "export", "--quiet", "--frozen", "--no-dev", "--no-emit-project",
@@ -106,6 +126,7 @@ def _podman(apps: Path, image: str, script: str) -> subprocess.CompletedProcess[
 @pytest.mark.parametrize("image", IMAGES)
 def test_selftest_natives_passes_on_older_distributions(apps: Path, image: str) -> None:
     """NAT-4: every extension of heavy finds its libraries and versions on each image."""
+    wheels.skip_without("onnxruntime", APPS_PYTHON)
     result = _podman(apps, image, "FSBPYR_CACHE_DIR=/tmp/cache FSBPYR_SELFTEST=natives /apps/heavy")
 
     assert result.returncode == 0, f"{image}: {result.stdout}{result.stderr}"
@@ -113,6 +134,7 @@ def test_selftest_natives_passes_on_older_distributions(apps: Path, image: str) 
 
 
 def test_selftest_natives_names_a_library_the_machine_lacks(apps: Path) -> None:
+    wheels.skip_without("onnxruntime", APPS_PYTHON)
     script = ("rm -f /usr/lib/*-linux-gnu/libstdc++.so.6* /lib/*-linux-gnu/libstdc++.so.6*; "
               "FSBPYR_CACHE_DIR=/tmp/cache FSBPYR_SELFTEST=natives /apps/heavy")  # fmt: skip
     result = _podman(apps, "docker.io/library/debian:12", script)  # the layout the rm names
@@ -151,6 +173,8 @@ def _objdump_versions(data: bytes, scratch: Path) -> dict[str, dict[str, str]]:
 def test_reported_system_libraries_match_the_binary(apps: Path, tmp_path: Path, name: str) -> None:
     """Every library and version namespace the build reports is one the objects need, with the
     newest version among them; hello needs nothing beyond glibc's libraries."""
+    if name.startswith("heavy"):
+        wheels.skip_without("onnxruntime", APPS_PYTHON)
     with Executable.open(apps / name) as executable:
         payload = executable.payload
         reported = json.loads(payload.build_info)["system"]["libraries"]
@@ -181,6 +205,8 @@ def test_reported_system_libraries_match_the_binary(apps: Path, tmp_path: Path, 
 def test_reported_glibc_requirement_matches_the_binary(
     apps: Path, tmp_path: Path, name: str
 ) -> None:
+    if name.startswith("heavy"):
+        wheels.skip_without("onnxruntime", APPS_PYTHON)
     with Executable.open(apps / name) as executable:
         payload = executable.payload
         reported = json.loads(payload.build_info)["glibc"]
