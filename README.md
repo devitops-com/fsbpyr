@@ -1,7 +1,7 @@
 # fsbpyr
 
 Fast single-binary Python CLI runtime: `fsbpyr build` turns a Python project (uv or pip) into one
-executable that carries CPython (3.12, 3.13 or 3.14), the project and its locked dependencies. The executable
+executable that carries CPython (3.12 to 3.15), the project and its locked dependencies. The executable
 needs nothing on the target machine but Linux x86-64 or aarch64 with glibc 2.34 or newer (the
 baseline every build targets and the tests run on: RHEL 9, Amazon Linux 2023, Ubuntu 22.04,
 Debian 12 and newer; `fsbpyr inspect` shows the glibc an executable actually needs), plus the
@@ -17,7 +17,7 @@ Modules are imported straight from the file, so startup stays close to plain CPy
 curl -LsSf https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh | sh
 ```
 
-The installer picks the build for this machine and the newest Python (see
+The installer picks the build for this machine and the default Python, 3.14 (see
 [Getting fsbpyr](#getting-fsbpyr)) and puts it in `~/.local/bin` (unless `$XDG_BIN_HOME` says
 otherwise).
 
@@ -52,7 +52,7 @@ attestation check and building fsbpyr from source are in [Getting fsbpyr](#getti
   projects too.
 - **Project:** a console script (`[project.scripts]`, or the build backend's own table such as
   setuptools' `entry_points`), or `--entry` with a script's name, a module or
-  `module:function`; and a `requires-python`, if it sets one, that admits 3.12, 3.13 or 3.14
+  `module:function`; and a `requires-python`, if it sets one, that admits one of 3.12 to 3.15
   (see "Which Python").
 - **Lock sources,** the first one found: a requirements file that `--requirements` or
   `requirements` names, `uv.lock` (the project's or its uv workspace's), `pylock.toml`,
@@ -61,11 +61,12 @@ attestation check and building fsbpyr from source are in [Getting fsbpyr](#getti
 
 ## Supported targets
 
-- **Python:** apps run the CPython of the fsbpyr that built them: 3.12.15, 3.13.17 or 3.14.9,
-  the version that fsbpyr embeds, which "Which Python" says how a build chooses. fsbpyr itself
-  needs Python 3.12 to 3.14 (D13) and one checkout builds all three variants (`make build
-  PYTHON=3.12`, see "Building from source"). Each release carries all three, for every
-  platform below.
+- **Python:** apps run the CPython of the fsbpyr that built them: 3.12.15, 3.13.17, 3.14.9 or
+  3.15.1, the version that fsbpyr embeds, which "Which Python" says how a build chooses. fsbpyr
+  itself needs Python 3.12 to 3.15 (D13) and one checkout builds all four (`make build
+  PYTHON=3.12`, see "Building from source"); 3.14 is the default (`.python-version`), which
+  `make build` and the installer take. Each release carries all four, for every platform
+  below.
 - **Platform:** Linux x86-64 and Linux aarch64 (arm64), with glibc. Each fsbpyr builds apps
   for the platform it runs on; there are no cross builds. The aarch64 builds and tests run on
   GitHub's arm64 runners, which have 4K pages; kernels with 16K or 64K pages are untested. On
@@ -106,7 +107,7 @@ build-constraint-dependencies` (read by `uv sync`, for `uv.lock` projects) or fr
 
 | Option | |
 |---|---|
-| `--python X.Y` | the Python to build for, 3.12 to 3.14, inside `requires-python` (default: `python` in `[tool.fsbpyr]`, else `.python-version`, else `requires-python` decides) |
+| `--python X.Y` | the Python to build for, 3.12 to 3.15, inside `requires-python` (default: `python` in `[tool.fsbpyr]`, else `.python-version`, else `requires-python` decides) |
 | `--entry NAME` | console script name, `module` or `module:function` (default: the only script) |
 | `-o, --output PATH` | where to write the executable (default: `dist/` and the console script's name) |
 | `--requirements FILE` | pinned requirements file, for pip projects without `pylock.toml` |
@@ -162,7 +163,7 @@ stderr. Only you know which arguments are safe, such as `--version` or `--help`.
 ### Which Python
 
 An app runs on the CPython of the fsbpyr that builds it, and there is one fsbpyr per Python
-(3.12, 3.13 and 3.14; "Getting fsbpyr"). `fsbpyr build` chooses the version, strongest first:
+(3.12 to 3.15; "Getting fsbpyr"). `fsbpyr build` chooses the version, strongest first:
 
 1. `--python X.Y` on the command line;
 2. `python = "X.Y"` in `[tool.fsbpyr]`: both are an error when the version is not supported or
@@ -482,7 +483,7 @@ The design, its decisions and the progress of each phase are in
 
 fsbpyr builds itself into a single executable, and that executable is the easiest way to run
 it: it carries its own runtime (CPython and the launcher), so building apps with it needs
-no compiler. There is one fsbpyr per Python version, 3.12, 3.13 and 3.14, each built with and
+no compiler. There is one fsbpyr per Python version, 3.12, 3.13, 3.14 and 3.15, each built with and
 carrying that version's runtime only; the apps it builds run on that Python. Each
 [release](https://github.com/devitops-com/fsbpyr/releases) carries all of them, built and
 attested by GitHub Actions. An asset is named with its Python and its target, the platform it
@@ -491,8 +492,8 @@ releases for `x86_64-linux-gnu` and `aarch64-linux-gnu` (Linux with glibc on x86
 so far.
 
 You need one of them: whichever Python it runs on, an fsbpyr builds a project for any of the
-three, downloading the matching one of its own release when the project needs another Python
-(see "Which Python"). The installer takes the newest Python's unless told another.
+four, downloading the matching one of its own release when the project needs another Python
+(see "Which Python"). The installer takes the default Python's, 3.14's, unless told another.
 
 ### The installer
 
@@ -522,7 +523,7 @@ into it, so a download is checked before it is used. A tag's own copy installs t
   reused. `--no-modify-path` or `FSBPYR_NO_MODIFY_PATH=1` leaves the shell files alone, and in
   GitHub Actions the directory goes to `$GITHUB_PATH` instead.
 
-Options: `--python X.Y` installs the fsbpyr that runs on that Python instead of the newest
+Options: `--python X.Y` installs the fsbpyr that runs on that Python instead of 3.14's
 (it stops, naming the release's Pythons, when there is none), `-h/--help`, `-q/--quiet`,
 `-v/--verbose`, `--no-modify-path`. Through the pipe:
 `curl ... | sh -s -- --python 3.13`. The installer is tested against a local HTTPS server
@@ -733,7 +734,7 @@ A rebuild checks the bytes themselves, at two levels:
   so run fsbpyr from source directly in the checkout above: it builds the runtime, then `stage1`,
   and `stage1` builds the file to compare. A runtime already in the cache under the same id is
   reused, not built again; an empty cache (`XDG_CACHE_HOME` set to a new directory) builds it
-  afresh. (b) is checked on every push to main, for each of the three variants and both
+  afresh. (b) is checked on every push to main, for each of the four Pythons and both
   targets, by the full suite's `reproduce` job (`.github/workflows/build.yml`), which rebuilds
   from a second checkout (another path and user, other caches, umask 077) and whose stage 3 the
   `compare` job checks against the build byte for byte; a release is made only from a commit
