@@ -1,6 +1,35 @@
 # `fsbpyr` vs. similar GitHub projects
 
-The first important distinction: [`devitops-com/fsbpyr`](<https://github.com/devitops-com/fsbpyr?utm_source=chatgpt.com>) is a Python application bundler and standalone runtime builder, not an AWS security scanner. It packages a Python project and its locked dependencies together with CPython into a single executable for Linux x86-64, so the target machine doesn't need Python installed.
+> **Note, 2026-10-23.** This evaluation was added on 2026-10-19 (commit c1aa348) and describes
+> fsbpyr as it was then: 0.20.0 plus a few unreleased commits. It is kept as written, with its
+> opinions, scores and descriptions of the other tools. The statements about fsbpyr below are not
+> updated; bracketed "[since ...]" markers flag facts that are no longer true. Since then (up to
+> 0.25.0; see CHANGELOG.md, README.md and docs/improvement-plan.md, which triages this
+> document):
+>
+> - Targets: Linux aarch64 with glibc besides x86-64 (0.21.0). Windows and macOS are still not
+>   supported; musl and macOS arm64 are planned and put aside.
+> - Pythons: apps can run CPython 3.12 and 3.13 as well as 3.14 (0.21.0), and 3.15 (0.25.0);
+>   3.14 stays the default. fsbpyr itself runs on 3.12 to 3.15.
+> - glibc baseline: 2.34, not 2.28; the launcher links against a Debian 12 sysroot (0.24.0).
+> - Getting it: `install.sh` (0.21.0) and `fsbpyr self update` (0.21.0). Each release has one
+>   executable per Python and target, with its `.xz`, `SHA256SUMS`, licence notices and a
+>   CycloneDX SBOM (0.22.0). The executables and SBOMs are attested by GitHub Actions.
+> - Reproducibility: every build is rebuilt independently (another runner, path, user and umask)
+>   and compared byte for byte, in the release workflow from 0.21.0 and in the full suite on
+>   every push to main since 0.24.0, when a release came to build only a commit that passed.
+> - Tests in CI: the full suite on every push to main and weekly, per target and Python, and the
+>   portability matrix on clean distribution images (0.21.0); a release needs both to have passed.
+>   A corpus of 11 real applications is built and compared with their venvs (0.21.0).
+> - Build manifest and diagnostics: `build_info` records the lock, every distribution's hash and
+>   the runtime's inputs; `inspect` shows the build options, where the bytes go and what the
+>   target must provide beyond glibc, and `--licenses` prints the notices (0.21.0);
+>   `FSBPYR_SELFTEST=natives` checks a target for missing libraries (0.22.0);
+>   docs/compatibility.md lists how an executable differs from a venv (0.21.0).
+> - Not done: a hook/plugin API, hidden-import discovery, module pruning and a compatibility
+>   dashboard service were rejected in docs/improvement-plan.md.
+
+The first important distinction: [`devitops-com/fsbpyr`](<https://github.com/devitops-com/fsbpyr?utm_source=chatgpt.com>) is a Python application bundler and standalone runtime builder, not an AWS security scanner. It packages a Python project and its locked dependencies together with CPython into a single executable for Linux x86-64 [since 0.21.0: also aarch64], so the target machine doesn't need Python installed.
 
 devitops-com/fsbpyr · GitHub
 
@@ -38,7 +67,7 @@ GitHub - Nuitka/Nuitka-standalone-backend: Enhanced CPython for usage in standal
 
 Most interesting for a self-contained Linux executable: `fsbpyr`
 
-Its differentiators are bundling CPython itself, avoiding a target-side Python installation, a glibc 2.28 compatibility target, executable integrity verification, and a reproducible self-hosting build process.
+Its differentiators are bundling CPython itself, avoiding a target-side Python installation, a glibc 2.28 [since 0.24.0: 2.34] compatibility target, executable integrity verification, and a reproducible self-hosting build process.
 
 [GitHub repository](<https://github.com/devitops-com/fsbpyr?utm_source=chatgpt.com>) · 82 commits and 0 stars shown on the repository page at review time.
 
@@ -57,8 +86,8 @@ The following is a qualitative comparison of the documented capabilities, not a 
 | Single distributable artifact | Yes | Yes | Yes | Yes | Yes |
 | Bundles Python runtime | Yes | Yes | Usually no | No | Yes |
 | Runs without target Python installation | Yes | Yes | Generally no | No | Yes |
-| Windows and macOS | No, Linux x86-64 target | Yes | Supported configurations | Yes, with caveats | Historically supported; verify current status |
-| Linux glibc baseline explicitly targeted | Yes, 2.28 | Platform-dependent | Platform-dependent | Platform-dependent | Configuration-dependent |
+| Windows and macOS | No, Linux x86-64 target [since 0.21.0: also aarch64] | Yes | Supported configurations | Yes, with caveats | Historically supported; verify current status |
+| Linux glibc baseline explicitly targeted | Yes, 2.28 [since 0.24.0: 2.34] | Platform-dependent | Platform-dependent | Platform-dependent | Configuration-dependent |
 | Dependency locking / reproducible inputs | Locked project dependencies | Build/specification driven | Strong locking support | pip-based packaging | Configuration-driven |
 | Native extensions | Supported, with constraints | Broad compatibility and hooks | Supported environments | Architecture-dependent | Supported, with integration work |
 | Built-in executable integrity verification | Yes, SHA-256 | Not an equivalent core feature | Not an equivalent core feature | Not an equivalent core feature | Not an equivalent core feature |
@@ -72,7 +101,7 @@ devitops-com/fsbpyr · GitHub
 
 A few important nuances:
 
-- fsbpyr: The most distinctive deployment model here is a standalone executable carrying CPython 3.14 and the application. It has controls for entry points, extras, native libraries, source inclusion, compression, offline builds, and inspection. Native extensions and packages that expect files on disk require special attention.
+- fsbpyr: The most distinctive deployment model here is a standalone executable carrying CPython 3.14 [since 0.21.0: or 3.12, 3.13; since 0.25.0: 3.15] and the application. It has controls for entry points, extras, native libraries, source inclusion, compression, offline builds, and inspection. Native extensions and packages that expect files on disk require special attention.
   devitops-com/fsbpyr · GitHub
   +1
 - PyInstaller: Much broader platform coverage and a mature ecosystem of hooks for packages such as NumPy and Qt. It collects an application and its dependencies with an interpreter, but the build generally needs to be performed on the target operating system.
@@ -161,7 +190,7 @@ GitHub
 
 ### A specific concern with fsbpyr: its support envelope
 
-The project targets Linux x86-64 with glibc 2.28 or newer and requires Python 3.14 for its own development package in the current `pyproject.toml`. Its README documents how native dependencies that cannot be built against its intended baseline may require special handling.
+The project targets Linux x86-64 [since 0.21.0: and aarch64] with glibc 2.28 [since 0.24.0: 2.34] or newer and requires Python 3.14 [since 0.21.0: 3.12 to 3.14; since 0.25.0: to 3.15] for its own development package in the current `pyproject.toml`. Its README documents how native dependencies that cannot be built against its intended baseline may require special handling.
 
 devitops-com/fsbpyr · GitHub
 

@@ -58,6 +58,8 @@ Spike code lives in `spikes/`. Build outputs go to `spikes/.out/`, which is git-
    objects target 2.17. Symbol versions bind to the host glibc at link time. A portable baseline
    needs a link against an old-glibc sysroot (moved to Phase 6c, D25; done: the stub now needs
    GLIBC_2.25). This confirms the risk listed in the plan.
+   Later: since 0.24.0 the sysroot is Debian 12 (glibc 2.36) and the baseline glibc 2.34
+   (D42; it replaced Debian 10 and 2.28 of D25).
 9. **SSL defaults.** `openssl_cafile=/etc/ssl/cert.pem` does not exist on Debian;
    `openssl_capath=/etc/ssl/certs` does. Real HTTPS verification has not been tested yet; that
    happens in Phase 6.
@@ -134,6 +136,8 @@ Spike code lives in `spikes/`. Build outputs go to `spikes/.out/`, which is git-
    **Decision D16:** all bytecode goes through the canonicalizer (`fsbpyr/bytecode.py`). It is
    tied to marshal version 5 and the CPython 3.14 code-object layout. A round-trip test over the
    full stdlib plus fixture dependencies is a required test.
+   Later: the canonicalizer handles marshal versions 4 (3.12, 3.13), 5 (3.14) and 6 (3.15,
+   which adds frozendict) since Phase 9 and 0.25.0, and so supports CPython 3.12 to 3.15 (D16, D43).
 
 ## Decisions
 
@@ -228,6 +232,13 @@ link differs from 3.14.
 Consequence for the plan: step 3's runtime build needs `libzstd.a` added to the link inputs
 for 3.12 and 3.13 (for 3.14 `_zstd` already pulls it in); the rest of the link, the HACL
 objects included, follows from `PYTHON.json` unchanged.
+
+Later: `link_inputs` adds `build/lib/libzstd.a` when no built-in module does, as this spike
+found. Since 0.23.0 the pinned release is PBS `20261021` (3.12.15, 3.13.17, 3.14.9) and the
+toolchain is LLVM 23.1.3's release tarball, not Debian's clang 22 (SEC-4 below). Since 0.24.0
+the sysroot link is Debian 12 with a glibc 2.34 baseline, not the 2.28 sysroot (D42). Since
+0.25.0 Python 3.15.1 is supported too; its libpython needs the unwinder (the JIT registers
+frames with libgcc's), and the launcher wraps `_dl_find_object` to stay on 2.34 (D43).
 
 ---
 

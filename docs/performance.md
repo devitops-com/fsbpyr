@@ -14,14 +14,16 @@ the boot code, and keep the old rows.
   Variants that are compared are run interleaved, so that a drift of the CPU clock hits both.
   Runs of 100 ms and more vary by about ±1.5 ms between rounds; repeat before trusting a
   difference of a few milliseconds.
-- "Bare CPython" is `python3.14 -I -S -c pass` (uv-managed CPython 3.14).
+- "Bare CPython" is `python3.14 -I -S -c pass` (uv-managed CPython 3.14; 3.14.9 in the rows of
+  0.24.0 and later) or, in the Python 3.15 row, `python3.15 -I -S -c pass` (uv-managed 3.15.1).
 - "Cache check" is the difference to a build of the same app whose cache check compares sizes
   only (a temporary measurement build, never released).
 
 ## Starting a no-op app
 
-The app's `main()` returns at once; the executable is 27.6 MB, about 21 MB of it launcher and
-static CPython.
+The app's `main()` returns at once; on Python 3.14 the executable is 27.8 MB (0.24.0 and 0.25.0:
+27,786,048 and 27,786,288 bytes), 20.9 MB of it launcher and static CPython and 6.7 MB the
+standard library; on 3.15 it is 29.7 MB (22.1 and 7.4 MB).
 
 | Release | Bare CPython | App | App without the integrity check | Integrity check |
 |---|---|---|---|---|
@@ -33,6 +35,19 @@ static CPython.
 | 0.9.0 (two rounds of 201) | 5.4–5.5 ms | 7.9–8.1 ms | 6.0–6.2 ms (1.11–1.12×) | 1.9–2.0 ms |
 | 0.14.0 (two rounds of 201) | 5.50–5.51 ms | 7.83–7.86 ms | 6.06–6.09 ms (1.10×) | 1.77 ms |
 | 0.15.0 (two rounds of 201; bare: PBS CPython 3.14.8) | 5.53–5.54 ms | 7.82 ms | 6.06 ms (1.10×) | 1.76 ms |
+| 0.24.0 (two rounds of 201; bare: uv CPython 3.14.9) | 5.43–5.46 ms | 7.61–7.66 ms | 5.97–6.02 ms (1.10×) | 1.64 ms |
+| 0.25.0 (two rounds of 201; as 0.24.0) | 5.43–5.46 ms | 7.63–7.66 ms | 5.99–6.02 ms (1.10×) | 1.64 ms |
+| 0.25.0 on Python 3.15 (two rounds of 201; bare: uv CPython 3.15.1) | 5.50–5.55 ms | 7.65–7.68 ms | 6.01–6.03 ms (1.09×) | 1.64–1.65 ms |
+
+The rows from 0.24.0 on were measured with `subprocess.run` as in the budget test, 5 warm-up
+runs and then 201 runs per variant per round, all variants of a round interleaved; the integrity
+check is `integrity_ns` of 201 further runs with `FSBPYR_TRACE=1`, interleaved with them.
+"App without the integrity check" is the app's p50 minus that p50, as in the 0.7.0 row (no
+measurement build). The 0.24.0 app was built by the release's `fsbpyr-3.14-x86_64-linux-gnu`,
+the 0.25.0 ones from the checkout; 0.24.0 (Debian 12 sysroot, glibc 2.34 baseline, LLVM 23) and
+0.25.0 (`_dl_find_object` wrapper, Python 3.15) start 0.16 to 0.21 ms faster than 0.15.0 did
+in its session (bare CPython 0.07 to 0.11 ms faster, the integrity check 0.12 ms); 0.24.0 and
+0.25.0 do not differ on 3.14.
 
 Budget (`test_startup_is_within_budget_of_bare_cpython`): everything but the integrity check
 within 1.5× bare CPython (1.15× until 0.7.0, 1.2× until 0.10.0; the owner raised it twice on
@@ -251,9 +266,9 @@ section; bytes, so the sums are exact:
 | **file less trailer** | **27,702,096** | **77,068,697** | **28,939,163** |
 
 The floor of every app is the stub (20.9 MB: the launcher with CPython and its libraries linked
-in statically, D2) plus the standard library (6.7 MB), together 27.6 MB. `hello`
-adds about 100 KB of tables and a few hundred bytes of its own. In `heavy`, onnxruntime and numpy
-hold 31 of the 37 MB of natives.
+in statically, D2) plus the standard library (6.7 MB), together 27.6 MB at this commit
+(0.25.0's: see "Starting a no-op app"). `hello` adds about 100 KB of tables and a few hundred
+bytes of its own. In `heavy`, onnxruntime and numpy hold 31 of the 37 MB of natives.
 
 ## A PyTorch app (0.8.0, D34)
 
@@ -546,7 +561,8 @@ clean up is not worth it.
 
 ## Building a runtime
 
-`fsbpyr runtime build` links the launcher with PBS's static CPython under full LTO: 51.4 s on
+`fsbpyr runtime build` links the launcher with PBS's static CPython under full LTO (since 0.23.0
+with clang and lld 23; the figures here are from 0.15.0 and were not measured again): 51.4 s on
 one core (49.8 s of CPU), 2.3 GB peak RSS, over D38's 1 GB, in this one command (app builds
 reuse the runtime and never link). lld's `--lto-partitions=8` failed: CPython's static
 `compress` (`_bz2module.c`) and `lzma_free` (`_lzmamodule.c`) clash with zlib's and liblzma's

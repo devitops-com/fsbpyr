@@ -47,8 +47,11 @@ leading to it must be owned by root or by the user and writable by nobody else (
 ## Known limits
 
 - **A rewritten digest.** The digest sits in the file it protects. Someone who can change the
-  file can change the digest too. Only checking from outside catches that: the release
-  attestations and the reproduction steps in the README. A signature checked with an outside
+  file can change the digest too. Only checking from outside catches that: a release's
+  provenance and SBOM attestations (made by release.yml, checked with `gh attestation
+  verify`), the installer (`install.sh` checks each download against the SHA-256 the release
+  recorded and runs `fsbpyr inspect --verify`; `FSBPYR_VERIFY=1` adds the attestation) and the
+  reproduction steps in the README ("Verifying a release"). A signature checked with an outside
   key (D31) comes with signed releases, after the MVP.
 - **POSIX ACLs and shared primary groups.** The cache root check reads the mode bits and the
   owner. A POSIX ACL on the cache root, or a primary group shared with other users, can give

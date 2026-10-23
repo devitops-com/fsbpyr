@@ -60,7 +60,11 @@ these from the machine:
 ## Tested on
 
 The portability test builds the `hello`, `heavy` and `compat` fixtures once, copies them into
-each of these distributions with podman and runs every check there.
+each of these distributions with podman and runs every check there. CI does so for each Python
+(3.12 to 3.15) and each target (x86-64 and aarch64, on a runner of its architecture); on
+aarch64 every image but `archlinux:latest` (no arm64 variant) runs. On 3.15 `heavy` is not
+built (onnxruntime has no wheel) and the `compat` checks of packages without a usable wheel
+are skipped (README, "Python 3.15").
 
 | Distribution | glibc |
 |---|---|
@@ -104,11 +108,12 @@ list cannot drift from the code. It says nothing about packages that are not in 
 
 ## Tested on real applications
 
-Besides the fixtures, a corpus of small applications is built and run once a night, on every
-push to main and before a release (`full-suite.yml`). Each is a project in `tests/corpus/<name>`
-with its own `uv.lock`; the test runs its commands in a venv and in the built executable and
-compares exit code, stdout and stderr. A failing row is marked in its directory's
-`commands.toml`.
+Besides the fixtures, a corpus of small applications is built and run in the suite job of
+`full-suite.yml`: on every push to main, weekly and on request, for each Python (3.12 to 3.15)
+and each target (x86-64 and aarch64). A release itself runs no tests: it publishes a commit
+whose run passed. Each app is a project in `tests/corpus/<name>` with its own `uv.lock`; the
+test runs its commands in a venv and in the built executable and compares exit code, stdout and
+stderr. A failing row is marked in its directory's `commands.toml`.
 
 | App | Risk it covers | `[tool.fsbpyr]` |
 |---|---|---|
@@ -125,11 +130,11 @@ compares exit code, stdout and stderr. A failing row is marked in its directory'
 | `setuptools-vendor` | the libraries setuptools vendors | none |
 
 `tests/fixtures/projects/plugins` is a host and two plugin distributions with a custom
-entry-point group and a PEP 420 namespace they share. The apps were only run on Linux x86-64
-with the Python of `.python-version`, and only for the commands in their `commands.toml`.
-`distutils` imported before `setuptools` is not found in the executable; the
-`setuptools-vendor` app imports `setuptools` first, as the `compat` app does (*not
-investigated further*).
+entry-point group and a PEP 420 namespace they share. The apps are run only for the commands in
+their `commands.toml`. On Python 3.15 an app named after a package without a usable wheel
+(`gnureadline`) is skipped (README, "Python 3.15"). `import distutils` before `setuptools`
+resolves to setuptools' copy (the `distutils` check above); the `setuptools-vendor` app imports
+`setuptools` first.
 
 ## Troubleshooting
 
