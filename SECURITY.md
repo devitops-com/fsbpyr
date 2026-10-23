@@ -19,8 +19,9 @@ come in a new release, and older releases are not patched.
 
 ## The runtime in every executable
 
-Every executable fsbpyr builds, fsbpyr's own included, carries its own runtime: CPython 3.14
-from [python-build-standalone](https://github.com/astral-sh/python-build-standalone) (PBS),
+Every executable fsbpyr builds, fsbpyr's own included, carries its own runtime: the CPython of
+the fsbpyr that built it (3.12, 3.13, 3.14 or 3.15; one fsbpyr per Python version) from
+[python-build-standalone](https://github.com/astral-sh/python-build-standalone) (PBS),
 linked statically into the launcher together with the libraries that PBS links into CPython's
 built-in modules: OpenSSL, SQLite, expat, zlib, libffi, liblzma, mpdecimal, bzip2, zstd,
 ncurses, libedit and libuuid. The runtime uses none of the target machine's copies of them,
@@ -33,8 +34,9 @@ file. Updating them is up to the app, and takes a rebuild as well.
 
 ## Fixes to the runtime
 
-When a PBS release fixes a security issue in CPython 3.14 or in one of the libraries linked
-into it, an fsbpyr patch release built on that PBS release follows. The targets are 7 days
+When a PBS release fixes a security issue in one of the CPython versions fsbpyr carries (3.12
+to 3.15) or in one of the libraries linked into it, an fsbpyr patch release built on that PBS
+release follows, with the fixed runtime for every Python version. The targets are 7 days
 after the PBS release for high or critical issues, and 30 days otherwise.
 
 The patch release's CHANGELOG entry, under `### Security`, names the components it updates
