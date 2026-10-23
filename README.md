@@ -65,7 +65,8 @@ attestation check and building fsbpyr from source are in [Getting fsbpyr](#getti
   3.15.1, the version that fsbpyr embeds, which "Which Python" says how a build chooses. fsbpyr
   itself needs Python 3.12 to 3.15 (D13) and one checkout builds all four (`make build
   PYTHON=3.12`, see "Building from source"); 3.14 is the default (`.python-version`), which
-  `make build` and the installer take. Each release carries all four, for every platform
+  `make build` and the installer take, and the one to build apps with until the packages they
+  need publish 3.15 wheels ("Python 3.15"). Each release carries all four, for every platform
   below.
 - **Platform:** Linux x86-64 and Linux aarch64 (arm64), with glibc. Each fsbpyr builds apps
   for the platform it runs on; there are no cross builds. The aarch64 builds and tests run on
@@ -187,6 +188,33 @@ arguments, so only the variants a project needs are downloaded, and a cached one
 offline. A developer build (`fsbpyr --version` starts with `untagged`) never downloads a
 variant, which would mix released code into a development build: it stops and says how to
 build the variant from a checkout, `make build PYTHON=3.X`.
+
+### Python 3.15
+
+fsbpyr builds for 3.15 since 0.25.0, but 3.14 stays the default, and 3.14 is the one to use for
+now: some widely used packages publish no wheel for 3.15 yet, or none that fsbpyr's glibc 2.34
+baseline can use. Until the packages your project needs have them, build with 3.14:
+`--python 3.14`, `python = "3.14"` in `[tool.fsbpyr]` or `3.14` in `.python-version`. The 3.15
+fsbpyr builds such a project with its release's 3.14 fsbpyr (see above). What to expect on
+3.15, as of 0.25.0 (2026-10-23):
+
+- **No wheel and no source distribution:** onnxruntime (1.31.0). A project that needs it does
+  not build for 3.15; uv stops with "doesn't have a source distribution or wheel for the
+  current platform".
+- **A source distribution only:** PyYAML (6.0.3) and gnureadline (8.3.3). uv builds them on the
+  build host, which then needs a compiler and their headers (libyaml for PyYAML's C loader,
+  readline for gnureadline), and the result is not reproducible on another host. PyYAML built
+  this way may come without its C loader: in fsbpyr's tests `yaml.CSafeLoader` was missing.
+- **Wheels above the baseline:** orjson's 3.15 wheels (3.13.0) need glibc 2.39, so uv takes its
+  source distribution instead, which needs Rust.
+- **Older releases in a lock:** a version locked before 3.15 came out may have no 3.15 wheel
+  where a newer one does (pydantic-core 2.46.5 but 2.50.1, charset-normalizer 3.4.7 but
+  3.5.2): `uv lock --upgrade-package NAME` takes the newer one.
+
+The build prints `built on this host from sdists, not reproducible elsewhere:` and the names of
+every distribution that had no usable wheel. It is information, not a warning: `--strict` does
+not fail on it. fsbpyr's own tests pass on 3.15 except what needs these packages, which they
+skip there (`tests/support/no-wheels.txt`).
 
 ## Failing a build on warnings
 

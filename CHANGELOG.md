@@ -31,7 +31,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   wheel for 3.15 on the glibc 2.34 baseline yet: onnxruntime cannot be installed on 3.15, the
   others build from their source distributions, which needs a compiler and is not
   reproducible elsewhere. The tests skip what needs them on 3.15
-  (`tests/support/no-wheels.txt`). Runtime ids, old → new (the launcher changed):
+  (`tests/support/no-wheels.txt`). The README's "Python 3.15" says what to expect and
+  recommends 3.14 until the wheels arrive. Runtime ids, old → new (the launcher changed):
   - x86-64: 3.12 `2802099b1e2f` → `282353998cfd`, 3.13 `db1aa8b7e5a1` → `6b9a06deed47`,
     3.14 `e43c48d54bac` → `bb7355139ff5`, 3.15 `d7b164c2b695`;
   - aarch64: 3.12 `c7dcb94ca154` → `4e29760fea67`, 3.13 `fd4779d965e7` → `5cb6f4775994`,
