@@ -10,6 +10,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-23
+
 ### Added
 - **Python 3.15.** A fourth fsbpyr runs on CPython 3.15.1 (`fsbpyr-3.15-<target>`, for both
   targets) and builds apps that run on it; the others build a 3.15 project by fetching it, as
