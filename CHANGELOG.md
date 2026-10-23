@@ -10,6 +10,12 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Fixed
+- **The README's rebuild of a release passes the asset's Python.** `fsbpyr-3.12-...` and
+  `fsbpyr-3.13-...` built the checkout with the Python its `.python-version` names, 3.14, by
+  handing the build to the release's 3.14 executable, so the comparison failed; `--python`
+  makes each rebuild itself, as CI's variant check does.
+
 ## [0.24.0] - 2026-10-22
 
 ### Changed

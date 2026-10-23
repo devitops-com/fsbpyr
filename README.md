@@ -691,12 +691,15 @@ chmod +x "$asset"
 want="$(./"$asset" inspect "$asset" | awk '$1 == "uv" { print $2; exit }')"
 [ "$(uv --version | cut -d' ' -f2)" = "$want" ] || echo "install uv $want first: this uv differs"
 git clone --branch "$tag" https://github.com/devitops-com/fsbpyr.git src
-(cd src && ../"$asset" build . -o ../rebuilt)
+python="${asset#fsbpyr-}"; python="${python%%-*}"   # the asset's Python: 3.14, 3.12, ...
+(cd src && ../"$asset" build . --python "$python" -o ../rebuilt)
 cmp "$asset" rebuilt && echo identical
 ```
 
-A variant rebuilds itself like the newest: each executable carries its own Python's runtime
-and builds with it. Its Python must be installed with uv (`uv python install 3.12`).
+`--python` makes each executable rebuild itself with the runtime it carries. Without it the
+checkout's `.python-version` (3.14) decides, and `fsbpyr-3.12-x86_64-linux-gnu` hands the
+build to the release's 3.14 executable, which builds itself. A variant's Python must be
+installed with uv (`uv python install 3.12`).
 
 A rebuild checks the bytes themselves, at two levels:
 
