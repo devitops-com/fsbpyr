@@ -322,7 +322,7 @@ project's directory: nothing in it names the builder's paths, time or host.
 | `system` | `{libraries, may_load}`: the system libraries the target must provide, and with `--hints` those the Python code may open by name |
 | `zstd_level` | the zstd level of the app's content and of every block |
 | `native_compression` | `xz -6` or `zstd`: how native files are stored |
-| `interpreter_reexec` | whether `-m MODULE` and `-c CODE` in the arguments of a child process that runs this executable run as the interpreter would (D23) |
+| `interpreter_reexec` | what a child process of this executable that asks for Python (`-m MODULE`, `-c CODE`, a `.py` file of the payload) gets: `true` runs it as the interpreter would (D23), `false` runs the app, `null` (not set) refuses it with exit 70 (D44) |
 
 The keys come from `src/fsbpyr/assemble.py` (the runtime's) and `src/fsbpyr/build.py` (the
 application's); see D28, D26, NAT-2, D29, D33, D23 and D27 for their history.

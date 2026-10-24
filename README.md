@@ -120,7 +120,7 @@ build-constraint-dependencies` (read by `uv sync`, for `uv.lock` projects) or fr
 | `--fast-compression / --no-fast-compression` | zstd level 3 instead of 9 (the standard library's files of 64 KiB and more stay level 9): a faster build, up to ~9% larger for large apps (measured with 0.14.0 and 0.15.0, docs/performance.md) |
 | `--best-compression / --no-best-compression` | native files (extension modules and shared libraries, nothing else) as xz -6 instead of zstd 9: about 11% smaller for an app with numpy and onnxruntime (measured with 0.20.0, docs/performance.md), no change for pure-Python apps, a slower build, and a slower first run, which decodes them into the cache; not with `--fast-compression` |
 | `--hints / --no-hints` | also list packages that may read files next to `__file__`, and system libraries the code may open by name (guesses) |
-| `--interpreter-reexec / --no-interpreter-reexec` | let the app's own children started as `sys.executable -m MODULE` or `-c CODE` run as Python |
+| `--interpreter-reexec / --no-interpreter-reexec` | let the app's own children started as `sys.executable -m MODULE`, `-c CODE` or with a script of the app run as Python, or (--no-...) run the app in them, for an app whose own options are named -m or -c; with neither, they are refused (exit 70) |
 | `--smoke / --no-smoke` | run the new executable once as a smoke test (default) or skip it |
 | `--smoke-args ARGS` | also run the new executable once with ARGS (one string, split like a shell would), for example "--version", and fail the build unless it exits 0; only you know which arguments have no side effects |
 | `--strict / --no-strict` | fail the build, leaving the output as it was, on any warning about the app and on an unlocked build; requirements files must pin and hash every line |
@@ -446,14 +446,29 @@ caller's environment. See [docs/security.md](docs/security.md).
 ### Helper interpreters
 
 In an executable, `sys.executable` is the app. multiprocessing works with every start method:
-the app recognizes the children it re-executes. Other code that starts a helper interpreter
-that way, `subprocess.run([sys.executable, "-m", "pkg.tool", ...])` or `-c CODE`, gets the
-app instead, unless it was built with `--interpreter-reexec`. Then such a child runs the
-module (from the executable) or the code as Python would, interpreter flags such as `-u` or
-`-B` accepted and ignored. Only a child of the app itself does: the same command line from a
-shell, a script or sudo runs the app, with these arguments, so a sudo rule for the app never
-hands out an interpreter. The option is off by default because an app that starts itself with
-options of its own named `-m` or `-c` would run Python instead.
+the app recognizes the children it re-executes. Other code starts helper interpreters that way
+too: joblib's workers (`n_jobs`), Jupyter kernels, py-cpuinfo,
+`subprocess.run([sys.executable, "-m", "pkg.tool", ...])`. Such a child asks for Python with
+`-m MODULE`, `-c CODE` or a script of the app (`sys.executable` and a `.py` file below the
+executable), and what it gets depends on the build:
+
+- built with `--interpreter-reexec` (`interpreter-reexec = true`): it runs the module, the
+  code or the script (from the executable) as Python would, interpreter flags such as `-u` or
+  `-B` accepted and ignored;
+- built with neither option: it is refused, with exit 70 and a message naming what it asked
+  for and the option. Running the app in its place would make every such child start the app
+  again, and every copy start more: joblib's `n_jobs=2` makes three copies per copy;
+- built with `--no-interpreter-reexec` (`interpreter-reexec = false`): it runs the app, with
+  these arguments, for an app whose own options are named `-m` or `-c` and which starts itself
+  with them. A `-c` whose value is a name or a constant, such as `-c config.toml`, is the app's
+  option in any build.
+
+Only a child of the app itself is treated so: the same command line from a shell, a script or
+sudo runs the app, with these arguments, so a sudo rule for the app never hands out an
+interpreter. An app that starts itself again in a chain of four is refused at the fifth
+(exit 70), whatever the arguments: code that starts `sys.executable` in another way cannot
+start the app without end. The build lists the libraries it finds that start helper
+interpreters (joblib, jupyter_client, py-cpuinfo, multiprocess, torch's inductor).
 
 ### The cache cleans itself
 

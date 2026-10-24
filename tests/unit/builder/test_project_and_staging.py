@@ -218,17 +218,20 @@ def test_fs_packages_must_be_package_names(tmp_path: Path, value: str) -> None:
         load_config(project)
 
 
-def test_interpreter_reexec_is_off_unless_the_project_or_the_command_line_asks(
+def test_interpreter_reexec_is_unset_unless_the_project_or_the_command_line_chooses(
     tmp_path: Path,
 ) -> None:
+    """Unset (None) refuses helper interpreters at run time, false runs the app (D44)."""
     default = load_config(Project.load(_project(tmp_path, PYPROJECT)))
     flagged = load_config(Project.load(_project(tmp_path, PYPROJECT)), interpreter_reexec=True)
+    refused = load_config(Project.load(_project(tmp_path, PYPROJECT)), interpreter_reexec=False)
     configured = load_config(
-        Project.load(_project(tmp_path, PYPROJECT + "interpreter-reexec = true\n"))
+        Project.load(_project(tmp_path, PYPROJECT + "interpreter-reexec = false\n"))
     )
 
-    assert (default.interpreter_reexec, flagged.interpreter_reexec) == (False, True)
-    assert configured.interpreter_reexec is True
+    assert (default.interpreter_reexec, flagged.interpreter_reexec) == (None, True)
+    assert refused.interpreter_reexec is False
+    assert configured.interpreter_reexec is False
 
 
 def test_smoke_args_come_from_the_project_and_the_command_line_wins(tmp_path: Path) -> None:

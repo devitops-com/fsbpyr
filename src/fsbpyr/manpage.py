@@ -19,8 +19,11 @@ EXIT_STATUS = (
     ("1", "The command failed; the reason is on standard error."),
     ("2", "Usage error: an unknown command or option, or a value the command refuses."),
     ("130", "Interrupted (Ctrl-C)."),
-    ("70", "An executable built by fsbpyr refused to start: its integrity check failed, the "
-           "file was modified or damaged. Printed by the built app, not by `fsbpyr`."),
+    ("70", "An executable built by fsbpyr refused to start: its integrity check failed (the "
+           "file was modified or damaged), it was started set-uid, set-gid or with file "
+           "capabilities, it was started by itself as a Python interpreter without "
+           "`--interpreter-reexec`, or it keeps starting itself. Printed by the built app, not "
+           "by `fsbpyr`."),
 )
 
 # (variable, meaning): the ones fsbpyr or an executable it built reads; a test keeps this

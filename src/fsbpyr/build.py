@@ -28,7 +28,7 @@ from .elf import ElfError, glibc_requirement, is_elf
 from .manifest import SCHEMA, LockError, built_here, dist_records, lock_record
 from .natives import opened
 from .payload.format import NATIVE_KINDS, ModuleKind
-from .payload.spec import XZ_PRESET, Dist, File
+from .payload.spec import XZ_PRESET, Dist, File, Module
 from .payload.spill import Spill
 from .payload.writer import commit
 from .project import LockSource, Project, ProjectError, unpinned_requirements
@@ -243,6 +243,33 @@ def best_compression_unused(*, best_compression: bool, files: Iterable[File]) ->
         return []
     return ["best-compression has nothing to compress: no extension modules or shared "
             "libraries were packaged, and it compresses nothing else"]  # fmt: skip
+
+
+# Libraries that start helper interpreters through sys.executable (D44): the module that shows
+# one is packaged, its name, and what it starts.
+HELPER_INTERPRETERS = (
+    ("joblib.externals.loky", "joblib", "workers and a resource tracker for n_jobs"),
+    ("loky", "loky", "workers and a resource tracker"),
+    ("jupyter_client", "jupyter_client", "kernels"),
+    ("cpuinfo", "py-cpuinfo", "its cpuinfo.py, for the CPU's details"),
+    ("multiprocess", "multiprocess", "children with the spawn and forkserver start methods"),
+    ("torch._inductor.compile_worker", "torch", "compile workers for torch.compile"),
+)
+
+
+def helper_interpreter_hints(modules: Iterable[Module], reexec: bool | None) -> list[str]:
+    """A note on the packaged libraries that start helper interpreters, unless the build runs
+    them (D23): without the setting they are refused, with ``false`` they run the app."""
+    if reexec is True:
+        return []
+    names = {module.name for module in modules}
+    found = [f"{who} ({what})" for module, who, what in HELPER_INTERPRETERS if module in names]
+    if not found:
+        return []
+    outcome = ("they run the app (--no-interpreter-reexec)" if reexec is False else
+               "they are refused (exit 70) unless the app is built with --interpreter-reexec")
+    return [Uncounted(f"these may start helper interpreters through sys.executable: "
+                      f"{', '.join(found)}; {outcome}")]  # fmt: skip
 
 
 def unpinned_warning(unpinned: list[str]) -> list[str]:
@@ -466,7 +493,8 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                     f"{', '.join(walk.unreachable)} (they come from the lock or requirements file)"
                 )
             warnings += [*content.warnings, *best_compression_unused(
-                best_compression=config.best_compression, files=content.files)]  # fmt: skip
+                best_compression=config.best_compression, files=content.files),
+                *helper_interpreter_hints(content.modules, config.interpreter_reexec)]  # fmt: skip
             glibc, glibc_warnings = glibc_report(runtime.stub, content.glibc,
                                                  baseline=baseline.baseline)  # fmt: skip
             libraries, system_warnings = system_report(runtime.stub, content.system)
@@ -497,7 +525,9 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                         "native_compression",
                         f"xz -{XZ_PRESET}" if config.best_compression else "zstd",
                     ),
-                    ("interpreter_reexec", config.interpreter_reexec),  # read at start (D23)
+                    # read at start: true runs helper interpreters (D23), false runs the
+                    # app in them, null refuses them (D44)
+                    ("interpreter_reexec", config.interpreter_reexec),
                     ("git", git_state(project.directory,
                                       warn=lambda note: warnings.append(Uncounted(note)))),
                     # fsbpyr's own, self update

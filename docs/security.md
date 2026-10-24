@@ -36,7 +36,7 @@ targets are in [SECURITY.md](../SECURITY.md).
 | D19 | Corrupt code objects: every code blob is a checksummed zstd frame, and readers require the checksum, so `marshal.loads` never sees damaged bytes. |
 | D20 | Another user planting a runtime or stub: cache directories must be the user's own and are forced to 0700; the cached runtime's digests are verified on load. |
 | D22 | A caller pretending to be multiprocessing: the three child command lines are matched exactly and decoded with `ast.literal_eval`, never executed, and run only if the parent is this same executable (device and inode of `/proc/<ppid>/exe`) with the same real and effective user and group ids. |
-| D23 | The same for `-m` and `-c` helper interpreters, which exist only with `--interpreter-reexec`; any other caller gets the app. |
+| D23, D44 | The same for helper interpreters (`-m`, `-c`, a `.py` file of the app), which run only with `--interpreter-reexec`; without the setting the app's own children asking for one exit 70, and any other caller gets the app. |
 | D31 | A changed executable: the launcher checks the whole file against the digest in its trailer before it reads anything else. |
 | D41 (SEC-3) | A privileged start: when the kernel sets AT_SECURE (set-uid, set-gid, file capabilities) the executable exits 70, because the cache location would come from the caller's environment and, under set-gid or capabilities, the invoking user would own the cache. |
 

@@ -120,8 +120,10 @@ def cli(ctx: click.Context) -> None:
               help="also list packages that may read files next to `__file__`, "
                    "and system libraries the code may open by name (guesses)")  # fmt: skip
 @click.option("--interpreter-reexec/--no-interpreter-reexec", default=None,
-              help="let the app's own children started as `sys.executable -m MODULE` or "
-                   "`-c CODE` run as Python")  # fmt: skip
+              help="let the app's own children started as `sys.executable -m MODULE`, "
+                   "`-c CODE` or with a script of the app run as Python, or (--no-...) run the "
+                   "app in them, for an app whose own options are named -m or -c; with "
+                   "neither, they are refused (exit 70)")  # fmt: skip
 @click.option("--smoke/--no-smoke", default=None,
               help="run the new executable once as a smoke test (default) or skip it")  # fmt: skip
 @click.option("--smoke-args", "smoke_args_text", metavar="ARGS",

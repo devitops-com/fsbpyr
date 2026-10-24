@@ -28,7 +28,9 @@ class BuildConfig:
     hints: bool = False  # also print guesses (packages that may read files next to __file__)
     fast_compression: bool = False  # zstd level 3 instead of 9 for app content (D29)
     best_compression: bool = False  # native files as xz -6 (D33): smaller, slower to build
-    interpreter_reexec: bool = False  # -m/-c from the app's own children run as Python (D23)
+    # -m/-c/payload scripts from the app's own children: True runs them as Python (D23),
+    # False runs the app in them, None (unset) refuses them (D44)
+    interpreter_reexec: bool | None = None
     strict: bool = False  # a warning about the app, or an unlocked build, fails the build
     python: str | None = None  # "3.12": the Python to build for; None: the version rule decides
 
@@ -132,7 +134,8 @@ CONFIG_KEYS = (
     ConfigKey("strict", "strict", _flag,
               "Boolean. Fail the build on warnings; as `--strict`."),
     ConfigKey("interpreter-reexec", "interpreter_reexec", _flag,
-              "Boolean. Children the app starts with `-m` or `-c` run as Python; "
+              "Boolean. true: children the app starts as Python (`-m`, `-c`, a script of the "
+              "app) run as Python; false: they run the app; unset: they are refused (exit 70); "
               "as `--interpreter-reexec`."),
 )
 _KEYS_BY_NAME = {key.name: key for key in CONFIG_KEYS}
