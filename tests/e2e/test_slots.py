@@ -25,7 +25,7 @@ CPUS = len(os.sched_getaffinity(0))
 @pytest.fixture(scope="module")
 def probe(launcher_build: LauncherBuild, tmp_path_factory: pytest.TempPathFactory) -> Path:
     out = tmp_path_factory.mktemp("probe") / "slots"
-    flags = ("-fsanitize=undefined", "-fno-sanitize-recover=undefined")
+    flags = ("-Wl,--wrap=geteuid", "-fsanitize=undefined", "-fno-sanitize-recover=undefined")
     return launcher_build.compile(out, [PROBE, "slots.c"], *flags)
 
 
@@ -182,13 +182,9 @@ def _make(path: Path, kind: str) -> None:
         (path.parent / "elsewhere").write_bytes(b"")
         (path.parent / "elsewhere").chmod(0o600)
         path.symlink_to(path.parent / "elsewhere")
-    else:  # someone else's: needs root to make
+    else:  # ours, while the probe takes itself for another user (PROBE_EUID): someone else's
         path.write_bytes(b"")
         path.chmod(0o600)
-        try:
-            os.chown(path, 65534, 65534)
-        except OSError:
-            pytest.skip("making a file someone else's needs root")
 
 
 @pytest.mark.parametrize("kind", ["open to the group", "fifo", "directory", "symlink",
@@ -199,12 +195,15 @@ def test_a_slot_file_not_ours_alone_is_passed_over(
     bad, good = tmp_path / "bad", tmp_path / "good"
     bad.mkdir()
     good.mkdir()
-    _make(bad / f"fsbpyr-{os.geteuid()}", kind)
+    other = kind == "someone else's"  # no chown without root: the probe runs as another euid
+    euid = os.geteuid() + other
+    _make(bad / f"fsbpyr-{euid}", kind)
 
-    alone = [starts.start(bad, limit=1)[1] for _ in range(2)]
+    alone = [starts.start(bad, limit=1, PROBE_EUID=str(euid))[1] for _ in range(2)]
     assert alone == [["unguarded"], ["unguarded"]]  # never refused for the guard's own sake
-    assert starts.start(bad, good, limit=1)[1] == ["held"]  # the next directory's file
-    assert _refused(starts.start(bad, good, limit=1)[0])
+    if not other:  # as another euid every file the probe makes is someone else's, good's too
+        assert starts.start(bad, good, limit=1)[1] == ["held"]  # the next directory's file
+        assert _refused(starts.start(bad, good, limit=1)[0])
 
 
 def test_without_a_usable_directory_starts_are_unguarded(starts: Starts, tmp_path: Path) -> None:
