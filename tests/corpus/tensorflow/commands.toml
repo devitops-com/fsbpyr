@@ -1,9 +1,3 @@
-# Fails today (found by this corpus): libtensorflow_framework.so.2's RUNPATH lists the
-# directories of every NVIDIA package ($ORIGIN/../nvidia/.../lib, about 20,000 bytes), and
-# fsbpyr's ELF reader takes a dynamic string of at most 4096 bytes (_MAX_NAME, src/fsbpyr/elf.py):
-# the build stops. Remove when the reader accepts long RUNPATHs.
-known-failure = "the build stops: libtensorflow_framework.so.2's 20 KB RUNPATH is longer than the ELF reader takes"
-
 expect = "saved model ["
 
 [[command]]

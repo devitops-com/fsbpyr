@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.elf import (
+    _MAX_NAME,
+    _MAX_SEARCH_PATH,
     DynamicInfo,
     ElfError,
     dynamic_info,
@@ -117,6 +119,26 @@ def test_out_of_range_string_offsets_are_rejected() -> None:
 
     with pytest.raises(ElfError, match="string"):
         dynamic_info(bytes(data))
+
+
+def test_a_runpath_can_be_far_longer_than_other_names() -> None:
+    long = ":".join(f"$ORIGIN/../nvidia/pkg{n}/lib" for n in range(800))  # about 24 KB
+    info = dynamic_info(make_elf(runpath=long, rpath=long))
+
+    assert len(long) > 4096 and len(info.runpath) == len(info.rpath) == 800
+    assert info.runpath[-1] == "$ORIGIN/../nvidia/pkg799/lib"
+
+
+def test_search_path_and_name_lengths_stop_at_their_bounds() -> None:
+    at_bound = "/" + "a" * (_MAX_SEARCH_PATH - 1)
+    assert dynamic_info(make_elf(runpath=at_bound)).runpath == (at_bound,)
+    with pytest.raises(ElfError, match="too long"):
+        dynamic_info(make_elf(runpath=at_bound + "a"))
+    assert dynamic_info(make_elf(soname="s" * _MAX_NAME)).soname == "s" * _MAX_NAME
+    with pytest.raises(ElfError, match="too long"):  # names stay at 4096
+        dynamic_info(make_elf(soname="s" * (_MAX_NAME + 1)))
+    with pytest.raises(ElfError, match="too long"):
+        dynamic_info(make_elf(needed=("n" * (_MAX_NAME + 1),)))
 
 
 # --- closures ------------------------------------------------------------------------------

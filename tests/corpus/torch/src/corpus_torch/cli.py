@@ -67,7 +67,11 @@ def compiled() -> None:
     def fn(x: torch.Tensor) -> torch.Tensor:
         return torch.sin(x) + x.pow(2)
 
-    result = torch.compile(fn, backend="eager")(torch.tensor([0.0, 1.0, 2.0]))
+    try:
+        result = torch.compile(fn, backend="eager")(torch.tensor([0.0, 1.0, 2.0]))
+    except RuntimeError as error:  # torch.compile does not support every Python yet (3.15)
+        print("compile unsupported:", error)
+        return
     print("compile eager", [round(v, 4) for v in result.tolist()])
 
 

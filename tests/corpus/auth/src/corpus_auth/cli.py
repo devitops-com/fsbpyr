@@ -2,6 +2,7 @@
 
 import socket
 import threading
+import time
 
 import argon2
 import bcrypt
@@ -94,6 +95,9 @@ def ssh(key: paramiko.RSAKey) -> None:
     print("ssh exec", stdout.read().decode().strip(), stdout.channel.recv_exit_status())
     starter.join()
     accepted[0].close()
+    deadline = time.monotonic() + 10  # the client reads the close before it closes: else the
+    while not stdout.channel.closed and time.monotonic() < deadline:  # server may read a reset
+        time.sleep(0.01)  # and log "Socket exception: Connection reset by peer"
     client.close()
     transport.close()
 

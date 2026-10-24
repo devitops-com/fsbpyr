@@ -41,6 +41,20 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   (tests/support/contain.py), and `make test` runs in a cgroup with a task and memory limit
   where systemd's user manager offers one.
 
+### Fixed
+- **An import-time warning names the importing module, with its source line**, as in a venv.
+  A warning raised with `stacklevel=2` or more while a module was imported (starlette's,
+  authlib's) named `<frozen _fsbpyr_boot>:83`, the payload loader, and showed no line: CPython's
+  warnings skip only frames of importlib, and could not read a payload file's source without
+  its module.
+- **`from .__init__ import x` works**: `<pkg>.__init__` imports as a module of its own, running
+  the package's `__init__` again, as a venv's finder does (statsmodels' `api`).
+- **A library with a long RPATH or RUNPATH no longer stops the build**: these lists may be up to
+  1 MiB; names stay limited to 4096 bytes. TensorFlow's RUNPATH is about 20 KB.
+- **On 3.14 and 3.15 the forkserver imports the app's entry module before forking workers**, as
+  a venv's imports the console script: torch's DataLoader workers no longer import torch each.
+  The module comes from the executable, never from the command line (D22).
+
 ## [0.25.0] - 2026-10-23
 
 ### Added

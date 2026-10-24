@@ -128,14 +128,14 @@ beyond the defaults; each setting's reason is a comment in its `pyproject.toml`.
 
 | App | Risk it covers | `[tool.fsbpyr]` |
 |---|---|---|
-| `torch` | TorchScript compiling the source, dynamo tracing bytecode, DataLoader worker processes, checkpoints; **fails on 3.14 and 3.15**: the forkserver does not preload the entry module (a built app's `__main__` has no file), so each worker imports torch itself and prints its warnings once more | none |
+| `torch` | TorchScript compiling the source, dynamo tracing bytecode (not on 3.15, where `torch.compile` is not supported yet), DataLoader worker processes forked from a forkserver that preloads the app's entry module (3.14, 3.15), checkpoints | none |
 | `torchvision` | custom operators registered in `torch.ops`, the image extension; **fails**: the build stops, since its extensions need torch's `libtorch*.so`, bundled by another distribution (their RPATH names PyTorch's build machine) | none |
 | `lightning` | the Lightning trainer, checkpoints, torchmetrics | `fs-packages = ["lightning"]` |
 | `transformers` | a tiny BERT and GPT-2 built offline, a tokenizer trained in process, safetensors, a pipeline | `fs-packages = ["transformers"]` |
 | `hf-datasets` | `map(num_proc=2)` through multiprocess and dill, Arrow files | none |
 | `jax` | jaxlib's extension, XLA compiling at run time, Flax and Optax | none |
 | `keras` | Keras 3 on JAX, a model saved and loaded | none |
-| `tensorflow` | TensorFlow's C++ runtime, `tf.function`, `tf.data`, SavedModel (3.12 and 3.13 only); **fails**: the build stops, since `libtensorflow_framework.so.2`'s RUNPATH (about 20,000 bytes) is longer than the ELF reader takes | none |
+| `tensorflow` | TensorFlow's C++ runtime, `tf.function`, `tf.data`, SavedModel (3.12 and 3.13 only); a RUNPATH of about 20,000 bytes; op libraries loaded by a path built from `__file__` | `fs-packages = ["clang", "tensorflow"]` |
 | `sklearn` | bundled datasets, joblib's loky worker processes started as `sys.executable -m` and `-c`, threadpoolctl | `fs-packages = ["sklearn"]`, `interpreter-reexec = true` |
 | `boosting` | xgboost and lightgbm loading their shared libraries with ctypes from paths built from `__file__` | `allow-system-libs = ["libgomp.so.1"]`, `fs-packages = ["lightgbm", "sklearn", "xgboost"]` |
 | `onnx` | onnx's reference evaluator and onnxruntime | none |
@@ -160,7 +160,7 @@ beyond the defaults; each setting's reason is a comment in its `pyproject.toml`.
 | `ortools` | CP-SAT, routing and GLOP | none |
 | `pyomo` | plugins loaded by name, the HiGHS interface | none |
 | `casadi` | IPOPT, CVODES and qpOASES plugins `dlopen`ed by name from casadi's directory | `allow-system-libs` (12 libraries of commercial solvers and MATLAB that its plugins link and the app never loads), `fs-packages = ["casadi"]` |
-| `statsmodels` | the formula API (patsy), bundled datasets; **fails**: `statsmodels.api` imports `from .__init__ import test`, and the payload has no module `statsmodels.__init__` | none |
+| `statsmodels` | the formula API (patsy), bundled datasets (`statsmodels.api` imports `from .__init__ import test`: `pkg.__init__` is a module of its own, as in a venv) | `fs-packages = ["statsmodels"]` |
 | `hdf5` | h5py, PyTables with blosc2 (found with ctypes) and netCDF4; py-cpuinfo running its `cpuinfo.py` as `sys.executable <script>` | `interpreter-reexec = true` |
 | `xarray` | xarray backends and chunk managers through entry points, dask, zarr, `dask.distributed` worker processes | `fs-packages = ["dask", "distributed"]` |
 | `geo` | shapely, pyproj's PROJ database, geopandas and pyogrio's GDAL data, rtree's libspatialindex (ctypes) | `fs-packages = ["pyproj", "pyogrio"]` |
@@ -185,7 +185,7 @@ beyond the defaults; each setting's reason is a comment in its `pyproject.toml`.
 
 | App | Risk it covers | `[tool.fsbpyr]` |
 |---|---|---|
-| `fastapi` | FastAPI and pydantic, uvicorn with uvloop, httptools and websockets serving from an import string; **fails**: a warning raised during an import (stacklevel 2) is attributed to fsbpyr's loader, not to the importing module | none |
+| `fastapi` | FastAPI and pydantic, uvicorn with uvloop, httptools and websockets serving from an import string; a warning raised during an import (stacklevel 2), attributed to the importing module | none |
 | `django` | admin, auth, DRF, migrations found by listing packages, templates, translations, collectstatic | `fs-packages = ["django", "corpus_django", "rest_framework"]` |
 | `flask-jinja` | templates and static files next to the package; without the setting the build succeeds and the app answers 500 | `fs-packages = ["corpus_flask"]` |
 | `aiohttp` | a server and client over TLS with websockets | none |
@@ -196,7 +196,7 @@ beyond the defaults; each setting's reason is a comment in its `pyproject.toml`.
 | `alembic` | migration files named by digits, loaded by path | none |
 | `psycopg` | a database driver whose wheel bundles libpq, libssl and libcrypto | none |
 | `messaging` | pyzmq with its bundled libzmq, msgpack, fastavro, cbor2 | none |
-| `auth` | JWT, bcrypt, argon2, PyNaCl, authlib, paramiko with an in-process SSH session; **fails**: as `fastapi`, a warning raised during an import is attributed to fsbpyr's loader | none |
+| `auth` | JWT, bcrypt, argon2, PyNaCl, authlib, paramiko with an in-process SSH session; an import-time warning with stacklevel 3 | none |
 | `cloud` | botocore's service models and endpoints, Azure SAS signing, Google namespace packages across distributions | none |
 | `observability` | OpenTelemetry's context and propagators loaded through entry points, prometheus, structlog, loguru, sentry | none |
 | `gevent` | monkey patching, pywsgi, a loop implementation chosen by name, gevent.subprocess | none |

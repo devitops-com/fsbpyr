@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable
-from multiprocessing import forkserver, resource_tracker, spawn, util
+from multiprocessing import forkserver, process, resource_tracker, spawn, util
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -318,3 +318,51 @@ def test_argv_is_never_evaluated_as_code() -> None:
     source = MP_SOURCE.read_text()
 
     assert "exec(" not in source and "eval(" not in source.replace("literal_eval(", "")
+
+
+def _forkserver_run(mp: ModuleType, monkeypatch: pytest.MonkeyPatch, entrypoint: str) -> list[str]:
+    """The names imported (as the preloaded main) before forkserver.main runs."""
+    events: list[str] = []
+    fake = ModuleType("multiprocessing.forkserver")
+    fake.main = lambda *args, **kwargs: events.append("main")  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "multiprocessing.forkserver", fake)
+    monkeypatch.setattr(mp, "_parent_runs_this_executable", lambda: True)
+
+    def import_module(name: str) -> ModuleType:
+        events.append(name)
+        return fake
+
+    monkeypatch.setattr(mp.importlib, "import_module", import_module)
+    argv = [EXE, "-c", FORKSERVER % (3, 4, ["__main__"], {}), *(["x"] if SYS_ARGV else [])]
+    monkeypatch.setattr(sys, "argv", argv[:])
+    assert mp.run_child(argv, entrypoint) is True
+    return events
+
+
+def test_forkserver_preloads_the_module_of_a_function_entry_point(
+    mp: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events = _forkserver_run(mp, monkeypatch, "pkg.cli:main")
+
+    assert events == ["pkg.cli", "multiprocessing.forkserver", "main"]  # imported first
+
+
+def test_forkserver_preloads_nothing_for_a_module_entry_point(
+    mp: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events = _forkserver_run(mp, monkeypatch, "pkg.cli")  # a venv's `-m` run sends no main_path
+
+    assert events == ["multiprocessing.forkserver", "main"]
+
+
+def test_forkserver_preload_failure_is_left_to_the_workers(
+    mp: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(name: str) -> ModuleType:
+        raise RuntimeError(name)
+
+    monkeypatch.setattr(mp, "_parent_runs_this_executable", lambda: True)
+    monkeypatch.setattr(mp.importlib, "import_module", fail)
+
+    mp._preload_entry_module("pkg.cli:main")  # does not raise
+    assert not getattr(process.current_process(), "_inheriting", False)

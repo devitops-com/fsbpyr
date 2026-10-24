@@ -11,3 +11,6 @@ corpus-statsmodels = "corpus_statsmodels.cli:main"
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.fsbpyr]
+fs-packages = ["statsmodels"]  # without it: NotADirectoryError opening datasets/longley/longley.csv next to data.py

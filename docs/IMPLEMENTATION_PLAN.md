@@ -1953,6 +1953,35 @@ cache, and cold where it matters). **Exit:** the comparison is committed in
   Not measured then: a cold page cache (it needs no root: `docs/performance.md`, "Cold start
   (0.20.0)"), PyApp's default mode (it installs the dependencies from an index on the first run).
 
+### Phase 11 — Gaps the corpus found (owner decision 2026-10-24: small, contained fixes first)
+
+The corpus of 65 apps (TST-3, 0.26.0) found ten gaps of fsbpyr's own, each a `known-failure`
+in the app's `tests/corpus/<app>/commands.toml` with the cause as far as it is known; the test
+expects the failure and goes red once it is fixed (then the line goes). On 2026-10-24, x86-64,
+55 of 65 apps matched their venv on 3.12 and 3.13, 54 of 64 on 3.14 and 35 of 42 on 3.15; with
+the four small fixes below, 59 of 65, 59 of 65, 58 of 64 and 38 of 42.
+
+**Small and contained — DONE 2026-10-24 (0.26.0):**
+
+| Gap | Apps | Cause | Fix |
+|---|---|---|---|
+| Import-time warnings name the loader | `fastapi`, `auth` | CPython's warnings skip frames whose file name holds `importlib` and `_bootstrap`; the payload loader's `exec_module` (`<frozen _fsbpyr_boot>`) was not skipped, and the C warnings code reads the source line from disk | `exec_module`'s code is named `<frozen importlib._bootstrap_fsbpyr>` (tracebacks hide it at the top as before), and linecache reads payload sources from the payload (hooked when linecache loads: at start from 3.13, on its first import on 3.12) |
+| `pkg.__init__` as a module | `statsmodels` | `from .__init__ import test` names a module `statsmodels.__init__`, which the payload had no record for | `<pkg>.__init__` of a regular package imports as a plain module from the package's `__init__`, as FileFinder does; statsmodels then also needs `fs-packages` for its datasets |
+| Long RUNPATH | `tensorflow` (3.12, 3.13) | `libtensorflow_framework.so.2`'s RUNPATH is about 20 KB; `elf.py` took dynamic strings of at most 4096 bytes | RPATH and RUNPATH may be up to 1 MiB, other names stay at 4096; tensorflow then needs `fs-packages = ["clang", "tensorflow"]` |
+| Forkserver preload | `torch` (3.14, 3.15) | the forkserver preloads `__main__` only from a `main_path`, which a built app has none of, so each worker imported torch itself | the forkserver imports the module of the executable's own entry point (`pkg.mod:func`), after the parent check, never one the command line names (D22) |
+
+**Larger, open:**
+
+| Gap | Apps | Cause | What a fix needs |
+|---|---|---|---|
+| Libraries bundled by another distribution | `torchvision` | its extensions need torch's `libtorch*.so` (in `torch/lib`); their RPATH names PyTorch's build machine, so the build counts them as neither bundled nor system libraries and stops | resolve DT_NEEDED against the libraries other distributions in the payload bundle, and make the loader find them at run time (the cache's layout, `LD_LIBRARY_PATH` is not ours to set) |
+| Plugins outside a package | `openmm` | plugins in `OpenMM.libs/lib/plugins` are loaded from a directory; `OpenMM.libs` is no package, so no setting extracts it | extraction of a library directory next to the shared objects that load from it, or a setting for non-package directories |
+| `sys.path` inserted ahead of the payload | `vision` | cv2's loader inserts its own directory at `sys.path[1]` to find its binary; `sys.path[0]` is the executable, so the payload's `cv2` is found again | let a directory inserted into `sys.path` take precedence for the names it holds, or special-case extension-only directories |
+| mypyc packages | `black` | mypyc sets the compiled package's `__path__` to the cache directory, where the payload's plain modules are not; `--fs-package` refuses packages of native code | extract the whole package (pure and native files) when its `__path__` is the cache's, or let the payload finder serve a package whose `__path__` points at the cache |
+| Listing a package directory | `twisted` | `twisted.plugin.getPlugins` lists `twisted/plugins` with `FilePath.listdir`; a path inside the executable cannot be listed, and `--fs-package twisted` puts the files in a site directory that is not on `sys.path` (the app exits 0 with no plugins) | put an fs-package's site directory on `sys.path`, or fold it into D24's path handling |
+| Standard-library sources on disk | `jupyter` | jedi parses the standard library's sources from disk; they are inside the executable | an option to extract the standard library's sources (size, and what else reads them) |
+| A missing kernel warning | `jupyter` | the kernel started as `sys.executable -m ipykernel_launcher` runs the cells, but ipykernel's startup warning is not printed; cause not found | find the cause first |
+
 ---
 
 ## 7. Test strategy

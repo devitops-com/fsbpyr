@@ -17,7 +17,8 @@ _VERNAUX = struct.Struct("<IHHII")  # vna_hash, vna_flags, vna_other, vna_name, 
 _GLIBC = re.compile(r"GLIBC_(\d+)\.(\d+)")
 _NUMERIC = re.compile(r"([A-Z]+)_(\d+(?:\.\d+)*)")  # GLIBCXX_3.4.22, CXXABI_1.3.9, GCC_7.0.0
 _GLIBC_ABI = {"GLIBC_ABI_DT_RELR": (2, 36)}  # version markers that are not release numbers
-_MAX_NAME = 4096
+_MAX_NAME = 4096  # a soname, a needed entry, a version name
+_MAX_SEARCH_PATH = 1 << 20  # an RPATH or RUNPATH lists directories: TensorFlow's is 20 KB
 PT_LOAD, PT_DYNAMIC, PT_INTERP = 1, 2, 3
 ET_EXEC = 2
 SHT_NOBITS = 8
@@ -121,11 +122,11 @@ class _Dynamic:
     strtab: int
     strsz: int
 
-    def string(self, index: int) -> str:
+    def string(self, index: int, longest: int = _MAX_NAME) -> str:
         start = self.strtab + index
         if not 0 <= index < self.strsz or start >= len(self.data):
             raise ElfError(f"dynamic string offset {index} out of range")
-        limit = min(len(self.data), self.strtab + self.strsz, start + _MAX_NAME + 1)
+        limit = min(len(self.data), self.strtab + self.strsz, start + longest + 1)
         end = self.data.find(b"\0", start, limit)
         if end < 0:
             raise ElfError(f"dynamic string at {index} is too long or not terminated")
@@ -162,7 +163,8 @@ def dynamic_info(data: ElfData) -> DynamicInfo:
     def paths(tag: int) -> tuple[str, ...]:
         if tag not in values:
             return ()
-        return tuple(part for part in section.string(values[tag]).split(":") if part)
+        listed = section.string(values[tag], _MAX_SEARCH_PATH)
+        return tuple(part for part in listed.split(":") if part)
 
     return DynamicInfo(
         needed=tuple(section.string(value) for tag, value in section.entries if tag == DT_NEEDED),

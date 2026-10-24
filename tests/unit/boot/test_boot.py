@@ -7,6 +7,7 @@ import importlib.resources
 import importlib.util
 import io
 import json
+import linecache
 import os
 import posix
 import sys
@@ -259,6 +260,8 @@ def isolated_sys(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(sys, "excepthook", sys.__excepthook__)
     frozen = importlib.machinery.FrozenImporter
     monkeypatch.setattr(frozen, "get_source", frozen.get_source)  # run() extends it
+    monkeypatch.setattr(linecache, "updatecache", linecache.updatecache)  # and wraps this
+    monkeypatch.setattr(linecache, "cache", dict(linecache.cache))
     for name in ("exit", "quit", "help"):
         monkeypatch.setattr(builtins, name, getattr(builtins, name))  # run() defines them
     before = set(sys.modules)
