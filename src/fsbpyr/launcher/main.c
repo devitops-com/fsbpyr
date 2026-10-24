@@ -1,14 +1,16 @@
 /* fsbpyr launcher: start the embedded CPython with startup modules served from the payload.
  *
  * Sequence (plan §3.3): check the whole file against its digest (D31), map and validate the
- * payload, check the bytecode/Python version, build CPython's frozen-module table from the
- * STARTUP section (checksum-verified decompression), register _fsbpyr, configure an isolated
- * interpreter that never probes the filesystem for the stdlib, and run `_fsbpyr_boot.run()`
- * through Py_RunMain so exit codes, SystemExit and SIGINT behave exactly as in CPython.
+ * payload, check the bytecode/Python version, hold one of the app's instance slots (D45), build
+ * CPython's frozen-module table from the STARTUP section (checksum-verified decompression),
+ * register _fsbpyr, configure an isolated interpreter that never probes the filesystem for the
+ * stdlib, and run `_fsbpyr_boot.run()` through Py_RunMain so exit codes, SystemExit and SIGINT
+ * behave exactly as in CPython.
  */
 #include "launcher.h"
 
 #include "due.h"
+#include "slots.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -123,6 +125,9 @@ int main(int argc, char **argv) {
         fatal("refusing a privileged start (set-uid, set-gid or file capabilities): the cache "
               "location comes from the caller's environment");
     check_versions();
+    /* before Python and the collection's fork: a start over the app's limit exits here (D45) */
+    const char *slot_dirs[] = {"/dev/shm", getenv("XDG_RUNTIME_DIR")};
+    fsb_hold_slot(fsb_self.dev, fsb_self.ino, slot_dirs, sizeof slot_dirs / sizeof slot_dirs[0]);
     if (fsb_str(&fsb_self, fsb_self.header.app_name, &app)) /* before Python: no threads yet */
         fsb_collect_when_due(app, fsb_self.header.app_name.length, argc > 0 ? argv[0] : app);
     PyImport_FrozenModules = startup_table();

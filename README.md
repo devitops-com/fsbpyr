@@ -438,10 +438,13 @@ directory anyone may add to, such as `/tmp`.) Environment variables the executab
 | `FSBPYR_TRACE=1` | print what the run loaded and extracted, and how long the integrity check took, as JSON on stderr |
 | `FSBPYR_SELFTEST` | `natives`: check that this machine provides every library and symbol version the native extensions need, one line per missing one, exit 1 if any (glibc targets); any other value: import the entry point and check it instead of running the app (what `--smoke` does) |
 | `FSBPYR_IMPORTTIME` | when set, print CPython's import-time table |
+| `FSBPYR_MAX_INSTANCES` | how many copies of the app may run at once (decimal, at most 4096; `0`: no limit); by default 4 per CPU and 16, at least 64 and at most 1024 |
 
 An executable needs `/proc` (it finds itself through `/proc/self/exe`), and refuses to start
 set-uid, set-gid or with file capabilities (exit 70): the cache location comes from the
-caller's environment. See [docs/security.md](docs/security.md).
+caller's environment. A start also exits 70 when as many copies of the app run already as
+the machine allows (`FSBPYR_MAX_INSTANCES` above): an app that keeps starting itself, by
+whatever route, stops there. See [docs/security.md](docs/security.md).
 
 ### Helper interpreters
 
@@ -465,9 +468,10 @@ executable), and what it gets depends on the build:
 
 Only a child of the app itself is treated so: the same command line from a shell, a script or
 sudo runs the app, with these arguments, so a sudo rule for the app never hands out an
-interpreter. An app that starts itself again in a chain of four is refused at the fifth
-(exit 70), whatever the arguments: code that starts `sys.executable` in another way cannot
-start the app without end. The build lists the libraries it finds that start helper
+interpreter. However an app starts copies of itself, through a shell or a script too, no
+more of them run at once than its instance limit allows (`FSBPYR_MAX_INSTANCES` above): a
+start beyond it exits 70. Code that starts `sys.executable` in another way so cannot start
+the app without end, deep or wide. The build lists the libraries it finds that start helper
 interpreters (joblib, jupyter_client, py-cpuinfo, multiprocess, torch's inductor).
 
 ### The cache cleans itself

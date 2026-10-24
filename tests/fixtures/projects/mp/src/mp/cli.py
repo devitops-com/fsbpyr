@@ -2,6 +2,7 @@
 
 import importlib.util
 import multiprocessing
+import shlex
 import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -30,11 +31,16 @@ def main() -> None:
                                    check=False)  # fmt: skip
             print(child.returncode, child.stdout.strip())
         return
-    if sys.argv[1:] == ["nest"]:  # starts itself without end: only a built app stops (D44)
+    if sys.argv[1:] == ["nest"]:  # starts itself without end: the instance limit stops it (D45)
         child = subprocess.run([sys.executable, "nest"], capture_output=True, text=True,
                                check=False)  # fmt: skip
         print(child.returncode, child.stdout.strip())
         return
+    if sys.argv[1:2] == ["fan"]:  # three copies of itself a level, through a shell (D45)
+        depth = max(int(sys.argv[2]), 0)
+        command = f"{shlex.quote(sys.executable)} fan {depth - 1}; exit $?"  # sh stays between
+        children = [subprocess.Popen(["/bin/sh", "-c", command]) for _ in range(3 if depth else 0)]
+        sys.exit(max((child.wait() for child in children), default=0))
     if "--wait" in sys.argv:  # lets a test replace the binary on disk before any child starts
         print("ready", flush=True)
         sys.stdin.readline()

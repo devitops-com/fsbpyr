@@ -19,7 +19,7 @@ Each row gives what you see, why, and what to do.
 | A resource opened for writing fails: `ValueError: payload resources are read-only; invalid mode ...`; an extracted file has mode 0400 or 0500 | Resources are served from the payload, and files extracted to the cache are made read-only | Write to a path of your own, not next to the package's data |
 | `sys.frozen` is missing, and `sys._MEIPASS` too | `sys.frozen` is PyInstaller's flag, and code that sees it looks for PyInstaller's layout (D21) | Do not test for it; test for the files you need |
 | A child the app starts as a Python interpreter (`subprocess.run([sys.executable, "-m", "tool"])`, `-c CODE`, or a `.py` file of the app, as joblib's `n_jobs`, Jupyter kernels and py-cpuinfo do) exits 70, printing `fsbpyr: refusing to run <what> as Python: the app started itself as a helper interpreter`; joblib then fails with `TerminatedWorkerError` | `sys.executable` is the app, not an interpreter (D22), and running the app in such a child would start it again and again (D44). multiprocessing children are recognized | Build with `--interpreter-reexec` ([D23](../docs/IMPLEMENTATION_PLAN.md)); then such a child of the app itself runs as CPython would. An app whose own options are named `-m` or `-c` and which starts itself with them: `--no-interpreter-reexec` |
-| An app exits 70 printing `fsbpyr: refusing to start: the 4 processes above this one run this same executable` | The app keeps starting itself, in a way that cannot be told from its own arguments: code starting `sys.executable` with arguments the app takes for its own (D44) | Find the code that starts `sys.executable` (`ps -f` shows the processes' command lines while they run); build with `--interpreter-reexec` if it asks for Python |
+| An app exits 70 printing `fsbpyr: refusing to start: <N> copies of this app are running already, as many as this machine allows at once` | N copies of the executable run already for this user, counted in `/dev/shm` (a container with a `/dev/shm` of its own counts apart); the limit is 4 per CPU and 16, at least 64 and at most 1024 (D45). It stops an app that starts itself again and again, however it starts it | If the app keeps starting itself, find the code that starts `sys.executable` (`ps -f`); if it needs more copies at once, set `FSBPYR_MAX_INSTANCES` to a higher number (at most 4096; 0 turns the limit off) |
 | `ModuleNotFoundError: No module named 'pkg_resources'` | setuptools 84.0.0 ships no `pkg_resources`. With an older setuptools pin it finds no distributions (*unverified*) | Use `importlib.metadata` and `importlib.resources` |
 
 ## What the target must provide
@@ -56,7 +56,9 @@ these from the machine:
   distribution matrix below tests only the kernel of the machine that ran it. Where a feature
   is missing the launcher goes without: it falls back when `O_TMPFILE` is unavailable
   (`place_unnamed` in `src/fsbpyr/launcher/cache.c`), and `close_range` is compiled out when
-  the headers lack it (`src/fsbpyr/launcher/due.c`).
+  the headers lack it (`src/fsbpyr/launcher/due.c`). The instance limit needs OFD locks
+  (Linux 3.15) and `/dev/shm` or `$XDG_RUNTIME_DIR`; without them a start runs unguarded
+  (`src/fsbpyr/launcher/slots.c`).
 
 ## Tested on
 

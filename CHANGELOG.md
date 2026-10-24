@@ -22,10 +22,15 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   stays the app's in every build.
 
 ### Added
+- **An app's copies running at once are limited** (D45). Every start holds one of the
+  executable's slots while it runs (an OFD lock in `/dev/shm`, freed by the kernel when the
+  process ends), and a start that finds them all taken exits 70. An app that starts itself
+  again and again, by whatever route (`sys.executable -m`, `-c`, a shell, a script) and in
+  whatever shape, stops at the limit: 4 per CPU and 16, at least 64 and at most 1024.
+  `FSBPYR_MAX_INSTANCES` sets it (`0`: no limit). Where the guard cannot work (no
+  `/dev/shm`, a file someone else made there, no OFD locks) the app starts unguarded.
 - `--interpreter-reexec` also runs a `.py` file of the app as Python (`sys.executable
   <exe>/pkg/tool.py`), as py-cpuinfo and torch's inductor start theirs.
-- An app with four processes in a row above it running the same executable exits 70, whatever
-  its arguments (D44).
 - The build names the packaged libraries known to start helper interpreters (joblib,
   jupyter_client, py-cpuinfo, multiprocess, torch's inductor) unless it was built with
   `--interpreter-reexec`; `--strict` does not count the note.

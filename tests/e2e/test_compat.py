@@ -210,15 +210,31 @@ def test_the_app_ran_like_the_original_when_it_calls_exit_in_a_child(
     assert result.stdout.split()[-1] == "4"
 
 
-def test_an_app_starting_itself_without_end_is_stopped_at_the_fifth_level(
+def test_an_app_starting_itself_without_end_stops_at_its_limit(
     mp_tmp: Path, tmp_path: Path
 ) -> None:
     executable = _build("mp", mp_tmp)
+    env = {**os.environ, "FSBPYR_CACHE_DIR": str(tmp_path / "cache"), "FSBPYR_MAX_INSTANCES": "4"}
 
-    result = _run(executable, tmp_path / "cache", "nest")
+    result = contain.run([executable, "nest"], env=env, timeout=120)
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.split() == ["0", "0", "0", "70"]  # four copies ran, the fifth exits 70
+
+
+def test_an_app_starting_itself_through_a_shell_is_held_to_its_limit(
+    mp_tmp: Path, tmp_path: Path
+) -> None:
+    """121 copies in four levels, each waiting for its three, with a shell between each and
+    its parent, where the checks of D44 see no parent running the app: only the instance limit
+    holds the tree (D45). Without it contain.run would find far more than 64 processes."""
+    executable = _build("mp", mp_tmp)
+    env = {**os.environ, "FSBPYR_CACHE_DIR": str(tmp_path / "cache"), "FSBPYR_MAX_INSTANCES": "4"}
+
+    result = contain.run([executable, "fan", "4"], env=env, timeout=120)
+
+    assert result.returncode == 70, result.stderr
+    assert "fsbpyr: refusing to start: 4 copies of this app are running already" in result.stderr
 
 
 def test_helper_interpreters_are_refused_to_other_callers(mp_tmp: Path, tmp_path: Path) -> None:

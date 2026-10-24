@@ -25,7 +25,7 @@ import _fsbpyr
 
 TYPE_CHECKING = False
 if TYPE_CHECKING:  # nothing below is imported at runtime: the annotations using it are quoted
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Iterable, Iterator
     from importlib.abc import Loader as _LoaderBase
     from importlib.metadata import Distribution, DistributionFinder
     from importlib.resources.abc import TraversableResources
@@ -460,47 +460,6 @@ def _interpreter_child() -> bool:
     return handled
 
 
-MAX_SELF_ANCESTORS = 4  # D44: an app restarting itself is refused at the fifth level
-
-
-def _parent_of(pid: int) -> int:
-    with open(f"/proc/{pid}/stat", "rb") as stat:  # "pid (comm) state ppid ...": comm may hold ")"
-        return int(stat.read().rpartition(b")")[2].split()[1])
-
-
-def _self_ancestors(
-    stat: "Callable[[str], posix.stat_result]" = posix.stat,
-    parent_of: "Callable[[int], int]" = _parent_of,
-) -> int:
-    """How many processes in a row above this one run this same executable (D44), counted
-    up to MAX_SELF_ANCESTORS; a start from a shell costs two stats. Any doubt stops counting."""
-    count = 0
-    try:
-        own = stat("/proc/self/exe")
-        pid = posix.getppid()
-        while pid > 1 and count < MAX_SELF_ANCESTORS:
-            parent = stat(f"/proc/{pid}/exe")
-            if (parent.st_dev, parent.st_ino) != (own.st_dev, own.st_ino):
-                break
-            count += 1
-            pid = parent_of(pid)
-    except (OSError, ValueError, IndexError):
-        pass
-    return count
-
-
-def _refuse_endless_restart() -> None:
-    """D44's backstop for what ``_interpreter_child`` cannot tell apart from the app's own
-    arguments: an app whose code starts it again in every child it starts."""
-    if _self_ancestors() >= MAX_SELF_ANCESTORS:
-        sys.stderr.write(
-            f"fsbpyr: refusing to start: the {MAX_SELF_ANCESTORS} processes above this one run "
-            "this same executable, so the app keeps starting itself (code starting "
-            "sys.executable as a Python interpreter?)\n"
-        )
-        raise SystemExit(70)
-
-
 def run() -> None:
     _locate_frozen_modules()
     sys.path_hooks.insert(0, path_hook)
@@ -533,7 +492,6 @@ def run() -> None:
 
         natives()
         return
-    _refuse_endless_restart()
     entrypoint = INFO["entrypoint"]
     if posix.environ.get(b"FSBPYR_SELFTEST"):
         _resolve(entrypoint)  # import the module and look the attribute up, without calling

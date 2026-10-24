@@ -379,52 +379,6 @@ def test_a_payload_script_counts_as_a_helper_interpreter(
     assert "refusing to run `pkg/cli.py` as Python" in capsys.readouterr().err
 
 
-def _stat(inode: int) -> os.stat_result:
-    return os.stat_result((0, inode, 1, 1, 0, 0, 0, 0, 0, 0))
-
-
-def test_ancestors_running_this_executable_are_counted_up_to_the_limit(
-    boot: ModuleType,
-) -> None:
-    def everyone_runs_it(path: str) -> os.stat_result:
-        return _stat(7)
-
-    def two_levels_run_it(path: str) -> os.stat_result:
-        levels = {f"/proc/{os.getppid() - level}/exe" for level in (0, 1)}
-        return _stat(7 if path == "/proc/self/exe" or path in levels else 8)
-
-    def started_from_a_shell(path: str) -> os.stat_result:
-        return _stat(7 if path == "/proc/self/exe" else 8)
-
-    def above(pid: int) -> int:
-        return pid - 1
-
-    assert boot._self_ancestors(everyone_runs_it, above) == boot.MAX_SELF_ANCESTORS
-    assert boot._self_ancestors(two_levels_run_it, above) == 2
-    assert boot._self_ancestors(started_from_a_shell, above) == 0
-
-
-def test_a_parent_is_read_from_proc(boot: ModuleType) -> None:
-    assert boot._parent_of(os.getpid()) == os.getppid()
-
-
-@pytest.mark.parametrize("ancestors", [3, 4])
-def test_the_app_is_refused_once_it_keeps_starting_itself(
-    boot: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
-    ancestors: int,
-) -> None:
-    monkeypatch.setattr(boot, "_self_ancestors", lambda: ancestors)
-
-    if ancestors < boot.MAX_SELF_ANCESTORS:
-        boot._refuse_endless_restart()
-        assert capsys.readouterr().err == ""
-    else:
-        with pytest.raises(SystemExit) as refused:
-            boot._refuse_endless_restart()
-        assert refused.value.code == 70
-        assert "fsbpyr: refusing to start: the 4 processes above" in capsys.readouterr().err
-
-
 @pytest.mark.usefixtures("isolated_sys")
 def test_multiprocessing_children_run_instead_of_the_app(
     boot: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

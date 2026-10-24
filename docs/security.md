@@ -37,6 +37,7 @@ targets are in [SECURITY.md](../SECURITY.md).
 | D20 | Another user planting a runtime or stub: cache directories must be the user's own and are forced to 0700; the cached runtime's digests are verified on load. |
 | D22 | A caller pretending to be multiprocessing: the three child command lines are matched exactly and decoded with `ast.literal_eval`, never executed, and run only if the parent is this same executable (device and inode of `/proc/<ppid>/exe`) with the same real and effective user and group ids. |
 | D23, D44 | The same for helper interpreters (`-m`, `-c`, a `.py` file of the app), which run only with `--interpreter-reexec`; without the setting the app's own children asking for one exit 70, and any other caller gets the app. |
+| D45 | Another user denying a user's starts through the instance limit: the slot file must be a regular file of the user's that nobody else may use, else it is passed over for the one in `$XDG_RUNTIME_DIR`, and with no file to trust the start runs unguarded. A file made first by someone else in `/dev/shm` can cost the user the guard, never a start. |
 | D31 | A changed executable: the launcher checks the whole file against the digest in its trailer before it reads anything else. |
 | D41 (SEC-3) | A privileged start: when the kernel sets AT_SECURE (set-uid, set-gid, file capabilities) the executable exits 70, because the cache location would come from the caller's environment and, under set-gid or capabilities, the invoking user would own the cache. |
 
@@ -63,5 +64,8 @@ leading to it must be owned by root or by the user and writable by nobody else (
 - **Privileged uses are refused.** `setcap cap_net_bind_service+ep app` and set-gid
   deployments stop working. A fixed root-owned cache that ignores `FSBPYR_*`, XDG and HOME
   would allow them, at the cost of a second cache policy; it was not chosen.
+- **The instance limit is no security boundary** (D45). It stops an app that keeps starting
+  itself, not an attacker: any process of the user can hold every slot (out of scope above),
+  and code that closes its descriptors, as daemonizing code does, gives its slot up.
 - **CVEs in the embedded runtime.** CPython and the libraries linked into it are fixed only by
   rebuilding with a newer fsbpyr (SECURITY.md, "Fixes to the runtime").
