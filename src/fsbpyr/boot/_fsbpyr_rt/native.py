@@ -163,11 +163,17 @@ class PayloadExtensionLoader(ExtensionFileLoader):
 
 
 def materialize_package(directory: str) -> str:
-    """Extract every file of the FS_REQUIRED package at payload ``directory``; returns the
-    prefix (with "/") that the package's modules live under."""
+    """Extract every file of the FS_REQUIRED package at payload ``directory``, and the libraries
+    its extensions need from outside it (``torchvision.libs``, torch's ``libc10.so``): code that
+    opens the extensions itself (torchvision's ``torch.ops.load_library``) does not import them,
+    which would extract their closures. Returns the prefix (with "/") that the package's modules
+    live under."""
     cache = native_cache()
     try:
-        cache.sync(_fsbpyr.files_below(directory))
+        files = _fsbpyr.files_below(directory)
+        needed = (_fsbpyr.closure(record[6]) for i in files
+                  if (record := _fsbpyr.file_at(i))[1] == NATIVE_EXT and record[6] != _fsbpyr.NONE)
+        cache.sync(tuple(dict.fromkeys((*files, *(i for closure in needed for i in closure)))))
     except OSError as exc:
         raise NativeCacheError(
             f"cannot extract {directory} into {cache.root}: {exc}; "
@@ -205,14 +211,28 @@ def materialize(path: str) -> str:
     return _MATERIALIZED[path]
 
 
-def bundled_library(name: str) -> str | None:
+def _top_package(path: str) -> str | None:
+    """The top-level directory of the payload, or of the cache's site tree, that ``path`` (a
+    module's ``__file__``) lies in; None for a module outside both, or at the root."""
+    for root in (_fsbpyr.info()["executable"] + "/", native_cache().site + "/"):
+        if path.startswith(root):
+            top, slash, _ = path[len(root) :].partition("/")
+            return top if slash else None
+    return None
+
+
+def bundled_library(name: str, caller: str | None = None) -> str | None:
     """Where the one shared object the payload bundles under the file name ``name`` is on disk,
     extracted with the libraries it needs (an extension's closure, or that of an extension
-    linking the library); None if the payload bundles none or several of that name."""
+    linking the library); of several, the one in the top-level package of the module
+    ``caller`` (its ``__file__``), as that package's own lookup next to its ``__file__`` finds
+    in a venv (PyTables: tables/libblosc2.so, not blosc2's). None if no one file qualifies."""
     files = _fsbpyr.info()["files"]
     found = [record for i in range(files)
              if (record := _fsbpyr.file_at(i))[1] in (NATIVE_EXT, NATIVE_LIB)
              and record[7].rpartition("/")[2] == name]  # fmt: skip
+    if len(found) > 1 and caller is not None and (top := _top_package(caller)) is not None:
+        found = [record for record in found if record[7].startswith(top + "/")]
     if len(found) != 1:
         return None
     index, kind, _, _, _, _, closure, rel = found[0]

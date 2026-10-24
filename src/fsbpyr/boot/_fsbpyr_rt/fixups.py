@@ -1,10 +1,11 @@
-"""Adjustments to stdlib modules in single-file executables, applied right after they load.
+"""Adjustments to modules in single-file executables, applied right after they load.
 
 The boot loader calls ``apply`` for the modules named in ``FIXUPS`` (plan Phase 6b).
 """
 
 import contextlib
 import os
+import sys
 
 TYPE_CHECKING = False
 if TYPE_CHECKING:
@@ -83,8 +84,12 @@ def _ctypes(module: "ModuleType") -> None:
                 bundled_library,
             )
 
+            caller = sys._getframe(1)  # the code that called CDLL(), past ctypes' own frames
+            while caller.f_back is not None and caller.f_globals.get("__package__") == "ctypes":
+                caller = caller.f_back
+            where = caller.f_globals.get("__file__")
             try:
-                path = bundled_library(bare)
+                path = bundled_library(bare, where if isinstance(where, str) else None)
             except (OSError, ImportError):  # the cache cannot be used: the original error stands
                 path = None
             if path is None:
@@ -94,7 +99,34 @@ def _ctypes(module: "ModuleType") -> None:
     module.CDLL.__init__ = with_bundled
 
 
-FIXUPS = {"ssl": _ssl, "multiprocessing.spawn": _multiprocessing_spawn, "ctypes": _ctypes}
+def _parso_file_io(module: "ModuleType") -> None:
+    # jedi parses the sources a module's loader hands it (KnownContentFileIO) and parso asks the
+    # file for its time only, to cache the parse: below a regular file (the executable) that
+    # fails with NotADirectoryError where parso expects FileNotFoundError, and no completion
+    # can look at a module of the payload (the standard library's included). The time of a
+    # payload file is the executable's.
+    last_modified = module.FileIO.get_last_modified
+
+    def payload_last_modified(self: object) -> float | None:
+        try:
+            return last_modified(self)  # type: ignore[no-any-return]
+        except NotADirectoryError:
+            import _fsbpyr  # noqa: PLC0415  only a payload path, and only here, gets this far
+
+            executable = _fsbpyr.info()["executable"]
+            if not os.fspath(self.path).startswith(executable + "/"):  # type: ignore[attr-defined]
+                raise
+            return os.stat(executable).st_mtime
+
+    module.FileIO.get_last_modified = payload_last_modified
+
+
+FIXUPS = {
+    "ssl": _ssl,
+    "multiprocessing.spawn": _multiprocessing_spawn,
+    "ctypes": _ctypes,
+    "parso.file_io": _parso_file_io,
+}
 
 
 def apply(module: "ModuleType") -> None:

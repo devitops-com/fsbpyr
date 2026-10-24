@@ -1,10 +1,3 @@
-# Fails today (found by this corpus): torchvision's _C_stable.so and image_stable.so need
-# libc10.so and libtorch*.so, which the torch distribution bundles in torch/lib; their RPATH
-# names a directory of PyTorch's build machine (/__w/_temp/conda_environment_.../lib), and in a
-# venv the loader finds them only because import torch loaded them first. The build counts them as neither bundled nor standard system libraries
-# and stops. Remove when the build resolves libraries other distributions bundle.
-known-failure = "the build stops: torchvision's extensions need torch's libtorch*.so, bundled by another distribution"
-
 expect = "png round trip True True"
 
 [[command]]

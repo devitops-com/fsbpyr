@@ -10,6 +10,12 @@ Libraries an object opens by name at run time (``dlopen("libx_shared.so")``, onn
 provider bridge) have no ``DT_NEEDED`` entry. A bundled library in the object's own directory or
 on its ``$ORIGIN`` search path whose file name the object contains as a C string counts as a
 dependency too, so it is extracted next to it.
+
+A library nothing on the search path provides may be one another distribution bundles
+(torchvision's extensions need torch's ``libc10.so``, whose RPATH names the build machine of
+PyTorch): it is taken from the payload's shared objects by SONAME or file name, if exactly one
+has that name. At run time it is in the cache under its own site-relative path and already loaded
+by its owner, whose import comes first, so ld.so reuses it by SONAME.
 """
 
 import contextlib
@@ -203,6 +209,40 @@ def _contained_names(data: Native, names: Iterable[bytes]) -> set[bytes]:
     return found
 
 
+def _libraries(
+    natives: Mapping[str, bytes | Path],
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """The shared libraries (not extensions) of the payload by directory, and by the names a
+    ``DT_NEEDED`` entry may use for them: their file name and their SONAME."""
+    libraries: dict[str, list[str]] = {}
+    providers: dict[str, list[str]] = {}
+    for path in sorted(natives):
+        with opened(natives[path]) as data:
+            if is_extension_module(path, data):
+                continue
+            try:
+                soname = dynamic_info(data).soname
+                names = {posixpath.basename(path), *([soname] if soname else [])}
+            except ElfError:
+                names = set()  # no library for another object; reported where its needs are read
+        libraries.setdefault(posixpath.dirname(path) or ".", []).append(path)
+        for name in names:
+            providers.setdefault(name, []).append(path)
+    return libraries, providers
+
+
+def _provider(path: str, needed: str, providers: dict[str, list[str]]) -> str | None:
+    """The one library named ``needed`` that a top-level directory other than ``path``'s (the
+    nearest thing to another distribution) bundles; None if there is none. Different files of
+    that name would load as one, so the build cannot tell which one the app gets."""
+    own = path.partition("/")[0]
+    found = sorted(lib for lib in providers.get(needed, ()) if lib.partition("/")[0] != own)
+    if len(found) > 1:
+        raise NativeError(f"{path} needs {needed}, which {' and '.join(found)} bundle; "
+                          "the build cannot tell which one the app loads")  # fmt: skip
+    return found[0] if found else None
+
+
 def _opened_by_name(
     path: str, data: Native, libraries: dict[str, list[str]], directories: list[str]
 ) -> list[str]:
@@ -223,6 +263,7 @@ def _direct_dependencies(  # noqa: PLR0913  the object, the payload, and inherit
     allowed: frozenset[str],
     *,
     inherited: tuple[str, ...],
+    providers: dict[str, list[str]],
     system: SystemUse | None = None,
 ) -> tuple[list[tuple[str, bool]], tuple[str, ...]]:
     """Bundled objects ``path`` loads, each with whether it is opened by name (not NEEDED), and
@@ -249,6 +290,8 @@ def _direct_dependencies(  # noqa: PLR0913  the object, the payload, and inherit
             raise NativeError(f"{path} needs {needed} by path, which cannot be bundled")
         candidates = (posixpath.normpath(posixpath.join(d, needed)) for d in directories)
         found = next((c for c in candidates if c in payload), None)
+        if found is None and needed not in system_libraries() and needed not in allowed:
+            found = _provider(path, needed, providers)  # bundled by another distribution
         if found is not None:
             dependencies.append((found, False))
         elif needed not in system_libraries() and needed not in allowed:
@@ -282,11 +325,7 @@ def closures(  # noqa: PLR0913  the payload's natives and executables, keyword-o
     go, with warnings (``_check_unreached``); every RPATH/RUNPATH entry the loader would search
     outside the payload is warned about (``_warn_search_paths``)."""
     payload = set(natives)
-    libraries: dict[str, list[str]] = {}  # directory -> shared libraries (not extensions) in it
-    for path in sorted(payload):
-        with opened(natives[path]) as data:
-            if not is_extension_module(path, data):
-                libraries.setdefault(posixpath.dirname(path) or ".", []).append(path)
+    libraries, providers = _libraries(natives)
     # (object, RPATHs it inherits) -> (its dependencies, the RPATHs they inherit)
     direct: dict[tuple[str, tuple[str, ...]], tuple[list[tuple[str, bool]], tuple[str, ...]]] = {}
     left_out: dict[str, str] = {}
@@ -298,7 +337,8 @@ def closures(  # noqa: PLR0913  the payload's natives and executables, keyword-o
         if (path, inherited) not in direct:
             with opened(natives[path]) as data:
                 direct[path, inherited] = _direct_dependencies(
-                    path, data, payload, libraries, allowed, inherited=inherited, system=system
+                    path, data, payload, libraries, allowed, inherited=inherited,
+                    providers=providers, system=system
                 )
         found, passed_on = direct[path, inherited]
         return [(library, by_name, passed_on) for library, by_name in found]
@@ -352,7 +392,8 @@ def closures(  # noqa: PLR0913  the payload's natives and executables, keyword-o
         if lib not in reached and lib not in left_out
     ]
     checked = {path: natives[path] for path in unreached} | dict(executables or {})
-    _check_unreached(checked, payload, libraries, allowed=allowed, warn=warn, system=system)
+    _check_unreached(checked, payload, libraries, providers, allowed=allowed, warn=warn,
+                     system=system)
     _warn_search_paths({**natives, **(executables or {})}, warn)
     if system is not None:
         _warn_system(system, allowed, warn)
@@ -363,6 +404,7 @@ def _check_unreached(  # noqa: PLR0913  what is checked, and what it is checked 
     files: Mapping[str, bytes | Path],
     payload: set[str],
     libraries: dict[str, list[str]],
+    providers: dict[str, list[str]],
     *,
     allowed: frozenset[str],
     warn: Callable[[str], None],
@@ -375,7 +417,7 @@ def _check_unreached(  # noqa: PLR0913  what is checked, and what it is checked 
         with opened(files[path]) as data:
             try:
                 _direct_dependencies(path, data, payload, libraries, allowed, inherited=(),
-                                     system=system)  # fmt: skip
+                                     providers=providers, system=system)  # fmt: skip
             except NativeError as exc:
                 warn(f"{exc}; no extension module loads it, so this matters only if the "
                      "application opens it")  # fmt: skip

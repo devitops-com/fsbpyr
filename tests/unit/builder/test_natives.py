@@ -418,3 +418,47 @@ def test_names_are_found_in_one_pass_as_whole_strings_or_path_ends() -> None:
 
     assert found == {b"libfirst.so", b"libpath.so.1", b"libnoext", b"libsuffix.so.2.3"}
     assert found == {name for name in names if _contains_name(data, name)}
+
+
+# --- libraries bundled by another distribution ---------------------------------------------
+
+TORCH_LIKE = {
+    "tv/_C.so": make_elf(needed=("libc10.so", "libtorch.so.2", "libc.so.6"),
+                         rpath="/__w/_temp/conda/lib", soname="PyInit__C"),
+    "torch/lib/libtorch.so.2": make_elf(needed=("libc10.so",), runpath="$ORIGIN",
+                                        soname="libtorch.so.2"),
+    "torch/lib/libc10.so": make_elf(),
+}  # fmt: skip
+
+
+def test_a_library_another_distribution_bundles_is_found_by_file_name_or_soname() -> None:
+    result = closures(TORCH_LIKE, {"tv/_C.so"}, allowed=frozenset())
+
+    assert result == {"tv/_C.so": ("torch/lib/libc10.so", "torch/lib/libtorch.so.2")}
+    renamed = {**TORCH_LIKE, "torch/lib/libtorch-2.so": TORCH_LIKE["torch/lib/libtorch.so.2"]}
+    del renamed["torch/lib/libtorch.so.2"]
+    assert closures(renamed, {"tv/_C.so"}, allowed=frozenset()) == {
+        "tv/_C.so": ("torch/lib/libc10.so", "torch/lib/libtorch-2.so")}  # by its SONAME
+
+
+def test_the_search_path_comes_before_libraries_of_other_distributions() -> None:
+    natives = {**TORCH_LIKE, "tv/libc10.so": make_elf()}
+    natives["tv/_C.so"] = make_elf(needed=("libc10.so", "libtorch.so.2"), runpath="$ORIGIN")
+
+    result = closures(natives, {"tv/_C.so"}, allowed=frozenset())
+
+    assert result == {"tv/_C.so": ("torch/lib/libc10.so", "torch/lib/libtorch.so.2",
+                                   "tv/libc10.so")}  # fmt: skip
+
+
+def test_libraries_of_one_name_in_several_distributions_are_not_guessed() -> None:
+    natives = {**TORCH_LIKE, "other/lib/libc10.so": make_elf()}
+
+    with pytest.raises(NativeError, match=r"other/lib/libc10\.so and torch/lib"):
+        closures(natives, {"tv/_C.so"}, allowed=frozenset())
+
+
+def test_a_system_library_is_never_replaced_by_a_bundled_one_of_its_name() -> None:
+    natives = {"p/_x.so": make_elf(needed=("libz.so.1",)), "q/libz.so.1": make_elf()}
+
+    assert closures(natives, {"p/_x.so"}, allowed=frozenset()) == {"p/_x.so": ()}

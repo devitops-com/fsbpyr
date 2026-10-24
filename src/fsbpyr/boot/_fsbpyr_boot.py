@@ -40,12 +40,13 @@ INFO = _fsbpyr.info()
 ROOT = INFO["executable"]
 _PREFIX = ROOT + "/"
 _INTERNAL = ("_fsbpyr_boot", "_fsbpyr_rt")  # boot code, hidden from module listings
-# Stdlib modules adjusted right after they load (_fsbpyr_rt.fixups): CA store fallback and
-# multiprocessing children started from this very binary.
-_FIXUPS = frozenset({"ssl", "multiprocessing.spawn", "ctypes"})
+# Modules adjusted right after they load (_fsbpyr_rt.fixups): CA store fallback, multiprocessing
+# children started from this very binary, bundled libraries by bare name, parso's file times.
+_FIXUPS = frozenset({"ssl", "multiprocessing.spawn", "ctypes", "parso.file_io"})
 # The native cache's site directory (with "/"), once an FS_REQUIRED package was extracted
 # there: modules of such packages live below it, and the path hook claims it too.
 _FS_PREFIXES: list[str] = []
+_FS_ROOTS: list[str] = []  # payload directories of the packages extracted there
 
 # (index, kind, flags, code, source, file, dist, path) as returned by _fsbpyr.find_module
 type Record = tuple[int, int, int, int, int, int, int, str]
@@ -181,6 +182,11 @@ def _fs_package_prefix(directory: str) -> str:
     prefix: str = materialize_package(directory)
     if prefix not in _FS_PREFIXES:
         _FS_PREFIXES.append(prefix)
+    if directory not in _FS_ROOTS:
+        _FS_ROOTS.append(directory)
+    # A loaded module's path entry is in sys.path_importer_cache (PEP 302); code that
+    # walks entries from __file__ (twisted.python.modules) warns if not.
+    sys.path_importer_cache.setdefault(prefix[:-1], PayloadPathFinder("", prefix))
     return prefix
 
 
@@ -264,14 +270,44 @@ class PayloadPathFinder:
         pass
 
 
+def _native_site() -> str | None:
+    """The native cache's site directory (with "/") once natives are in use, else None (also
+    where no cache directory can be told: no payload path may fail for want of one)."""
+    native = sys.modules.get("_fsbpyr_rt.native")
+    if native is None:
+        return None
+    try:
+        return str(native.native_cache().site) + "/"
+    except (ImportError, OSError):
+        return None
+
+
+def _locations() -> "Iterator[str]":
+    """Where payload paths live; the native cache's site last, asked only for an entry no
+    other location claims."""
+    yield _PREFIX
+    yield from _FS_PREFIXES
+    if (site := _native_site()) is not None:
+        yield site
+
+
+def _in_fs_package(directory: str) -> bool:
+    return any(directory == root or directory.startswith(root + "/") for root in _FS_ROOTS)
+
+
 def path_hook(entry: str) -> PayloadPathFinder:
     """Claim ``<exe>`` and ``<exe>/<dir>`` (normalizing '', '.' and trailing components), and
-    the same below the cache directory of extracted FS_REQUIRED packages."""
-    for location in (_PREFIX, *_FS_PREFIXES):
+    the same below the native cache's site directory: the files of an extracted FS_REQUIRED
+    package are there, any other directory stands for the payload's (mypyc names the directory
+    its extension was extracted to as the compiled package's ``__path__``, whatever the
+    spec says)."""
+    for location in _locations():
         if entry == location[:-1] or entry.startswith(location):
             parts = [part for part in entry[len(location) :].split("/") if part not in ("", ".")]
             if ".." not in parts:
-                return PayloadPathFinder("/".join(parts), location)
+                directory = "/".join(parts)
+                served = location if location == _PREFIX or _in_fs_package(directory) else _PREFIX
+                return PayloadPathFinder(directory, served)
     raise ImportError("not an fsbpyr payload path", path=entry)
 
 

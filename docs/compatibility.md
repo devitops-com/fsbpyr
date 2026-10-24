@@ -129,7 +129,7 @@ beyond the defaults; each setting's reason is a comment in its `pyproject.toml`.
 | App | Risk it covers | `[tool.fsbpyr]` |
 |---|---|---|
 | `torch` | TorchScript compiling the source, dynamo tracing bytecode (not on 3.15, where `torch.compile` is not supported yet), DataLoader worker processes forked from a forkserver that preloads the app's entry module (3.14, 3.15), checkpoints | none |
-| `torchvision` | custom operators registered in `torch.ops`, the image extension; **fails**: the build stops, since its extensions need torch's `libtorch*.so`, bundled by another distribution (their RPATH names PyTorch's build machine) | none |
+| `torchvision` | custom operators registered in `torch.ops`, the image extension (opened by `torch.ops.load_library` through a `FileFinder` on the package directory) | `fs-packages = ["torchvision"]` |
 | `lightning` | the Lightning trainer, checkpoints, torchmetrics | `fs-packages = ["lightning"]` |
 | `transformers` | a tiny BERT and GPT-2 built offline, a tokenizer trained in process, safetensors, a pipeline | `fs-packages = ["transformers"]` |
 | `hf-datasets` | `map(num_proc=2)` through multiprocess and dill, Arrow files | none |
@@ -144,7 +144,7 @@ beyond the defaults; each setting's reason is a comment in its `pyproject.toml`.
 | `nlp` | nltk, spaCy (language data imported by name), sentencepiece, tiktoken's plugin namespace | `fs-packages = ["spacy", "thinc"]` |
 | `vision` | scikit-image's lazy_loader stubs, imageio-ffmpeg's bundled binary run as a subprocess; **fails**: cv2's loader puts its directory into `sys.path` behind the executable and finds the cv2 package again, not its binary | `fs-packages = ["cv2"]` |
 | `matplotlib` | matplotlib and seaborn: fonts and data of mpl-data, Agg rendering | none |
-| `jupyter` | nbclient running a notebook in an ipykernel started as `sys.executable -m ipykernel_launcher`, IPython in process, jedi; **fails**: jedi cannot read the standard library's sources (they are inside the executable), and the kernel prints no startup warning (cause not found yet) | `fs-packages = ["nbformat", "parso"]`, `interpreter-reexec = true` |
+| `jupyter` | nbclient running a notebook in an ipykernel started as `sys.executable -m ipykernel_launcher`, IPython in process, jedi (the standard library's sources come from the payload, `fixups.py`); the kernelspec search is cut to ipykernel's own (`XDG_DATA_DIRS`): a built app has no `share/`, and a host's `/usr/share/jupyter/kernels/python3` (Debian's python3-ipykernel) would start the system's Python as the kernel | `fs-packages = ["debugpy", "IPython", "nbformat", "parso"]`, `interpreter-reexec = true` |
 | `hydra` | a config package, `_target_` instantiation, plugin discovery in the `hydra_plugins` namespace | none |
 | `optuna` | a study in SQLite, whose storage runs alembic migrations kept next to optuna's modules | `fs-packages = ["optuna"]` |
 
@@ -200,14 +200,14 @@ beyond the defaults; each setting's reason is a comment in its `pyproject.toml`.
 | `cloud` | botocore's service models and endpoints, Azure SAS signing, Google namespace packages across distributions | none |
 | `observability` | OpenTelemetry's context and propagators loaded through entry points, prometheus, structlog, loguru, sentry | none |
 | `gevent` | monkey patching, pywsgi, a loop implementation chosen by name, gevent.subprocess | none |
-| `twisted` | the reactor, twisted.web, plugins; **fails**: `twisted.plugin.getPlugins` finds no plugins, since `twisted/plugins` is not a directory it can list, and the app exits 0 | none |
+| `twisted` | the reactor, twisted.web, plugins listed by `twisted.plugin.getPlugins` (twisted lists `twisted/plugins` on disk) | `fs-packages = ["twisted"]` |
 | `validation` | jsonschema's meta-schemas through importlib.resources, marshmallow, Faker's locale providers, phonenumbers' lazy metadata | none |
 
 ### Tools
 
 | App | Risk it covers | `[tool.fsbpyr]` |
 |---|---|---|
-| `black` | modules compiled with mypyc; **fails**: `black.output` is not found, because the compiled package's `__path__` is the cache directory and `--fs-package` refuses a package of native code | none |
+| `black` | modules compiled with mypyc, whose `__path__` is the cache directory the extension was extracted to; its `blib2to3` reads `Grammar.txt` next to its `__file__` | `fs-packages = ["blib2to3"]` |
 | `gnureadline` | an extension that links GNU readline statically | none |
 | `lxml` | libxml2 and libxslt bundled in the wheel | none |
 | `pillow` | Pillow's codecs and embedded font | none |

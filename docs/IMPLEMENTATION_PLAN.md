@@ -1953,15 +1953,16 @@ cache, and cold where it matters). **Exit:** the comparison is committed in
   Not measured then: a cold page cache (it needs no root: `docs/performance.md`, "Cold start
   (0.20.0)"), PyApp's default mode (it installs the dependencies from an index on the first run).
 
-### Phase 11 — Gaps the corpus found (owner decision 2026-10-24: small, contained fixes first)
+### Phase 11 — Gaps the corpus found (owner decisions 2026-10-24: small, contained fixes first, then the gaps every Python has)
 
-The corpus of 65 apps (TST-3, 0.26.0) found ten gaps of fsbpyr's own, each a `known-failure`
-in the app's `tests/corpus/<app>/commands.toml` with the cause as far as it is known; the test
+The corpus of 65 apps (TST-3, 0.26.0) found gaps of fsbpyr's own, each a `known-failure` in
+the app's `tests/corpus/<app>/commands.toml` with the cause as far as it is known; the test
 expects the failure and goes red once it is fixed (then the line goes). On 2026-10-24, x86-64,
 55 of 65 apps matched their venv on 3.12 and 3.13, 54 of 64 on 3.14 and 35 of 42 on 3.15; with
-the four small fixes below, 59 of 65, 59 of 65, 58 of 64 and 38 of 42.
+the fixes below, 63 of 65 on 3.12 and 3.13, 62 of 64 on 3.14 and 42 of 42 on
+3.15 (openmm and cv2 still fail; on 3.15 they have no wheels).
 
-**Small and contained — DONE 2026-10-24 (0.26.0):**
+**Fixed (0.26.0):**
 
 | Gap | Apps | Cause | Fix |
 |---|---|---|---|
@@ -1969,21 +1970,23 @@ the four small fixes below, 59 of 65, 59 of 65, 58 of 64 and 38 of 42.
 | `pkg.__init__` as a module | `statsmodels` | `from .__init__ import test` names a module `statsmodels.__init__`, which the payload had no record for | `<pkg>.__init__` of a regular package imports as a plain module from the package's `__init__`, as FileFinder does; statsmodels then also needs `fs-packages` for its datasets |
 | Long RUNPATH | `tensorflow` (3.12, 3.13) | `libtensorflow_framework.so.2`'s RUNPATH is about 20 KB; `elf.py` took dynamic strings of at most 4096 bytes | RPATH and RUNPATH may be up to 1 MiB, other names stay at 4096; tensorflow then needs `fs-packages = ["clang", "tensorflow"]` |
 | Forkserver preload | `torch` (3.14, 3.15) | the forkserver preloads `__main__` only from a `main_path`, which a built app has none of, so each worker imported torch itself | the forkserver imports the module of the executable's own entry point (`pkg.mod:func`), after the parent check, never one the command line names (D22) |
-| Libraries loaded by bare name (found by full-suite.yml's corpus job after the merge, 2026-10-24) | `hdf5` (PyTables) | PyTables looks for blosc2's `libblosc2.so` in `sysconfig`'s site-packages, which a built app has no directory for, then loads it by bare name; that works only where the system has a copy (this host did, CI did not) | `ctypes.CDLL` of a bare name the system cannot load finds the one library of that file name the payload bundles, extracted with its closure (`_fsbpyr_rt/fixups.py`); a system copy still comes first |
+| mypyc packages | `black` | mypyc sets the compiled package's `__path__` to the directory its shared runtime library was extracted to (the cache), where the payload's plain modules are not, so `from black.output import err` found nothing | the path hook serves a directory of the native cache that holds no extracted fs-package as the payload directory it mirrors (`path_hook`); `black` then also needs `fs-packages = ["blib2to3"]`, which reads `Grammar.txt` next to its (compiled, so cache-side) `__file__` |
+| Libraries loaded by bare name (found by full-suite.yml's corpus job after the merge, 2026-10-24) | `hdf5` (PyTables) | PyTables looks for `libblosc2.so` next to its `__file__`, then in `sysconfig`'s site-packages, then by bare name; the first two are no directories in a built app, and the bare name works only where the system has a copy (this host did, CI did not) | `ctypes.CDLL` of a bare name the system cannot load finds the library of that file name the payload bundles, extracted with its closure (`_fsbpyr_rt/fixups.py`); of several (tables' and blosc2's `libblosc2.so`), the one in the top-level package of the module calling `CDLL`, as that package's own lookup finds in a venv; a system copy still comes first |
+| Libraries bundled by another distribution (2026-10-24) | `torchvision` | its extensions need torch's `libc10.so` and `libtorch*.so` (in `torch/lib`); their RPATH names PyTorch's build machine, so the build counted them as neither bundled nor system libraries and stopped; the extensions are then opened by `torch.ops.load_library` from a `FileFinder` on the package directory, and the libraries in `torchvision.libs` were not extracted | `natives.closures` resolves a `DT_NEEDED` entry no search path provides against the payload's shared objects by file name or SONAME, when exactly one in another top-level directory has it (several: the build stops and names them); at run time torch's import has loaded them, so ld.so reuses them by SONAME; an fs-package is extracted with the closures of the extensions below it (`native.materialize_package`); the app needs `fs-packages = ["torchvision"]` |
+| Listing a package directory | `twisted` | `twisted.plugin.getPlugins` lists `twisted/plugins` with `FilePath.listdir`, which a path inside the executable cannot serve; with `--fs-package twisted` the files are on disk, but their site directory was not in `sys.path_importer_cache`, so twisted warned and found no plugins (the app exited 0) | an fs-package's site directory is entered into `sys.path_importer_cache` when it is extracted; `twisted` needs `fs-packages = ["twisted"]`, `sys.path` is unchanged |
+| Standard-library sources for jedi (2026-10-24) | `jupyter` | jedi parses the sources its module finder's loader hands it (`KnownContentFileIO`), but parso asks the file for its time with `os.path.getmtime`, which fails below the executable with `NotADirectoryError` where parso expects `FileNotFoundError` | `parso.file_io`'s `FileIO.get_last_modified` answers the executable's time for a payload path (`_fsbpyr_rt/fixups.py`); no source is extracted (the standard library's are 574 files, 11 MB, 2.5 MB zstd-compressed) |
+| A missing kernel warning (2026-10-24) | `jupyter` | not a gap of fsbpyr's: the build packages no `share/` files, so jupyter_client's kernelspec search found the host's `/usr/share/jupyter/kernels/python3` (Debian's python3-ipykernel 6.29, Python 3.13) and ran the notebook in the system's Python, whose old ipykernel has no such warning; on a host without that file the kernel is the executable re-run as Python, and it needs `fs-packages` `debugpy` (`_vendored` listed) and `IPython` (`README_STARTUP` read next to `__file__`) | the app cuts the search to ipykernel's own kernelspec (`XDG_DATA_DIRS`) and names the two packages |
 
-**Larger, open:**
+**Open:**
 
 | Gap | Apps | Cause | What a fix needs |
 |---|---|---|---|
-| Libraries bundled by another distribution | `torchvision` | its extensions need torch's `libtorch*.so` (in `torch/lib`); their RPATH names PyTorch's build machine, so the build counts them as neither bundled nor system libraries and stops | resolve DT_NEEDED against the libraries other distributions in the payload bundle, and make the loader find them at run time (the cache's layout, `LD_LIBRARY_PATH` is not ours to set) |
 | Plugins outside a package | `openmm` | plugins in `OpenMM.libs/lib/plugins` are loaded from a directory; `OpenMM.libs` is no package, so no setting extracts it | extraction of a library directory next to the shared objects that load from it, or a setting for non-package directories |
 | `sys.path` inserted ahead of the payload | `vision` | cv2's loader inserts its own directory at `sys.path[1]` to find its binary; `sys.path[0]` is the executable, so the payload's `cv2` is found again | let a directory inserted into `sys.path` take precedence for the names it holds, or special-case extension-only directories |
-| mypyc packages | `black` | mypyc sets the compiled package's `__path__` to the cache directory, where the payload's plain modules are not; `--fs-package` refuses packages of native code | extract the whole package (pure and native files) when its `__path__` is the cache's, or let the payload finder serve a package whose `__path__` points at the cache |
-| Listing a package directory | `twisted` | `twisted.plugin.getPlugins` lists `twisted/plugins` with `FilePath.listdir`; a path inside the executable cannot be listed, and `--fs-package twisted` puts the files in a site directory that is not on `sys.path` (the app exits 0 with no plugins) | put an fs-package's site directory on `sys.path`, or fold it into D24's path handling |
-| Standard-library sources on disk | `jupyter` | jedi parses the standard library's sources from disk; they are inside the executable | an option to extract the standard library's sources (size, and what else reads them) |
 | `importlib.resources` paths have no `resolve()` | `grpc` without `fs-packages` (found by the settings investigation, 2026-10-24) | grpc_tools calls `importlib.resources.files(...).resolve()` and passes the result to protoc; fsbpyr's traversable has no `resolve()`, so the app fails with `AttributeError` instead of a file access the boot note or a setting could act on | give the payload's traversable `resolve()` (a path on disk via D27's extraction, as `as_file` does) |
-| A missing kernel warning | `jupyter` | the kernel started as `sys.executable -m ipykernel_launcher` runs the cells, but ipykernel's startup warning is not printed; cause not found | find the cause first |
-
+| A compiled module's own `OSError` is reported as an extraction failure (2026-10-24) | `black` without `fs-packages` | mypyc runs a compiled package's body inside `create_module`, where `PayloadExtensionLoader` wraps every `OSError` as "cannot extract native code for ... into <cache>"; blib2to3's read of `Grammar.txt` looked like a cache problem | wrap only the errors of the extraction itself |
+| `FileFinder` over a payload directory finds nothing (2026-10-24) | `torchvision` without `fs-packages` | torchvision finds its ops library with `importlib.machinery.FileFinder(os.path.dirname(__file__))`, which lists a directory; inside the executable it finds nothing and the ops never register (a silent failure) | serve a `FileFinder` on a payload directory, or recognise it in the hints |
+| Kernels of the host (2026-10-24) | apps that start Jupyter kernels | the build packages no `share/` files, so jupyter_client finds the host's kernelspecs first and may run a notebook in the system's Python | package a distribution's `share/jupyter/kernels`, or document it with the isolation the corpus app uses (`XDG_DATA_DIRS`) |
 ---
 
 ## 7. Test strategy

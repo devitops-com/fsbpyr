@@ -51,6 +51,10 @@ def main() -> None:
         for name in ("JUPYTER_RUNTIME_DIR", "JUPYTER_DATA_DIR", "JUPYTER_CONFIG_DIR", "IPYTHONDIR"):
             os.environ[name] = os.path.join(directory, name.lower())
         os.environ["JUPYTER_PLATFORM_DIRS"] = "1"
+        # The system's kernelspecs (/usr/share/jupyter/kernels: a host with python3-ipykernel
+        # has one) come before ipykernel's own, which names sys.executable. The venv finds its
+        # own spec first (its share/ directory), a built app has none.
+        os.environ["XDG_DATA_DIRS"] = os.path.join(directory, "xdg")
         notebook()
         ipython()
         completions()

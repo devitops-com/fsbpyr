@@ -42,11 +42,32 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   where systemd's user manager offers one.
 
 ### Fixed
+- **Libraries another distribution bundles are found at build time.** A native file's `DT_NEEDED`
+  entry that no search path provides is taken from the payload's shared objects of another
+  top-level directory by file name or SONAME (torchvision's extensions need torch's `libc10.so`
+  and `libtorch*.so`, and the RPATH names PyTorch's build machine), when exactly one has it;
+  with several, the build stops and names them. An fs-package is extracted with the libraries
+  its extensions need from outside it (`torchvision.libs`). The corpus app torchvision now
+  matches its venv (with `fs-packages = ["torchvision"]`).
+- **An fs-package's cache directory is a path entry of `sys.path_importer_cache`.** Code that
+  walks entries from a module's `__file__` (`twisted.python.modules`) found it missing, warned
+  "not in path importer cache" and listed no plugins: the corpus app `twisted`, with
+  `fs-packages = ["twisted"]`, now lists the same plugins as its venv.
+- **Packages compiled with mypyc import their plain modules** (black). mypyc names the
+  directory its shared runtime library was extracted to (the native cache) as the compiled
+  package's `__path__`, where the payload's plain modules are not: `from black.output import
+  err` found nothing. The path hook now serves a directory of the native cache that holds no
+  extracted fs-package as the payload directory it mirrors.
 - **A library a package loads by its bare file name is found among the libraries the app
   bundles** when the system has none of that name (`ctypes.CDLL("libblosc2.so")`, as
   PyTables does after looking in a site-packages directory a built app does not have). It is
-  extracted with the libraries it needs; a system copy still comes first. PyTables apps failed
-  with `Blosc2 library not found` on machines without a system blosc2.
+  extracted with the libraries it needs; of several of that name, the one in the package of the
+  module calling `CDLL`; a system copy still comes first. PyTables apps failed with `Blosc2
+  library not found` on machines without a system blosc2.
+- **jedi completes names of the standard library and of other modules of the payload**: parso
+  asked the file of a payload module for its time, which fails below the executable with
+  `NotADirectoryError` (it expects `FileNotFoundError`), so every completion that looked into
+  a module of the payload raised. The time of a payload file is now the executable's.
 - **An import-time warning names the importing module, with its source line**, as in a venv.
   A warning raised with `stacklevel=2` or more while a module was imported (starlette's,
   authlib's) named `<frozen _fsbpyr_boot>:83`, the payload loader, and showed no line: CPython's

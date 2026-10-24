@@ -1,11 +1,3 @@
-# Fails today (found by this corpus): getPlugins(ICheckerFactory, twisted.plugins) finds nothing
-# (the built app prints `plugins []`, the venv lists four) and exits 0. twisted.python.modules
-# lists a package's modules with FilePath.listdir on <entry>/twisted/plugins; the entry is the
-# executable (or, with --fs-package twisted, the cache's site directory, which is on neither
-# sys.path nor sys.path_importer_cache: a "not in path importer cache" UserWarning), and a
-# directory below the executable file cannot be listed (ENOTDIR). --fs-package twisted does not help.
-known-failure = "twisted.plugin.getPlugins finds no plugins: twisted/plugins is not a listable directory"
-
 expect = "plugins ['anonymous'"
 
 [[command]]

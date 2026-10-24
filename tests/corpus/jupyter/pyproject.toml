@@ -18,4 +18,4 @@ build-backend = "uv_build"
 interpreter-reexec = true
 # Without them nbformat fails to validate (it reads its JSON schemas next to its modules) and
 # jedi to complete (parso reads its grammar files next to its modules)
-fs-packages = ["nbformat", "parso"]
+fs-packages = ["debugpy", "IPython", "nbformat", "parso"]
