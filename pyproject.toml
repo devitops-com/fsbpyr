@@ -65,7 +65,9 @@ ignore = ["PLR2004"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S302", "S603", "PLR0913", "PLR0917"]
 "tests/fixtures/projects/**" = ["PLC0415", "S701"]  # lazy imports on purpose; text templates
-"tests/corpus/**" = ["PLC0415", "S701", "E402"]  # the same: apps of the corpus
+# the same: apps of the corpus; fixed credentials for deterministic output, requests to servers
+# the apps start on 127.0.0.1, an SSH client trusting the app's own in-process server
+"tests/corpus/**" = ["PLC0415", "S701", "E402", "S105", "S106", "S310", "S507"]
 "src/fsbpyr/boot/**" = ["S302"]  # unmarshals code from its own payload
 "src/fsbpyr/runtime/**" = ["S603"]  # runs the pinned interpreter and the located toolchain
 "src/fsbpyr/staging.py" = ["S603"]  # runs uv with argument lists, never a shell

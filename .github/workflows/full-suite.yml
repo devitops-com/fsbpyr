@@ -4,9 +4,10 @@ name: Full suite
 # nothing):
 #   - build (build.yml, with its checks): the release build, its smoke test and an independent
 #     rebuild compared byte for byte, exactly as release.yml then builds the tagged commit;
-#   - suite: the whole test suite but the portability tests, as an unprivileged user in a Debian
-#     trixie container: natives, compatibility, the ASan/UBSan launcher, the fuzzer, the
-#     cache-directory and GC tests, the ownership checks, and the coverage gates;
+#   - suite: the whole test suite but the portability tests and the corpus, as an unprivileged
+#     user in a Debian trixie container: natives, compatibility, the ASan/UBSan launcher, the
+#     fuzzer, the cache-directory and GC tests, the ownership checks, and the coverage gates;
+#   - corpus: the real-world apps of tests/corpus, built and compared with their venvs;
 #   - portability: the portability tests (tests/e2e/test_portability.py, which need `podman run`
 #     on the runner host).
 # It runs on every push to main, which is a merge: tools/release/release.sh tags only a main
@@ -60,10 +61,13 @@ jobs:
           - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
     # Debian trixie by digest, as build.yml (a multi-arch index: one image per runner
     # architecture). Privileged: rootless podman for the tests that map
-    # a second range of user ids, strace and user namespaces inside the container.
+    # a second range of user ids, strace and user namespaces inside the container. At most 8192
+    # tasks and 14 GiB without swap (the runners have 16): a runaway app (one restarting itself
+    # through sys.executable) is stopped here before it takes the runner with it; the tests
+    # contain each run of an app besides (tests/support/contain.py).
     container:
       image: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
-      options: --privileged
+      options: --privileged --pids-limit 8192 --memory 14g --memory-swap 14g
     timeout-minutes: 60
     steps:
       # As root. git before the checkout (it needs the tags); bootstrap.sh's packages; rootless
@@ -231,9 +235,9 @@ jobs:
         continue-on-error: true
         run: as-tester make check-c $MAKE_ARGS
 
-      # Everything but the portability tests. FSBPYR_TESTS_REQUIRE_ALL=full: no skip is
-      # expected, so a test that cannot run here fails the step. Branch coverage below
-      # pyproject.toml's fail_under fails it too. The launcher programs the tests build are
+      # Everything but the portability tests and the corpus (the jobs below).
+      # FSBPYR_TESTS_REQUIRE_ALL=full: no skip is expected, so a test that cannot run here fails
+      # the step. Branch coverage below pyproject.toml's fail_under fails it too. The launcher programs the tests build are
       # instrumented for llvm-cov and kept (FSBPYR_LLVM_COV_DIR), for the report below.
       - name: The whole suite
         run: |
@@ -241,7 +245,8 @@ jobs:
             FSBPYR_FUZZ_SECONDS="$FSBPYR_FUZZ_SECONDS" FSBPYR_FUZZ_CORPUS=/home/tester/fuzz-corpus \
             FSBPYR_LLVM_COV_DIR=/home/tester/llvm-cov/bin \
             LLVM_PROFILE_FILE=/home/tester/llvm-cov/prof/%p-%m.profraw \
-            $UV_RUN pytest --ignore=tests/e2e/test_portability.py --durations=30 \
+            $UV_RUN pytest --ignore=tests/e2e/test_portability.py \
+              --ignore=tests/e2e/test_corpus.py --durations=30 \
               --junitxml=full.xml --cov --cov-report=xml
 
       # IMPLEMENTATION_PLAN.md §7 sets 90% for payload/ and elf.py, above the 80% overall; this
@@ -279,6 +284,87 @@ jobs:
             /home/tester/src/full.xml
             /home/tester/src/coverage.xml
             /home/tester/launcher-coverage.txt
+          if-no-files-found: warn
+
+  # The real-world corpus (tests/corpus, TST-3): its apps built and compared with their venvs,
+  # in a job of its own beside the suite, which it would otherwise take past its timeout. The
+  # same container and user as the suite; temporary files on the container's disk, not a
+  # tmpfs: a big app's venv, executable and caches take gigabytes while it runs. `make
+  # test-corpus` builds the runtime (and fetches clang/lld 23) itself.
+  corpus:
+    name: corpus (${{ matrix.target }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14", "3.15"]  # as in the suite job
+        target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
+        include:
+          - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
+          - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
+    container:
+      image: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+      options: --pids-limit 8192 --memory 14g --memory-swap 14g  # as the suite job's
+    timeout-minutes: 60
+    steps:
+      - name: Install the build prerequisites
+        run: |
+          apt-get update -q
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+            ca-certificates curl git make clang-22 lld-22 zstd
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0  # the tags: fsbpyr's --version reads them
+
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install uv
+        run: sh tools/release/install-uv.sh /usr/local/bin > /dev/null
+
+      # As in the suite job: a user of its own, its copy of the checkout and a clean environment
+      # (GitHub's /github/home belongs to another user, and fsbpyr refuses a cache below it).
+      - name: An unprivileged user
+        run: |
+          useradd --create-home --uid 1000 tester
+          cp -a "$GITHUB_WORKSPACE" /home/tester/src
+          chown -R tester: /home/tester
+          cat > /usr/local/bin/as-tester <<'WRAPPER'
+          #!/bin/sh
+          cd /home/tester/src || exit 1
+          exec runuser -u tester -- env -i HOME=/home/tester USER=tester LANG=C.UTF-8 \
+            PATH=/home/tester/.local/bin:/usr/local/bin:/usr/bin:/bin "$@"
+          WRAPPER
+          chmod 755 /usr/local/bin/as-tester
+
+      # The default version runs in .venv, another in .venv-3.X (the Makefile's PYTHON=3.X).
+      - name: The Python of this entry
+        env:
+          MATRIX_PYTHON: ${{ matrix.python }}
+        run: |
+          if [ "$MATRIX_PYTHON" = "$(cut -d. -f1,2 .python-version)" ]; then
+            echo "MAKE_ARGS=" >> "$GITHUB_ENV"
+            as-tester uv python install "$(cat .python-version)"
+          else
+            echo "MAKE_ARGS=PYTHON=$MATRIX_PYTHON" >> "$GITHUB_ENV"
+            as-tester uv python install "$MATRIX_PYTHON"
+          fi
+
+      # FSBPYR_TESTS_REQUIRE_ALL=full: an app may only be skipped for a package without a wheel
+      # on this Python and machine (tests/support/no-wheels.txt).
+      - name: make test-corpus
+        run: |
+          as-tester FSBPYR_TESTS_REQUIRE_ALL=full JOBS=4 \
+            PYTEST_ADDOPTS="--durations=30 --junitxml=corpus.xml" make test-corpus $MAKE_ARGS
+
+      - name: Upload the report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: corpus-${{ matrix.python }}-${{ matrix.target }}
+          path: /home/tester/src/corpus.xml
           if-no-files-found: warn
 
   # The portability matrix: the apps run on 13 distributions (glibc 2.28 to 2.44; the 12 with an

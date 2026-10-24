@@ -1,0 +1,4 @@
+expect = "gthread /three 200 hello from /three"
+
+[[command]]
+argv = []

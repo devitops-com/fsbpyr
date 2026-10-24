@@ -1,0 +1,14 @@
+# Fails today (found by this corpus): cv2's loader (cv2/__init__.py bootstrap) takes itself
+# out of sys.modules, inserts its own directory into sys.path at position 1 and imports
+# cv2 again, to load the binary cv2.abi3.so from there. In a venv that directory comes before
+# site-packages; in a built app sys.path[0] is the executable, so the payload's cv2 package
+# is found again and the loader stops ("recursion is detected"). Its workaround (insert at
+# position 0 when sys.path[0] is cv2's parent) does not apply: with fs-packages cv2's parent
+# is the cache's site directory, without them config.py is not on disk. Remove when the
+# finder lets a directory inserted into sys.path go before the payload's packages.
+known-failure = "cv2's loader finds the cv2 package again, not its binary: recursion is detected"
+
+expect = "camera (512, 512)"
+
+[[command]]
+argv = []

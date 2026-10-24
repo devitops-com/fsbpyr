@@ -1,0 +1,7 @@
+defaults:
+  - db: sqlite
+  - _self_
+
+app:
+  name: corpus
+  workers: 2

@@ -1,0 +1,22 @@
+[project]
+name = "corpus-boosting"
+version = "1.0.0"
+description = "fsbpyr corpus app: xgboost and lightgbm, shared libraries loaded with ctypes by path"
+requires-python = ">=3.12"
+dependencies = ["xgboost>=3", "lightgbm>=4.6", "scikit-learn>=1.6"]
+
+[project.scripts]
+corpus-boosting = "corpus_boosting.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+# Without it the build stops: lightgbm's lib_lightgbm.so needs the host's GNU OpenMP
+# runtime (libgomp.so.1), which its wheel does not bundle
+allow-system-libs = ["libgomp.so.1"]
+# Without them `import lightgbm` and `import xgboost` fail: both find their shared library
+# (lib_lightgbm.so, libxgboost.so) on paths built from __file__ and load it with ctypes; their
+# scikit-learn API imports sklearn, which reads estimator.css next to its module
+fs-packages = ["lightgbm", "sklearn", "xgboost"]

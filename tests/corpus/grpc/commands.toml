@@ -1,0 +1,5 @@
+expect = "unary Hello, Ada! 1700000000"
+
+[[command]]
+argv = []
+env = { GRPC_VERBOSITY = "ERROR" }

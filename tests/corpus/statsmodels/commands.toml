@@ -1,0 +1,4 @@
+expect = "ols params"
+
+[[command]]
+argv = []

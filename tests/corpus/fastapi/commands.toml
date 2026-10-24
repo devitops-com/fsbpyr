@@ -1,0 +1,4 @@
+expect = "uvicorn websocket echo over tcp"
+
+[[command]]
+argv = []

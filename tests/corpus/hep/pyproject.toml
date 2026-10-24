@@ -1,0 +1,13 @@
+[project]
+name = "corpus-hep"
+version = "1.0.0"
+description = "fsbpyr corpus app: ROOT files, awkward arrays, package data tables"
+requires-python = ">=3.12"
+dependencies = ["uproot>=5", "awkward>=2", "vector>=1", "particle>=0.25", "hepunits>=2", "iminuit>=2.30", "numpy>=2"]
+
+[project.scripts]
+corpus-hep = "corpus_hep.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

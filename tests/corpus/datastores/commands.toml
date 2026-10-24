@@ -1,0 +1,4 @@
+expect = "bson has_c True"
+
+[[command]]
+argv = []

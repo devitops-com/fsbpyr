@@ -1,0 +1,4 @@
+expect = "lightgbm predict ["
+
+[[command]]
+argv = []

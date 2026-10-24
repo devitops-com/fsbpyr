@@ -1,0 +1,21 @@
+[project]
+name = "corpus-casadi"
+version = "1.0.0"
+description = "fsbpyr corpus app: casadi plugins dlopened by name from its own directory"
+requires-python = ">=3.12"
+dependencies = ["casadi>=3.6"]
+
+[project.scripts]
+corpus-casadi = "corpus_casadi.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+# Without allow-system-libs the build fails: casadi ships plugins for commercial solvers (mosek,
+# xpress, knitro, snopt, worhp, ...) whose libraries are not in the wheel; the app never loads them.
+allow-system-libs = ["libMad.so", "libconopt.so.4", "libeng.so", "libhsl.so", "libknitro.so", "libmex.so", "libmosek64.so", "libmx.so", "libsnopt7.so", "libut.so", "libworhp.so", "libxprs.so"]
+# Without fs-packages the run fails: casadi dlopens its plugins by path <casadi.__file__'s directory>/
+# libcasadi_nlpsol_ipopt.so, a path inside the executable ("Plugin 'ipopt' is not found", Not a directory).
+fs-packages = ["casadi"]

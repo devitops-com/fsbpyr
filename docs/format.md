@@ -93,7 +93,7 @@ equal), for two things:
 | 8 | 4 | `format_version` (= 7) |
 | 12 | 4 | `header_size` (= 208) |
 | 16 | 4 | `python_hexversion` of the target CPython (`PY_VERSION_HEX`) |
-| 20 | 4 | bytecode magic (`importlib.util.MAGIC_NUMBER`) |
+| 20 | 4 | bytecode magic (`importlib.util.MAGIC_NUMBER`) of the target CPython (3.12 to 3.15) |
 | 24 | 32 | `generation_id` (native cache generation, §7 of the plan) |
 | 56 | 8 | `app_name` — Str |
 | 64 | 8 | `entrypoint` — Str (`module:attr` or `module`) |
@@ -271,7 +271,7 @@ this short list to build CPython's frozen-module table, so it never scans the MO
 - Every Str must lie inside STRTAB, be NUL-terminated, contain no NUL, and be valid UTF-8.
 - Every index field must be NONE or in range. Enum fields must hold known values, and flag
   fields must hold known bits only. Reserved fields must be 0.
-- Every blob must be 16-byte aligned, lie inside the blob data area, and have `size` ≤ 2^40.
+- Every blob must be 16-byte aligned, lie inside the blob data area, and have `size` ≤ 2^62.
   For codec none, `stored_size == size`. A blob of codec 2 instead names a block (in range, codec
   zstd, `size` ≤ 1 MiB) and lies inside its content (`stored_size + size` ≤ the block's
   `size`); codec 2 is invalid in version 1.
@@ -302,12 +302,30 @@ project's directory: nothing in it names the builder's paths, time or host.
 | `schema` | `1`. Incremented when a key changes meaning, never for a new key |
 | `lock` | `{kind, path, sha256, hashed}`: `kind` is `uv.lock`, `pylock.toml`, `requirements` or `unlocked`; `path` is relative to the project directory (`../uv.lock` for a workspace member), null if unlocked; `sha256` is of the file; `hashed` says whether it pins artifact hashes |
 | `dists` | `[{name, version, source, artifact_sha256}]`, sorted by name |
+| `runtime` | the runtime's id, `cp<python>-<triple>-<12 hex digits>` (a digest of the launcher, the PBS archive, the sysroot and the layout version) |
+| `runtime_tag` | the PBS distribution's tag and the target triple (`<tag>-<triple>`); it seeds `generation_id` |
+| `python` | the target CPython's version (3.12 to 3.15) |
+| `extension_suffixes` | the file name suffixes the runtime's interpreter imports extension modules by, in its order; asked of the interpreter itself since 0.25.0, as PYTHON.json's list lags (3.15.1's lacks `.abi3t.so`) |
+| `fsbpyr` | the version of the fsbpyr that built the executable |
+| `zstd` | the libzstd version that compressed the payload (see Determinism) |
+| `resources` | `sha256` over every payload file's path, content digest and mode, cut to 32 hex digits: the name of the tree where resources extracted on demand live (D27) |
 | `runtime_inputs` | `{pbs: {release, name, sha256}, sysroot, layout}`: the python-build-standalone archive and the glibc sysroot the runtime was made from, and its layout version |
 | `runtime_components` | versions the runtime's interpreter reports: `openssl`, `sqlite`, `zlib`, `expat`, `libmpdec`. Read once when the runtime is built; an executable that builds another passes them on |
 | `stub_sha256` | SHA-256 of the bytes before the payload (the stub and its zero padding): `head -c <payload_offset> app \| sha256sum`. The same in every app built by the same fsbpyr release; there is no digest of the builder |
 | `settings` | `{entry, fs_packages, allow_system_libs, extras, include_source}`: `fs_packages` is the effective list (the built-in packages and the configured ones) |
 | `release_asset` | only in fsbpyr's own executable: the release asset (without `.xz`) it is released as, `fsbpyr-3.X-<target>` (e.g. `fsbpyr-3.14-x86_64-linux-gnu`), the target being the host's name from the target table, which `fsbpyr self update` fetches the same Python's build of. 0.21.0 recorded `fsbpyr-<target>` for the newest Python (published until 0.21.0 only); a value that is not today's form makes `self update` use the asset of the Python the executable runs on |
-| `project`, `fsbpyr_version`, `git`, `uv`, `glibc`, `system`, `zstd_level`, `native_compression`, `interpreter_reexec`, `runtime`, `runtime_tag`, `python`, `extension_suffixes`, `fsbpyr`, `zstd`, `resources` | as before (D28, D26, NAT-2, D29, D33, D23, D27) |
+| `project` | `{name, version}` of the application |
+| `fsbpyr_version` | the builder's version, with the commit where there is one (`fsbpyr inspect`) |
+| `git` | `{commit, tag}` of the project's HEAD (`tag`: the highest `vX.Y.Z` on it, or null); null without git or outside a repository |
+| `uv` | the version of the uv that built the wheel and installed everything |
+| `glibc` | the oldest glibc the application runs on (the stub's requirement, raised by bundled native code), e.g. `2.34` |
+| `system` | `{libraries, may_load}`: the system libraries the target must provide, and with `--hints` those the Python code may open by name |
+| `zstd_level` | the zstd level of the app's content and of every block |
+| `native_compression` | `xz -6` or `zstd`: how native files are stored |
+| `interpreter_reexec` | what a child process of this executable that asks for Python (`-m MODULE`, `-c CODE`, a `.py` file of the payload) gets: `true` runs it as the interpreter would (D23), `false` runs the app, `null` (not set) refuses it with exit 70 (D44) |
+
+The keys come from `src/fsbpyr/assemble.py` (the runtime's) and `src/fsbpyr/build.py` (the
+application's); see D28, D26, NAT-2, D29, D33, D23 and D27 for their history.
 
 `dists[].source` is one of:
 

@@ -1,0 +1,21 @@
+[project]
+name = "corpus-django"
+version = "1.0.0"
+description = "fsbpyr corpus app: Django project with admin, DRF, migrations, translations and collectstatic"
+requires-python = ">=3.12"
+dependencies = ["django>=5.1", "djangorestframework>=3.15"]
+
+[project.scripts]
+corpus-django = "corpus_django.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+# Without "django": OSError "No translation files found for default language en" (Django finds
+# its locale/*/LC_MESSAGES/django.mo through the file system next to its modules). Without
+# "corpus_django": TemplateDoesNotExist notes/summary.txt (the app loader lists the templates/
+# directory next to the app's modules). Without "rest_framework": exit 0, but collectstatic
+# copies 130 files instead of 157 (the static finders list rest_framework/static on disk).
+fs-packages = ["django", "corpus_django", "rest_framework"]

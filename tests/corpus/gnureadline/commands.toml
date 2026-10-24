@@ -1,2 +1,4 @@
+expect = "2 second"
+
 [[command]]
 argv = []

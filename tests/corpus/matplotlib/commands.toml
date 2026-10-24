@@ -1,0 +1,4 @@
+expect = "plots.png"
+
+[[command]]
+argv = []

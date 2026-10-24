@@ -1,0 +1,4 @@
+expect = "sub got [b'weather', b'sunny']"
+
+[[command]]
+argv = []

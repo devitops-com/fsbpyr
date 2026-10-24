@@ -47,42 +47,46 @@ for one maintainer working with an AI assistant.
 
 ## Stage overview
 
-Status on 2026-10-22: every item below is implemented. Stages 0 to 2 were released in 0.21.0
+Status on 2026-10-23: every item below is implemented. Stages 0 to 2 were released in 0.21.0
 (2026-10-21) and the three items below the cut line in 0.22.0 (2026-10-22). 0.23.0 makes
 SEC-4's switch to clang/lld 23 with PBS 20261021, moves REP-1's pins and fixes REP-7's expat
-CPE. "Released" names the first release with each item.
+CPE. 0.24.0 (2026-10-22) moves the sysroot to Debian 12 with a glibc 2.34 baseline (D42),
+drops snapshot.debian.org and moves the checks from release.yml into full-suite.yml and the
+reusable build.yml. 0.25.0 (2026-10-23) adds Python 3.15 (D43). The item texts below are the plan as written on 2026-10-19; a status note says where
+the repository has moved on. "Released" names the first release with each item, and what a
+later release changed.
 
 | ID | Title | Effort | Stage | Released |
 |---|---|---|---|---|
-| CI-8 | Run CI on every push to main, and tag only a green commit | S | 0 | 0.21.0 |
+| CI-8 | Run CI on every push to main, and tag only a green commit | S | 0 | 0.21.0; reshaped in 0.24.0 |
 | REL-1 | Fix the release-verification recipe, make releases and tags immutable, and stop re-pushing tags | S | 0 | 0.21.0 |
-| REL-2 | Freeze the release artifact before the tests run, and compare it with stage 3 | S | 0 | 0.21.0 |
+| REL-2 | Freeze the release artifact before the tests run, and compare it with stage 3 | S | 0 | 0.21.0; in build.yml since 0.24.0 |
 | BLD-1 | Keep a failed build from replacing a working output | S | 0 | 0.21.0 |
 | RT-1 | Restore exit(), quit() and help in built apps | S | 0 | 0.21.0 |
-| NAT-1 | Actually rebuild the project's own extensions against the glibc 2.28 sysroot | S | 0 | 0.21.0 |
+| NAT-1 | Actually rebuild the project's own extensions against the glibc 2.28 sysroot | S | 0 | 0.21.0; Debian 12 sysroot in 0.24.0 |
 | DX-4 | Put a working quickstart and the prerequisites first in the README | S | 0 | 0.21.0 |
 | DOC-3 | Correct the README's overclaims and stale numbers | S | 0 | 0.21.0 |
-| SCOPE-1 | State the 3.14-only target, and cap fsbpyr's own requires-python | S | 0 | 0.21.0 |
+| SCOPE-1 | State the 3.14-only target, and cap fsbpyr's own requires-python | S | 0 | 0.21.0; cap `<3.16` in 0.25.0 |
 | SEC-1 | Publish a security policy and the embedded-runtime CVE response | S | 0 | 0.21.0 |
 | SEC-2 | Move the runtime to PBS 20261009 now, and watch upstream daily | S | 0 | 0.21.0; pin 20261021 in 0.23.0 |
 | CI-1 | Turn unexpected skips into failures in CI, and run the D37 contract test there | S | 0 | 0.21.0 |
 | CI-2 | Measure and enforce coverage in CI | S | 0 | 0.21.0 |
 | CI-4 | Put the full test environment in the repo | M | 1 | 0.21.0 |
-| CI-3 | Run the whole suite on main and nightly as a normal user, and gate releases on it | L | 1 | 0.21.0 |
-| CI-6 | Run the 13-distribution portability matrix on the runner host | M | 1 | 0.21.0 |
+| CI-3 | Run the whole suite on main and nightly as a normal user, and gate releases on it | L | 1 | 0.21.0; reshaped in 0.24.0 |
+| CI-6 | Run the 13-distribution portability matrix on the runner host | M | 1 | 0.21.0; 11 images since 0.24.0 |
 | TST-1 | Make the compatibility checks fail on stderr noise | S | 1 | 0.21.0 |
 | TST-2 | Compare every fixture command with the same project run from its venv | M | 1 | 0.21.0 |
 | BLD-2 | Let the smoke test run the app once (opt-in) | S | 1 | 0.21.0 |
 | BLD-3 | Add --strict so CI can fail on warnings, including unhashed requirements | S | 1 | 0.21.0 |
-| NAT-2 | Report what the target must provide beyond glibc, and check the GLIBCXX/CXXABI/GCC floors | M | 1 | 0.21.0 |
+| NAT-2 | Report what the target must provide beyond glibc, and check the GLIBCXX/CXXABI/GCC floors | M | 1 | 0.21.0; manylinux_2_34 limits in 0.24.0 |
 | RT-2 | Explain single-file-layout failures at run time (D24 amendment), and widen the build-time scan | M | 1 | 0.21.0 |
 | RT-4 | Resolve sys.path entries that point inside the executable | M | 1 | 0.21.0 |
 | DX-1 | Show what the build is doing | S | 1 | 0.21.0 |
 | SEC-3 | Refuse privileged starts, check credentials in the D22/D23 parent check, and write the threat model | M | 1 | 0.21.0 |
 | SEC-4 | Prepare the LLVM 23 toolchain before a security fix forces it | M | 1 | 0.21.0; the switch in 0.23.0 |
-| REP-1 | Pin and record the release toolchain | M | 1 | 0.21.0; pins moved in 0.23.0 |
-| REP-2 | Prove reproducibility on an independent worker for every main push and tag | M | 1 | 0.21.0 |
-| DOC-1 | Document how an executable differs from a venv, what the target must provide, and what is tested | M | 1 | 0.21.0 |
+| REP-1 | Pin and record the release toolchain | M | 1 | 0.21.0; pins moved in 0.23.0; snapshot dropped in 0.24.0 |
+| REP-2 | Prove reproducibility on an independent worker for every main push and tag | M | 1 | 0.21.0; in build.yml since 0.24.0 |
+| DOC-1 | Document how an executable differs from a venv, what the target must provide, and what is tested | M | 1 | 0.21.0; glibc 2.34 in 0.24.0 |
 | TST-3 | Build a small real-world corpus checked against each app's venv | L | 1 | 0.21.0 |
 | REP-3 | Make build_info a versioned manifest traceable to its inputs | M | 2 | 0.21.0 |
 | REP-4 | Ship third-party licence notices with releases and apps | M | 2 | 0.21.0 |
@@ -377,6 +381,7 @@ settings of §5 #2 are switched on. Released in 0.21.0.
   - The push that adds the trigger starts a release.yml run on main, with `publish` skipped.
   - release.sh refuses a HEAD that has no green main push run, and the test covers it.
 - Effort: S. Depends on: none. Owner decision: none.
+- Status (0.24.0, 2026-10-22): release.yml no longer runs for pushes to main or pull requests. It runs for a pushed `v*` tag only, builds (build.yml without its checks), attests and publishes, and tests nothing. The main push run is full-suite.yml's (CI-3), which calls the reusable build.yml with its checks (stage 3 compared with the executable, smoke test, the `.xz` unpacked, the independent rebuild compared byte for byte). `make release` (tools/release/release.sh) tags main's HEAD only when tools/release/green-run.sh finds that commit's green full-suite.yml run, following one in progress with follow-run.sh's plain progress lines, and release.yml's `publish` job checks the tagged commit again. `make release-prep VERSION=X.Y.Z` makes the release commit at the end of a branch, so the full suite tests what is released after the merge; `make release` makes no commit. Pull requests start no CI: a branch is tested locally first.
 
 ### REL-1 Fix the release-verification recipe, make releases and tags immutable, and stop re-pushing tags
 - Why: three problems. eval:199-200, 203.
@@ -436,6 +441,7 @@ settings of §5 #2 are switched on. Released in 0.21.0.
   - A main push run's log (CI-8) shows the cmp step, and the upload before `make check`.
   - The new step adds under 30 s to the build job. Whole runs vary too much to bound: tag runs of the same workflow took 5m46s (v0.19.0) and 7m09s (v0.20.0).
 - Effort: S. Depends on: CI-8 (for the main push run). Owner decision: none.
+- Status (0.24.0, 2026-10-22): the `cmp` of stage 3 with the executable (and the smoke test and the `.xz` unpack check) is in build.yml under `checks`, so it runs in full-suite.yml's build job for every push to main, per target and Python. release.yml's tag run builds without those checks, since the tagged commit's full-suite run did them, and the tests no longer run in the release build at all (CI-3).
 
 ### BLD-1 Keep a failed build from replacing a working output
 - Why: four related gaps. eval:337, 466.
@@ -482,6 +488,7 @@ settings of §5 #2 are switched on. Released in 0.21.0.
   - The unit test asserts that the project wheel is rebuilt with the sysroot flags.
   - An e2e test in tests/e2e/test_build.py (run by test-ci) builds cext on the trixie CI host. It asserts that the host-built extension needed more than GLIBC_2.28 before the rebuild, that `fsbpyr inspect --json` reports glibc ≤ 2.28 afterwards, and that no glibc warning is printed.
 - Effort: S. Depends on: CI-1 (gcc in CI). Owner decision: none (applies D25).
+- Status (0.24.0, 2026-10-22): the sysroot is Debian 12's (glibc 2.36) and the baseline glibc 2.34, from Debian's own repository (D42, which replaces D25's Debian 10 sysroot and glibc 2.28). The "2.28" and `pthread_create` above are the plan as written: `pthread_create` is GLIBC_2.34 and no longer above the baseline, so the cext fixture parses its argument with `strtol`, which a host with glibc 2.38 or newer binds to `__isoc23_strtol` (GLIBC_2.38) and the Debian 12 sysroot to `strtol` (GLIBC_2.2.5), and its e2e test in tests/e2e/test_build.py checks the rebuild against that.
 
 ### DX-4 Put a working quickstart and the prerequisites first in the README
 - Why: "Building an app" starts at README.md:123, behind about 90 lines on building from source and verification. The install line `curl -fLo ~/.local/bin/fsbpyr` (README.md:18, :27-28) fails when ~/.local/bin does not exist, and on a fresh Debian or Ubuntu account a new ~/.local/bin reaches PATH only at the next login (/etc/skel/.profile). Nothing says what a project needs. Gaps: dx/readme-first-run-path (medium), dx/docs-examples-misleading-config (low). eval:330-339.
@@ -539,6 +546,7 @@ settings of §5 #2 are switched on. Released in 0.21.0.
   - In a CPython 3.15 venv, `pip install .` is refused; after `uv pip install .`, `fsbpyr build` exits 1 with the new message and stages nothing. A unit test checks the message with a patched `sys.version_info`.
   - The README section exists, and a docs test checks that it names the pinned CPython version from runtime/pins.py.
 - Effort: S. Depends on: none. Owner decision: decided (owner, 2026-10-19; D13): the cap `<3.15`, which becomes `>=3.12,<3.15` when Phase 9's port to 3.12 (step 2 of its Python-version part) lowers D13 to 3.12 (IMPLEMENTATION_PLAN.md:1522-1523), and rises to the next minor whenever `fsbpyr` moves to a newer Python (:1502-1503) (§5 #12).
+- Status (0.25.0, 2026-10-23): the 3.14-only text above is the plan of 2026-10-19. Phase 9 widened it to 3.12-3.14 on 2026-10-20, and 0.25.0 adds 3.15.1 (D43): `requires-python` is `>=3.12,<3.16`, `bytecode.SUPPORTED_PYTHON` is 3.12 to 3.15, and four fsbpyr executables are built per target. 3.14 stays the default (`.python-version` is 3.14.9; owner, 2026-10-23). The early version check still stops any other Python (§5 #12).
 
 ### SEC-1 Publish a security policy and the embedded-runtime CVE response
 - Why: the public repository has no SECURITY.md, and private vulnerability reporting is off. Nothing tells users that a CPython or OpenSSL fix means rebuilding their executables, although every app embeds the PBS runtime statically (D2, D4). Gaps: security/no-vulnerability-disclosure-process, repro/no-security-policy-or-cve-response, maturity/governance-files-missing (medium); maturity/runtime-security-update-policy (high; its policy part); dx/no-community-docs (low). eval:203.
@@ -660,6 +668,7 @@ clang/lld 23 then; the switch to it came in 0.23.0 (see SEC-4).
   - A launcher change on main produces a run whose log shows `FSBPYR_FUZZ_SECONDS=600` and a restored corpus.
   - The measured duration is recorded in CONTRIBUTING.md.
 - Effort: L. The roughly 12 e2e items that run 38624936426 did not reach, and the unit and integration tiers, have not run as `tester` in CI. Depends on: CI-1, CI-4, CI-8. Owner decision: decided (owner, 2026-10-20; no D-number; partly reverses 84feb09): a release requires a green full-suite run of its parent commit (§5 #1).
+- Status (0.24.0, 2026-10-22): full-suite.yml runs on every push to main, weekly (Sundays, with the longer fuzzing run) and on request; it has no nightly run (owner, 2026-10-21: main changes by merges only). Every trigger runs each (target, Python) entry: x86-64 and aarch64, 3.12 to 3.15 since 0.25.0. Its first job calls build.yml with its checks, so it also tests the release build (REL-2, REP-2), and its coverage gates are `fail_under` and 90% for payload/ plus elf.py. The release gate asks for a green full-suite.yml run of the commit that is tagged, not of its parent: `make release-prep` ends a branch with the release commit, so the run for the merge tested that commit itself (CI-8's note). release.yml tests nothing.
 
 ### CI-6 Run the 13-distribution portability matrix on the runner host
 - Why: tests/e2e/test_portability.py never runs in CI and gates no release. It covers 13 images with glibc 2.28-2.44, and its objdump cross-check compares the reported glibc floor with the binaries. In run 38624936426 (rootless podman as `tester` in a privileged container), its 13 `podman run` items failed and its 4 objdump checks passed; pytest never printed why. The containers also get outbound network access, since `podman run` (test_portability.py:86) sets no `--network`, although the HTTP checks are already left out of its COMMANDS. eval.md missed that. Gaps: native/portability-matrix-not-in-ci (medium), tests/ci-runs-only-core-subset (high, portability part). eval:197-198, 361-363, 387, 441.
@@ -680,6 +689,7 @@ clang/lld 23 then; the switch to it came in 0.23.0 (see SEC-4).
   - `grep -n 'network=none' tests/e2e/test_portability.py` matches.
   - CI-3's gate covers the job, because it checks the conclusion of the whole workflow run.
 - Effort: M. Depends on: CI-3. Owner decision: none (part of §5 #1).
+- Status (0.24.0, 2026-10-22): the portability job runs once per (target, Python) entry and pulls the 11 images of tests/support/images.py, glibc 2.34 to 2.44 (Rocky 9, Amazon Linux 2023, Ubuntu 22.04, 24.04 and 26.04, Debian 12 and 13, AlmaLinux 10, openSUSE Leap 16.0, Fedora, Arch), 10 on aarch64 because Arch has no arm64 variant. Debian 10 and 11, Rocky 8, Ubuntu 20.04 and Leap 15 left the matrix with glibc 2.28 (D42), so "13 images" and "2.28-2.44" above are the plan as written.
 
 ### TST-1 Make the compatibility checks fail on stderr noise
 - Why: the compat matrix (tests/e2e/test_compat.py:93-98) and the datafiles checks assert the exit status and stdout only; tests/e2e/test_natives.py checks stderr only for its trace line and one onnxruntime message. That is how 0.17.1's mispackaged mypyc charset_normalizer passed while requests warned on stderr. Gap: tests/compat-checks-ignore-stderr (medium). eval:466.
@@ -759,6 +769,7 @@ clang/lld 23 then; the switch to it came in 0.23.0 (see SEC-4).
   - tests/unit/test_inspect.py::test_json_describes_everything is updated.
   - stage2 == stage3.
 - Effort: M. Depends on: none. Owner decision: none.
+- Status (0.24.0, 2026-10-22): the limits are auditwheel's manylinux_2_34 ones, per target (libgcc_s's GCC version differs between x86-64 and aarch64), not manylinux_2_28 x86_64's; D42.
 
 ### RT-2 Explain single-file-layout failures at run time (D24 amendment), and widen the build-time scan
 - Why: four problems. eval:260, 264, 428-430.
@@ -893,6 +904,7 @@ clang/lld 23 then; the switch to it came in 0.23.0 (see SEC-4).
   - A `workflow_dispatch` run of upstream-watch on a branch with an older uv.version opens a `toolchain-update` issue.
 - Effort: M. Depends on: SEC-2. Owner decision: none. D26 is untouched (users keep their uv), and so is D3 (the toolchain stays out of runtime_id).
 - Status (0.23.0, 2026-10-22): upstream-watch's first toolchain issue (#19) moved uv to 0.13.5 and the trixie image to `sha256:4c252754...`. Its text missed two places a pin lives, the Containerfile's `UV_VERSION`/`UV_SHA256_*` and full-suite.yml's image (test_release.py caught the first); it now names them.
+- Status (0.24.0, 2026-10-22): snapshot.debian.org is gone from the build (D42): tools/release/apt-snapshot, `FSBPYR_APT_SNAPSHOT` and upstream-watch's snapshot-age check are removed. The build installs ca-certificates, git, curl, xz-utils, make and zstd from Debian's own repository and no clang/lld 22 (LLVM's pinned 23 links the launcher), so the snapshot, `dpkg-query -W clang-22 lld-22 xz-utils` and "Debian clang version 22.1.8" above no longer apply; the image digest and the uv pin stay. The README keeps the snapshot recipe for rebuilding 0.19.0 to 0.22.0.
 
 ### REP-2 Prove reproducibility on an independent worker for every main push and tag
 - Why: stage2 == stage3 is checked inside one job, with one path, cache and user. Nothing rebuilds a release anywhere else, and the self-rebuild cannot cover the stub (D4). Gaps: repro/no-independent-clean-rebuild (high); maturity/no-independent-reproducibility-check (medium); repro/determinism-e2e-coverage (low). eval:199, 284, 286, 424-426, 450.
@@ -912,6 +924,7 @@ clang/lld 23 then; the switch to it came in 0.23.0 (see SEC-4).
   - The extended e2e test fails if a checkout path leaks into the output.
   - In the same run, `compare` ends within 1 minute of `build`, by job times, because `reproduce` runs alongside `build`.
 - Effort: M. Depends on: REP-1, REL-2. Owner decision: none. This checks what D4's self-hosting cannot.
+- Status (0.24.0, 2026-10-22): `reproduce` and `compare` are jobs of build.yml that run under `checks`, per (target, Python) entry, on a fresh runner with the same image, the pinned uv and no snapshot. They run in full-suite.yml for every push to main and not in release.yml: `publish` needs `build` and `sbom` only, so a tag is covered through the full-suite run of its commit, whose `compare` also checks the SBOMs byte for byte (REP-7).
 
 ### DOC-1 Document how an executable differs from a venv, what the target must provide, and what is tested
 - Why: users learn these differences only by hitting them, and the lists of tested distributions and packages exist only as test constants. Gaps: deps/runtime-differences-undocumented, dx/no-limitations-troubleshooting-docs, maturity/no-user-facing-scope-and-limitations (medium); deps/interpreter-config-differences-undocumented, native/stdlib-and-system-data-undocumented, native/noexec-hint-partial, security/env-var-docs, repro/offline-airgap-workflow (low); the documentation half of native/cxx-sdist-rebuild-unsupported (medium; the rest is deferred, §4). eval:264, 339, 390, 455-457.
@@ -949,6 +962,7 @@ clang/lld 23 then; the switch to it came in 0.23.0 (see SEC-4).
   - every message that docs/compatibility.md quotes with an `fsbpyr:` prefix matches src/ by fragments, since messages are composed at run time (main.c:46 with integrity.c:189; cli.py:161): each quote is split at the prefix, paths and numbers, and every fragment of 10 or more characters occurs in a string in src/ (OS messages such as "[Errno 20] Not a directory" are not checked);
   - every variable read through `getenv("FSBPYR_`, `environ.get("FSBPYR_` or `environ.get(b"FSBPYR_` in src/fsbpyr appears in the README table (compile-time defines and header guards are not matched).
 - Effort: M. Depends on: SCOPE-1, RT-1, RT-2, NAT-2 (for their final texts). Owner decision: none.
+- Status (0.24.0, 2026-10-22): docs/compatibility.md and the README say glibc 2.34 or newer (x86-64 and aarch64), list the 11 portability images and give manylinux_2_34 advice; "glibc ≥ 2.28", "manylinux_2_28" and "13 images" above are the plan as written.
 
 ### TST-3 Build a small real-world corpus checked against each app's venv
 - Why: there are 6 synthetic fixtures (340 lines of Python), and the real packaging bugs came from outside them: gnureadline in 0.15.2/0.15.3, mypyc in 0.17.1. pandas, direct use of Pillow, and entry-point plugins across distributions are untested. Gaps: tests/no-real-world-app-corpus (medium), deps/plugin-discovery-untested-across-dists (low). eval:262, 357-359, 373, 440, 457, 465, 475, 482.
@@ -1230,7 +1244,7 @@ waits.
   - A unit test with faked loader output, copied from those real lines, passes.
   - In CI-6, heavy exits 0 on debian:10. In a `--rm` debian:10 container with /usr/lib/x86_64-linux-gnu/libstdc++.so.6* removed, it exits non-zero and names libstdc++.so.6. (busybox:glibc lacks the stub's libdl, libutil and librt, so heavy fails in ld.so before boot.)
 - Effort: M. Depends on: NAT-2, CI-6, DOC-1. Owner decision: none.
-- Done 2026-10-21: `_fsbpyr_rt/selftest.py`, called from the boot code for `FSBPYR_SELFTEST=natives` (any other value keeps its meaning). The loader is the executable's own PT_INTERP, read from /proc/self/exe, so aarch64 and x86-64 need no table. Missing items are reported once each, with the extensions that need them. Unit tests with faked loader output: tests/unit/boot/test_selftest.py. End to end: tests/e2e/test_natives.py runs heavy on this host (exit 0). The debian:10 checks (heavy passes on every image; with libstdc++.so.6 removed it exits non-zero naming it) are in tests/e2e/test_portability.py. They passed in `make test-portability` on the x86-64 host (2026-10-22) and in the full suite's portability jobs on x86-64 and aarch64 for all three Pythons (run 39756817933, the one 0.22.0 was released from), so glibc 2.28's loader in trace mode and an aarch64 host are covered too. Released in 0.22.0.
+- Done 2026-10-21: `_fsbpyr_rt/selftest.py`, called from the boot code for `FSBPYR_SELFTEST=natives` (any other value keeps its meaning). The loader is the executable's own PT_INTERP, read from /proc/self/exe, so aarch64 and x86-64 need no table. Missing items are reported once each, with the extensions that need them. Unit tests with faked loader output: tests/unit/boot/test_selftest.py. End to end: tests/e2e/test_natives.py runs heavy on this host (exit 0). The debian:10 checks (heavy passes on every image; with libstdc++.so.6 removed it exits non-zero naming it) are in tests/e2e/test_portability.py. They passed in `make test-portability` on the x86-64 host (2026-10-22) and in the full suite's portability jobs on x86-64 and aarch64 for all three Pythons (run 39756817933, the one 0.22.0 was released from), so glibc 2.28's loader in trace mode and an aarch64 host are covered too. Released in 0.22.0. Since 0.24.0 (debian:10 left the matrix, D42) the "heavy passes" check runs on every one of the 11 images and the libstdc++.so.6 removal on debian:12.
 
 ### REP-7 Publish a CycloneDX SBOM for fsbpyr's release
 - Why: vulnerability scanners cannot see the statically linked OpenSSL, SQLite, expat or libffi inside fsbpyr. Gaps: repro/no-sbom, security/no-component-inventory-or-sbom part (b) (medium); maturity/release-artifact-extras (low). eval.md asks for a manifest (eval:280), not an SBOM by name. It is below the cut line because REP-3's build_info, with `runtime_components`, already tells users what the release embeds and when to rebuild. This is the same reason §4 gives for deferring app SBOMs. Revisit when a user's scanner asks for an SBOM.
@@ -1248,7 +1262,7 @@ waits.
   - `jq -r '.components[] | select(.name == "openssl") | .cpe' fsbpyr.cdx.json` prints a CPE with the embedded OpenSSL version, and the same holds for SQLite.
   - `grype sbom:` on a copy whose OpenSSL version is set to 3.0.0 lists OpenSSL vulnerabilities (a manual check, recorded in the commit).
 - Effort: M. Depends on: REP-3, REP-2, REP-6 (the plain sha256). Owner decision: none.
-- Done 2026-10-21, released in 0.22.0: tools/release/sbom.py, tests/unit/test_sbom.py (a fixed inspect JSON: determinism, CPEs, purls, the fsbpyr component) and an SBOM of the hello executable in tests/e2e/test_build.py; release.yml makes the SBOM in `build` and `reproduce`, `compare` checks the two, and a new matrix job `sbom` attests each to its executable with actions/attest-sbom v4.1.0 (one SBOM per call, hence a job per executable and not a step in `publish`, which needs it); workflow-text tests in tests/integration/test_release.py. Since the plan: one SBOM per executable (`<asset>.cdx.json`, six per release; every asset is `fsbpyr-3.X-<target>` since 2026-10-22). The CPE names were checked against NVD's CPE dictionary on 2026-10-22: it has no mpdecimal product, so libmpdec is listed without a CPE. Checked on 0.22.0's release (2026-10-22): `gh attestation verify ... --predicate-type https://cyclonedx.org/bom` passes for all six executables, every `compare` job found byte-identical SBOMs, and `jq` on the published files shows the CPEs of OpenSSL 3.5.9, SQLite 3.53.1 and zlib 1.3.2. It also showed expat's version as `expat_2.9.0`, as pyexpat reports it, so its CPE matched no vulnerability: fixed in 0.23.0, and the e2e test now checks a real executable's expat CPE. The grype check (grype v0.121.0, database of 2026-10-22, recorded in d28d504): with OpenSSL set to 3.0.0 and expat to 2.4.0, 78 OpenSSL and 52 expat matches; the real SBOM matches SQLite 3.53.1 (CVE-2026-11822, CVE-2026-11824) and zlib 1.3.2 (CVE-2026-85091), see SEC-2. attest-sbom is deprecated upstream in favour of actions/attest, which v4.1.0 wraps.
+- Done 2026-10-21, released in 0.22.0: tools/release/sbom.py, tests/unit/test_sbom.py (a fixed inspect JSON: determinism, CPEs, purls, the fsbpyr component) and an SBOM of the hello executable in tests/e2e/test_build.py; release.yml makes the SBOM in `build` and `reproduce`, `compare` checks the two, and a new matrix job `sbom` attests each to its executable with actions/attest-sbom v4.1.0 (one SBOM per call, hence a job per executable and not a step in `publish`, which needs it); workflow-text tests in tests/integration/test_release.py. Since the plan: one SBOM per executable (`<asset>.cdx.json`, six per release; every asset is `fsbpyr-3.X-<target>` since 2026-10-22). The CPE names were checked against NVD's CPE dictionary on 2026-10-22: it has no mpdecimal product, so libmpdec is listed without a CPE. Checked on 0.22.0's release (2026-10-22): `gh attestation verify ... --predicate-type https://cyclonedx.org/bom` passes for all six executables, every `compare` job found byte-identical SBOMs, and `jq` on the published files shows the CPEs of OpenSSL 3.5.9, SQLite 3.53.1 and zlib 1.3.2. It also showed expat's version as `expat_2.9.0`, as pyexpat reports it, so its CPE matched no vulnerability: fixed in 0.23.0, and the e2e test now checks a real executable's expat CPE. The grype check (grype v0.121.0, database of 2026-10-22, recorded in d28d504): with OpenSSL set to 3.0.0 and expat to 2.4.0, 78 OpenSSL and 52 expat matches; the real SBOM matches SQLite 3.53.1 (CVE-2026-11822, CVE-2026-11824) and zlib 1.3.2 (CVE-2026-85091), see SEC-2. attest-sbom is deprecated upstream in favour of actions/attest, which v4.1.0 wraps. Since 0.24.0 `reproduce` and `compare` are build.yml's (see REP-2); since 0.25.0 there are eight SBOMs per release, one per executable (four Pythons, two targets).
 
 ### CI-7 Close the remaining low test gaps
 - Why: five low-severity gaps: tests/thin-property-based-testing, security/fuzz-scope-and-corpus (build-time parsers), tests/no-interrupted-build-or-kill-tests (signal part), security/layer4-interrupted-build-and-low-disk, security/no-tsan-no-c-static-analysis (static-analysis part). eval:355-357, 365-367. It is below the cut line because all five are low. BLD-1 already covers a failed write, and CI-3 fuzzes continuously and keeps the corpus.
@@ -1326,6 +1340,8 @@ waits.
      of the 445 e2e items had run when run 38624936426 was cancelled at 17m53s, and the unit
      and integration tiers had not started.
    - **Decided (owner, 2026-10-20): (b).** Until CI-3 lands, CI-8's main push run is the gate.
+   - **Since 0.24.0 (2026-10-22):** the gate is a green full-suite.yml run of the tagged commit
+     itself (CI-3's note); release.yml runs the tag's build only.
 2. **Repository settings and burned versions (REL-1, SEC-1).**
    - Immutable releases, a `v*` tag ruleset that blocks updates and deletion, and private
      vulnerability reporting.
@@ -1401,6 +1417,8 @@ waits.
     3.15; uv installs anyway, so fsbpyr also stops early with a clear error on any Python but
     3.14. Phase 9's port to 3.12 widens it to `>=3.12,<3.15`, and the cap rises whenever `fsbpyr`
     moves to a newer Python. **Decided (owner, 2026-10-19).**
+    **Raised (owner, 2026-10-23):** `>=3.12,<3.16`, with 3.15 supported and 3.14 the default
+    (0.25.0, D43; SCOPE-1).
 13. **Where Stages 0-2 sit relative to Phase 9 (no D-number). Decided (owner, 2026-10-19):
     (a).**
     - (a) Stage 0 before Phase 9 starts; Stages 1-2 alongside Phase 9, with CI-3, CI-6 and
@@ -1419,6 +1437,12 @@ platforms, self-update and the installer are decided in docs/IMPLEMENTATION_PLAN
 ---
 
 ## 6. How to measure progress
+
+Status on 2026-10-23: the "Today" column is the state of 2026-10-19. Since then every push to
+main runs full-suite.yml, which includes the release build and the independent rebuild's
+`compare` (via build.yml), and a tag is made only on a commit whose run passed. The workflow
+names in "How it is measured" are from the plan: CI-8's and REP-2's checks now live in
+full-suite.yml and build.yml, and `release.yml` runs for tags only.
 
 | Metric | Today | Target | How it is measured |
 |---|---|---|---|

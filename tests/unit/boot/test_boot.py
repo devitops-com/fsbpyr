@@ -7,6 +7,7 @@ import importlib.resources
 import importlib.util
 import io
 import json
+import linecache
 import os
 import posix
 import sys
@@ -259,6 +260,8 @@ def isolated_sys(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(sys, "excepthook", sys.__excepthook__)
     frozen = importlib.machinery.FrozenImporter
     monkeypatch.setattr(frozen, "get_source", frozen.get_source)  # run() extends it
+    monkeypatch.setattr(linecache, "updatecache", linecache.updatecache)  # and wraps this
+    monkeypatch.setattr(linecache, "cache", dict(linecache.cache))
     for name in ("exit", "quit", "help"):
         monkeypatch.setattr(builtins, name, getattr(builtins, name))  # run() defines them
     before = set(sys.modules)
@@ -326,7 +329,7 @@ def test_run_defines_exit_quit_and_help_as_site_does(
 
 
 @pytest.mark.usefixtures("isolated_sys")
-@pytest.mark.parametrize("allowed", [True, False], ids=["interpreter-reexec", "default"])
+@pytest.mark.parametrize("allowed", [True, False], ids=["interpreter-reexec", "false"])
 def test_code_from_the_app_itself_runs_instead_of_it_only_when_built_so(
     boot: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
@@ -345,6 +348,38 @@ def test_code_from_the_app_itself_runs_instead_of_it_only_when_built_so(
 
     expected = "child cli\n" if allowed else "fsbpyr selftest ok: demo\n"
     assert capsys.readouterr().out == expected
+
+
+@pytest.mark.usefixtures("isolated_sys")
+def test_code_from_the_app_itself_is_refused_when_the_build_did_not_choose(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    reexec = importlib.import_module("_fsbpyr_rt.reexec")
+    monkeypatch.setattr(reexec, "_parent_runs_this_executable", lambda: True)  # as in a child
+    monkeypatch.setitem(boot.INFO, "build_info", json.dumps({"interpreter_reexec": None}))
+    monkeypatch.setitem(sys.modules, "__main__", types.ModuleType("__main__"))
+    monkeypatch.setattr(sys, "argv", [boot.ROOT, "-B", "-c", "import pkg.cli"])
+
+    with pytest.raises(SystemExit) as refused:
+        boot.run()
+
+    assert refused.value.code == 70
+    assert "fsbpyr: refusing to run `-c 'import pkg.cli'` as Python" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("isolated_sys")
+def test_a_payload_script_counts_as_a_helper_interpreter(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    reexec = importlib.import_module("_fsbpyr_rt.reexec")
+    monkeypatch.setattr(reexec, "_parent_runs_this_executable", lambda: True)
+    monkeypatch.setitem(boot.INFO, "build_info", json.dumps({"interpreter_reexec": None}))
+    monkeypatch.setattr(sys, "argv", [boot.ROOT, f"{boot.ROOT}/pkg/cli.py"])
+
+    with pytest.raises(SystemExit):
+        boot.run()
+
+    assert "refusing to run `pkg/cli.py` as Python" in capsys.readouterr().err
 
 
 @pytest.mark.usefixtures("isolated_sys")

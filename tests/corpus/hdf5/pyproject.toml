@@ -1,0 +1,19 @@
+[project]
+name = "corpus-hdf5"
+version = "1.0.0"
+description = "fsbpyr corpus app: h5py, PyTables with blosc2 and netCDF4 native libraries"
+requires-python = ">=3.12"
+dependencies = ["h5py>=3.11", "tables>=3.10", "netCDF4>=1.7", "cftime>=1.6", "numpy>=2"]
+
+[project.scripts]
+corpus-hdf5 = "corpus_hdf5.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+# PyTables' blosc2 chunk sizes ask py-cpuinfo, which runs `sys.executable <its cpuinfo.py>
+# --json` when ~/.pytables-cpuinfo.json is missing: refused (exit 70) without it, and
+# before D44 each child ran the app again, without end.
+interpreter-reexec = true

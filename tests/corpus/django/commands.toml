@@ -1,0 +1,4 @@
+expect = "admin login de 200 True"
+
+[[command]]
+argv = []

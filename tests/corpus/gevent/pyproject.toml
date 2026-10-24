@@ -1,0 +1,13 @@
+[project]
+name = "corpus-gevent"
+version = "1.0.0"
+description = "fsbpyr corpus app: gevent monkey patching, pywsgi and subprocess"
+requires-python = ">=3.12"
+dependencies = ["gevent>=24.11"]
+
+[project.scripts]
+corpus-gevent = "corpus_gevent.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

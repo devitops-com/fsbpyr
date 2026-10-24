@@ -1,0 +1,16 @@
+[project]
+name = "corpus-pyscf"
+version = "1.0.0"
+description = "fsbpyr corpus app: pyscf's C libraries and basis-set files"
+requires-python = ">=3.12"
+dependencies = ["pyscf>=2.8"]
+
+[project.scripts]
+corpus-pyscf = "corpus_pyscf.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+fs-packages = ["pyscf"]  # pyscf loads pyscf/lib/*.so with numpy.ctypeslib from its package directory (OSError: Library libnp_helper not found without it)

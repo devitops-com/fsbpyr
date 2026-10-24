@@ -1,0 +1,4 @@
+expect = "mip optimal"
+
+[[command]]
+argv = []

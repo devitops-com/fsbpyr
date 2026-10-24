@@ -1,0 +1,18 @@
+[project]
+name = "corpus-xarray"
+version = "1.0.0"
+description = "fsbpyr corpus app: xarray with dask, zarr and entry-point backends, and distributed worker processes"
+requires-python = ">=3.12"
+dependencies = ["xarray>=2025.1", "dask[array,distributed]>=2025.1", "zarr>=3", "numpy>=2", "pandas>=2.2", "scipy>=1.14"]
+
+[project.scripts]
+corpus-xarray = "corpus_xarray.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+# Without it: dask opens dask/dask.yaml and distributed opens distributed/distributed.yaml next to
+# their __file__ at import (NotADirectoryError: ".../corpus-xarray/dask/dask.yaml").
+fs-packages = ["dask", "distributed"]

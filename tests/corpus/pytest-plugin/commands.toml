@@ -1,3 +1,5 @@
+expect = "PASSED "
+
 [[command]]
 argv = ["work/test_sample.py"]
 

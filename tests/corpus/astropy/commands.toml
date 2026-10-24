@@ -1,0 +1,4 @@
+expect = "galactic 121.174 -21.573"
+
+[[command]]
+argv = []

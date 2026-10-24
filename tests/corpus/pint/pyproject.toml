@@ -1,0 +1,17 @@
+[project]
+name = "corpus-pint"
+version = "1.0.0"
+description = "fsbpyr corpus app: pint and uncertainties with the definitions file of pint, scipy constants"
+requires-python = ">=3.12"
+dependencies = ["pint>=0.24", "uncertainties>=3.2", "scipy>=1.14", "numpy>=2"]
+
+[project.scripts]
+corpus-pint = "corpus_pint.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+# Without it: pint opens pint/default_en.txt next to its __file__ (NotADirectoryError).
+fs-packages = ["pint"]

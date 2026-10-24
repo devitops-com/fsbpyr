@@ -1,0 +1,13 @@
+[project]
+name = "corpus-twisted"
+version = "1.0.0"
+description = "fsbpyr corpus app: twisted reactor, web and plugins"
+requires-python = ">=3.12"
+dependencies = ["twisted>=24.10"]
+
+[project.scripts]
+corpus-twisted = "corpus_twisted.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

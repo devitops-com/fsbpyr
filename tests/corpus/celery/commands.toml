@@ -1,0 +1,4 @@
+expect = "chain value=6"
+
+[[command]]
+argv = []

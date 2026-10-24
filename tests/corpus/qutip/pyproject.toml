@@ -1,0 +1,13 @@
+[project]
+name = "corpus-qutip"
+version = "1.0.0"
+description = "fsbpyr corpus app: qutip quantum dynamics on scipy sparse matrices"
+requires-python = ">=3.12"
+dependencies = ["qutip[graphics]>=5", "numpy>=2", "scipy>=1.14"]
+
+[project.scripts]
+corpus-qutip = "corpus_qutip.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

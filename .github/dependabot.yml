@@ -1,9 +1,9 @@
 # Weekly update pull requests for what reaches a release:
 #   - github-actions: the actions the workflows pin by commit;
 #   - uv: uv.lock, whose click and packaging fsbpyr's own executable embeds.
-# The trixie image (build.yml, full-suite.yml, Containerfile) is pinned by digest and left out: Dependabot does
-# not read the Containerfile, and tools/toolchain-watch.sh (upstream-watch.yml) compares the pin
-# with the registry, as it does the uv of tools/release/uv.version and the Debian snapshot.
+# The trixie image (build.yml, full-suite.yml, Containerfile) is pinned by digest and left out:
+# Dependabot does not read the Containerfile, and tools/toolchain-watch.sh (upstream-watch.yml)
+# compares the pin with the registry, as it does the uv of tools/release/uv.version.
 version: 2
 updates:
   - package-ecosystem: github-actions

@@ -24,7 +24,7 @@ from fsbpyr.cli import main
 from fsbpyr.payload.reader import Executable
 from fsbpyr.runtime.registry import Runtime
 
-from ..support import wheels
+from ..support import contain, wheels
 from ..support.differential import assert_same, make_venv
 from ..support.stderr import noise
 
@@ -116,8 +116,7 @@ def _venv(name: str, factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
 
 def _run(executable: Path, cache: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "FSBPYR_CACHE_DIR": str(cache)}
-    return subprocess.run([executable, *args], env=env, capture_output=True, text=True,
-                          timeout=120, check=False)  # fmt: skip
+    return contain.run([executable, *args], env=env, timeout=120)
 
 
 @pytest.mark.parametrize("check", sorted(MATRIX))
@@ -183,9 +182,10 @@ def test_argv_is_never_run_as_python_code(mp_tmp: Path, tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("options", "expected"),
-    [(("--interpreter-reexec",), ["0 helper ['a']", "0 code ['-c', 'b']", "4"]),
-     ((), ["1", "1", "1"])],  # the app ran in the children, with their arguments: an error
-    ids=["interpreter-reexec", "default"],
+    [(("--interpreter-reexec",), ["0 helper ['a']", "0 helper ['c']", "0 code ['-c', 'b']", "4"]),
+     ((), ["70", "70", "70", "70"]),  # refused: running the app would start it again (D44)
+     (("--no-interpreter-reexec",), ["1", "1", "1", "1"])],  # the app, with those arguments
+    ids=["interpreter-reexec", "default", "false"],
 )  # fmt: skip
 def test_the_app_starts_helper_interpreters_only_when_built_so(
     mp_tmp: Path, tmp_path: Path, options: tuple[str, ...], expected: list[str]
@@ -208,6 +208,33 @@ def test_the_app_ran_like_the_original_when_it_calls_exit_in_a_child(
     result = assert_same(mp_venv, executable, ["reexec"], env=env, script="mp")
 
     assert result.stdout.split()[-1] == "4"
+
+
+def test_an_app_starting_itself_without_end_stops_at_its_limit(
+    mp_tmp: Path, tmp_path: Path
+) -> None:
+    executable = _build("mp", mp_tmp)
+    env = {**os.environ, "FSBPYR_CACHE_DIR": str(tmp_path / "cache"), "FSBPYR_MAX_INSTANCES": "4"}
+
+    result = contain.run([executable, "nest"], env=env, timeout=120)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ["0", "0", "0", "70"]  # four copies ran, the fifth exits 70
+
+
+def test_an_app_starting_itself_through_a_shell_is_held_to_its_limit(
+    mp_tmp: Path, tmp_path: Path
+) -> None:
+    """121 copies in four levels, each waiting for its three, with a shell between each and
+    its parent, where the checks of D44 see no parent running the app: only the instance limit
+    holds the tree (D45). Without it contain.run would find far more than 64 processes."""
+    executable = _build("mp", mp_tmp)
+    env = {**os.environ, "FSBPYR_CACHE_DIR": str(tmp_path / "cache"), "FSBPYR_MAX_INSTANCES": "4"}
+
+    result = contain.run([executable, "fan", "4"], env=env, timeout=120)
+
+    assert result.returncode == 70, result.stderr
+    assert "fsbpyr: refusing to start: 4 copies of this app are running already" in result.stderr
 
 
 def test_helper_interpreters_are_refused_to_other_callers(mp_tmp: Path, tmp_path: Path) -> None:

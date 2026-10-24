@@ -1,0 +1,16 @@
+[project]
+name = "corpus-grpc"
+version = "1.0.0"
+description = "fsbpyr corpus app: gRPC over TLS with code generated at run time by grpc_tools"
+requires-python = ">=3.12"
+dependencies = ["grpcio>=1.66", "grpcio-tools>=1.66", "protobuf>=5", "cryptography>=43"]
+
+[project.scripts]
+corpus-grpc = "corpus_grpc.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+fs-packages = ["grpc_tools"]

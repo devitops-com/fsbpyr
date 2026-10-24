@@ -1,0 +1,13 @@
+[project]
+name = "corpus-messaging"
+version = "1.0.0"
+description = "fsbpyr corpus app: pyzmq with a bundled libzmq, msgpack, fastavro, cbor2"
+requires-python = ">=3.12"
+dependencies = ["pyzmq>=26", "msgpack>=1.1", "fastavro>=1.9", "cbor2>=5.6"]
+
+[project.scripts]
+corpus-messaging = "corpus_messaging.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

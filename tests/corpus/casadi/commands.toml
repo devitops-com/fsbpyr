@@ -1,0 +1,4 @@
+expect = "ipopt [1.0, 1.0]"
+
+[[command]]
+argv = []

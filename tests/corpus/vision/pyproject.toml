@@ -1,0 +1,19 @@
+[project]
+name = "corpus-vision"
+version = "1.0.0"
+description = "fsbpyr corpus app: opencv, scikit-image data and lazy_loader stubs, imageio-ffmpeg's bundled binary"
+requires-python = ">=3.12"
+dependencies = ["opencv-python-headless>=4.10", "scikit-image>=0.25", "imageio>=2.36", "imageio-ffmpeg>=0.6"]
+
+[project.scripts]
+corpus-vision = "corpus_vision.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+# Without it the build's smoke test fails: cv2's loader executes config.py next to its
+# __init__ ("OpenCV loader: missing configuration file"); with it the loader fails as
+# commands.toml says
+fs-packages = ["cv2"]

@@ -1,0 +1,13 @@
+[project]
+name = "corpus-observability"
+version = "1.0.0"
+description = "fsbpyr corpus app: OpenTelemetry, prometheus, structlog, loguru and sentry"
+requires-python = ">=3.12"
+dependencies = ["opentelemetry-api>=1.27", "opentelemetry-sdk>=1.27", "prometheus-client>=0.21", "structlog>=24", "loguru>=0.7", "sentry-sdk>=2.18"]
+
+[project.scripts]
+corpus-observability = "corpus_observability.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

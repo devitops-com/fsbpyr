@@ -1,0 +1,18 @@
+[project]
+name = "corpus-optuna"
+version = "1.0.0"
+description = "fsbpyr corpus app: optuna's SQLite storage with alembic migrations next to its modules"
+requires-python = ">=3.12"
+dependencies = ["optuna>=4"]
+
+[project.scripts]
+corpus-optuna = "corpus_optuna.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+# Without it create_study fails: optuna's RDB storage runs the alembic migrations kept
+# in a directory next to its modules
+fs-packages = ["optuna"]

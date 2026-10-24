@@ -1,2 +1,4 @@
+expect = "Hello Ada!"
+
 [[command]]
 argv = []

@@ -1,0 +1,6 @@
+# omegaconf pins antlr4-python3-runtime 4.9.*, which publishes an sdist only (pure Python)
+sdists = ["antlr4-python3-runtime"]
+expect = "instantiate main:3"
+
+[[command]]
+argv = []

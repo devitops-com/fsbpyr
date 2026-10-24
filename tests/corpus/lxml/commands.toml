@@ -1,2 +1,4 @@
+expect = "['b']"
+
 [[command]]
 argv = []

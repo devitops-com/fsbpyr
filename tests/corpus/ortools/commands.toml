@@ -1,0 +1,4 @@
+expect = "glop True"
+
+[[command]]
+argv = []

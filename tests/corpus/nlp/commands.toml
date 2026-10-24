@@ -1,0 +1,4 @@
+expect = "tiktoken ids"
+
+[[command]]
+argv = []

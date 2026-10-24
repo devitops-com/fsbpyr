@@ -1,0 +1,4 @@
+expect = "onnxruntime"
+
+[[command]]
+argv = []

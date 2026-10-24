@@ -1,0 +1,8 @@
+expect = "solve [2, 3]"
+
+[[command]]
+argv = []
+
+[[command]]
+argv = []
+env = { SYMPY_GROUND_TYPES = "flint" }

@@ -1,0 +1,22 @@
+[project]
+name = "corpus-torchvision"
+version = "1.0.0"
+description = "fsbpyr corpus app: torchvision's operators and image extension registered in torch.ops"
+requires-python = ">=3.12"
+dependencies = ["torch>=2.5", "torchvision>=0.20"]
+
+[project.scripts]
+corpus-torchvision = "corpus_torchvision.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

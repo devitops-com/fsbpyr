@@ -1,0 +1,13 @@
+[project]
+name = "corpus-pyomo"
+version = "1.0.0"
+description = "fsbpyr corpus app: pyomo plugin loading and the HiGHS interface"
+requires-python = ">=3.12"
+dependencies = ["pyomo>=6.8", "highspy>=1.8"]
+
+[project.scripts]
+corpus-pyomo = "corpus_pyomo.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

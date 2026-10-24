@@ -1,0 +1,4 @@
+expect = "ssh exec ran hostname"
+
+[[command]]
+argv = []

@@ -1,0 +1,4 @@
+expect = "pion pi+"
+
+[[command]]
+argv = []

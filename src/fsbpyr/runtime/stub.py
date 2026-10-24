@@ -20,6 +20,7 @@ LAUNCHER_SOURCES = (
     "parallel.c",
     "cache.c",
     "due.c",
+    "slots.c",
     "way.c",
     "glibc.c",
 )
@@ -31,6 +32,7 @@ LAUNCHER_FILES = (
     "parallel.h",
     "cache.h",
     "due.h",
+    "slots.h",
     "way.h",
     "format.h",
     "vendor/zstd/zstd.h",

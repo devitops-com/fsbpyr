@@ -1,0 +1,13 @@
+[project]
+name = "corpus-faiss"
+version = "1.0.0"
+description = "fsbpyr corpus app: faiss-cpu's SWIG module and OpenMP"
+requires-python = ">=3.12"
+dependencies = ["faiss-cpu>=1.9", "numpy>=2"]
+
+[project.scripts]
+corpus-faiss = "corpus_faiss.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

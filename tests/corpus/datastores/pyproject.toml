@@ -1,0 +1,16 @@
+[project]
+name = "corpus-datastores"
+version = "1.0.0"
+description = "fsbpyr corpus app: async SQLAlchemy over aiosqlite, fakeredis and bson"
+requires-python = ">=3.12"
+dependencies = ["sqlalchemy[asyncio]>=2", "aiosqlite>=0.20", "redis>=5", "fakeredis>=2.26", "pymongo>=4.10"]
+
+[project.scripts]
+corpus-datastores = "corpus_datastores.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+fs-packages = ["fakeredis"]  # without it: NotADirectoryError opening fakeredis/commands.json next to _command_info.py

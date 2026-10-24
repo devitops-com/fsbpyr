@@ -9,6 +9,11 @@ fd, import modules or run files. An app that may be started with untrusted argum
 rule, say) must not become a Python interpreter, so a child runs only when its parent process
 runs this very executable, its fds are not stdio, and it asks for nothing an fsbpyr parent
 never sends (a ``main_path``, a foreign ``sys_path``).
+
+A venv's forkserver imports the console script that started it (the parent's ``main_path``) once,
+and its workers fork with the app's modules loaded. A built app has no script to send, so the
+forkserver imports the module of the app's own entry point instead (``INFO["entrypoint"]``, never
+the command line). An app run as a module (``python -m``) sends no ``main_path`` in a venv either.
 """
 
 import ast
@@ -160,8 +165,30 @@ def _parent_runs_this_executable() -> bool:
     return uids == os.getresuid()[:2] and gids == os.getresgid()[:2]
 
 
-def run_child(argv: list[str]) -> bool:
-    """Run the multiprocessing child ``argv`` asks for; False if it asks for none."""
+def _preload_entry_module(entrypoint: str) -> None:
+    """What a venv's forkserver does with the console script's ``main_path``: import the module
+    of ``pkg.cli:main`` as the preloaded main. A failure is left to the workers, which import it
+    again and report it (the forkserver's own ``on_error`` does the same for ``main_path``)."""
+    from multiprocessing import process  # noqa: PLC0415
+
+    process.current_process()._inheriting = True  # type: ignore[attr-defined]  # as forkserver does
+    try:
+        importlib.import_module(entrypoint.partition(":")[0])
+    except Exception:  # noqa: S110
+        pass
+    finally:
+        del process.current_process()._inheriting  # type: ignore[attr-defined]
+
+
+def preload_names(arguments: tuple[object, ...]) -> list[str]:
+    """The module names a forkserver command preloads (``_forkserver`` checked they are strings)."""
+    names = arguments[2]
+    return names if isinstance(names, list) else []
+
+
+def run_child(argv: list[str], entrypoint: str = "") -> bool:
+    """Run the multiprocessing child ``argv`` asks for; False if it asks for none.
+    ``entrypoint`` is the app's own (``pkg.cli:main`` or a module name)."""
     command = child_command(argv)
     if command is None:
         return False
@@ -169,5 +196,8 @@ def run_child(argv: list[str]) -> bool:
         raise SystemExit("refusing to run as a multiprocessing child: not started by this program")
     module, function, arguments, keywords, child_argv = command
     sys.argv[:] = child_argv  # what CPython's -c would have left in sys.argv
+    forkserver = module == "multiprocessing.forkserver"
+    if forkserver and "__main__" in preload_names(arguments) and ":" in entrypoint:
+        _preload_entry_module(entrypoint)
     getattr(importlib.import_module(module), function)(*arguments, **keywords)
     return True

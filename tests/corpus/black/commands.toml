@@ -4,6 +4,8 @@
 # --fs-package refuses a package of native code. Remove this line when the importer is fixed.
 known-failure = "a mypyc package's __path__ is the cache directory: black.output is not found"
 
+expect = "black, "
+
 [[command]]
 argv = ["--version"]
 

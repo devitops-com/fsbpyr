@@ -20,6 +20,7 @@ from fsbpyr.build import (
     built_here_above,
     check_strict,
     glibc_report,
+    helper_interpreter_hints,
     rebuild_on_baseline,
     smoke_run,
     smoke_test,
@@ -30,8 +31,8 @@ from fsbpyr.cli import main
 from fsbpyr.closure import SiteIndex
 from fsbpyr.config import BuildConfig
 from fsbpyr.manifest import SCHEMA
-from fsbpyr.payload.format import FileKind
-from fsbpyr.payload.spec import Blob, Dist, File
+from fsbpyr.payload.format import FileKind, ModuleKind
+from fsbpyr.payload.spec import Blob, Dist, File, Module
 from fsbpyr.project import LockSource, Project
 from fsbpyr.runtime import pins
 from fsbpyr.runtime.sysroot import build_flags
@@ -502,3 +503,30 @@ def test_dists_built_here_from_sdists_are_named_in_one_line_that_is_no_warning(
     assert entries["schema"] == SCHEMA == 1
     assert entries["dists"][0]["backend"] == "hatchling 1.0"  # type: ignore[index]
     assert set(entries) == {"schema", "lock", "dists", "settings"}
+
+
+def _modules(*names: str) -> list[Module]:
+    return [Module(name, name.replace(".", "/") + ".py", ModuleKind.MODULE) for name in names]
+
+
+@pytest.mark.parametrize(
+    ("reexec", "outcome"),
+    [(None, "they are refused (exit 70) unless the app is built with --interpreter-reexec"),
+     (False, "they run the app (--no-interpreter-reexec)")],
+)  # fmt: skip
+def test_libraries_starting_helper_interpreters_are_named_unless_the_build_runs_them(
+    reexec: bool | None, outcome: str
+) -> None:
+    modules = _modules("numpy", "joblib", "joblib.externals.loky", "cpuinfo")
+
+    [hint] = helper_interpreter_hints(modules, reexec)
+
+    assert isinstance(hint, Uncounted)  # --strict does not fail on it
+    assert "joblib (workers and a resource tracker for n_jobs)" in hint
+    assert "py-cpuinfo (its cpuinfo.py, for the CPU's details)" in hint
+    assert hint.endswith(outcome)
+
+
+def test_no_hint_with_interpreter_reexec_or_without_such_a_library() -> None:
+    assert helper_interpreter_hints(_modules("joblib.externals.loky"), True) == []
+    assert helper_interpreter_hints(_modules("numpy", "joblib"), None) == []

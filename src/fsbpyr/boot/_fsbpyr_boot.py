@@ -81,7 +81,9 @@ class PayloadLoader(_LoaderBase):
             raise ImportError(f"{module.__name__!r} has no spec", name=module.__name__)
         record: Record = spec.loader_state
         exec(self._code(record), module.__dict__)  # noqa: S102
-        if module.__name__ in _FIXUPS:
+        if module.__name__ == "linecache":  # 3.12: no startup module, imported when needed
+            _install_payload_linecache(module)
+        elif module.__name__ in _FIXUPS:
             from _fsbpyr_rt.fixups import apply  # type: ignore[import-not-found]  # noqa: PLC0415
 
             apply(module)
@@ -151,6 +153,22 @@ class AliasLoader(PayloadLoader):
         return super()._record(self.payload if fullname == self.public else fullname)
 
 
+class InitLoader(AliasLoader):
+    """Loader of ``pkg.__init__`` imported as a module of its own (``from .__init__ import x``):
+    it runs the package's ``__init__`` record again, and is not a package."""
+
+    def is_package(self, fullname: str) -> bool:
+        return False
+
+
+# warnings.warn(stacklevel >= 2) skips the frames of importlib (file names with "importlib" and
+# "_bootstrap"), so that an import-time warning names the importing module. exec_module is the one
+# frame of ours between the importer and the module's code: it carries such a file name too.
+# Not the exact "<frozen importlib._bootstrap...>" of CPython, whose frames tracebacks strip.
+_LOADER_FRAME = "<frozen importlib._bootstrap_fsbpyr>"
+PayloadLoader.exec_module.__code__ = PayloadLoader.exec_module.__code__.replace(
+    co_filename=_LOADER_FRAME
+)
 LOADER = PayloadLoader()
 
 
@@ -188,9 +206,18 @@ class PayloadPathFinder:
     def _spec(self, fullname: str, payload: str) -> ModuleSpec | None:
         """Spec of module ``fullname``, whose payload record is named ``payload``."""
         record = _fsbpyr.find_module(payload)
+        init = payload.removesuffix(".__init__")
+        if record is None and init != payload:  # a venv's FileFinder finds __init__.py by name
+            record = _fsbpyr.find_module(init)
+            if record is None or record[1] != PACKAGE:  # regular packages only
+                return None
+        else:
+            init = payload
         if record is None:
             return None
         kind, path, location, loader = record[1], record[7], self.location, self._loader
+        if init != payload:
+            kind = MODULE
         where = location + payload.replace(".", "/")
         if kind == NAMESPACE:  # a portion: PathFinder assembles the namespace package
             spec = ModuleSpec(fullname, None, is_package=True)
@@ -206,7 +233,9 @@ class PayloadPathFinder:
         if record[2] & FS_REQUIRED_ROOT and location == _PREFIX:
             location = _fs_package_prefix(_directory(path))
             loader = PayloadLoader(location)
-        if payload != fullname:
+        if init != payload:
+            loader = InitLoader(location, fullname, init)
+        elif payload != fullname:
             loader = AliasLoader(location, fullname, payload)
         spec = ModuleSpec(
             fullname,
@@ -338,7 +367,7 @@ def _excepthook(
     exc_type: type[BaseException], exc: BaseException, tb: "TracebackType | None"
 ) -> None:
     """Hide the launcher's own frames (run_command, this module) at the top of tracebacks."""
-    hidden = ("<string>", _excepthook.__code__.co_filename)
+    hidden = ("<string>", _excepthook.__code__.co_filename, _LOADER_FRAME)
     head = tb
     while head is not None and head.tb_frame.f_code.co_filename in hidden:
         head = head.tb_next
@@ -427,6 +456,31 @@ def _install_frozen_sources() -> None:
     FrozenImporter.get_source = classmethod(get_source)  # type: ignore[method-assign,assignment]
 
 
+def _install_payload_linecache(linecache: "ModuleType") -> None:
+    """warnings formats the source line with ``linecache.getline(file, line)`` and no module
+    globals, so no loader is asked for it: let linecache read payload files from the payload."""
+    updatecache = linecache.updatecache
+
+    def payload_updatecache(
+        filename: str, module_globals: "dict[str, object] | None" = None
+    ) -> list[str]:
+        lines: list[str] = updatecache(filename, module_globals)
+        if lines or not (filename.startswith(_PREFIX) and filename.endswith(".py")):
+            return lines
+        record = _fsbpyr.find_file(filename[len(_PREFIX) :])
+        if record is None:
+            return lines
+        from _frozen_importlib_external import decode_source  # noqa: PLC0415
+
+        text = decode_source(_fsbpyr.read(record[4]))
+        split = text.split("\n")  # at newlines only, as the file's readlines() would
+        lines = [line + "\n" for line in split[:-1]] + ([split[-1]] if split[-1] else [])
+        linecache.cache[filename] = (len(text), None, lines, filename)  # no mtime: never stale
+        return lines
+
+    linecache.updatecache = payload_updatecache  # type: ignore[attr-defined]
+
+
 def _install_site_builtins() -> None:
     """exit(), quit() and help as site defines them; built apps never import site (D14).
     help imports pydoc only when it is called."""
@@ -442,19 +496,21 @@ def _multiprocessing_child() -> bool:
         return False  # the common case costs two scans of argv
     from _fsbpyr_rt.mp import run_child  # type: ignore[import-not-found]  # noqa: PLC0415
 
-    handled: bool = run_child(argv)
+    handled: bool = run_child(argv, INFO["entrypoint"])
     return handled
 
 
 def _interpreter_child() -> bool:
-    """With interpreter-reexec (D23), the app re-executed through ``sys.executable`` with
-    ``-m MODULE`` or ``-c CODE`` runs that instead."""
+    """The app re-executed through ``sys.executable`` with ``-m MODULE``, ``-c CODE`` or a
+    script of the payload runs that instead with interpreter-reexec (D23), and is refused
+    without the setting (D44)."""
     argv = sys.argv
-    if "-m" not in argv[1:-1] and "-c" not in argv[1:-1]:
-        return False  # the common case costs two scans of argv
+    flagged = "-m" in argv[1:-1] or "-c" in argv[1:-1]
+    if not flagged and not any(arg.startswith(_PREFIX) for arg in argv[1:]):
+        return False  # the common case costs three scans of argv
     from _fsbpyr_rt.reexec import run_child  # type: ignore[import-not-found]  # noqa: PLC0415
 
-    handled: bool = run_child(argv, INFO["build_info"])
+    handled: bool = run_child(argv, INFO["build_info"], _PREFIX)
     return handled
 
 
@@ -470,6 +526,8 @@ def run() -> None:
     if sys.excepthook is sys.__excepthook__:
         sys.excepthook = _excepthook
     _install_frozen_sources()
+    if (linecache := sys.modules.get("linecache")) is not None:  # a startup module (3.13+)
+        _install_payload_linecache(linecache)
     _install_site_builtins()  # for -c and -m children too
     if posix.environ.get(b"FSBPYR_TRACE"):
         import atexit  # noqa: PLC0415
