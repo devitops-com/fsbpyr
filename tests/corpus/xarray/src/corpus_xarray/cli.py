@@ -38,10 +38,12 @@ def distributed_part() -> None:
     from dask.distributed import Client, LocalCluster
 
     # The scheduler's HTTP server binds port 8787 even without the dashboard, and warns with
-    # another port when that one is taken: port 0 never is.
+    # another port when that one is taken: port 0 never is. A worker's heartbeat that races the
+    # scheduler's shutdown logs "Failed to communicate with scheduler" at ERROR on a slow
+    # machine (seen on aarch64): the workers log only CRITICAL.
     with LocalCluster(
         n_workers=2, threads_per_worker=1, processes=True, dashboard_address=None,
-        scheduler_kwargs={"dashboard_address": ":0"}, silence_logs=logging.ERROR,
+        scheduler_kwargs={"dashboard_address": ":0"}, silence_logs=logging.CRITICAL,
     ) as cluster, Client(cluster) as client:  # fmt: skip
         futures = client.map(lambda value: value * value, range(5))
         print("map", client.gather(futures))

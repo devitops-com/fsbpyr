@@ -161,7 +161,7 @@ beyond the defaults; each setting's reason is a comment in its `pyproject.toml`.
 | `pyomo` | plugins loaded by name, the HiGHS interface | none |
 | `casadi` | IPOPT, CVODES and qpOASES plugins `dlopen`ed by name from casadi's directory | `allow-system-libs` (12 libraries of commercial solvers and MATLAB that its plugins link and the app never loads), `fs-packages = ["casadi"]` |
 | `statsmodels` | the formula API (patsy), bundled datasets (`statsmodels.api` imports `from .__init__ import test`: `pkg.__init__` is a module of its own, as in a venv) | `fs-packages = ["statsmodels"]` |
-| `hdf5` | h5py, PyTables with blosc2 (found with ctypes) and netCDF4; py-cpuinfo running its `cpuinfo.py` as `sys.executable <script>` | `interpreter-reexec = true` |
+| `hdf5` | h5py, PyTables with blosc2 (loaded by bare name with ctypes, found among the bundled libraries) and netCDF4; py-cpuinfo running its `cpuinfo.py` as `sys.executable <script>` | `interpreter-reexec = true` |
 | `xarray` | xarray backends and chunk managers through entry points, dask, zarr, `dask.distributed` worker processes | `fs-packages = ["dask", "distributed"]` |
 | `geo` | shapely, pyproj's PROJ database, geopandas and pyogrio's GDAL data, rtree's libspatialindex (ctypes) | `fs-packages = ["pyproj", "pyogrio"]` |
 | `dataframes` | polars, pyarrow and duckdb exchanging Arrow data, Parquet | none |

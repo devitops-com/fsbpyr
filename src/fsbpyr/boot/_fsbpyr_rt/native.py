@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 NATIVE_EXT = 3
+NATIVE_LIB = 4
 GENERATION_DIGITS = 32
 _SYSTEM_LIBRARY_ERRORS = ("version `GLIBC", "GLIBCXX_", "CXXABI_", "cannot open shared object file")
 EXTRACTED: list[str] = []  # site-relative paths this process wrote, kept for FSBPYR_TRACE
@@ -202,6 +203,33 @@ def materialize(path: str) -> str:
         raise OSError(exc.errno, detail + hint, exc.filename) from exc
     _MATERIALIZED[path] = f"{cache.site}/{path}"
     return _MATERIALIZED[path]
+
+
+def bundled_library(name: str) -> str | None:
+    """Where the one shared object the payload bundles under the file name ``name`` is on disk,
+    extracted with the libraries it needs (an extension's closure, or that of an extension
+    linking the library); None if the payload bundles none or several of that name."""
+    files = _fsbpyr.info()["files"]
+    found = [record for i in range(files)
+             if (record := _fsbpyr.file_at(i))[1] in (NATIVE_EXT, NATIVE_LIB)
+             and record[7].rpartition("/")[2] == name]  # fmt: skip
+    if len(found) != 1:
+        return None
+    index, kind, _, _, _, _, closure, rel = found[0]
+    members: tuple[int, ...] = ()
+    if kind == NATIVE_EXT and closure != _fsbpyr.NONE:
+        members = _fsbpyr.closure(closure)
+    elif kind == NATIVE_LIB:  # no closure of its own: an extension that links it has one
+        for i in range(files):
+            record = _fsbpyr.file_at(i)
+            if record[1] == NATIVE_EXT and record[6] != _fsbpyr.NONE:
+                linked = _fsbpyr.closure(record[6])
+                if index in linked:
+                    members = linked
+                    break
+    cache = native_cache()
+    cache.sync((index, *members))
+    return f"{cache.site}/{rel}"
 
 
 def extension_spec(

@@ -66,7 +66,35 @@ def _multiprocessing_spawn(module: "ModuleType") -> None:
         module.set_executable(OWN_EXECUTABLE)
 
 
-FIXUPS = {"ssl": _ssl, "multiprocessing.spawn": _multiprocessing_spawn}
+def _ctypes(module: "ModuleType") -> None:
+    # A package that loads its own library by bare file name (PyTables: libblosc2.so, after
+    # looking for it in site-packages, which a built app has no directory for) finds the one the
+    # app bundles, when the system has none of that name: a system copy still comes first.
+    init = module.CDLL.__init__
+
+    def with_bundled(self: object, name: object, *args: object, **kwargs: object) -> None:
+        try:
+            init(self, name, *args, **kwargs)
+        except OSError:
+            bare = os.fspath(name) if isinstance(name, (str, os.PathLike)) else None
+            if not isinstance(bare, str) or not bare or "/" in bare:
+                raise
+            from _fsbpyr_rt.native import (  # type: ignore[import-not-found]  # noqa: PLC0415
+                bundled_library,
+            )
+
+            try:
+                path = bundled_library(bare)
+            except (OSError, ImportError):  # the cache cannot be used: the original error stands
+                path = None
+            if path is None:
+                raise
+            init(self, path, *args, **kwargs)
+
+    module.CDLL.__init__ = with_bundled
+
+
+FIXUPS = {"ssl": _ssl, "multiprocessing.spawn": _multiprocessing_spawn, "ctypes": _ctypes}
 
 
 def apply(module: "ModuleType") -> None:
