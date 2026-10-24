@@ -1,6 +1,7 @@
 """_fsbpyr_rt.fixups: stdlib adjustments applied right after a module loads (Phase 6b)."""
 
 import importlib.util
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -98,6 +99,73 @@ def test_an_unusable_fallback_bundle_never_breaks_contexts(
     context = ssl.SSLContext()
     context.set_default_verify_paths()  # as OpenSSL's own defaults: never raises
     assert context.loaded == ["defaults"]
+
+
+class _Cdll:
+    """ctypes.CDLL as far as the fixup needs: only paths in ``LOADABLE`` load."""
+
+    LOADABLE = frozenset({"/cache/site/lib/libbundled.so", "libsystem.so"})
+
+    def __init__(self, name: object, mode: int = 0) -> None:
+        if name not in self.LOADABLE:
+            raise OSError(f"{name}: cannot open shared object file")
+        self._name = name
+
+
+def _ctypes(fixups: ModuleType, monkeypatch: pytest.MonkeyPatch, bundled: dict[str, str]) -> type:
+    """A ctypes module with the fixup applied; ``bundled`` maps file names to cached paths."""
+    native = ModuleType("_fsbpyr_rt.native")
+    native.bundled_library = bundled.get  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "_fsbpyr_rt", ModuleType("_fsbpyr_rt"))
+    monkeypatch.setitem(sys.modules, "_fsbpyr_rt.native", native)
+    ctypes = ModuleType("ctypes")
+    ctypes.CDLL = type("CDLL", (_Cdll,), {})  # type: ignore[attr-defined]
+    fixups.apply(ctypes)
+    cdll: type = ctypes.CDLL
+    return cdll
+
+
+def test_a_library_missing_by_name_is_loaded_from_the_payload(
+    fixups: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cdll = _ctypes(fixups, monkeypatch, {"libbundled.so": "/cache/site/lib/libbundled.so"})
+
+    assert cdll("libbundled.so")._name == "/cache/site/lib/libbundled.so"
+    assert cdll(Path("libbundled.so"))._name == "/cache/site/lib/libbundled.so"  # a PathLike
+
+
+def test_a_system_library_of_that_name_comes_first(
+    fixups: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cdll = _ctypes(fixups, monkeypatch, {"libsystem.so": "/cache/site/lib/libsystem.so"})
+
+    assert cdll("libsystem.so")._name == "libsystem.so"
+
+
+@pytest.mark.parametrize("name", ["libnone.so", "/opt/lib/libbundled.so", "", None, b"lib.so"])
+def test_other_failures_raise_as_before(
+    fixups: ModuleType, monkeypatch: pytest.MonkeyPatch, name: object
+) -> None:
+    """No bundled library of that name, a path, or no name to look up: the original error."""
+    cdll = _ctypes(fixups, monkeypatch, {"libbundled.so": "/cache/site/lib/libbundled.so"})
+
+    with pytest.raises(OSError, match="cannot open shared object file"):
+        cdll(name)
+
+
+def test_a_cache_that_cannot_be_used_leaves_the_original_error(
+    fixups: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cdll = _ctypes(fixups, monkeypatch, {})
+    native = sys.modules["_fsbpyr_rt.native"]
+
+    def unusable(name: str) -> str:
+        raise PermissionError(13, "cache not writable")
+
+    monkeypatch.setattr(native, "bundled_library", unusable)
+
+    with pytest.raises(OSError, match="cannot open shared object file"):
+        cdll("libbundled.so")
 
 
 def test_multiprocessing_children_start_from_this_binary(fixups: ModuleType) -> None:

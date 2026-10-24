@@ -378,6 +378,8 @@ def test_the_projects_own_extension_is_rebuilt_against_the_glibc_sysroot(
     glibc = json.loads(capsys.readouterr().out)["glibc"]
     assert tuple(map(int, glibc.split("."))) <= (2, 34)
     assert _run(executable, "21").stdout == "cext 42\n"
+    # ctypes.CDLL of its own library by bare file name finds the bundled one (fixups)
+    assert _run(executable, "--ctypes").stdout == "ctypes True\n"
 
 
 # --- review regressions (Phase 4) -------------------------------------------------------------

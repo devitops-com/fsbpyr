@@ -106,6 +106,33 @@ def test_compiled_package_keeps_its_submodules_in_the_payload(boot: types.Module
     assert below_pth_root.submodule_search_locations == [boot.ROOT + "/rcy"]  # by name
 
 
+def test_a_bundled_library_is_found_by_its_file_name(native: types.ModuleType) -> None:
+    """``ctypes.CDLL("libhelper.so")`` falls back to it (fixups): extracted with the closure of
+    an extension that links it."""
+    site = Path(native.native_cache().site)
+
+    assert native.bundled_library("libhelper.so") == str(site / LIB)
+
+    assert (site / LIB).read_bytes() == CONTENT[LIB]
+    assert not (site / EXT).exists()  # the closure's members, not the extension itself
+
+
+def test_an_extension_found_by_its_file_name_comes_with_its_closure(
+    native: types.ModuleType,
+) -> None:
+    site = Path(native.native_cache().site)
+
+    assert native.bundled_library(EXT.rpartition("/")[2]) == str(site / EXT)
+
+    assert (site / EXT).read_bytes() == CONTENT[EXT] and (site / LIB).read_bytes() == CONTENT[LIB]
+
+
+def test_a_name_the_payload_bundles_no_library_of_is_none(native: types.ModuleType) -> None:
+    assert native.bundled_library("libmissing.so") is None
+    assert native.bundled_library("helper.so") is None  # the whole file name, not a part of it
+    assert not Path(native.native_cache().site).exists()
+
+
 def test_first_sync_extracts_the_closure_once(
     boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:

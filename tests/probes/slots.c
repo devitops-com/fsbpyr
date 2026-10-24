@@ -10,7 +10,9 @@
  *                          lead to the slot file, or nothing
  *
  * A start that finds every slot taken ends as fsb_hold_slot ends it (exit 70, or 0 in a
- * background collection), printing nothing on stdout.
+ * background collection), printing nothing on stdout. Built with -Wl,--wrap=geteuid: with
+ * $PROBE_EUID set, slots.c takes the process for that user (a file of ours is then another
+ * user's, without root to chown it).
  */
 #include "slots.h"
 
@@ -19,6 +21,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+uid_t __real_geteuid(void);
+
+uid_t __wrap_geteuid(void) {
+    const char *euid = getenv("PROBE_EUID");
+    return euid != NULL ? (uid_t)strtoul(euid, NULL, 10) : __real_geteuid();
+}
 
 /* The lowest descriptor number free. */
 static int lowest_free(void) {

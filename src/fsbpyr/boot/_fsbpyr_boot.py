@@ -42,7 +42,7 @@ _PREFIX = ROOT + "/"
 _INTERNAL = ("_fsbpyr_boot", "_fsbpyr_rt")  # boot code, hidden from module listings
 # Stdlib modules adjusted right after they load (_fsbpyr_rt.fixups): CA store fallback and
 # multiprocessing children started from this very binary.
-_FIXUPS = frozenset({"ssl", "multiprocessing.spawn"})
+_FIXUPS = frozenset({"ssl", "multiprocessing.spawn", "ctypes"})
 # The native cache's site directory (with "/"), once an FS_REQUIRED package was extracted
 # there: modules of such packages live below it, and the path hook claims it too.
 _FS_PREFIXES: list[str] = []

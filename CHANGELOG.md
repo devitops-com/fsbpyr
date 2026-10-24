@@ -42,6 +42,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   where systemd's user manager offers one.
 
 ### Fixed
+- **A library a package loads by its bare file name is found among the libraries the app
+  bundles** when the system has none of that name (`ctypes.CDLL("libblosc2.so")`, as
+  PyTables does after looking in a site-packages directory a built app does not have). It is
+  extracted with the libraries it needs; a system copy still comes first. PyTables apps failed
+  with `Blosc2 library not found` on machines without a system blosc2.
 - **An import-time warning names the importing module, with its source line**, as in a venv.
   A warning raised with `stacklevel=2` or more while a module was imported (starlette's,
   authlib's) named `<frozen _fsbpyr_boot>:83`, the payload loader, and showed no line: CPython's
