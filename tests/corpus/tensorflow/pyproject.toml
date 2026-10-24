@@ -1,0 +1,13 @@
+[project]
+name = "corpus-tensorflow"
+version = "1.0.0"
+description = "fsbpyr corpus app: TensorFlow's C++ runtime, tf.function, tf.data and SavedModel"
+requires-python = ">=3.12"
+dependencies = ["tensorflow>=2.19"]
+
+[project.scripts]
+corpus-tensorflow = "corpus_tensorflow.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

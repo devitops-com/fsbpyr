@@ -1,2 +1,4 @@
+expect = "gamma"
+
 [[command]]
 argv = []

@@ -1,0 +1,13 @@
+[project]
+name = "corpus-onnx"
+version = "1.0.0"
+description = "fsbpyr corpus app: onnx and onnxruntime native extensions"
+requires-python = ">=3.12"
+dependencies = ["onnx>=1.17", "onnxruntime>=1.20", "numpy>=2"]
+
+[project.scripts]
+corpus-onnx = "corpus_onnx.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

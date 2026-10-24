@@ -1,0 +1,4 @@
+expect = "duckdb [('first', 5.0), ('second', 7.0)]"
+
+[[command]]
+argv = []

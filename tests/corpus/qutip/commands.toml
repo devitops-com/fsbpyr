@@ -1,0 +1,4 @@
+expect = "sigmaz"
+
+[[command]]
+argv = []

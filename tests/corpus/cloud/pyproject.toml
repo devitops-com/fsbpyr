@@ -1,0 +1,13 @@
+[project]
+name = "corpus-cloud"
+version = "1.0.0"
+description = "fsbpyr corpus app: boto3, azure and google cloud clients without network"
+requires-python = ">=3.12"
+dependencies = ["boto3>=1.35", "azure-storage-blob>=12.23", "google-cloud-storage>=2.18"]
+
+[project.scripts]
+corpus-cloud = "corpus_cloud.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

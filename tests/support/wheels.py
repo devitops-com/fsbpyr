@@ -13,8 +13,8 @@ def _read(path: Path) -> dict[str, frozenset[str]]:
     table: dict[str, frozenset[str]] = {}
     for line in path.read_text().splitlines():
         if line.strip() and not line.startswith("#"):
-            python, *packages = line.split()
-            table[python] = frozenset(map(canonicalize_name, packages))
+            python, *packages = line.split()  # several lines may name one Python
+            table[python] = table.get(python, frozenset()) | set(map(canonicalize_name, packages))
     return table
 
 

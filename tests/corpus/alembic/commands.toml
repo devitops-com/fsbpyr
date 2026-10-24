@@ -1,3 +1,5 @@
+expect = "tables ['alembic_version', 'orders', 'users']"
+
 [[command]]
 argv = ["history"]
 

@@ -1,0 +1,4 @@
+expect = "RHF energy"
+
+[[command]]
+argv = []

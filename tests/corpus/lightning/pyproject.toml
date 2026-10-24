@@ -1,0 +1,26 @@
+[project]
+name = "corpus-lightning"
+version = "1.0.0"
+description = "fsbpyr corpus app: Lightning trainer, checkpoints and torchmetrics"
+requires-python = ">=3.12"
+dependencies = ["lightning>=2.4", "torch>=2.5", "torchmetrics>=1.5"]
+
+[project.scripts]
+corpus-lightning = "corpus_lightning.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.fsbpyr]
+# Without it the build's smoke test fails: lightning reads version.info next to its
+# __init__ (NotADirectoryError below the executable)
+fs-packages = ["lightning"]

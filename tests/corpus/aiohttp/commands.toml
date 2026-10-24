@@ -1,0 +1,4 @@
+expect = "websocket echo ping"
+
+[[command]]
+argv = []

@@ -1,0 +1,16 @@
+[project]
+name = "corpus-materials"
+version = "1.0.0"
+description = "fsbpyr corpus app: ase, spglib, compiled symmetry code"
+requires-python = ">=3.12"
+dependencies = ["ase>=3.23", "spglib>=2.5", "numpy>=2", "scipy>=1.14"]
+
+[project.scripts]
+corpus-materials = "corpus_materials.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+fs-packages = ["ase"]  # ase reads data files next to its modules (ase/collections/g2.json: NotADirectoryError without it)

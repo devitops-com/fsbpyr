@@ -1,0 +1,1 @@
+{{ count }} note{{ count|pluralize }}: {% for note in notes %}{{ note.title|upper }}{% if not forloop.last %}, {% endif %}{% endfor %}

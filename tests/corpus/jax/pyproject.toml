@@ -1,0 +1,13 @@
+[project]
+name = "corpus-jax"
+version = "1.0.0"
+description = "fsbpyr corpus app: jax's jaxlib extension, XLA compiled at run time, flax and optax"
+requires-python = ">=3.12"
+dependencies = ["jax>=0.7", "flax>=0.11", "optax>=0.2"]
+
+[project.scripts]
+corpus-jax = "corpus_jax.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

@@ -1,0 +1,13 @@
+[project]
+name = "corpus-matplotlib"
+version = "1.0.0"
+description = "fsbpyr corpus app: matplotlib and seaborn: bundled fonts and data, Agg rendering"
+requires-python = ">=3.12"
+dependencies = ["matplotlib>=3.10", "seaborn>=0.13", "pandas>=2.2"]
+
+[project.scripts]
+corpus-matplotlib = "corpus_matplotlib.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

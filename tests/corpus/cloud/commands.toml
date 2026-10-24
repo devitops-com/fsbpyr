@@ -1,0 +1,4 @@
+expect = "s3 buckets ['alpha', 'beta']"
+
+[[command]]
+argv = []

@@ -1,0 +1,4 @@
+expect = "losses ["
+
+[[command]]
+argv = []

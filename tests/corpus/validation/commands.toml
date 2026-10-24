@@ -1,0 +1,4 @@
+expect = "faker de_DE"
+
+[[command]]
+argv = []

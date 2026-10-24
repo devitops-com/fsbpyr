@@ -1,0 +1,23 @@
+[project]
+name = "corpus-sklearn"
+version = "1.0.0"
+description = "fsbpyr corpus app: scikit-learn's bundled datasets, joblib worker processes and threadpoolctl"
+requires-python = ">=3.12"
+dependencies = ["scikit-learn>=1.6"]
+
+[project.scripts]
+corpus-sklearn = "corpus_sklearn.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+# Without it the build's smoke test fails: sklearn/utils/_repr_html/estimator.py reads
+# estimator.css next to its __file__ (NotADirectoryError below the executable)
+fs-packages = ["sklearn"]
+# Without it joblib's loky workers (`sys.executable -m joblib...popen_loky_posix`) and its
+# resource tracker (`sys.executable -c ...`) are refused with exit 70, and n_jobs=2 fails with
+# TerminatedWorkerError. Before D44 they ran the app again, each starting three more: the
+# runaway that took the host down on 2026-10-24.
+interpreter-reexec = true

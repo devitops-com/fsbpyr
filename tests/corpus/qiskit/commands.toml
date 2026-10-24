@@ -1,0 +1,4 @@
+expect = "bell counts"
+
+[[command]]
+argv = []

@@ -1,0 +1,4 @@
+expect = "wsgi /item/7"
+
+[[command]]
+argv = []

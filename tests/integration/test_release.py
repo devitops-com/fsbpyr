@@ -1042,8 +1042,9 @@ def test_the_image_is_pinned_by_digest_in_the_workflow_and_the_containerfile() -
         )
     }
 
-    # build and reproduce (REP-2) use the image, the suite job and the Containerfile once
-    assert [len(found) for found in pins.values()] == [2, 1, 1], pins
+    # build and reproduce (REP-2) use the image, the suite and corpus jobs, and the
+    # Containerfile once
+    assert [len(found) for found in pins.values()] == [2, 2, 1], pins
     assert len({digest for found in pins.values() for digest in found}) == 1  # the same digest
     for path in pins:
         text = (ROOT / path).read_text(encoding="utf-8")
@@ -1088,13 +1089,24 @@ def test_the_full_suite_runs_on_main_and_weekly_once_per_python_version() -> Non
     assert "push:\n    branches: [main]" in workflow
     assert "workflow_dispatch:" in workflow
     assert f'WEEKLY="{weekly}"' in workflow  # the fuzzing time reads the weekly schedule
-    # the suite and the portability matrix
-    assert len(re.findall(r'python: \["3.12", "3.13", "3.14", "3.15"\]', workflow)) == 2
-    assert len(re.findall(r'target: \["x86_64-linux-gnu", "aarch64-linux-gnu"\]', workflow)) == 2
+    # the suite, the corpus and the portability matrix
+    assert len(re.findall(r'python: \["3.12", "3.13", "3.14", "3.15"\]', workflow)) == 3
+    assert len(re.findall(r'target: \["x86_64-linux-gnu", "aarch64-linux-gnu"\]', workflow)) == 3
     assert "options: --privileged" in workflow and "timeout-minutes: 60" in workflow
     assert "--ignore=tests/e2e/test_portability.py" in workflow
+    assert "--ignore=tests/e2e/test_corpus.py" in workflow  # the corpus job's
     assert "FSBPYR_TESTS_REQUIRE_ALL=full" in workflow
     assert 'git diff --quiet "$last" HEAD -- src/fsbpyr/launcher tests/fuzz' in workflow
+
+
+def test_the_corpus_job_runs_make_test_corpus_with_nothing_skipped_by_surprise() -> None:
+    workflow = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
+    job = workflow.split("\n  corpus:\n")[1].split("\n  portability:\n")[0]
+
+    assert "make test-corpus $MAKE_ARGS" in job
+    assert "FSBPYR_TESTS_REQUIRE_ALL=full" in job
+    assert "--junitxml=corpus.xml" in job
+    assert "tmpfs" not in job  # big apps: temporary files on disk
 
 
 def test_the_portability_job_runs_on_the_host_after_the_suite_with_nothing_skipped() -> None:

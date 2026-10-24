@@ -1,2 +1,4 @@
+expect = "north"
+
 [[command]]
 argv = ["work/sales.csv"]

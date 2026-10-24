@@ -1,0 +1,22 @@
+[project]
+name = "corpus-numba"
+version = "1.0.0"
+description = "fsbpyr corpus app: numba's JIT compiler, parallel threading layer and on-disk cache"
+requires-python = ">=3.12"
+dependencies = ["numba>=0.61", "numpy>=2"]
+
+[project.scripts]
+corpus-numba = "corpus_numba.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+# Without it the build stops: numba's omppool and tbbpool extensions need libgomp.so.1.0.0 and
+# libtbb.so.12, which the numba wheel does not bundle (numba falls back to its workqueue layer
+# when the host has no libgomp or libtbb)
+allow-system-libs = ["libgomp.so.1.0.0", "libtbb.so.12"]
+# Without it numba's @njit(cache=True) fails: "cannot cache function ...: no locator
+# available", since the function's source file is below the executable
+fs-packages = ["corpus_numba"]

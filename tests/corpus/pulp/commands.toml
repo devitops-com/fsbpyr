@@ -1,0 +1,4 @@
+expect = "cbc status Optimal"
+
+[[command]]
+argv = []

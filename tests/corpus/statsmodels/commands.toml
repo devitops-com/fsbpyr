@@ -1,0 +1,11 @@
+# Fails today (found by this corpus), and fs-packages = ["statsmodels"] does not help: statsmodels/api.py
+# runs `from .__init__ import test`, importing the package's __init__.py as a module of its own,
+# statsmodels.__init__. The payload has a record for the package statsmodels (statsmodels/__init__.py)
+# and none for a module named statsmodels.__init__, so PayloadPathFinder._spec finds nothing and
+# ModuleNotFoundError follows; a venv's FileFinder finds __init__.py by file name.
+known-failure = "statsmodels.api does `from .__init__ import test`: no module statsmodels.__init__ in the payload"
+
+expect = "ols params"
+
+[[command]]
+argv = []

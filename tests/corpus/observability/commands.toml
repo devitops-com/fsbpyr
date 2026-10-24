@@ -1,0 +1,4 @@
+expect = "span inner {'items': 3} parent outer"
+
+[[command]]
+argv = []

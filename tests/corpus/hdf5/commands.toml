@@ -1,0 +1,4 @@
+expect = "pytables 500"
+
+[[command]]
+argv = []

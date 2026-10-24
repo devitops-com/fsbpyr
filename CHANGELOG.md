@@ -10,6 +10,32 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Changed
+- **An app that starts itself as a Python interpreter is refused rather than run again** (D44).
+  A child the app starts with `sys.executable -m MODULE`, `-c CODE` or a `.py` file of the app
+  used to run the app; libraries that start helper interpreters so made it start itself again
+  and again: joblib's `n_jobs=2` three copies per copy (a corpus app grew to 1,550 processes in
+  90 s and took its host down), Jupyter kernels and py-cpuinfo an endless chain. Such a child
+  now exits 70 and says what it asked for, unless the build chose: `--interpreter-reexec` runs
+  it as Python (D23), `--no-interpreter-reexec` runs the app as before, for apps whose own
+  options are named `-m` or `-c`. A `-c` value that is a name or a constant (`-c config.toml`)
+  stays the app's in every build.
+
+### Added
+- `--interpreter-reexec` also runs a `.py` file of the app as Python (`sys.executable
+  <exe>/pkg/tool.py`), as py-cpuinfo and torch's inductor start theirs.
+- An app with four processes in a row above it running the same executable exits 70, whatever
+  its arguments (D44).
+- The build names the packaged libraries known to start helper interpreters (joblib,
+  jupyter_client, py-cpuinfo, multiprocess, torch's inductor) unless it was built with
+  `--interpreter-reexec`; `--strict` does not count the note.
+- The real-world corpus grows from 11 to 65 apps, covering AI research, applied mathematics,
+  physics and services (docs/compatibility.md); it runs in full-suite.yml's new corpus job,
+  and locally with `make test-corpus`. Every run of an app in the tests is contained: killed
+  with all its processes when it starts too many, outlives its command or times out
+  (tests/support/contain.py), and `make test` runs in a cgroup with a task and memory limit
+  where systemd's user manager offers one.
+
 ## [0.25.0] - 2026-10-23
 
 ### Added

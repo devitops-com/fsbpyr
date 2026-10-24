@@ -1,0 +1,13 @@
+[project]
+name = "corpus-fitting"
+version = "1.0.0"
+description = "fsbpyr corpus app: lmfit and emcee on numpy and scipy"
+requires-python = ">=3.12"
+dependencies = ["lmfit>=1.3", "emcee>=3.1", "numpy>=2", "scipy>=1.14"]
+
+[project.scripts]
+corpus-fitting = "corpus_fitting.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

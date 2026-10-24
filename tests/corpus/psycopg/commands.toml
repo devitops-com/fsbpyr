@@ -1,2 +1,4 @@
+expect = "select"
+
 [[command]]
 argv = []

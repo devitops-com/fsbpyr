@@ -1,0 +1,26 @@
+[project]
+name = "corpus-transformers"
+version = "1.0.0"
+description = "fsbpyr corpus app: transformers with tokenizers and safetensors, offline"
+requires-python = ">=3.12"
+dependencies = ["transformers>=4.46", "tokenizers>=0.20", "safetensors>=0.4", "torch>=2.5"]
+
+[project.scripts]
+corpus-transformers = "corpus_transformers.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.fsbpyr]
+# Without it `import transformers` fails: it lists its models/ directory with
+# os.scandir to build its lazy import structure (NotADirectoryError)
+fs-packages = ["transformers"]

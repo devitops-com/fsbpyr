@@ -105,10 +105,9 @@ The distinction that matters is between having tests and having evidence of reli
      end to end, most of the latter on real executables;
    - GitHub Actions runs all of them on every push to main, weekly and on request, for four
      Pythons on two architectures, and a release is built only from a commit whose run passed;
-   - the executable against the original application: a corpus of 11 real applications
-     (alembic, black, Flask with Jinja, gnureadline, lxml, pandas, Pillow, psycopg, a pytest
-     plugin, scipy, setuptools' vendored libraries) and a compatibility app with 18 library
-     checks, each run in the executable and in the project's venv and compared on exit code,
+   - the executable against the original application: a corpus of real applications (11 in
+     0.25.0; 65 after it, across AI research, applied mathematics, physics and services, listed
+     in docs/compatibility.md) and a compatibility app with 18 library checks, each run in the executable and in the project's venv and compared on exit code,
      stdout and stderr; a build that passes while the app fails counts as a failure;
    - clean machines: the built apps run on 11 distribution images without Python, from Rocky 9
      and Amazon Linux 2023 (glibc 2.34) to Arch (2.44);
@@ -260,9 +259,15 @@ Recommended, with status:
   the corpus.
 
 Success criterion: a representative suite of real applications packages and runs without
-workarounds, or explains what to configure. Now: of the 11 corpus apps, 9 match their venv with
-no setting, Flask with Jinja needs `fs-packages`, and black fails (a mypyc-compiled package's
-`__path__` is the cache directory; a known failure). In Phase 10 fsbpyr needed no options for
+workarounds, or explains what to configure. In 0.25.0: of the 11 corpus apps, 9 match their
+venv with no setting, Flask with Jinja needs `fs-packages`, and black fails (a mypyc-compiled
+package's `__path__` is the cache directory; a known failure). After 0.25.0, on 3.14 and
+x86-64: of the 64 corpus apps that run there, 54 match their venv, 32 with no setting and 22
+with `fs-packages` (21), `allow-system-libs` or `interpreter-reexec`; 10 are known failures,
+each a gap in fsbpyr written down in its `commands.toml` (warnings attributed to the loader, a
+forkserver that does not preload the entry module, libraries that another distribution
+bundles, a 20 KB RUNPATH, cv2's loader, jedi reading the standard library's sources, openmm's
+plugin directory, twisted's plugin listing, `from .__init__ import`, mypyc's `__path__`). In Phase 10 fsbpyr needed no options for
 three apps where PyInstaller needed `--collect-data` and `--copy-metadata`.
 
 ### 1.2 Reproducible, verifiable builds (P0)
@@ -386,7 +391,7 @@ measure, each now backed by tests:
 
 | Proposed | Status (0.25.0) |
 | --- | --- |
-| Days 1–30: a corpus of 20–30 representative applications | 11 apps chosen by risk class |
+| Days 1–30: a corpus of 20–30 representative applications | 11 apps chosen by risk class; 65 after 0.25.0 |
 | Clean-environment execution tests | Done |
 | Tests of dependency discovery, native libraries, dynamic imports, package resources | Done |
 | A baseline of success rate, build time, start time and size against PyInstaller | Done in Phase 10 (0.19.0) |
@@ -405,26 +410,26 @@ Measurable acceptance criteria rather than a weighted feature checklist:
 
 | Metric | Proposed target | Now (0.25.0) |
 | --- | --- | --- |
-| Successful builds on the supported corpus | At least 95% at first, trending upward | All 11 build; 10 of 11 match their venv |
-| False-success builds (build passes, application fails) | Zero in the supported regression suite | Zero: the corpus test fails on any |
+| Successful builds on the supported corpus | At least 95% at first, trending upward | All 11 build; 10 of 11 match their venv. After 0.25.0, on 3.14: 54 of 64 match |
+| False-success builds (build passes, application fails) | Zero in the supported regression suite | Zero: the corpus test fails on any. After 0.25.0: 5 commands exit 0 with another output, all in known failures |
 | Reproducibility | Identical outputs for identical pinned inputs | Met for fsbpyr's releases; wheel-only app locks |
 | External dependencies | Explicitly reported and validated | Reported at build time; checked on a target by the self-test |
-| Packaging configuration | No manual step for common supported applications | 1 of 11 corpus apps needs a setting (`fs-packages`) |
+| Packaging configuration | No manual step for common supported applications | 1 of 11 corpus apps needs a setting (`fs-packages`); after 0.25.0, 22 of the 54 matching apps |
 | Regression testing | Every fixed packaging bug becomes a permanent test | CONTRIBUTING.md requires it |
 | Performance | Measurements against PyInstaller `--onefile` and `--onedir` | `--onefile` (0.19.0); `--onedir` not |
 
 A 95% success rate is not enough for critical production workloads; the threshold should be
 higher for the supported application class. The most telling metric is the share of
 applications that work on the first build without hooks or hidden-import declarations: 9 of 11
-corpus apps.
+corpus apps in 0.25.0; 32 of the 64 that run on 3.14 after it.
 
 ## Final recommendation
 
 The order of investment proposed, with status:
 
 1. Dependency discovery and runtime correctness: done, by packaging the whole lock.
-2. A real-world application compatibility suite: done (11 apps, the compat app), smaller than
-   proposed.
+2. A real-world application compatibility suite: done (11 apps and the compat app in 0.25.0,
+   smaller than proposed; 65 apps after it).
 3. Reproducibility, provenance and artifact verification: done.
 4. Native-library portability and diagnostics: done.
 5. Demonstrable start-time and size advantages: start time against PyInstaller onefile shown;

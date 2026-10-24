@@ -1,0 +1,14 @@
+# Fails today (found by this corpus): starlette.testclient warns at import with stacklevel=2
+# ("Using `httpx` with `starlette.testclient` is deprecated"). CPython's warnings skip only the
+# frames of importlib._bootstrap, so in a venv the warning is attributed to fastapi/testclient.py
+# line 1, the importer; in the executable the frame at level 2 is the payload loader's
+# exec_module (src/fsbpyr/boot/_fsbpyr_boot.py, `exec(self._code(record), ...)`), and stderr
+# reads `<frozen _fsbpyr_boot>:83: StarletteDeprecationWarning` instead. Stdout is identical.
+# Any import-time warning with stacklevel >= 2 differs alike. Remove this line when the loader's
+# frame is skipped.
+known-failure = "an import-time warning with stacklevel=2 is attributed to the loader's exec_module frame, not the importing module"
+
+expect = "uvicorn websocket echo over tcp"
+
+[[command]]
+argv = []

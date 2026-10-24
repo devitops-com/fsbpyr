@@ -18,7 +18,8 @@ Each row gives what you see, why, and what to do.
 | `ModuleNotFoundError` for `tkinter`, `idlelib`, `ensurepip`, `turtledemo` or `test`; `_dbm` (so `dbm.ndbm`) is missing | The build leaves these out of the standard library; `_tkinter` and `_dbm` are the two shared objects of the interpreter build, and neither is bundled. GUI toolkits that ship as wheels (Qt, wx) are not blocked, but no test covers them | Do not import them; `dbm.dumb` is pure Python |
 | A resource opened for writing fails: `ValueError: payload resources are read-only; invalid mode ...`; an extracted file has mode 0400 or 0500 | Resources are served from the payload, and files extracted to the cache are made read-only | Write to a path of your own, not next to the package's data |
 | `sys.frozen` is missing, and `sys._MEIPASS` too | `sys.frozen` is PyInstaller's flag, and code that sees it looks for PyInstaller's layout (D21) | Do not test for it; test for the files you need |
-| `sys.executable` runs the app, not an interpreter: `subprocess.run([sys.executable, "-m", "tool"])` starts the app again | The executable is the app (D22). multiprocessing children are recognized | Build with `--interpreter-reexec` ([D23](../docs/IMPLEMENTATION_PLAN.md)); then `-m` and `-c` run as CPython would, for a child of the app itself |
+| A child the app starts as a Python interpreter (`subprocess.run([sys.executable, "-m", "tool"])`, `-c CODE`, or a `.py` file of the app, as joblib's `n_jobs`, Jupyter kernels and py-cpuinfo do) exits 70, printing `fsbpyr: refusing to run <what> as Python: the app started itself as a helper interpreter`; joblib then fails with `TerminatedWorkerError` | `sys.executable` is the app, not an interpreter (D22), and running the app in such a child would start it again and again (D44). multiprocessing children are recognized | Build with `--interpreter-reexec` ([D23](../docs/IMPLEMENTATION_PLAN.md)); then such a child of the app itself runs as CPython would. An app whose own options are named `-m` or `-c` and which starts itself with them: `--no-interpreter-reexec` |
+| An app exits 70 printing `fsbpyr: refusing to start: the 4 processes above this one run this same executable` | The app keeps starting itself, in a way that cannot be told from its own arguments: code starting `sys.executable` with arguments the app takes for its own (D44) | Find the code that starts `sys.executable` (`ps -f` shows the processes' command lines while they run); build with `--interpreter-reexec` if it asks for Python |
 | `ModuleNotFoundError: No module named 'pkg_resources'` | setuptools 84.0.0 ships no `pkg_resources`. With an older setuptools pin it finds no distributions (*unverified*) | Use `importlib.metadata` and `importlib.resources` |
 
 ## What the target must provide
@@ -108,33 +109,113 @@ list cannot drift from the code. It says nothing about packages that are not in 
 
 ## Tested on real applications
 
-Besides the fixtures, a corpus of small applications is built and run in the suite job of
+Besides the fixtures, a corpus of small applications is built and run in the corpus job of
 `full-suite.yml`: on every push to main, weekly and on request, for each Python (3.12 to 3.15)
-and each target (x86-64 and aarch64). A release itself runs no tests: it publishes a commit
-whose run passed. Each app is a project in `tests/corpus/<name>` with its own `uv.lock`; the
-test runs its commands in a venv and in the built executable and compares exit code, stdout and
-stderr. A failing row is marked in its directory's `commands.toml`.
+and each target (x86-64 and aarch64); `make test-corpus` runs it locally. A release itself runs
+no tests: it publishes a commit whose run passed. Each app is a project in
+`tests/corpus/<name>` with its own `uv.lock`; the test runs its commands in a venv and in the
+built executable, each run with an empty home directory of its own, and compares exit code,
+stdout and stderr ([tests/corpus/README.md](../tests/corpus/README.md)). An app is skipped on a
+Python where a package of its lock has no wheel for manylinux_2_34 (`tests/support/no-wheels.txt`:
+on 3.15, 23 apps; `tensorflow` also on 3.14, and it has no 3.14 or 3.15 wheels at all). A
+failing row is marked in its directory's `commands.toml` (**fails** below): the test expects
+the failure and goes red once it is fixed. The `[tool.fsbpyr]` column is what the app needs
+beyond the defaults; each setting's reason is a comment in its `pyproject.toml`.
+
+### AI research and machine learning
 
 | App | Risk it covers | `[tool.fsbpyr]` |
 |---|---|---|
-| `alembic` | migration files named by digits, loaded by path | none |
-| `black` | modules compiled with mypyc; **fails**: `black.output` is not found, because the compiled package's `__path__` is the cache directory and `--fs-package` refuses a package of native code | none |
+| `torch` | TorchScript compiling the source, dynamo tracing bytecode, DataLoader worker processes, checkpoints; **fails on 3.14 and 3.15**: the forkserver does not preload the entry module (a built app's `__main__` has no file), so each worker imports torch itself and prints its warnings once more | none |
+| `torchvision` | custom operators registered in `torch.ops`, the image extension; **fails**: the build stops, since its extensions need torch's `libtorch*.so`, bundled by another distribution (their RPATH names PyTorch's build machine) | none |
+| `lightning` | the Lightning trainer, checkpoints, torchmetrics | `fs-packages = ["lightning"]` |
+| `transformers` | a tiny BERT and GPT-2 built offline, a tokenizer trained in process, safetensors, a pipeline | `fs-packages = ["transformers"]` |
+| `hf-datasets` | `map(num_proc=2)` through multiprocess and dill, Arrow files | none |
+| `jax` | jaxlib's extension, XLA compiling at run time, Flax and Optax | none |
+| `keras` | Keras 3 on JAX, a model saved and loaded | none |
+| `tensorflow` | TensorFlow's C++ runtime, `tf.function`, `tf.data`, SavedModel (3.12 and 3.13 only); **fails**: the build stops, since `libtensorflow_framework.so.2`'s RUNPATH (about 20,000 bytes) is longer than the ELF reader takes | none |
+| `sklearn` | bundled datasets, joblib's loky worker processes started as `sys.executable -m` and `-c`, threadpoolctl | `fs-packages = ["sklearn"]`, `interpreter-reexec = true` |
+| `boosting` | xgboost and lightgbm loading their shared libraries with ctypes from paths built from `__file__` | `allow-system-libs = ["libgomp.so.1"]`, `fs-packages = ["lightgbm", "sklearn", "xgboost"]` |
+| `onnx` | onnx's reference evaluator and onnxruntime | none |
+| `faiss` | faiss-cpu's SWIG module and OpenMP | none |
+| `numba` | the JIT compiler, the parallel threading layer and `cache=True` | `allow-system-libs = ["libgomp.so.1.0.0", "libtbb.so.12"]`, `fs-packages = ["corpus_numba"]` |
+| `nlp` | nltk, spaCy (language data imported by name), sentencepiece, tiktoken's plugin namespace | `fs-packages = ["spacy", "thinc"]` |
+| `vision` | scikit-image's lazy_loader stubs, imageio-ffmpeg's bundled binary run as a subprocess; **fails**: cv2's loader puts its directory into `sys.path` behind the executable and finds the cv2 package again, not its binary | `fs-packages = ["cv2"]` |
+| `matplotlib` | matplotlib and seaborn: fonts and data of mpl-data, Agg rendering | none |
+| `jupyter` | nbclient running a notebook in an ipykernel started as `sys.executable -m ipykernel_launcher`, IPython in process, jedi; **fails**: jedi cannot read the standard library's sources (they are inside the executable), and the kernel prints no startup warning (cause not found yet) | `fs-packages = ["nbformat", "parso"]`, `interpreter-reexec = true` |
+| `hydra` | a config package, `_target_` instantiation, plugin discovery in the `hydra_plugins` namespace | none |
+| `optuna` | a study in SQLite, whose storage runs alembic migrations kept next to optuna's modules | `fs-packages = ["optuna"]` |
+
+### Applied mathematics
+
+| App | Risk it covers | `[tool.fsbpyr]` |
+|---|---|---|
+| `scipy` | scipy's compiled libraries | none |
+| `sympy` | lambdify executing generated source, mpmath, gmpy2 and python-flint ground types | none |
+| `networkx` | backend dispatch through entry points, scipy-backed algorithms, GraphML | none |
+| `cvxpy` | solver extensions (Clarabel, SCS, OSQP); cvxpy lists its own package directory | `fs-packages = ["cvxpy"]` |
+| `pulp` | CBC, shipped as an executable file in the package and run as a subprocess; HiGHS in process | `fs-packages = ["pulp"]` |
+| `ortools` | CP-SAT, routing and GLOP | none |
+| `pyomo` | plugins loaded by name, the HiGHS interface | none |
+| `casadi` | IPOPT, CVODES and qpOASES plugins `dlopen`ed by name from casadi's directory | `allow-system-libs` (12 libraries of commercial solvers and MATLAB that its plugins link and the app never loads), `fs-packages = ["casadi"]` |
+| `statsmodels` | the formula API (patsy), bundled datasets; **fails**: `statsmodels.api` imports `from .__init__ import test`, and the payload has no module `statsmodels.__init__` | none |
+| `hdf5` | h5py, PyTables with blosc2 (found with ctypes) and netCDF4; py-cpuinfo running its `cpuinfo.py` as `sys.executable <script>` | `interpreter-reexec = true` |
+| `xarray` | xarray backends and chunk managers through entry points, dask, zarr, `dask.distributed` worker processes | `fs-packages = ["dask", "distributed"]` |
+| `geo` | shapely, pyproj's PROJ database, geopandas and pyogrio's GDAL data, rtree's libspatialindex (ctypes) | `fs-packages = ["pyproj", "pyogrio"]` |
+| `dataframes` | polars, pyarrow and duckdb exchanging Arrow data, Parquet | none |
+| `pandas-csv` | pandas with numpy and dateutil | none |
+
+### Physics
+
+| App | Risk it covers | `[tool.fsbpyr]` |
+|---|---|---|
+| `astropy` | units, IERS and leap-second tables with downloads off, coordinates, cosmology data, FITS and ECSV | `fs-packages = ["astropy", "astropy_iers_data"]` |
+| `pint` | pint's definitions file, uncertainties, scipy's constants | `fs-packages = ["pint"]` |
+| `fitting` | lmfit and emcee on numpy and scipy | none |
+| `qutip` | quantum dynamics on scipy's sparse matrices | none |
+| `hep` | ROOT files with uproot, awkward arrays, vector, particle's PDG tables, iminuit | none |
+| `materials` | ase's data files and EMT calculator, spglib | `fs-packages = ["ase"]` |
+| `pyscf` | C libraries loaded with `numpy.ctypeslib`, basis-set files | `fs-packages = ["pyscf"]` |
+| `qiskit` | transpiler plugins through entry points, the Aer simulator | `fs-packages = ["qiskit", "qiskit_aer"]` |
+| `openmm` | plugins loaded as shared libraries from a directory next to OpenMM's library; **fails**: the plugin libraries are not extracted (they are in `OpenMM.libs`, not in a package), so only the Reference platform is found | none |
+
+### Services
+
+| App | Risk it covers | `[tool.fsbpyr]` |
+|---|---|---|
+| `fastapi` | FastAPI and pydantic, uvicorn with uvloop, httptools and websockets serving from an import string; **fails**: a warning raised during an import (stacklevel 2) is attributed to fsbpyr's loader, not to the importing module | none |
+| `django` | admin, auth, DRF, migrations found by listing packages, templates, translations, collectstatic | `fs-packages = ["django", "corpus_django", "rest_framework"]` |
 | `flask-jinja` | templates and static files next to the package; without the setting the build succeeds and the app answers 500 | `fs-packages = ["corpus_flask"]` |
+| `aiohttp` | a server and client over TLS with websockets | none |
+| `gunicorn` | the arbiter and its sync and gthread workers forked from a WSGI app, SIGTERM | none |
+| `grpc` | protoc run at run time with grpc_tools' include files, TLS, streaming | `fs-packages = ["grpc_tools"]` |
+| `celery` | an in-process worker, transports resolved from aliases, chains and groups | none |
+| `datastores` | async SQLAlchemy over aiosqlite (greenlet), fakeredis, bson | `fs-packages = ["fakeredis"]` |
+| `alembic` | migration files named by digits, loaded by path | none |
+| `psycopg` | a database driver whose wheel bundles libpq, libssl and libcrypto | none |
+| `messaging` | pyzmq with its bundled libzmq, msgpack, fastavro, cbor2 | none |
+| `auth` | JWT, bcrypt, argon2, PyNaCl, authlib, paramiko with an in-process SSH session; **fails**: as `fastapi`, a warning raised during an import is attributed to fsbpyr's loader | none |
+| `cloud` | botocore's service models and endpoints, Azure SAS signing, Google namespace packages across distributions | none |
+| `observability` | OpenTelemetry's context and propagators loaded through entry points, prometheus, structlog, loguru, sentry | none |
+| `gevent` | monkey patching, pywsgi, a loop implementation chosen by name, gevent.subprocess | none |
+| `twisted` | the reactor, twisted.web, plugins; **fails**: `twisted.plugin.getPlugins` finds no plugins, since `twisted/plugins` is not a directory it can list, and the app exits 0 | none |
+| `validation` | jsonschema's meta-schemas through importlib.resources, marshmallow, Faker's locale providers, phonenumbers' lazy metadata | none |
+
+### Tools
+
+| App | Risk it covers | `[tool.fsbpyr]` |
+|---|---|---|
+| `black` | modules compiled with mypyc; **fails**: `black.output` is not found, because the compiled package's `__path__` is the cache directory and `--fs-package` refuses a package of native code | none |
 | `gnureadline` | an extension that links GNU readline statically | none |
 | `lxml` | libxml2 and libxslt bundled in the wheel | none |
-| `pandas-csv` | pandas with numpy and dateutil | none |
 | `pillow` | Pillow's codecs and embedded font | none |
-| `psycopg` | a database driver whose wheel bundles libpq, libssl and libcrypto | none |
 | `pytest-plugin` | a pluggy plugin found through an entry point | none |
-| `scipy` | scipy's compiled libraries | none |
 | `setuptools-vendor` | the libraries setuptools vendors | none |
 
 `tests/fixtures/projects/plugins` is a host and two plugin distributions with a custom
 entry-point group and a PEP 420 namespace they share. The apps are run only for the commands in
-their `commands.toml`. On Python 3.15 an app named after a package without a usable wheel
-(`gnureadline`) is skipped (README, "Python 3.15"). `import distutils` before `setuptools`
-resolves to setuptools' copy (the `distutils` check above); the `setuptools-vendor` app imports
-`setuptools` first.
+their `commands.toml`. `import distutils` before `setuptools` resolves to setuptools' copy (the
+`distutils` check above); the `setuptools-vendor` app imports `setuptools` first.
 
 ## Troubleshooting
 

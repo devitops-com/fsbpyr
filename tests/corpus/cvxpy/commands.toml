@@ -1,0 +1,4 @@
+expect = "lp -7.0"
+
+[[command]]
+argv = []

@@ -1,0 +1,11 @@
+# Fails today (found by this corpus): authlib.jose warns at import time with stacklevel 3, and
+# warnings.py counts frames skipping only those whose file name has "importlib" and "_bootstrap"
+# in it. The importer's exec_module frame (<frozen _fsbpyr_boot>, line 83) is not skipped, so
+# the executable's stderr names "<frozen _fsbpyr_boot>:83" with no source line, and the venv's
+# names corpus_auth/cli.py:14 and shows the import statement. Stdout is identical.
+known-failure = "an import-time warning is attributed to <frozen _fsbpyr_boot>:83, not to the importing module"
+
+expect = "ssh exec ran hostname"
+
+[[command]]
+argv = []

@@ -1,0 +1,13 @@
+[project]
+name = "corpus-keras"
+version = "1.0.0"
+description = "fsbpyr corpus app: keras 3 on the jax backend, model files, saved in a temporary directory"
+requires-python = ">=3.12"
+dependencies = ["keras>=3.10", "jax>=0.7"]
+
+[project.scripts]
+corpus-keras = "corpus_keras.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

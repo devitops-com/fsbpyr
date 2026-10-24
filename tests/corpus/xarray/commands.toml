@@ -1,0 +1,4 @@
+expect = "map [0, 1, 4, 9, 16]"
+
+[[command]]
+argv = []

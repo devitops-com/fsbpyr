@@ -1,0 +1,18 @@
+[project]
+name = "corpus-nlp"
+version = "1.0.0"
+description = "fsbpyr corpus app: nltk, spaCy, sentencepiece and tiktoken: language data by name, plugin namespaces"
+requires-python = ">=3.12"
+dependencies = ["nltk>=3.9", "spacy>=3.8", "sentencepiece>=0.2", "tiktoken>=0.8"]
+
+[project.scripts]
+corpus-nlp = "corpus_nlp.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+# Without them the build's smoke test fails: thinc reads backends/_custom_kernels.cu, spaCy
+# default_config.cfg, next to their modules (NotADirectoryError below the executable)
+fs-packages = ["spacy", "thinc"]

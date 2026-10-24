@@ -1,0 +1,4 @@
+expect = "predict ["
+
+[[command]]
+argv = []

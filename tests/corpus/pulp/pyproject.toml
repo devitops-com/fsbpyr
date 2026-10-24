@@ -1,0 +1,19 @@
+[project]
+name = "corpus-pulp"
+version = "1.0.0"
+description = "fsbpyr corpus app: pulp's bundled CBC executable and highspy"
+requires-python = ">=3.12"
+dependencies = ["pulp>=3,<4", "highspy>=1.8"]  # pulp 4 no longer bundles the CBC executable this app exists to cover
+
+[project.scripts]
+corpus-pulp = "corpus_pulp.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.fsbpyr]
+# Without it the CBC solver is not found: pulp checks os.access(X_OK) on solverdir/cbc/linux/i64/cbc
+# below <executable>/pulp/, a path inside the executable that is no file (PulpSolverError:
+# PULP_CBC_CMD: Not Available; listSolvers shows only HiGHS), and would run it as a subprocess.
+fs-packages = ["pulp"]

@@ -1,0 +1,4 @@
+expect = "prange 999000.0"
+
+[[command]]
+argv = []

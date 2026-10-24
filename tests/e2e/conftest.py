@@ -70,9 +70,15 @@ def runtime(request: pytest.FixtureRequest) -> registry.Runtime:
     return registry.find_runtime(TARGET_PYTHON, sanitize=sanitize)
 
 
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    corpus.collect(report)
+
+
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
     """Whether the runtime's pinned downloads came from FSBPYR_TEST_DOWNLOADS or the network,
-    and how the real-world corpus fared (TST-3)."""
+    and how the real-world corpus fared (TST-3). Under pytest-xdist the corpus results reach
+    the controller in the reports; it loads this conftest when the run names a file below
+    tests/e2e (`make test-corpus` does), the downloads are the workers' own."""
     if lines := corpus.summary():
         terminalreporter.section("corpus")
         for line in lines:

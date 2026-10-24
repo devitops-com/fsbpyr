@@ -1,0 +1,4 @@
+expect = "reloaded"
+
+[[command]]
+argv = []

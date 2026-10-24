@@ -42,7 +42,7 @@ else
 WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-container test-portability check check-c release-prep release clean
+.PHONY: help bootstrap build install uninstall test test-ci test-container test-corpus test-portability check check-c release-prep release clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -111,15 +111,30 @@ uninstall: ## Remove what `make install` installed
 # after Ctrl-C, the tests' subprocesses may still be writing there, hence the second try.
 # The runtime's pinned downloads are kept in TESTTMP between runs (tests/support/downloads.py),
 # unless FSBPYR_TEST_DOWNLOADS names another place.
+# A runaway in the tests (an app restarting itself through sys.executable, 2026-10-24) is held
+# in a cgroup of the run ($(CONTAINED), before the command) where systemd's user manager offers
+# one: at most TEST_TASKS tasks and TEST_MEMORY bytes of memory (70% of the machine's), no swap;
+# only the process that runs out of memory is killed (OOMPolicy=continue), and whatever is left
+# in the cgroup is killed when the run ends. Without a user manager (CI's containers, which
+# have limits of their own) the run is not wrapped. tests/support/contain.py contains each run
+# of an app besides.
 TESTTMP ?= $(HOME)/tmp
+TEST_TASKS ?= 8192
+TEST_MEMORY ?= $(shell awk '/^MemTotal:/ { printf "%d", $$2 * 1024 * 0.7 }' /proc/meminfo)
 TESTENV := $(WITH_LLVM23) mkdir -p "$(TESTTMP)" && tmp=$$(mktemp -d "$(TESTTMP)/fsbpyr-test.XXXXXX") \
-	&& trap 'rm -rf "$${tmp:?}" 2>/dev/null || { sleep 2; rm -rf "$${tmp:?}"; }' EXIT && TMPDIR="$$tmp" \
+	&& unit="fsbpyr-test-$$$$" contain= && if systemd-run --user --scope --quiet true 2>/dev/null; then \
+		contain="systemd-run --user --scope --quiet --collect --unit=$$unit -p TasksMax=$(TEST_TASKS) \
+			-p MemoryMax=$(TEST_MEMORY) -p MemorySwapMax=0 -p OOMPolicy=continue --"; fi \
+	&& trap 'systemctl --user kill --signal=SIGKILL "$$unit.scope" 2>/dev/null; \
+		rm -rf "$${tmp:?}" 2>/dev/null || { sleep 2; rm -rf "$${tmp:?}"; }' EXIT && TMPDIR="$$tmp" \
 	FSBPYR_TEST_DOWNLOADS="$${FSBPYR_TEST_DOWNLOADS:-$(TESTTMP)/fsbpyr-test-downloads}"
-# `make test` runs the tests in JOBS processes (pytest-xdist), each test file in one of them.
+CONTAINED := $$contain
+# `make test` runs the tests in JOBS processes (pytest-xdist), each test file in one of them;
+# the real-world corpus is left to `make test-corpus`.
 JOBS ?= 8
 
-test: ## Run the test suite in JOBS processes (default 8; temporary files in a directory under TESTTMP, ~/tmp, removed afterwards)
-	$(TESTENV) $(UVRUN) pytest -n $(JOBS) --dist loadfile
+test: ## Run the test suite but the corpus in JOBS processes (default 8; temporary files in a directory under TESTTMP, ~/tmp, removed afterwards)
+	$(TESTENV) $(CONTAINED) $(UVRUN) pytest -n $(JOBS) --dist loadfile --ignore=tests/e2e/test_corpus.py
 
 # The core of the suite, quicker than `make test`: unit and integration tests, real builds,
 # executables run with the release launcher, and a real executable's boot imports and
@@ -128,20 +143,21 @@ test: ## Run the test suite in JOBS processes (default 8; temporary files in a d
 # the tests marked `sanitized`. Branch coverage below pyproject.toml's fail_under fails the run;
 # coverage.xml is the report.
 test-ci: ## Run the core of the test suite
-	$(TESTENV) $(UVRUN) pytest tests/unit tests/integration tests/e2e/test_build.py \
+	$(TESTENV) $(CONTAINED) $(UVRUN) pytest tests/unit tests/integration tests/e2e/test_build.py \
 		tests/e2e/test_runtime_app.py tests/e2e/test_imports.py \
 		tests/e2e/test_stub_hardening.py \
 		-k "not (sanitized and not release)" --cov --cov-report=term --cov-report=xml
 
-# Everything but the portability tests (`podman run` inside podman), in the Containerfile's
-# `test` stage: Debian trixie as `tester`, with the packages and users tools/test-setup.sh adds.
+# Everything but the portability tests (`podman run` inside podman) and the corpus, in the
+# Containerfile's `test` stage: Debian trixie as `tester`, with the packages and users
+# tools/test-setup.sh adds.
 # A copy of the checkout is the suite's; FSBPYR_TESTS_REQUIRE_ALL=container fails any skip
 # outside the allowlist in tests/conftest.py. Two volumes keep what a run would fetch again:
 # uv's cache and Pythons, and the runtime's pinned downloads (FSBPYR_TEST_DOWNLOADS). Needs
 # podman, which is yours to install; --network pasta:-4 is bootstrap's, for the same reason.
 # TMPDIR is a tmpfs: a symlink target of 4,000 bytes (test_cache_root.py) fails on the
 # container's overlay file system with "File name too long", and the builds are big.
-test-container: ## Run the whole suite but the portability tests in a Debian trixie container (podman; PYTHON=3.X)
+test-container: ## Run the whole suite but the portability tests and the corpus in a Debian trixie container (podman; PYTHON=3.X)
 	podman build --target test -t fsbpyr-test -f Containerfile .
 	podman run --rm --network pasta:-4 -v "$(CURDIR)":/checkout:ro,Z \
 		-v fsbpyr-test-cache:/home/tester/.cache -v fsbpyr-test-downloads:/home/tester/downloads \
@@ -150,7 +166,14 @@ test-container: ## Run the whole suite but the portability tests in a Debian tri
 		fsbpyr-test bash -c 'tar -C /checkout --exclude="./.venv*" --exclude=./dist -cf - . | tar -xf - \
 			&& uv python install $(if $(filter command line,$(origin PYTHON)),$(PYTHON),"$$(cat .python-version)") \
 			&& clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" \
-			&& $(UVRUN) pytest -n $(JOBS) --dist loadfile --ignore=tests/e2e/test_portability.py'
+			&& $(UVRUN) pytest -n $(JOBS) --dist loadfile --ignore=tests/e2e/test_portability.py \
+				--ignore=tests/e2e/test_corpus.py'
+
+# The real-world corpus (tests/corpus, TST-3), as full-suite.yml's corpus job runs it: each app
+# in one of JOBS processes. It needs the network (gigabytes of wheels on a first run, kept in
+# uv's cache) and up to a few gigabytes of temporary space per app while it runs.
+test-corpus: ## Run the real-world corpus in JOBS processes (PYTHON=3.X; network)
+	$(TESTENV) $(CONTAINED) $(UVRUN) pytest -n $(JOBS) --dist load tests/e2e/test_corpus.py
 
 # The portability matrix (tests/e2e/test_portability.py): 11 images pulled and run with podman,
 # on $(BIN)'s builds of the fixtures (tools/portability-apps.sh); needs llvm-objdump.

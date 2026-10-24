@@ -1,0 +1,4 @@
+expect = "convert 42.1648 kilometer"
+
+[[command]]
+argv = []
