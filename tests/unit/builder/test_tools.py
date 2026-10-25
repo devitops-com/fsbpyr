@@ -11,7 +11,7 @@ from fsbpyr.closure import ClosureError, InstalledDist, SiteIndex, resolve_entry
 from fsbpyr.config import BuildConfig
 from fsbpyr.loose import Package, directory_name
 from fsbpyr.project import LockSource, Project, ProjectError
-from fsbpyr.tools import Listed, listed_distributions, tool_scripts, with_commands
+from fsbpyr.tools import Listed, Tools, listed_distributions, tool_scripts, with_commands
 
 PYTHON = "3.14.0"
 
@@ -513,3 +513,95 @@ def test_a_dependency_marked_with_an_extra_that_is_asked_elsewhere_is_still_inst
                          python_version=PYTHON)  # fmt: skip
 
     assert sorted(tools.scripts) == ["req"]
+
+
+# --- the family: a tool's own scripts and those of its requirements named after it ---------------
+
+
+def _tools(index: SiteIndex, names: list[str]) -> Tools:
+    return tool_scripts(index, _listed_by(names), project="p", source="requirements.txt",
+                        python_version=PYTHON)  # fmt: skip
+
+
+def test_a_tool_with_scripts_also_has_those_of_a_requirement_named_after_it() -> None:
+    index = _index(
+        _dist("ansible", ("ansible-core>=2", "jinja2"), "ansible-community = a:main", code=True),
+        _dist("ansible-core", ("jinja2",), "ansible = c.cli:main\nansible-playbook = c.pb:main"),
+        _dist("jinja2", (), "jinja = jinja2.cli:main"),
+    )
+
+    tools = _tools(index, ["ansible"])
+
+    assert sorted(tools.scripts) == ["ansible", "ansible-community", "ansible-playbook"]
+    assert tools.owners["ansible-playbook"] == "ansible-core"
+    assert "ansible takes commands from its family: ansible-core" in tools.notes
+
+
+def test_the_family_is_followed_to_the_members_own_family() -> None:
+    index = _index(
+        _dist("a", ("a-b",), "a = x:a"),
+        _dist("a-b", ("a-b-c",)),  # no script, but its own family has one
+        _dist("a-b-c", (), "abc = x:abc"),
+    )
+
+    assert sorted(_tools(index, ["a"]).scripts) == ["a", "abc"]
+
+
+def test_a_dependency_outside_the_family_still_gives_no_commands() -> None:
+    index = _index(
+        _dist("tool", ("toolkit", "other-tool"), "tool = x:t"),
+        _dist("toolkit", (), "tk = x:tk"),
+        _dist("other-tool", (), "ot = x:ot"),
+    )
+
+    assert sorted(_tools(index, ["tool"]).scripts) == ["tool"]
+
+
+def test_a_family_member_under_a_false_marker_or_an_unasked_extra_gives_none() -> None:
+    index = _index(
+        _dist("t", ("t-win; sys_platform == 'win32'", "t-x; extra == 'x'"), "t = x:t"),
+        _dist("t-win", (), "tw = x:tw"),
+        _dist("t-x", (), "tx = x:tx"),
+    )
+
+    assert sorted(_tools(index, ["t"]).scripts) == ["t"]
+    asked = tool_scripts(index, [Listed("t", frozenset({"x"}))], project="p",
+                         source="requirements.txt", python_version=PYTHON)  # fmt: skip
+    assert sorted(asked.scripts) == ["t", "tx"]
+
+
+def test_only_a_direct_requirement_counts_as_family() -> None:
+    index = _index(
+        _dist("t", ("lib",), "t = x:t"),
+        _dist("lib", ("t-more",)),
+        _dist("t-more", (), "tm = x:tm"),
+    )
+
+    assert sorted(_tools(index, ["t"]).scripts) == ["t"]
+
+
+def test_a_script_name_clash_inside_a_family_is_the_clash_error() -> None:
+    index = _index(
+        _dist("t", ("t-core",), "run = x:a"),
+        _dist("t-core", (), "run = x:b"),
+    )
+
+    with pytest.raises(ClosureError, match="both have the script 'run'"):
+        _tools(index, ["t"])
+
+
+def test_a_family_member_named_too_is_not_a_clash_with_itself() -> None:
+    index = _index(
+        _dist("ansible", ("ansible-core",), "ac = x:a"),
+        _dist("ansible-core", (), "ansible = x:b"),
+    )
+
+    tools = _tools(index, ["ansible", "ansible-core"])
+
+    assert sorted(tools.scripts) == ["ac", "ansible"]
+
+
+def test_a_family_cycle_stops() -> None:
+    index = _index(_dist("t", ("t-a",), "t = x:t"), _dist("t-a", ("t-a",), "ta = x:ta"))
+
+    assert sorted(_tools(index, ["t"]).scripts) == ["t", "ta"]

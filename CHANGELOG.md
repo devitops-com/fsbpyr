@@ -134,7 +134,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   named after it (a made-up `acme` requiring `acme-cli`), down to a distribution with scripts (a
   cycle or eight levels stop it), and the build names the meta-package and the tools taken
   through it; any other distribution with no script is a library, not a tool, and the build says
-  so. `gui_scripts` are commands like console scripts (pip and uv
+  so. A tool also has the commands of its **family**, decided while building it (not by the
+  owner): its direct requirements whose name is the tool's name and a dash (`ansible` gives
+  `ansible-core`'s `ansible`, `ansible-playbook`, ... beside its own `ansible-community`), under
+  the runtime's markers and the extras asked for, and theirs in turn; the build names the members
+  it took commands from; a script-name clash inside a family is the clash error. `gui_scripts` are commands like console scripts (pip and uv
   install them as ordinary launchers on Linux). Two tools with one script name fail the build
   naming both distributions (a console and a gui script of one name clash too); no script at all
   fails it, saying what the file named. A directory with

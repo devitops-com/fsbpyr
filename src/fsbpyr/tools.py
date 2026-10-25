@@ -9,7 +9,10 @@ distributions directly (``-r`` includes are followed, constraints name nothing).
 lists every installed distribution (``pip freeze``, pylock.toml, a Pipfile.lock) names the
 dependencies too, so there the tools are the listed distributions no other listed distribution
 requires; a Pipfile beside its lock names the tools in ``[packages]``. A dependency's
-scripts are never commands. A tool with no console or gui script of its own that is a
+scripts are never commands, except those of its family: a direct requirement named
+``<tool>-...`` (``ansible`` gives ``ansible-core``'s commands too; decided while building,
+2026-10-25).
+A tool with no console or gui script of its own that is a
 meta-package (no importable code of its own: ``jupyter``) has its direct requirements as the
 tools in its place; with code of its own it falls through only to a requirement named after it
 (a made-up ``acme`` requires ``acme-cli``). Any other such distribution is a library, not a tool.
@@ -245,7 +248,7 @@ def _through_metas(
         if name in path or len(path) > _META_DEPTH or name not in index.dists:
             return []
         if _scripts_of(index.dists[name]):
-            return [name]
+            return [name, *family(name, extras, (*path, name))]
         if (name, extras) in taken_by:
             return taken_by[name, extras]
         slot = len(notes)
@@ -263,6 +266,23 @@ def _through_metas(
         taken_by[name, extras] = taken
         return taken
 
+    def family(name: str, extras: frozenset[str], path: tuple[str, ...]) -> list[str]:
+        """The members of the tool's family that have scripts: direct requirements named
+        ``<tool>-...`` (ansible -> ansible-core), and theirs in turn."""
+        found: list[str] = []
+        for dependency, asked in _dependencies(name, extras, index, environment).items():
+            if (not dependency.startswith(f"{name}-") or dependency in path
+                    or len(path) > _META_DEPTH or dependency not in index.dists):
+                continue  # fmt: skip
+            if _scripts_of(index.dists[dependency]):
+                found.append(dependency)
+            found += [m for m in family(dependency, asked, (*path, dependency)) if m not in found]
+        if found and (name, extras) not in noted:
+            noted.add((name, extras))
+            notes.append(f"{name} takes commands from its family: {_shown(found)}")
+        return found
+
+    noted: set[tuple[str, frozenset[str]]] = set()
     tools: list[str] = []
     for name, extras in tops.items():
         tools += [t for t in take(name, extras, ()) if t not in tools]

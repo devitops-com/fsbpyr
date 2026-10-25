@@ -72,7 +72,9 @@ says:
 - A build that stops on `native files need libraries that are neither bundled nor standard
   system libraries` prints the `allow-system-libs` line that lets the target provide them.
 - A child process that exits 70 with `fsbpyr: refusing to run ... as Python` asks for
-  `interpreter-reexec` ([Helper interpreters](#helper-interpreters)).
+  `interpreter-reexec` ([Helper interpreters](#helper-interpreters)). A tool that runs a script
+  file of the host through `sys.executable` (Ansible's modules) gets `unknown command` instead: it
+  needs a real interpreter, see "A tool from its requirements file".
 
 The table in [docs/compatibility.md](docs/compatibility.md#differs-from-a-venv) explains each
 symptom and its remedy.
@@ -583,14 +585,22 @@ whatever its requirements say: its scripts are the commands, and the tools' scri
   on down to a distribution with scripts (the build names the
   meta-package and the tools taken through it). Any other distribution with no script is a
   library, not a tool (the build says so): `requests` listed beside `httpie` gives no command,
-  and its dependency's `normalizer` is not one. Two tools with one script name, a
-  console and a gui script among them, fail the build naming both distributions; no script at all
+  and its dependency's `normalizer` is not one. A tool also has the commands of its **family**:
+  its direct requirements (same markers and extras) whose name is the tool's name and a dash,
+  and theirs in turn. `ansible` requires `ansible-core`, so a file naming `ansible` gives
+  `ansible-community` and also `ansible`, `ansible-playbook`, ...; the build says
+  `ansible takes commands from its family: ansible-core`. (Decided while building it, not by the
+  owner. Checked against the metadata of httpie, flake8, black, pytest, celery, sphinx, jupyter
+  and ansible: only `ansible` gains commands; `jupyter-console` was already taken through
+  `jupyter`. Of ten more looked at, `mkdocs` gains its dependency's `mkdocs-get-deps`, which a
+  venv install has in `bin` too.) Two tools with one script name, a
+  console and a gui script among them, or a tool and its family, fail the build naming both
+  distributions; no script at all
   fails it, saying what the file named. `--entry NAME` builds one of the commands alone. The smoke test
   checks every command as for any several-command executable: it imports each target's module and
-  looks its function up (library code, imported as for any console script). Only synthetic
-  distributions have exercised the fall-through. Real ones differ: `ansible` is the
-  `ansible-community` distribution and gives its own `ansible-community` command, not
-  `ansible-core`'s; `ansible-core` needs `--fs-package ansible` for its data files, and a
+  looks its function up (library code, imported as for any console script). Real ones differ
+  from the made-up ones: `ansible-core` needs `--fs-package ansible` for its data files (without
+  it the smoke test fails with `Missing base YAML definition file (bad install?)`), and a
   `jupyter` build needs one for `rfc3987_syntax`.
 - **Build:** the lock is installed as for any pip project (a `requirements.txt` that is not pinned
   warns, `--strict` and `--hash` lines work as before), then the commands are tied to links.
@@ -601,7 +611,14 @@ whatever its requirements say: its scripts are the commands, and the tools' scri
   connection, worker pools, `multiprocessing` outside the cases fsbpyr recognizes) exits 70 unless
   the binary is built with `--interpreter-reexec`. The build cannot tell which tools do; it prints
   the note it prints for any app when a library that starts helper interpreters is packaged, and
-  you test the commands you need. See [Helper interpreters](#helper-interpreters).
+  you test the commands you need. See [Helper interpreters](#helper-interpreters). Ansible's
+  modules are the exception that `--interpreter-reexec` does not cover: the implicit `localhost`
+  (`ansible localhost -m ping -c local`) runs each module as `sys.executable /path/AnsiballZ_x.py`,
+  a file of the host, which the executable does not run as Python (`unknown command`). Give it a
+  real interpreter: `-e ansible_python_interpreter=/usr/bin/python3` (or the inventory variable).
+  A playbook with `connection: local` on an inventory host discovers one by itself. With `HOME`
+  and `ANSIBLE_HOME` in a writable place, `ansible --version`, `ansible-playbook --version` and
+  a one-task local playbook ran from a build of `ansible-core==2.18.6` and of `ansible==11.6.0`.
 - **Interpreter-like commands** (`ipython`, `ansible-console`) are reachable through the
   executable's name (`tools ipython`) as through their links; a `sudo` rule must name the link
   (`/opt/tools/ansible`), not the executable.
