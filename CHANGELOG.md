@@ -24,6 +24,15 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   SLES 15 SP4 and SP5 (glibc 2.31) and openSUSE Leap 15 only. The portability matrix gains
   `registry.suse.com/bci/bci-base:15.7` (SLES 15 SP7, 12 images now, 11 on aarch64), and the
   README and `docs/compatibility.md` list SLES 15 SP6 and newer.
+- **`make test-vm` runs aarch64 apps on 16K- and 64K-page kernels.** `tools/vm-smoke.py` boots
+  Raspberry Pi 5's kernel (16 KiB pages) and EL8's (64 KiB pages) in `qemu-system-aarch64`
+  (TCG, no KVM) with an initramfs of a pinned Debian trixie (or Rocky Linux 8.10) root file
+  system and the aarch64 apps it is given, runs their commands and checks the page size, the
+  exit codes and the output on the serial console. Kernels and root file systems are pinned by
+  URL and SHA-256 (`tools/vm-pins.toml`). `full-suite.yml` gains a `vm-smoke` job that runs the
+  aarch64 executable and two fixture apps, one with native extensions, on both kernels. The
+  README no longer calls 16K- and 64K-page kernels untested: they are smoke-tested in virtual
+  machines, not on hardware.
 
 ### Changed
 - **`PYTHONUNBUFFERED` is honoured** (D14). Set and non-empty, it makes an app's stdout and

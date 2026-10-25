@@ -42,7 +42,7 @@ else
 WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-container test-corpus test-portability check check-c release-prep release release-check clean
+.PHONY: help bootstrap build install uninstall test test-ci test-container test-corpus test-portability test-vm check check-c release-prep release release-check clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -184,6 +184,15 @@ test-portability: ## Run the portability matrix on 12 distributions (podman, dis
 	tools/portability-apps.sh $(BIN) dist/portability-apps $(PYTHON_MINOR)
 	$(TESTENV) FSBPYR_PORTABILITY_APPS="$(CURDIR)/dist/portability-apps" FSBPYR_TESTS_REQUIRE_ALL=portability \
 		$(UVRUN) pytest tests/e2e/test_portability.py
+
+# aarch64 apps in a QEMU system VM (tools/vm-smoke.py) whose kernel has 16 KiB pages (Raspberry
+# Pi 5's) and 64 KiB pages (EL8's), under TCG: no KVM, about a minute per boot. fsbpyr builds for
+# its own host, so the apps are aarch64 executables you built on one: VM_ARGS="--app dist/hello
+# --run 'hello => hello'" (see the script's header). Without VM_ARGS only the boots are checked.
+# Needs qemu-system-aarch64, which is yours to install; the kernels and root file systems it
+# fetches are pinned in tools/vm-pins.toml and kept in FSBPYR_TEST_DOWNLOADS.
+test-vm: ## Run aarch64 apps in a QEMU VM with 16K and 64K page kernels (qemu-system-aarch64; VM_ARGS=...)
+	$(SCRATCHENV) $(CONTAINED) $(UVRUN) python tools/vm-smoke.py $(VM_ARGS)
 
 check: ## Static checks: ruff + mypy
 	$(UVRUN) ruff check
