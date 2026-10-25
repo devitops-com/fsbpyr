@@ -418,6 +418,10 @@ Pure-Python apps run straight from the executable. Native extensions, and the pa
 in `fs-packages` (plus the known ones: babel, botocore, certifi, litellm, matplotlib and
 torch), are extracted on first use into `${XDG_CACHE_HOME:-~/.cache}/<app>`, or
 `$FSBPYR_CACHE_DIR` when set; resources an app asks for as a path are extracted there too.
+A package in `fs-packages` comes with the libraries its extensions need from outside it and
+with every shared library its distribution ships (openmm opens its plugins from a directory),
+and `ctypes.CDLL` of a bare file name the system cannot load finds the app's bundled library
+of that name (PyTables' `libblosc2.so`).
 With `--best-compression` that first use takes longer, since xz decodes more slowly than zstd:
 the launcher decodes each library in pieces of 4 MiB on up to 8 threads (numpy's first import:
 about +70 ms; onnxruntime's together with numpy's: about +80 ms; measured at 0.8.0, not

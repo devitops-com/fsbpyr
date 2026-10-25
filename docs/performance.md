@@ -22,7 +22,7 @@ the boot code, and keep the old rows.
 ## Starting a no-op app
 
 The app's `main()` returns at once; on Python 3.14 the executable is 27.8 MB (0.24.0 and 0.25.0:
-27,786,048 and 27,786,288 bytes), 20.9 MB of it launcher and static CPython and 6.7 MB the
+27,786,048 and 27,799,648 bytes), 20.9 MB of it launcher and static CPython and 6.7 MB the
 standard library; on 3.15 it is 29.7 MB (22.1 and 7.4 MB).
 
 | Release | Bare CPython | App | App without the integrity check | Integrity check |
@@ -36,18 +36,21 @@ standard library; on 3.15 it is 29.7 MB (22.1 and 7.4 MB).
 | 0.14.0 (two rounds of 201) | 5.50–5.51 ms | 7.83–7.86 ms | 6.06–6.09 ms (1.10×) | 1.77 ms |
 | 0.15.0 (two rounds of 201; bare: PBS CPython 3.14.8) | 5.53–5.54 ms | 7.82 ms | 6.06 ms (1.10×) | 1.76 ms |
 | 0.24.0 (two rounds of 201; bare: uv CPython 3.14.9) | 5.43–5.46 ms | 7.61–7.66 ms | 5.97–6.02 ms (1.10×) | 1.64 ms |
-| 0.25.0 (two rounds of 201; as 0.24.0) | 5.43–5.46 ms | 7.63–7.66 ms | 5.99–6.02 ms (1.10×) | 1.64 ms |
-| 0.25.0 on Python 3.15 (two rounds of 201; bare: uv CPython 3.15.1) | 5.50–5.55 ms | 7.65–7.68 ms | 6.01–6.03 ms (1.09×) | 1.64–1.65 ms |
+| 0.25.0 (two rounds of 201; as 0.24.0) | 5.57 ms | 7.58–7.59 ms | 5.95–5.96 ms (1.07×) | 1.63 ms |
+| 0.25.0 on Python 3.15 (two rounds of 201; bare: uv CPython 3.15.1) | 5.58–5.59 ms | 7.66–7.67 ms | 6.02–6.03 ms (1.08×) | 1.63–1.64 ms |
 
 The rows from 0.24.0 on were measured with `subprocess.run` as in the budget test, 5 warm-up
 runs and then 201 runs per variant per round, all variants of a round interleaved; the integrity
 check is `integrity_ns` of 201 further runs with `FSBPYR_TRACE=1`, interleaved with them.
 "App without the integrity check" is the app's p50 minus that p50, as in the 0.7.0 row (no
 measurement build). The 0.24.0 app was built by the release's `fsbpyr-3.14-x86_64-linux-gnu`,
-the 0.25.0 ones from the checkout; 0.24.0 (Debian 12 sysroot, glibc 2.34 baseline, LLVM 23) and
-0.25.0 (`_dl_find_object` wrapper, Python 3.15) start 0.16 to 0.21 ms faster than 0.15.0 did
-in its session (bare CPython 0.07 to 0.11 ms faster, the integrity check 0.12 ms); 0.24.0 and
-0.25.0 do not differ on 3.14.
+the 0.25.0 ones from a checkout of its code (2026-10-25, a session in which bare CPython started
+0.11 to 0.14 ms slower than in 0.24.0's). 0.24.0 (Debian 12 sysroot, glibc 2.34 baseline,
+LLVM 23) starts 0.16 to 0.21 ms faster than 0.15.0 did in its session (bare CPython 0.07 to
+0.11 ms faster, the integrity check 0.12 ms); 0.25.0 (`_dl_find_object` wrapper, Python 3.15,
+D44, D45) is no slower than 0.24.0 on 3.14. D45's instance slot, an `open` and an `fcntl` at
+every start, costs 0.03 to 0.08 ms: the app with `FSBPYR_MAX_INSTANCES=0`, interleaved with
+the other variants, started that much faster.
 
 Budget (`test_startup_is_within_budget_of_bare_cpython`): everything but the integrity check
 within 1.5× bare CPython (1.15× until 0.7.0, 1.2× until 0.10.0; the owner raised it twice on
@@ -710,7 +713,8 @@ removes it at exit: 35.0 MB in 2 files for `hello` (`libpython3.14.so.1.0` and
    loaded per distribution. Under cProfile, `_fsbpyr.sync` is the cache check, and the extraction
    on a first run.
 2. `FSBPYR_IMPORTTIME=1 app ...`: CPython's import-time table, per module.
-3. Compare with the tables above: the no-op app isolates the launcher and the integrity check,
+3. Compare with the tables above: the no-op app isolates the launcher (its instance slot
+   apart: `FSBPYR_MAX_INSTANCES=0` turns it off) and the integrity check,
    `heavy json` the payload imports, `heavy np` and `heavy onnx` the cache check and native
    loading, aiagent a large pure-Python import tree.
 4. `uv run pytest -q tests/e2e/test_runtime_app.py -k budget` checks the startup budget.

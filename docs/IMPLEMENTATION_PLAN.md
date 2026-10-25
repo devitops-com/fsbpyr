@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.19, 2026-10-23 (fsbpyr 0.25.0). Phases 0–8, 6b, 6c and 10 are complete (Phase 7 reduced by D37; Phase 8 in six steps, 8a–8f). Phase 9 (owner decision 2026-10-18) is done for self-update, one fsbpyr per Python version (3.12 to 3.15; 3.14 stays the default, D43), the installer and Linux aarch64 with glibc; musl and macOS on Apple Silicon are put aside (owner decision 2026-10-21; no Windows), and signed releases come later (not MVP, owner decision 2026-10-18). Apps and releases cover Linux x86-64 and aarch64 with a glibc 2.34 baseline (D42); uv is required (D26); the CLI runs on click, which also gives the completions and the man page (D40); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.20, 2026-10-25 (fsbpyr 0.25.0). Phases 0–8, 6b, 6c and 10 are complete (Phase 7 reduced by D37; Phase 8 in six steps, 8a–8f). Phase 11 (the gaps the corpus of 65 apps found, owner decisions 2026-10-24) is done for the corpus: every app matches its venv; four smaller gaps found on the way stay open. No app can start itself without end (D44, D45). Phase 9 (owner decision 2026-10-18) is done for self-update, one fsbpyr per Python version (3.12 to 3.15; 3.14 stays the default, D43), the installer and Linux aarch64 with glibc; musl and macOS on Apple Silicon are put aside (owner decision 2026-10-21; no Windows), and signed releases come later (not MVP, owner decision 2026-10-18). Apps and releases cover Linux x86-64 and aarch64 with a glibc 2.34 baseline (D42); uv is required (D26); the CLI runs on click, which also gives the completions and the man page (D40); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -1955,14 +1955,14 @@ cache, and cold where it matters). **Exit:** the comparison is committed in
 
 ### Phase 11 — Gaps the corpus found (owner decisions 2026-10-24: small, contained fixes first, then the gaps every Python has)
 
-The corpus of 65 apps (TST-3, 0.26.0) found gaps of fsbpyr's own, each a `known-failure` in
+The corpus of 65 apps (TST-3, 0.25.0) found gaps of fsbpyr's own, each a `known-failure` in
 the app's `tests/corpus/<app>/commands.toml` with the cause as far as it is known; the test
 expects the failure and goes red once it is fixed (then the line goes). On 2026-10-24, x86-64,
 55 of 65 apps matched their venv on 3.12 and 3.13, 54 of 64 on 3.14 and 35 of 42 on 3.15; with
 the fixes below, every one: 65 of 65 on 3.12 and 3.13, 64 of 64 on 3.14 and 42 of 42 on 3.15
-(2026-10-25; on aarch64, CI's corpus job found jupyter's build stopping, fixed below).
+(2026-10-25), and the same on aarch64 in CI once jupyter's build there was fixed (below).
 
-**Fixed (0.26.0):**
+**Fixed (0.25.0):**
 
 | Gap | Apps | Cause | Fix |
 |---|---|---|---|
