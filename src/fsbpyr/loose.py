@@ -7,6 +7,14 @@ nothing else (a ``.env`` or a key file is never in it) under the reserved root `
 which keeps their relative paths; the boot puts the script's directory on ``sys.path`` first, so
 siblings import as they do under ``uv run``. The files come from ``git ls-files`` inside a git
 work tree, else from a walk that skips what is not the project's.
+
+A directory with no pyproject.toml, setup.py or setup.cfg is packaged the same way (research
+UC6): its Python files are the ``*.py`` files and the extensionless files whose first line is a
+python or ``uv run`` shebang; every file with a main guard or such a shebang is a command, named
+after the file. A file whose name is no Python name (``check-disk``) is stored under a mangled
+module name in the same directory (``check_disk.py``) and still runs as ``__main__``; its
+``__file__`` is that path inside the executable. Dependencies come from requirements.txt or
+pylock.toml, else from the union of the commands' PEP 723 blocks.
 """
 
 from __future__ import annotations
@@ -20,16 +28,19 @@ import re
 import time
 import tomllib
 import zipfile
-from dataclasses import dataclass
+from collections.abc import Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from packaging.markers import Marker
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 from .entry import _SKIPPED_DIRECTORIES, has_main_guard
+from .links import COMMAND_NAME
 from .project import ProjectError
 from .vcs import work_tree_files
 
@@ -41,6 +52,12 @@ _TEST_DIRECTORIES = frozenset({"test", "tests"})  # not commands
 _MAIN_STEMS = frozenset({"main", "__main__"})  # take the project's name as a command
 _MODE = 0o100644 << 16  # a regular file, rw-r--r--
 _EXTRAS_SUFFIX = re.compile(r"\s*\[[^\]]*\]\s*$")
+_SHEBANG_PROGRAM = re.compile(r"python3?(?:\.\d+)?")  # not python2: Python 2 files do not run
+_SHEBANG_HEAD = 512  # bytes read of an extensionless file to see whether it is a script
+# PEP 723's reference expression for an inline metadata block
+_BLOCK = re.compile(r"(?m)^# /// (?P<type>[a-zA-Z0-9-]+)$\s(?P<content>(^#(| .*)$\s)+)^# ///$")
+_MINORS = range(41)  # Python 3.0 to 3.40 and a few patch levels: a range of versions is empty
+_PATCHES = (0, 1, 2, 5, 10, 20, 99)  # when none of them is in it (requires-python of blocks)
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,13 +72,23 @@ class Package:
     # command -> target below ROOT: "pkg.mod" (run as __main__) or "pkg.mod:attr"
     commands: dict[str, str]
     warnings: tuple[str, ...]
+    # a directory without pyproject.toml: the project file of each file stored under another
+    # name (payload path -> relative path), and what the commands' PEP 723 blocks say
+    origins: dict[str, str] = field(default_factory=dict)
+    requires_python: str | None = None
+    dependencies: tuple[str, ...] = ()
 
     @classmethod
-    def load(cls, directory: Path) -> Package:
+    def load(cls, directory: Path, *, declared: bool = False) -> Package:
+        """The package of ``directory``. Without a pyproject.toml the dependencies are those of
+        the commands' PEP 723 blocks, unless ``declared``: a requirements file or a lock
+        declares them (the blocks' requires-python still counts)."""
         directory = directory.resolve()
         if directory in (Path("/"), Path.home().resolve()):
             raise ProjectError(f"{directory} is not a project directory: fsbpyr packages the "
                                "Python files below it, and that is all of them")  # fmt: skip
+        if not (directory / "pyproject.toml").is_file():
+            return cls._from_directory(directory, declared=declared)
         try:
             data = tomllib.loads((directory / "pyproject.toml").read_text())
         except (OSError, tomllib.TOMLDecodeError) as exc:
@@ -75,6 +102,21 @@ class Package:
             raise ProjectError(f"{directory} has no Python files to package")
         return cls(directory, name, _version(table), _metadata(table), sources,
                    _commands(name, table, sources), warnings)  # fmt: skip
+
+    @classmethod
+    def _from_directory(cls, directory: Path, *, declared: bool) -> Package:
+        name = directory_name(directory)
+        sources, origins, warnings = discover_directory(directory)
+        if not sources:
+            raise ProjectError(f"{directory} has no pyproject.toml or setup.py and no Python "
+                               "files to package")  # fmt: skip
+        commands, files = _directory_commands(name, sources, origins, warnings)
+        dependencies, requires_python = _inline_requirements(files)
+        table: dict[str, Any] = {"name": name, "dependencies": [] if declared else dependencies}
+        if requires_python is not None:
+            table["requires-python"] = requires_python
+        return cls(directory, name, _version(table), _metadata(table), sources, commands,
+                   tuple(warnings), origins, requires_python, tuple(dependencies))  # fmt: skip
 
     def wheel_name(self) -> str:
         return f"{re.sub(r'[-_.]+', '_', self.name)}-{self.version}-py3-none-any.whl"
@@ -153,32 +195,117 @@ def _metadata(table: dict[str, Any]) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def discover(directory: Path) -> tuple[dict[str, bytes], tuple[str, ...]]:
-    """The project's Python files (relative posix path -> content, sorted) and warnings for the
-    files that cannot be imported. A symlink to a file outside the tree is an error."""
+def _project_files(directory: Path, *, scripts: bool) -> Iterator[tuple[str, Path, bool]]:
+    """(relative path, real file, is a ``*.py`` file) of each regular file of the project that
+    can be Python: the ``*.py`` files and, with ``scripts``, the extensionless ones (names
+    starting with a dot are skipped then). A link to a file outside the tree is an error for a
+    ``*.py`` file; an extensionless one is passed over unread."""
     listed = work_tree_files(directory)
     paths = listed or _walk(directory)
     root = Path(os.path.realpath(directory))
     venvs: dict[str, bool] = {}
-    sources: dict[str, bytes] = {}
-    warnings: list[str] = []
     for rel in sorted(paths):
         parts = rel.split("/")
-        if not rel.endswith(".py") or _pruned(directory, parts[:-1], venvs):
+        python = rel.endswith(".py")
+        if scripts and parts[-1].startswith("."):
+            continue
+        if not (python or (scripts and "." not in parts[-1])) or _pruned(
+            directory, parts[:-1], venvs
+        ):
             continue
         path = directory / rel
         if not path.is_file():  # a tracked file removed, a broken link, a link to a directory
             continue
         real = Path(os.path.realpath(path))
-        if not real.is_relative_to(root):
+        if real.is_relative_to(root):
+            target = real.relative_to(root).parts  # a link must not lead to what is skipped
+            if target[-1].startswith(".") or _pruned(directory, list(target[:-1]), venvs):
+                continue
+            if not (target[-1].endswith(".py") or (scripts and "." not in target[-1])):
+                continue
+            yield rel, real, python
+        elif python:
             raise ProjectError(f"{rel} is a link to {real}, outside the project directory; "
                                "fsbpyr packages the project's own files only")  # fmt: skip
+
+
+def discover(directory: Path) -> tuple[dict[str, bytes], tuple[str, ...]]:
+    """The project's Python files (relative posix path -> content, sorted) and warnings for the
+    files that cannot be imported. A symlink to a file outside the tree is an error."""
+    sources: dict[str, bytes] = {}
+    warnings: list[str] = []
+    for rel, real, _ in _project_files(directory, scripts=False):
+        parts = rel.split("/")
         if not all(part.isidentifier() for part in (*parts[:-1], parts[-1].removesuffix(".py"))):
             warnings.append(f"{rel} is not packaged: its name or a directory name is not a valid "
                             "Python name, so no import reaches it")  # fmt: skip
             continue
         sources[rel] = real.read_bytes()
     return sources, tuple(warnings)
+
+
+def python_shebang(data: bytes) -> bool:
+    """Whether the first line of ``data`` is a shebang that starts Python 3 (``python``,
+    ``python3``, ``python3.12``, directly or through ``env``) or ``uv run``; text only."""
+    head = data[:_SHEBANG_HEAD]
+    if not head.startswith(b"#!") or b"\0" in head:
+        return False
+    words = head[2:].split(b"\n", 1)[0].decode("utf-8", "replace").split()
+    if words and os.path.basename(words[0]) == "env":  # options and VAR=value come first
+        words = [word for word in words[1:] if not word.startswith("-") and "=" not in word]
+    if not words:
+        return False
+    program = os.path.basename(words[0])
+    if program == "uv":
+        return words[1:2] == ["run"]
+    return _SHEBANG_PROGRAM.fullmatch(program) is not None
+
+
+def directory_name(directory: Path) -> str:
+    """The project name of a directory without pyproject.toml: its name, canonical, with what a
+    project name cannot hold replaced."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", directory.name).strip("-._")
+    return canonicalize_name(cleaned or "scripts")
+
+
+def _module_stem(stem: str) -> str:
+    """``stem`` as a module name: what no identifier holds becomes ``_``, and a name that starts
+    with a digit gets a ``_`` in front (``check-disk`` -> ``check_disk``, ``2fa`` -> ``_2fa``)."""
+    if stem.isidentifier():
+        return stem
+    mangled = "".join(char if f"_{char}".isidentifier() else "_" for char in stem)
+    return mangled if mangled.isidentifier() else f"_{mangled}"
+
+
+def discover_directory(directory: Path) -> tuple[dict[str, bytes], dict[str, str], list[str]]:
+    """The Python files of a directory without pyproject.toml: payload path -> content (sorted),
+    payload path -> project file, and warnings. A file whose name is no Python name is stored as
+    ``<mangled name>.py`` in its directory; two files with one payload path are an error. Files
+    in directories that are no Python names are reported and left out."""
+    sources: dict[str, bytes] = {}
+    origins: dict[str, str] = {}
+    warnings: list[str] = []
+    for rel, real, python in _project_files(directory, scripts=True):
+        if not python:
+            with real.open("rb") as handle:
+                if not python_shebang(handle.read(_SHEBANG_HEAD)):
+                    continue
+        *folders, leaf = rel.split("/")
+        if not all(part.isidentifier() for part in folders):
+            warnings.append(f"{rel} is not packaged: a directory name is not a valid Python "
+                            "name, so no import reaches it")  # fmt: skip
+            continue
+        stem = _module_stem(leaf.removesuffix(".py"))
+        if not python and leaf.isidentifier():  # python3 never imports an extensionless file
+            stem = f"_x_{stem}"
+        payload = "/".join([*folders, stem + ".py"])
+        if payload in origins:
+            raise ProjectError(f"{origins[payload]} and {rel} are both {payload} in the "
+                               "executable (a name that is no Python name is stored with '_' "
+                               "for each character that is not one); rename one of them"
+                               )  # fmt: skip
+        sources[payload], origins[payload] = real.read_bytes(), rel
+    return dict(sorted(sources.items())), origins, warnings
 
 
 def _pruned(directory: Path, parts: list[str], venvs: dict[str, bool]) -> bool:
@@ -236,9 +363,10 @@ def _commands(name: str, table: dict[str, Any], sources: dict[str, bytes]) -> di
     return commands
 
 
-def _candidate(path: str, data: bytes) -> bool:
+def _candidate(path: str, data: bytes, *, shebang: bool = False) -> bool:
     """Whether a file can be a command: a top-level ``__main__.py`` or any file with a main
-    guard, except setup.py, packages' ``__init__``/``__main__`` and test code."""
+    guard (or, with ``shebang``, a python shebang), except setup.py, packages'
+    ``__init__``/``__main__`` and test code."""
     parts = path.split("/")
     leaf = parts[-1]
     if (path == "setup.py" or leaf in {"__init__.py", "conftest.py"}
@@ -247,12 +375,83 @@ def _candidate(path: str, data: bytes) -> bool:
         return False
     if leaf == "__main__.py":
         return len(parts) == 1
-    return has_main_guard(data)
+    return has_main_guard(data) or (shebang and python_shebang(data))
 
 
 def _command_name(project: str, path: str) -> str:
     stem = path.rpartition("/")[2].removesuffix(".py")
     return project if stem in _MAIN_STEMS else stem
+
+
+def _directory_commands(
+    name: str, sources: dict[str, bytes], origins: dict[str, str], warnings: list[str]
+) -> tuple[dict[str, str], dict[str, bytes]]:
+    """The commands of a directory without pyproject.toml, one per file with a main guard or a
+    python shebang (the file's name, ``main`` and ``__main__`` after the directory), and the
+    contents of those files by project path. Two files with one name are an error; a name that
+    is no command name is a warning, and the file stays a module."""
+    commands: dict[str, str] = {}
+    owner: dict[str, str] = {}
+    files: dict[str, bytes] = {}
+    for payload, data in sources.items():
+        origin = origins[payload]
+        if not _candidate(origin, data, shebang=True):
+            continue
+        command = _command_name(name, origin)
+        if not COMMAND_NAME.fullmatch(command):
+            warnings.append(f"{origin} is not a command: {command!r} is not a command name "
+                            "(letters, digits and _.+-, starting with a letter or digit)"
+                            )  # fmt: skip
+            continue
+        if command in owner:
+            raise ProjectError(f"{owner[command]} and {origin} are both the command "
+                               f"{command!r}; rename one of them")  # fmt: skip
+        commands[command], owner[command], files[origin] = _module(payload), origin, data
+    return commands, files
+
+
+def inline_metadata(source: bytes, where: str) -> dict[str, Any]:
+    """The TOML of the ``# /// script`` block of a file (PEP 723), empty without one."""
+    text = source.decode("utf-8", "replace")
+    blocks = [block for block in _BLOCK.finditer(text) if block["type"] == "script"]
+    if len(blocks) > 1:
+        raise ProjectError(f"{where} has more than one '# /// script' block")
+    if not blocks:
+        return {}
+    lines = blocks[0]["content"].splitlines(keepends=True)
+    toml = "".join(line[2:] if line.startswith("# ") else line[1:] for line in lines)
+    try:
+        return tomllib.loads(toml)
+    except tomllib.TOMLDecodeError as exc:
+        line = text.count("\n", 0, blocks[0].start()) + 1
+        raise ProjectError(f"{where}:{line}: invalid '# /// script' block: {exc}") from exc
+
+
+def _inline_requirements(files: dict[str, bytes]) -> tuple[list[str], str | None]:
+    """The union of the dependencies of the files' PEP 723 blocks (each requirement once, in
+    file order) and the intersection of their requires-python; an error naming the files when
+    that leaves no Python version."""
+    dependencies: dict[str, None] = {}
+    specifiers: dict[str, SpecifierSet] = {}
+    for where, data in sorted(files.items()):
+        block = inline_metadata(data, where)
+        listed = block.get("dependencies", [])
+        if not isinstance(listed, list):
+            raise ProjectError(f"{where}: PEP 723 dependencies must be a list")
+        for text in listed:
+            dependencies[str(_requirement(text, f"{where}: PEP 723 dependencies"))] = None
+        if (declared := block.get("requires-python")) is not None:
+            try:
+                specifiers[where] = SpecifierSet(str(declared))
+            except InvalidSpecifier as exc:
+                raise ProjectError(f"{where}: invalid requires-python {declared!r}") from exc
+    if not specifiers:
+        return list(dependencies), None
+    combined = SpecifierSet(",".join(map(str, specifiers.values())))
+    if not any(f"3.{minor}.{patch}" in combined for minor in _MINORS for patch in _PATCHES):
+        raise ProjectError("the requires-python of the PEP 723 blocks leave no Python version: "
+                           + ", ".join(f"{where} {spec}" for where, spec in specifiers.items()))
+    return list(dependencies), str(combined)
 
 
 def _rewrite(target: str, sources: dict[str, bytes]) -> str:

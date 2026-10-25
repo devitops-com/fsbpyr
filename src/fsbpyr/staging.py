@@ -59,6 +59,7 @@ class StagingOptions:
     # rather than the build host's. A dependency without such a wheel is built from its sdist.
     platform: str | None = None
     strict: bool = False  # requirements files must pin and hash every line (uv --require-hashes)
+    package: Package | None = None  # the files the build checked: the wheel of a loose project
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +70,7 @@ class StagingPlan:
     wheel_dir: Path
     env: dict[str, str] = field(default_factory=dict)
     forget: list[str] = field(default_factory=list)  # + names: drops uv's cached builds of them
+    package: Package | None = None  # the loose project's files, as checked (empty ``build``)
 
 
 def find_uv() -> Path:
@@ -158,7 +160,7 @@ def staging_plan(
 ) -> StagingPlan:
     """The plan for ``source``, its uv steps (and the rebuild of dists from sdists) running
     with SOURCE_DATE_EPOCH: the user's, else the project's last commit time, else 1980."""
-    plan = _plan(project, source, uv, work, options)
+    plan = replace(_plan(project, source, uv, work, options), package=options.package)
     if SOURCE_DATE_EPOCH in os.environ:
         return plan
     epoch = max(commit_time(project.directory) or 0, EPOCH_FLOOR)
@@ -262,15 +264,20 @@ def _run(
 
 
 def _write_loose_wheel(
-    project_dir: Path, wheel_dir: Path, env: dict[str, str], log: Callable[[str], None]
+    project_dir: Path,
+    wheel_dir: Path,
+    env: dict[str, str],
+    log: Callable[[str], None],
+    package: Package | None = None,
 ) -> Path:
-    """The wheel of a project without a build system, stamped SOURCE_DATE_EPOCH (``env``, else
-    the environment's; never before 1980)."""
+    """The wheel of a project without a build system (``package``, else read now), stamped
+    SOURCE_DATE_EPOCH (``env``, else the environment's; never before 1980)."""
     log(f"writing {project_dir.name}'s wheel")
     text = env.get(SOURCE_DATE_EPOCH, os.environ.get(SOURCE_DATE_EPOCH, ""))
     if not text.strip().isdecimal():
         raise StagingError(f"{SOURCE_DATE_EPOCH}={text!r} is not a number of seconds")
-    return Package.load(project_dir).write_wheel(wheel_dir, max(int(text), EPOCH_FLOOR))
+    package = package or Package.load(project_dir)
+    return package.write_wheel(wheel_dir, max(int(text), EPOCH_FLOOR))
 
 
 def _build_wheel(  # noqa: PLR0913  the plan, where, and the progress keywords
@@ -285,7 +292,7 @@ def _build_wheel(  # noqa: PLR0913  the plan, where, and the progress keywords
     """The plan's build of the project wheel, into ``wheel_dir`` with ``env`` added."""
     wheel_dir.mkdir(parents=True, exist_ok=True)
     if not plan.build:
-        return _write_loose_wheel(project_dir, wheel_dir, {**plan.env, **env}, log)
+        return _write_loose_wheel(project_dir, wheel_dir, {**plan.env, **env}, log, plan.package)
     build = [str(wheel_dir) if part == str(plan.wheel_dir) else part for part in plan.build]
     with leave_tree_unchanged(project_dir):
         _run(build, project_dir, {**plan.env, **env}, log=log, verbose=verbose)

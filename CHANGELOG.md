@@ -47,6 +47,27 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   and names a standard library module removed in the build's Python (`cgi`, `imp`, ...) with
   the older `--python` that has it. The uncaught-error note for a file read next to a script no
   longer advises `--fs-package`.
+- **A directory of scripts builds as one executable with a command per link.** `fsbpyr build`
+  in a directory with no `pyproject.toml`, `setup.py` or `setup.cfg` (a `setup.cfg` alone is
+  still refused) packages its Python files: `*.py` and extensionless files whose first line is a
+  python or `uv run` shebang, from `git ls-files` or a pruned walk, and nothing else, so a
+  `.env`, a key or a data file is never in the executable; an untracked, not ignored `secrets.py`
+  is. A file with a module-level main guard or a python shebang is a command named after the file
+  (hyphens kept, `main.py` and `__main__.py` after the directory), test files are never commands,
+  and two files with one name fail the build, naming both. A file whose name is no Python name
+  (`check-disk.py`, `10-backup`) is stored under a module name in its directory (`check_disk.py`,
+  `_10_backup.py`) and runs as `__main__`; its `__file__` is that path. The dependencies are
+  `requirements.txt` or `pylock.toml`, else the union of the commands' PEP 723 blocks
+  (`requires-python` intersected, a conflict fails naming the files), else none; no venv is
+  read. The static import check also searches a directory a file puts on `sys.path` with a path
+  built from its `__file__` (the `pylib` hack), and treats the imports of a file whose `sys.path`
+  change it cannot follow as optional. The output is `dist/<directory name>` and the links, and
+  the build prints how to install them on a host. README and `docs/compatibility.md` cover
+  monitoring plugins and cron fleets: the shared instance budget (`FSBPYR_MAX_INSTANCES`; a start
+  beyond it exits 70), the per-start integrity check, and crontab lines that ran `python3 x.py`.
+- **A build warns about files a script reads next to its `__file__`.** For the files of the
+  scripts root `_fsbpyr_scripts/` (projects without a build system, directories of scripts) the
+  warning is always on, names `file:line`, and says the executable does not hold the file.
 - **A project with no console scripts builds from its `__main__` package or guarded module.**
   With no `--entry`, the build picks the project's only top-level package with a `__main__.py`
   (run as `python -m pkg`), else its only top-level module with an `if __name__ == "__main__":`
@@ -62,6 +83,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   README and `docs/compatibility.md` list SLES 15 SP6 and newer.
 
 ### Changed
+- **The uncaught-error note for a file below the executable says when `--fs-package` does not
+  apply.** A top-level module that reads `<exe>/x.conf` (the path is no module) now gets a note, a
+  namespace directory is told to get an `__init__.py` first (a regular package below it is named),
+  and the note for a script says the executable holds Python files only.
 - **A project without a build system whose `[project.scripts]` point into `src/`** must name
   `_fsbpyr_scripts.src.pkg.mod:main`; the build says so. It built through setuptools before.
 - **The smoke test of a `module` or inferred entry runs that module's top-level code on the

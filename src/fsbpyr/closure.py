@@ -16,10 +16,10 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
 from .entry import installed_candidates
+from .links import COMMAND_NAME
 from .loose import MODULE_GROUP
 
 _EXTRAS_SUFFIX = re.compile(r"\s*\[[^\]]*\]\s*$")
-_COMMAND_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]*")
 
 
 class ClosureError(RuntimeError):
@@ -182,7 +182,7 @@ def command_table(scripts: Mapping[str, str]) -> str:
     ``name=target`` lines, sorted. A name is a file name the build links and a command line
     word: the build fails naming one that is not plain."""
     for name in scripts:
-        if not _COMMAND_NAME.fullmatch(name):
+        if not COMMAND_NAME.fullmatch(name):
             raise ClosureError(f"console script name {name!r} is not valid for a command of a "
                                "multi-command executable: letters, digits and _.+- only, "
                                "starting with a letter or digit")  # fmt: skip

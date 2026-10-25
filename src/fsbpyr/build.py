@@ -90,6 +90,7 @@ class BuildResult:
     target_needs: str | None = None  # "glibc >= 2.34; libstdc++.so.6 (...)"
     commands: tuple[str, ...] = ()  # the names of a multi-command executable, else empty
     links: tuple[Path, ...] = ()  # beside the output, one per command not named like it
+    loose: bool = False  # built from the project's Python files, with no build system
 
 
 def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
@@ -316,8 +317,11 @@ def unpinned_warning(unpinned: list[str]) -> list[str]:
 
 
 def lock_warnings(project: Project, source: LockSource, requirements: str | None) -> list[str]:
-    """What is not reproducible about the lock source: no lock at all, or unpinned lines."""
+    """What is not reproducible about the lock source: no lock at all, or unpinned lines. A
+    directory of scripts that declares no dependency has nothing to lock."""
     if source is LockSource.UNLOCKED:
+        if project.bare and not project.dependencies:
+            return []
         warnings = ["unlocked build: dependencies resolved now, not reproducible"]
         for foreign in ("poetry.lock", "pdm.lock"):
             if (project.directory / foreign).is_file():
@@ -411,8 +415,13 @@ def load_package(project: Project, config: BuildConfig, warnings: list[str]) -> 
     build fails here when it has no command and ``--entry`` names none."""
     if not project.loose:
         return None
-    package = Package.load(project.directory)
+    declared = project.lock_source(config.requirements) is not LockSource.UNLOCKED
+    package = Package.load(project.directory, declared=declared)
     warnings += package.warnings
+    if config.entry is None and not package.commands and project.bare:
+        raise ProjectError(f"{project.directory} has no Python file with an if __name__ == "
+                           "'__main__' guard or a python shebang; choose one with --entry "
+                           "(a command name or _fsbpyr_scripts.module[:attr])")  # fmt: skip
     if config.entry is None and not package.commands:
         raise ProjectError(f"{package.name} has no [project.scripts] and no Python file with an "
                            "if __name__ == '__main__' guard; choose one with --entry (a "
@@ -435,8 +444,10 @@ def _unresolved_warning(
              f"with --python {REMOVED_IN[name][0]}.{REMOVED_IN[name][1] - 1}"
              for name in sorted(removed) if REMOVED_IN[name] <= python]  # fmt: skip
     if {problem.module.partition(".")[0] for problem in problems} - set(removed):
-        hints += ["declare it in [project] dependencies (a project's own file is found next to "
-                  "the script that imports it)"]
+        where = ("requirements.txt, or in a '# /// script' block of the script" if project.bare
+                 else "[project] dependencies")  # fmt: skip
+        hints += [f"declare it in {where} (a project's own file is found next to the script "
+                  "that imports it)"]
         if (project.directory / ".venv").is_dir():
             hints[-1:] = ["a .venv is not read for undeclared dependencies; `uv pip freeze "
                           "--python .venv/bin/python > requirements.txt` writes what it holds, "
@@ -467,6 +478,8 @@ def check_script_imports(  # noqa: PLR0913  the package and what resolves its im
     skipped = set()
     for command, target in chosen.items():
         if problems := check_command(target, package.sources, known):
+            problems = [dataclasses.replace(p, path=package.origins.get(p.path, p.path))
+                        for p in problems]  # fmt: skip
             warnings.append(_unresolved_warning(command, problems, project, python))
             skipped.add(command)
     if skipped and config.strict:
@@ -612,7 +625,7 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
         baseline = pins.sysroot_for(triple)  # the stub's glibc (D25)
         options = StagingOptions(TARGET_PYTHON, config.extras, config.offline, config.requirements,
                                  platform=target_named(triple).uv_platform,
-                                 strict=config.strict)  # fmt: skip
+                                 strict=config.strict, package=package)  # fmt: skip
         plan = staging_plan(project, source, uv, Path(tmp), options)
         wheel = run_plan(plan, project.directory, log=log, verbose=verbose)
         index = SiteIndex.scan(plan.site)
@@ -649,9 +662,11 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
                 spill=spill,
                 runtime_modules=runtime_module_names(runtime),
                 project=dist.name,
+                origins=package.origins if package is not None else {},
             )
             warnings += walk.warnings
-            if walk.unreachable:
+            # a directory of scripts has no dependencies of its own: the file declares them all
+            if walk.unreachable and not (project.bare and source is not LockSource.UNLOCKED):
                 warnings.append(
                     f"packaged although not required by {dist.name}: "
                     f"{', '.join(walk.unreachable)} (they come from the lock or requirements file)"
@@ -706,5 +721,5 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
             written.append(build_temporary(runtime, app, output))
     return BuildResult(
         output, app_name, entrypoint, written[0].stat().st_size, tuple(warnings), glibc,
-        target_needs(libraries, glibc), commands,
+        target_needs(libraries, glibc), commands, loose=project.loose,
     )  # fmt: skip

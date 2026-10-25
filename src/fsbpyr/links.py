@@ -2,9 +2,13 @@
 
 import contextlib
 import os
+import re
 import secrets
+import shlex
 from collections.abc import Iterable
 from pathlib import Path
+
+COMMAND_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]*")  # a file name and a command line word
 
 
 class LinkError(RuntimeError):
@@ -42,3 +46,18 @@ def make_links(binary: Path, commands: Iterable[str]) -> list[Path]:
             raise
         made.append(path)
     return made
+
+
+def deploy_recipe(binary: Path, commands: Iterable[str]) -> list[str]:
+    """The lines that say how to install a build of loose scripts on a host: the binary, one
+    link per command, and what a caller that ran ``python3 x.py`` runs instead."""
+    name = shlex.quote(binary.name)
+    lines = ["to deploy, copy the file and link it by each command's name (DEST: a directory "
+             "on the host):",
+             f'  install -m 755 {shlex.quote(str(binary))} "$DEST"/{name}']  # fmt: skip
+    if linked := [command for command in commands if command != binary.name]:
+        lines.append(f"  for c in {' '.join(map(shlex.quote, linked))}; do "
+                     f'ln -sf {name} "$DEST/$c"; done')  # fmt: skip
+    lines.append("a crontab, unit or agent line such as `python3 $DEST/x.py` must become "
+                 "`$DEST/x`: the link is an executable, not a Python file")  # fmt: skip
+    return lines

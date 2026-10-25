@@ -71,8 +71,9 @@ def cli(ctx: click.Context) -> None:
 @cli.command(
     "build",
     help="build a single-file executable from a project\n\nPROJECT is the project's directory "
-    "(default: the current one). Options given here win over `[tool.fsbpyr]` in its "
-    "`pyproject.toml`.\n\n"
+    "(default: the current one); a directory of Python files with no `pyproject.toml` or "
+    "`setup.py` is built from them, one command per file with a main guard or a python "
+    "shebang. Options given here win over `[tool.fsbpyr]` in its `pyproject.toml`.\n\n"
     "The app runs on the Python that `--python`, `python` in `[tool.fsbpyr]`, a supported "
     "`.python-version` pin or `requires-python` choose, in that order (the lowest supported "
     "version `requires-python` allows, the highest below an upper-only bound). Each Python "
@@ -228,6 +229,11 @@ def build_command(  # noqa: PLR0913  click passes every option by name
         print(f"fsbpyr: linked {link} -> {link.readlink()}")
     if result.target_needs:
         print(f"fsbpyr: target needs: {result.target_needs}")
+    if result.loose:
+        from .links import deploy_recipe  # noqa: PLC0415  keep --version fast
+
+        for line in deploy_recipe(result.output, result.commands):
+            print(f"fsbpyr: {line}")
     return 0
 
 

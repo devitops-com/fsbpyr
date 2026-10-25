@@ -470,7 +470,6 @@ def test_excepthook_adds_no_note_for_other_failures(
 ) -> None:
     for exc in (
         FileNotFoundError(2, "No such file", "/etc/nothing"),
-        FileNotFoundError(2, "No such file", f"{boot.ROOT}/nothing/x"),  # not in the payload
         ValueError("bad"),
     ):
         boot._excepthook(type(exc), exc, None)
@@ -532,3 +531,60 @@ def test_the_missing_module_is_found_in_the_chain_and_stdlib_modules_are_not(
     assert boot._missing_module(ModuleNotFoundError(name="tkinter")) is None
     assert boot._missing_module(ModuleNotFoundError(name="json.nope")) is None
     assert boot._missing_module(ValueError("bad")) is None
+
+
+def _note(boot: ModuleType, monkeypatch: pytest.MonkeyPatch, path: str, **kinds: int) -> str:
+    """The note for an OSError on ``path``, with ``kinds`` (module name -> kind) as the payload."""
+    monkeypatch.setattr(boot._fsbpyr, "find_module",
+                        lambda name: (0, kinds[name]) if name in kinds else None)  # fmt: skip
+    note = boot._inside_executable_note(NotADirectoryError(20, "Not a directory", path))
+    assert isinstance(note, str)
+    return note
+
+
+def test_the_note_for_the_scripts_root_does_not_advise_fs_package(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    note = _note(boot, monkeypatch, f"{boot.ROOT}/_fsbpyr_scripts/sub/x.conf",
+                 _fsbpyr_scripts=boot.NAMESPACE)  # fmt: skip
+
+    assert "holds the project's Python files only" in note and "outside the executable" in note
+    assert "--fs-package" not in note
+
+
+@pytest.mark.parametrize("relative", ["x.conf", "data/x.conf", "mod.py"])
+def test_the_note_for_a_flat_module_says_fs_package_takes_packages_only(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch, relative: str
+) -> None:
+    note = _note(boot, monkeypatch, f"{boot.ROOT}/{relative}", mod=boot.MODULE)
+
+    assert "a top-level module's __file__" in note and "takes packages only" in note
+    assert "rebuild with --fs-package" not in note
+
+
+def test_the_note_for_a_namespace_directory_does_not_advise_fs_package_for_it(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    note = _note(boot, monkeypatch, f"{boot.ROOT}/ns/data.txt", ns=boot.NAMESPACE)
+
+    assert "ns is a directory without an __init__.py" in note
+    assert "rebuild with --fs-package ns" not in note and "add an __init__.py" in note
+
+
+def test_the_note_for_a_package_below_a_namespace_names_that_package(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    note = _note(boot, monkeypatch, f"{boot.ROOT}/google/cloud/x/data.txt",
+                 **{"google": boot.NAMESPACE, "google.cloud": boot.NAMESPACE,
+                    "google.cloud.x": boot.PACKAGE})  # fmt: skip
+
+    assert note.endswith("google.cloud.x reads files next to its __file__: rebuild with "
+                         "--fs-package google.cloud.x\n")  # fmt: skip
+
+
+def test_the_note_for_a_regular_package_is_unchanged_for_its_directory_too(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    note = _note(boot, monkeypatch, f"{boot.ROOT}/pkg", pkg=boot.PACKAGE)
+
+    assert "pkg reads files next to its __file__: rebuild with --fs-package pkg" in note

@@ -820,6 +820,26 @@ def test_file_read_hints_name_a_package_fs_packages_accepts(site: Path) -> None:
              fs_packages=frozenset({"google.cloud.x"}))  # fmt: skip  # the advice works
 
 
+def test_reads_next_to_file_in_the_scripts_root_are_always_reported_by_project_file(
+    site: Path,
+) -> None:
+    _dist(site, "ops", "0", {"_fsbpyr_scripts/check_disk.py": READS_DATA,
+                             "_fsbpyr_scripts/sub/plain.py": READS_DATA,
+                             "_fsbpyr_scripts/tests/test_x.py": READS_DATA,
+                             "_fsbpyr_scripts/guarded.py":
+                                 b"if __name__ == '__main__':\n    open(__file__)\n",
+                             "other/__init__.py": READS_DATA})  # fmt: skip
+    dist = SiteIndex.scan(site).dists["ops"]
+
+    content = classify([dist], extension_suffixes=SUFFIXES, include_source=True, project="ops",
+                       origins={"_fsbpyr_scripts/check_disk.py": "check-disk"})  # fmt: skip
+
+    reads = [w for w in content.warnings if "next to its own __file__" in w]
+    assert [w.partition(": ")[0] for w in reads] == ["check-disk:2", "sub/plain.py:2"]
+    assert "does not hold" in reads[0] and "outside it" in reads[0]
+    assert not [w for w in content.warnings if "these packages read files" in w]  # no --hints
+
+
 def test_shared_objects_python_code_names_are_reported(site: Path) -> None:
     extension = make_elf(soname="PyInit__ext")  # the symbol name CPython looks up
     loader = b"import ctypes, os\nctypes.CDLL(os.path.join(HERE, 'libplugin.so.2'))\n"

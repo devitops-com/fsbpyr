@@ -147,6 +147,7 @@ test-ci: ## Run the core of the test suite
 	$(TESTENV) $(CONTAINED) $(UVRUN) pytest tests/unit tests/integration tests/e2e/test_build.py \
 		tests/e2e/test_runtime_app.py tests/e2e/test_imports.py \
 		tests/e2e/test_stub_hardening.py tests/e2e/test_multicall.py tests/e2e/test_scripts.py \
+		tests/e2e/test_loose_directory.py \
 		-k "not (sanitized and not release)" --cov --cov-report=term --cov-report=xml
 
 # Everything but the portability tests (`podman run` inside podman) and the corpus, in the

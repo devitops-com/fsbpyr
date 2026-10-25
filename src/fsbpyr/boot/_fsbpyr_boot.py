@@ -464,26 +464,52 @@ def _missing_module(exc: BaseException | None) -> str | None:
 
 def _inside_executable_note(exc: BaseException | None) -> str | None:
     """D24: the hint for an OSError (anywhere in the chain) on a path below the executable,
-    which a package reading files next to its ``__file__`` provokes. Costs nothing until an
+    which code reading files next to its ``__file__`` provokes. Costs nothing until an
     exception goes uncaught."""
     seen: set[int] = set()
     while exc is not None and id(exc) not in seen:
         seen.add(id(exc))
         filename = exc.filename if isinstance(exc, OSError) else None
         if isinstance(filename, str) and filename.startswith(_PREFIX):
-            package = filename[len(_PREFIX) :].partition("/")[0]
-            if package == _SCRIPTS[:-1]:  # --fs-package cannot extract it: not a regular package
-                return (
-                    f"fsbpyr: {filename} is inside the executable, which holds the project's "
-                    "Python files only: read other files from a path outside it\n"
-                )
-            if _fsbpyr.find_module(package) is not None:
-                return (
-                    f"fsbpyr: {filename} is inside the executable; {package} reads files next "
-                    f"to its __file__: rebuild with --fs-package {package}\n"
-                )
+            return _note_for(filename)
         exc = exc.__cause__ or exc.__context__
     return None
+
+
+def _note_for(filename: str) -> str:
+    """The D24 note for ``filename``, a path below the executable. ``--fs-package`` takes a
+    regular package (one with an ``__init__.py``) and nothing else: not a namespace directory,
+    not a flat module, not the scripts root."""
+    parts = filename[len(_PREFIX) :].split("/")
+    if parts[0] == _SCRIPTS[:-1]:  # a script's __file__ is its path in the payload
+        return (
+            f"fsbpyr: {filename} is inside the executable, which holds the project's Python "
+            "files only and not the files next to a script; read the file from a path outside "
+            "the executable\n"
+        )
+    record = _fsbpyr.find_module(parts[0])
+    if record is None or record[1] not in (PACKAGE, NAMESPACE):  # <exe>/x.conf, a flat module's
+        return (
+            f"fsbpyr: {filename} is inside the executable; a top-level module's __file__ is a "
+            "path in it and the files next to the module are not (--fs-package takes packages "
+            "only): read the file from a path outside the executable\n"
+        )
+    for depth in range(1, len(parts) + 1):  # the outermost regular package holds the others
+        name = ".".join(parts[:depth])
+        found = _fsbpyr.find_module(name)
+        if found is None or found[1] not in (PACKAGE, NAMESPACE):
+            break
+        if found[1] == PACKAGE:
+            return (
+                f"fsbpyr: {filename} is inside the executable; {name} reads files next to its "
+                f"__file__: rebuild with --fs-package {name}\n"
+            )
+    return (
+        f"fsbpyr: {filename} is inside the executable; {parts[0]} is a directory without an "
+        "__init__.py (a namespace package), which --fs-package does not take: add an "
+        "__init__.py to the package that reads the file and rebuild with --fs-package, or read "
+        "the file from a path outside the executable\n"
+    )
 
 
 def _resolve(entrypoint: str) -> object:

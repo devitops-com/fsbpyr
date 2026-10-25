@@ -47,6 +47,10 @@ class Project:
     static_entry_points: bool = False
     # no build system to run: fsbpyr writes the wheel of the project's Python files (loose.py)
     loose: bool = False
+    # a directory with no pyproject.toml, setup.py or setup.cfg: loose, named after the directory,
+    # with the dependencies its commands' PEP 723 blocks declare
+    bare: bool = False
+    dependencies: tuple[str, ...] = ()
 
     @classmethod
     def load(cls, directory: Path) -> Project:
@@ -63,7 +67,7 @@ class Project:
             raise ProjectError(f"{directory} has a setup.cfg but no pyproject.toml or setup.py; "
                                "setup.cfg alone does not say how to build it")  # fmt: skip
         else:
-            raise ProjectError(f"{directory} has no pyproject.toml or setup.py")
+            return cls._bare(directory)
         table = data.get("project", {})
         dynamic = table.get("dynamic", [])
         declared = "project" in data and isinstance(dynamic, list)
@@ -81,9 +85,22 @@ class Project:
             loose=_without_build_system(data),
         )
 
+    @classmethod
+    def _bare(cls, directory: Path) -> Project:
+        """A directory of Python files (research UC6); its commands, and what their PEP 723
+        blocks declare, come from reading the files."""
+        from .loose import Package  # noqa: PLC0415  loose imports this module's error
+
+        package = Package.load(directory)
+        return cls(directory=directory, name=package.name, requires_python=package.requires_python,
+                   scripts=dict(package.commands), loose=True, bare=True,
+                   dependencies=package.dependencies)  # fmt: skip
+
     @property
     def uv_root(self) -> Path | None:
         """Directory whose uv.lock governs this project: itself, or its uv workspace root."""
+        if self.bare:  # no pyproject.toml: uv has no project to sync
+            return None
         if (self.directory / "uv.lock").is_file():
             return self.directory
         for parent in self.directory.parents:

@@ -62,7 +62,9 @@ says:
 
 - An uncaught file error on a path inside the executable (usually `NotADirectoryError`) ends
   with `fsbpyr: <path> is inside the executable; <package> reads files next to its __file__:
-  rebuild with --fs-package <package>`. The note is missing when the app catches the error or
+  rebuild with --fs-package <package>`. For a module that is no package, a namespace directory
+  and the files of a script, the note says that `--fs-package` does not apply, and to read the
+  file from a path outside the executable. The note is missing when the app catches the error or
   installs its own `sys.excepthook` (typer and rich do), and a package that only checks whether
   its files exist sees `False` and may fail later in another way. `fsbpyr build --hints` lists
   packages that may read files next to `__file__` (guesses).
@@ -283,6 +285,97 @@ setuptools' legacy fallback. A uv workspace root (`[tool.uv.workspace]`) keeps i
   requirements.txt`, which the build then reads. A standard
   library module removed in the build's Python (`cgi` in 3.13, `imp` in 3.12) is named as such,
   with the `--python` that still has it.
+
+### A directory of scripts
+
+`cd ops-scripts && fsbpyr build` also builds a directory with no `pyproject.toml`, `setup.py` or
+`setup.cfg` (a `setup.cfg` alone is refused): a git repository of `.py` files and executable
+scripts that Ansible copies to hosts with the wrong Python or none, a set of monitoring plugins,
+a cron fleet. The result is one executable and a link per command, built as in "Projects
+without a build system", named after the directory. It runs where "Supported targets" says:
+RHEL, Oracle Linux, AlmaLinux and Rocky 9 and 10, Amazon Linux 2023, Ubuntu 22.04 and newer,
+Debian 12 and newer, SLES 15 SP6 and newer and SLES 16. EL8 (glibc 2.28), CentOS 7, Amazon
+Linux 2, Ubuntu 20.04, Debian 11 and every musl system are out of reach. So are scripts for
+Python 2, scripts that import what Python removed (`cgi`, `imp`, `telnetlib`; the build names the
+`--python` that still has the module) and scripts that import the system's `dnf`, `rpm`,
+`selinux` or `apt` bindings, which no executable carries.
+
+- **What is packaged:** the Python files: `*.py`, and extensionless files whose first line is a
+  python shebang (`#!/usr/bin/env python3`, `#!/usr/bin/python3`, `#!/usr/bin/env python`,
+  `#!/usr/bin/env -S uv run --script`). A file with another shebang, a binary file, `.env`, a key,
+  a template or a data file is never packaged: nothing but Python is taken, so no deny list is
+  needed. The files are `git ls-files` (tracked, and untracked but not ignored) in a work tree,
+  else those of a walk that skips hidden directories, virtual environments, `__pycache__`,
+  `build`, `dist`, `node_modules` and `site-packages`. A `secrets.py` that is untracked and not
+  in `.gitignore` **is** packaged, as `uv run` would import it: ignore it, or keep it out of the
+  directory (an ignored one is never packaged). A link to a `.py` file outside the directory fails
+  the build and a link to any other file outside it is passed over; links to directories are
+  not followed. The home directory and `/` are no project directories. Only directories with
+  Python names become import paths: a `.py` file or a script below `sub-dir/` is not packaged,
+  and the build warns.
+- **Commands:** a file with an `if __name__ == "__main__":` guard at module level or a python
+  shebang is a command. The build reads the files and runs none of them. `conftest.py`,
+  `test_*.py`, `*_test.py` and files below a top-level `tests/` or `test/` are packaged and are
+  never commands. The command is the file's name without `.py`, hyphens kept (`check-disk.py` and
+  an extensionless `check-disk` give `check-disk`); `main.py` and `__main__.py` take the
+  directory's name. Two files with one name (`a.py` and `sub/a.py`, `tool` and `tool.py`) fail the
+  build, naming both. A file whose name is no valid command name ("Several commands in one
+  executable") stays a module, with a warning. One command makes `dist/<command>`; several make
+  `dist/<directory name>` and a link per command.
+- **Names that are no Python names:** `check-disk.py`, `10-backup` and an extensionless `check-disk`
+  run as commands all the same. The build stores such a file in its own directory under the name
+  that results from replacing each character no Python name can hold with `_`, and a `_` in front
+  of a name that starts with a digit (`check_disk.py`, `_10_backup.py`); two files that give one
+  name fail the build, naming both. An extensionless file with a Python name (`queue`) gets `_x_`
+  in front (`_x_queue.py`), since `python3` never imports such a file and it must not shadow the
+  standard library for its siblings. It runs as `__main__`, and its `__file__` is that path inside
+  the executable. Files with Python names keep them, so `import util` finds the `util.py` next to
+  the script.
+- **Dependencies:** only what the directory declares. `requirements.txt` (or `--requirements`) or
+  `pylock.toml`, as for any pip project; else the union of the `# /// script` blocks (PEP 723) of
+  the command files, resolved at build time, so the build warns that it is unlocked. The
+  `requires-python` entries of the blocks are intersected, and a conflict between them fails the
+  build, naming the files. A requirements file or `pylock.toml` replaces the blocks'
+  dependencies. With none of them the scripts get no packages. A `.venv` is never read.
+- **Imports are checked** for each command as in "Projects without a build system": an import
+  that nothing in the directory, the dependencies or the standard library resolves skips the
+  command with a warning that names `file:line`, and with a `.venv` in the directory, the
+  `uv pip freeze --python .venv/bin/python > requirements.txt` that records it. `--strict` fails
+  the build, and so does a build with no command left. An import under `try`/`except
+  ImportError` gives no warning. A directory that a file adds to `sys.path` with a path built from
+  its own `__file__` (`sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+  "pylib"))`) is searched; a `sys.path` change the check cannot follow makes the unresolved
+  imports of the command optional.
+- **At run time** a link runs its script as `python3 script.py` would: as `__main__`, `argv` as
+  given, the script's directory first on `sys.path`. A sibling named like a standard library
+  module (`calendar.py`) wins over the library, as it does for CPython. The `pylib` hack above
+  finds the modules of `pylib/`.
+- **Files next to a script** are not in the executable. The build warns for each read next to
+  `__file__` it finds in the scripts (`file:line`; a heuristic that knows `open`, `read_text`,
+  `os.listdir` and the like, not every way to read), and an uncaught error on such a path says
+  the executable holds Python files only. Keep the file outside the executable, next to it for
+  instance, and read it from there.
+- **Deploy:** the build prints how to install the result on a host, for example
+  `install -m 755 dist/ops-scripts "$DEST"/ops-scripts` and `for c in check-disk check_mem; do ln -sf
+  ops-scripts "$DEST/$c"; done`. A crontab, unit or agent line such as
+  `python3 /opt/tools/check-disk.py` must become `/opt/tools/check-disk`: the link is an
+  executable, not a Python file.
+
+#### Monitoring plugins and cron fleets
+
+Nagios, Icinga, NRPE and Checkmk checks and cron jobs call a script by the name a command
+definition holds, many times an hour. Give each link the name the definition uses: name the file
+so, or link the command under that name. Keep the binary outside directories that an agent runs
+file by file (`cron.daily`, a monitoring agent's directory of local checks): it would run the
+binary itself as well. Put it in a directory of its own and link the commands where the agent
+looks, with an absolute target (`ln -sf /opt/tools/ops-scripts /etc/cron.daily/check_disk`).
+
+- All the links share **one instance budget** (D45), because it counts copies by the executable's
+  file. The limit is 4 per CPU, at least 64 and at most 1024; a start beyond it exits 70, which
+  Nagios shows as CRITICAL. `FSBPYR_MAX_INSTANCES` raises it (at most 4096), for a host that
+  starts many checks at once.
+- Every start checks the whole executable (D31, "Integrity"); the cost grows with the file's size,
+  and one executable serves every command.
 
 ### Which Python
 
