@@ -62,9 +62,14 @@ class Project:
     dependencies: tuple[str, ...] = ()
     # one script (research UC8): `directory` is its directory, which nothing else of is read
     script: Path | None = None
+    # a directory with no Python file and a lock source: a tool binary (tools.py), whose commands
+    # are the console scripts of the distributions the lock names
+    tools: bool = False
 
     @classmethod
-    def load(cls, directory: Path) -> Project:
+    def load(cls, directory: Path, requirements: str | None = None) -> Project:
+        """The project of ``directory`` (or of a script). ``requirements``: the requirements file
+        the build is given, which a directory without Python files needs to be a tool binary."""
         directory = directory.resolve()
         if directory.is_file():
             return cls._script(directory)
@@ -75,14 +80,15 @@ class Project:
             except tomllib.TOMLDecodeError as exc:
                 raise ProjectError(f"{pyproject}: {exc}") from exc
             if settings_only(directory, data):
-                return cls._bare(directory, tool=dict(data.get("tool", {}).get("fsbpyr", {})))
+                return cls._bare(directory, dict(data.get("tool", {}).get("fsbpyr", {})),
+                                 requirements)  # fmt: skip
         elif (directory / "setup.py").is_file():
             data = {}
         elif (directory / "setup.cfg").is_file():
             raise ProjectError(f"{directory} has a setup.cfg but no pyproject.toml or setup.py; "
                                "setup.cfg alone does not say how to build it")  # fmt: skip
         else:
-            return cls._bare(directory)
+            return cls._bare(directory, requirements=requirements)
         table = data.get("project", {})
         dynamic = table.get("dynamic", [])
         declared = "project" in data and isinstance(dynamic, list)
@@ -103,13 +109,26 @@ class Project:
         )
 
     @classmethod
-    def _bare(cls, directory: Path, tool: dict[str, Any] | None = None) -> Project:
+    def _bare(
+        cls, directory: Path, tool: dict[str, Any] | None = None, requirements: str | None = None
+    ) -> Project:
         """A directory of Python files (research UC6); its commands, and what their PEP 723
         blocks declare, come from reading the files. ``tool``: the ``[tool.fsbpyr]`` table of a
-        pyproject.toml that holds settings and nothing else."""
-        from .loose import Package  # noqa: PLC0415  loose imports this module's error
+        pyproject.toml that holds settings and nothing else. Without a Python file, a lock
+        source (``requirements``, the table's, pylock.toml or requirements.txt) makes it a tool
+        binary."""
+        from .loose import NoPythonFiles, Package, directory_name  # noqa: PLC0415  see above
 
-        package = Package.load(directory)
+        try:
+            package = Package.load(directory)
+        except NoPythonFiles:
+            given = requirements or (tool or {}).get("requirements")
+            if given is None and not any(
+                (directory / name).is_file() for name in ("pylock.toml", DEFAULT_REQUIREMENTS)
+            ):
+                raise
+            return cls(directory=directory, name=directory_name(directory), tool=tool or {},
+                       loose=True, bare=True, tools=True)  # fmt: skip
         return cls(directory=directory, name=package.name, requires_python=package.requires_python,
                    scripts=dict(package.commands), tool=tool or {}, loose=True, bare=True,
                    dependencies=package.dependencies)  # fmt: skip
@@ -231,7 +250,7 @@ class Project:
             )
 
 
-def _requirement_lines(requirements: Path) -> list[tuple[int, str]]:
+def requirement_lines(requirements: Path) -> list[tuple[int, str]]:
     """The (first line number, text) of each logical line of a requirements file; comments are
     dropped, and so is a trailing ``--hash`` on a requirement. A ``\\`` continues a line."""
     lines: list[tuple[int, str]] = []
@@ -256,7 +275,7 @@ def unpinned_requirements(requirements: Path) -> list[str]:
     it installs whatever the tree holds. Other options (``-r``, ``--hash``) are not
     requirements; a ``\\`` continues a line."""
     unpinned = []
-    for _, text in _requirement_lines(requirements):
+    for _, text in requirement_lines(requirements):
         editable = _EDITABLE.match(text)
         if text.startswith("-") and not editable:
             continue
@@ -273,7 +292,7 @@ def unpinned_requirements(requirements: Path) -> list[str]:
 def vcs_requirements(requirements: Path) -> list[str]:
     """The ``file:line: text`` of each requirement taken from version control (``git+https://``
     and the like): a commit SHA pins the source, but uv's --require-hashes wants a hash."""
-    return [f"{requirements.name}:{number}: {text}" for number, text in _requirement_lines(
+    return [f"{requirements.name}:{number}: {text}" for number, text in requirement_lines(
         requirements) if _VCS.search(text)]
 
 

@@ -68,6 +68,7 @@ from .staging import (
 )
 from .system import system_info, system_report, target_needs
 from .targets import target_named
+from .tools import listed_distributions, tool_scripts, with_commands
 from .vcs import git_state, own_version, release_asset_record
 from .venvdeps import Inferred, find_venv, infer
 
@@ -434,6 +435,10 @@ def load_package(project: Project, config: BuildConfig, warnings: list[str]) -> 
     if not project.loose:
         return None
     declared = project.lock_source(config.requirements) is not LockSource.UNLOCKED
+    if project.tools:  # no Python file, a lock source: the lock names the tools
+        listed = listed_distributions(project, project.lock_source(config.requirements),
+                                      config.requirements)  # fmt: skip
+        return Package.tool_binary(project.directory, {item.name for item in listed})
     package = Package.load(project.directory, declared=declared, script=project.script)
     warnings += package.warnings
     if config.entry is None and not package.commands and project.bare:
@@ -567,6 +572,30 @@ def check_script_imports(  # noqa: PLR0913  the package and what resolves its im
     return frozenset(skipped)
 
 
+def tool_binary(  # noqa: PLR0913  the build's state: what is staged, and the progress line
+    package: Package | None,
+    project: Project,
+    config: BuildConfig,
+    index: SiteIndex,
+    dist: InstalledDist,
+    *,
+    python_version: str,
+    log: Callable[[str], None],
+) -> InstalledDist | None:
+    """For a tool binary (None for any other build): the project as the distribution whose
+    console scripts are those of the tools its lock names, chosen and logged here."""
+    if package is None or not package.tools:
+        return None
+    source = project.lock_source(config.requirements)
+    listed = listed_distributions(project, source, config.requirements)
+    path = project.lock_path(source, config.requirements)
+    tools = tool_scripts(index, listed, project=dist.name, source=path.name if path else "",
+                         python_version=python_version)  # fmt: skip
+    for note in tools.notes:
+        log(note)
+    return with_commands(dist, tools)
+
+
 def smoke_test(executable: Path, app_name: str, output: Path | None = None) -> None:
     """Run the executable in selftest mode: boot, import the entry module, exit. An error names
     ``output``, the path the executable is to replace, when it is given."""
@@ -683,7 +712,7 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
 ) -> BuildResult:
     """Everything up to the new executable, written beside the output: ``written`` holds it as
     soon as it exists, ``made`` the output directory if this build created it."""
-    project = Project.load(directory)
+    project = Project.load(directory, config.requirements)
     check_before_staging(project, config)
     package = load_package(project, config, warnings)
     uv = find_uv()  # before anything slow: a build cannot go far without it (D26)
@@ -726,10 +755,13 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
         dist = attach_legacy_scripts(
             _installed_project(index, wheel, project, config), wheel, warnings)
         index.dists[dist.name] = dist
-        walk = index.walk(dist, extras=config.extras, python_version=runtime.python_version)
-        app_name, entrypoint = resolve_entry(dist, config.entry, log, omit=(
+        tool_dist = tool_binary(package, project, config, index, dist,
+                               python_version=runtime.python_version, log=log)
+        walk = index.walk(tool_dist or dist, extras=config.extras,
+                          python_version=runtime.python_version)  # fmt: skip
+        app_name, entrypoint = resolve_entry(tool_dist or dist, config.entry, log, omit=(
             check_script_imports(package, project, config, index.site, runtime, warnings=warnings)
-            if package is not None else ()))  # fmt: skip
+            if package is not None and tool_dist is None else ()))  # fmt: skip
         output = (config.output or project.directory / "dist" / app_name).resolve()
         check_output(output)
         commands = _commands_to_link(entrypoint, output)

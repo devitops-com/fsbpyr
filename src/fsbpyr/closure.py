@@ -135,7 +135,7 @@ class SiteIndex:
                 continue
             seen.setdefault(dist.name, set()).update(active)
             for line in dist.requires:
-                requirement = _requirement(line, dist)
+                requirement = requirement_of(line, dist)
                 if requirement.marker is not None and not any(
                     requirement.marker.evaluate({**environment, "extra": extra})
                     for extra in (active or {""})
@@ -165,7 +165,7 @@ def marker_environment(python_version: str) -> dict[str, str]:
     return environment
 
 
-def _requirement(line: str, dist: InstalledDist) -> Requirement:
+def requirement_of(line: str, dist: InstalledDist) -> Requirement:
     try:
         return Requirement(line)
     except InvalidRequirement as exc:

@@ -100,6 +100,27 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   (run as `python -m pkg`), else its only top-level module with an `if __name__ == "__main__":`
   guard (found with `ast`, never by importing it), and prints which one and why. Several
   candidates, or a package and a module, keep the "choose one with --entry" error and list them.
+- **A directory of requirements builds the tools it names: `cd tools && fsbpyr build`.** A
+  directory with no Python file (no `pyproject.toml`, or one that holds only tool settings) and a
+  lock source (`requirements.txt`, `pylock.toml`, `--requirements FILE`) used to fail with "no
+  Python files to package"; it now builds one executable whose commands are the console scripts
+  of the distributions the file names (`ansible-core==2.17.*`, `httpie==3.2.4`), with the links,
+  the deploy lines and the output name (`dist/<directory name>`, or `dist/<command>` for one) of
+  a directory of scripts. The lock is installed as for any pip project (pins, hashes and
+  `--strict` as before) with a wheel of metadata only for the directory, named after it, or
+  `<name>-tools` when a requirement has that name; nothing of the directory is packaged. A
+  requirements file names its distributions directly (`-r` includes are followed, `-c` files
+  name nothing; a line that gives no name, such as a path, is refused). A file that lists every
+  installed distribution (`pip freeze`, `uv pip freeze`, `pylock.toml`) has as tools only the
+  listed distributions that no other listed distribution requires, and the build prints which it
+  took and why. A dependency's scripts are not commands, and neither are `gui_scripts` (the build
+  names those it left out). Two tools with one script name fail the build naming both
+  distributions; no console script at all fails it, saying what the file named. A directory with
+  a Python file is a directory of scripts as before. README ("A tool from its requirements
+  file") and `docs/compatibility.md` cover tools that start helpers through `sys.executable`
+  (exit 70 unless built with `--interpreter-reexec`), commands that are interpreters (reachable
+  as `tools ipython`; a `sudo` rule names the link) and the licences of the tools, which are
+  collected as for any app.
 - **`fsbpyr build --glibc 2.28` builds an app for EL8** (RHEL 8, Rocky Linux 8, AlmaLinux 8), as
   does `glibc = "2.28"` in `[tool.fsbpyr]` (in a directory of scripts, in its settings-only
   `pyproject.toml`; in a single script, in its block); the command line wins, other values are

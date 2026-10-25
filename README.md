@@ -91,8 +91,10 @@ symptom and its remedy.
   executable with all of them (see "Several commands in one executable"). A project with a
   `[project]` table and no `[build-system]` builds from its Python files (see "Projects without a
   build system"), and so does a directory of scripts with no project file at all ("A directory of
-  scripts"); `fsbpyr build FILE` builds one script ("A single script"). Legacy `scripts=` files that start with `#!python` in the project's
-  wheel are commands too ("Legacy scripts"); other legacy scripts are not packaged (the build warns). And a
+  scripts"); `fsbpyr build FILE` builds one script ("A single script"). A directory with no Python
+  file and a requirements file builds the tools the file names ("A tool from its requirements
+  file"). Legacy `scripts=` files that start with `#!python` in the project's wheel are commands
+  too ("Legacy scripts"); other legacy scripts are not packaged (the build warns). And a
   `requires-python`, if it sets one, that admits one of 3.12 to 3.15 (see "Which Python").
 - **Lock sources,** the first one found: a requirements file that `--requirements` or
   `requirements` names, `uv.lock` (the project's or its uv workspace's), `pylock.toml`,
@@ -134,8 +136,8 @@ The build host needs [uv](https://docs.astral.sh/uv/) on `PATH`, and network acc
 time (uv fetches the Python it builds with and the locked dependencies; later builds work from its cache, or
 with `--offline`). git is optional: with it, the executable records the commit it was built
 from. The output defaults to `dist/<console-script-name>` (`dist/<project name>` for several
-commands, `dist/<directory name>` for a directory of scripts, `dist/<file stem>` beside a single
-script). A directory of scripts or a single script is built with no project file at all; the sections
+commands, `dist/<directory name>` for a directory of scripts or a tool binary, `dist/<file stem>`
+beside a single script). A directory of scripts or a single script is built with no project file at all; the sections
 "Projects without a build system", "A directory of scripts" and "A single script" below say how.
 
 uv picks wheels that run on glibc 2.34 (manylinux_2_34; manylinux_2_28 with `--glibc 2.28`). A dependency without one is built
@@ -466,6 +468,51 @@ looks, with an absolute target (`ln -sf /opt/tools/ops-scripts /etc/cron.daily/c
   starts many checks at once.
 - Every start checks the whole executable (D31, "Integrity"); the cost grows with the file's size,
   and one executable serves every command.
+
+### A tool from its requirements file
+
+`cd tools && fsbpyr build` in a directory with no Python file and a lock source builds the tools
+the lock names: `requirements.txt` saying `ansible-core==2.17.*`, or `httpie==3.2.4`, or a
+`pylock.toml`, or a file given with `--requirements` (or `requirements` in `[tool.fsbpyr]` of a
+`pyproject.toml` of settings). The directory is an empty project whose requirements are the tools;
+the result is one executable, named after the directory, whose commands are the console scripts
+of those tools, with a link per command and the deploy lines of "A directory of scripts". One
+command makes `dist/<command>`. A directory that holds a Python file is a directory of scripts,
+whatever its requirements say: its scripts are the commands, and the tools' scripts are not added.
+
+- **Which tools:** the distributions the file names directly, one per requirement line (`name[extra]`,
+  `name @ URL`, a URL with `#egg=name` or a wheel or sdist file name; `-r` files are followed,
+  constraints (`-c`) and options name nothing, and a line that gives no name, such as a path, is
+  refused: write `name @ URL`). A file that lists every installed distribution, as `pip freeze`,
+  `uv pip freeze` and `pylock.toml` do, names the dependencies too, so there the tools are the
+  listed distributions that no other listed distribution requires (by `Requires-Dist`, read from
+  the staged site). The build says which it took and why, and the commands it found:
+  `requirements.txt lists all 4 installed distributions, so the tools are the 1 that no other
+  listed distribution requires: flake8`. In a file of tools alone every listed distribution is a
+  tool, `requests` among them if you name it, though it has no command.
+- **Commands:** the `console_scripts` of the tools. A dependency's scripts are not commands
+  (`ansible-core`'s are; its `jinja2` dependency's are not; name `jinja2` in a file of tools alone
+  to have them), and `gui_scripts` are not either:
+  they open windows and need a display (the build says which it left out). Two tools with one
+  script name fail the build naming both distributions; no console script at all fails it, saying
+  what the file named. `--entry NAME` builds one of the commands alone. The smoke test
+  checks every command as for any several-command executable: it imports each target's module and
+  looks its function up (library code, imported as for any console script).
+- **Build:** the lock is installed as for any pip project (a `requirements.txt` that is not pinned
+  warns, `--strict` and `--hash` lines work as before), then the commands are tied to links.
+  Nothing of the project is packaged: the executable holds the tools and their dependencies. The
+  distribution that stands for the directory is named after it, or `<name>-tools` when a
+  requirement has that name (`mkdir httpie; echo httpie==3.2.4 > httpie/requirements.txt`).
+- **Helper interpreters:** a tool that starts helpers through `sys.executable` (Ansible's local
+  connection, worker pools, `multiprocessing` outside the cases fsbpyr recognizes) exits 70 unless
+  the binary is built with `--interpreter-reexec`. The build cannot tell which tools do; it prints
+  the note it prints for any app when a library that starts helper interpreters is packaged, and
+  you test the commands you need. See [Helper interpreters](#helper-interpreters).
+- **Interpreter-like commands** (`ipython`, `ansible-console`) are reachable through the
+  executable's name (`tools ipython`) as through their links; a `sudo` rule must name the link
+  (`/opt/tools/ansible`), not the executable.
+- **Licences:** you redistribute the tools. Their licence files are collected as for any app
+  (`fsbpyr inspect --licenses`), which is the notices the distributions ship.
 
 ### A single script
 
