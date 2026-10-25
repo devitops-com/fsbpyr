@@ -341,6 +341,20 @@ def test_man_page_and_completions_under_the_prefix_are_written_again(
     assert "left alone" in capsys.readouterr().err  # the hint for ones not found
 
 
+def test_placed_el8_stubs_of_the_old_release_are_named_in_a_warning(
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stub = installed.parent / "fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz"
+    stub.write_bytes(b"old stub")
+    github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
+
+    assert main(["self", "update"]) == 0
+
+    err = capsys.readouterr().err
+    assert stub.name in err and "belong to the old release" in err
+    assert stub.read_bytes() == b"old stub"  # the user's files are left alone
+
+
 def test_an_executable_outside_a_bin_directory_gets_the_hint_only(
     github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str]

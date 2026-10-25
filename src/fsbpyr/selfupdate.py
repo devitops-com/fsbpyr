@@ -40,6 +40,7 @@ _ASSET_NAME = re.compile(rf"fsbpyr-3\.\d+-({_TARGETS})")
 _TIMEOUT_S = 60
 _CHUNK = 1 << 20
 _RELEASE = re.compile(r"v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
+_PLACED_STUBS = "fsbpyr-stub-*-glibc*"  # EL8 stubs a user placed beside the executable (D46)
 _ACCEPT = {"Accept": "application/vnd.github+json", "User-Agent": "fsbpyr-self-update"}
 
 # What `make install` puts under the prefix (Makefile), and the command that writes each.
@@ -286,6 +287,10 @@ def update(
         except OSError as exc:
             temporary.unlink(missing_ok=True)
             warn(f"{final} was not updated: {exc.strerror or exc}")
+    if placed := sorted(path.name for path in directory.glob(_PLACED_STUBS)):
+        warn(f"{', '.join(placed)} beside {executable.name} belong to the old release and "
+             f"`--glibc` will refuse them; place the stubs of {release.tag} there, or remove "
+             "these and let `--glibc` download them")  # fmt: skip
     log(f"updated {executable} to fsbpyr {release.tag}")
     return True
 
