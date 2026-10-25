@@ -4,8 +4,8 @@ Fast single-binary Python CLI runtime: `fsbpyr build` turns a Python project (uv
 executable that carries CPython (3.12 to 3.15), the project and its locked dependencies. The executable
 needs nothing on the target machine but Linux x86-64 or aarch64 with glibc 2.34 or newer (the
 baseline every build targets and the tests run on: RHEL 9, Amazon Linux 2023, Ubuntu 22.04,
-Debian 12 and newer; `fsbpyr inspect` shows the glibc an executable actually needs), plus the
-system libraries its native dependencies link
+Debian 12 and newer, SLES 15 SP6 and newer; `fsbpyr inspect` shows the glibc an executable
+actually needs), plus the system libraries its native dependencies link
 (often libstdc++ and libgcc_s; `fsbpyr inspect` lists them): no Python, no virtual
 environment, no installation step.
 Modules are imported straight from the file, so startup stays close to plain CPython.

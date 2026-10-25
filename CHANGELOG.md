@@ -19,6 +19,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - **A build warns about dropped legacy scripts.** Files a project's `setup.py` installs with
   `scripts=` were dropped without a word; the warning now names each and says that legacy
   scripts are not packaged (use `[project.scripts]` or `--entry`).
+- **SLES 15 SP6 and SP7 are supported and tested.** Their glibc is 2.38 and fsbpyr apps run on
+  them; the 0.24.0 entry's statement that SLES/openSUSE Leap 15 are no longer supported holds for
+  SLES 15 SP4 and SP5 (glibc 2.31) and openSUSE Leap 15 only. The portability matrix gains
+  `registry.suse.com/bci/bci-base:15.7` (SLES 15 SP7, 12 images now, 11 on aarch64), and the
+  README and `docs/compatibility.md` list SLES 15 SP6 and newer.
 
 ### Changed
 - **`PYTHONUNBUFFERED` is honoured** (D14). Set and non-empty, it makes an app's stdout and
@@ -27,6 +32,15 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - **`fsbpyr self update` refuses an executable that needs a newer glibc than the host has.** The
   glibc its build_info records is compared with the host's before anything is replaced; the
   message names both versions.
+- **`docs/compatibility.md` says what a hard link to an app does.** `sys.executable`, `__file__`
+  and `sys.path[0]` of a start through a hard link are below the link's own path, a symlink gives
+  the target's, and a rebuild leaves a hard link on the old build.
+- **Compile warnings of the project's own files are build warnings.** A `SyntaxWarning` or
+  `DeprecationWarning` that compiling emits (`"\d"` in a normal string, say) used to show
+  neither at build time nor at run time, while a venv run of the script prints it. The build now
+  prints it with its file and line (`fsbpyr: warning: pkg/mod.py:12: SyntaxWarning: ...`) for the
+  project's own modules; dependencies and the standard library stay silent, and `--strict`
+  counts it like the other warnings. The bytecode is unchanged.
 
 ### Fixed
 - **A static project with no console scripts, no `--entry` and no `__main__.py` or guarded
@@ -54,6 +68,24 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   app's cache was never collected (and with `HOME=''` the two disagreed about the cache root). An
   unset, empty or relative `HOME` now means the passwd home in the launcher, the boot code and
   the runtime registry alike.
+- **A script started through `sys.executable` finds the modules next to it** with
+  `--interpreter-reexec`: `[sys.executable, <exe>/pkg/a.py]` now has `<exe>/pkg` first on
+  `sys.path`, as `python /path/pkg/a.py` does, so `import common` of a sibling `pkg/common.py`
+  works.
+- **The restart idiom `os.execv(sys.executable, [sys.executable] + sys.argv)` gives the child
+  the argv of the parent.** gunicorn's USR2 re-exec and Django's autoreloader start
+  `[sys.executable, <interpreter flags>, sys.argv[0], *args]`; in a venv that is
+  `python /venv/bin/app args`, but a built app ran with its own path as an extra first argument.
+  A start whose first argument after the interpreter flags is this very executable (the same
+  file, a link to it included) now drops the flags and that argument, keeping it as
+  `sys.argv[0]`. Only interpreter flags (`-u`, `-v`, `-X x`, `-W x`, ...) may precede it; any
+  other option means the app's own arguments, and nothing is touched.
+- **CPython 3.15's misleading hint for a missing module is replaced.** It read "Site
+  initialization is disabled, did you forget to add the site-packages directory to sys.path or
+  to enable your virtual environment?", which is not what an fsbpyr user can do; an uncaught
+  `ModuleNotFoundError` now ends with "fsbpyr: X is not in the executable: add it to the
+  project's dependencies and rebuild". Only uncaught exceptions are changed, not those a program
+  formats itself with `traceback` or `logging`.
 
 ## [0.25.0] - 2026-10-25
 

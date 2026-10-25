@@ -799,3 +799,26 @@ def test_a_setuptools_scripts_file_is_reported_as_not_packaged(
     err = capsys.readouterr().err
     assert "legacy: legacy script old-tool is not packaged" in err
     assert "legacy: legacy script legacy " not in err
+
+
+def test_compile_warnings_of_the_projects_own_files_are_build_warnings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _fixture("escapes", tmp_path)
+
+    assert main(["build", str(project), "--no-smoke"]) == 0
+
+    err = capsys.readouterr().err
+    assert "fsbpyr: warning: escapes/cli.py:5: " in err and "invalid escape sequence" in err
+    assert _run(project / "dist" / "escapes").stdout == "escapes ['1', '22']\n"  # still runs
+
+
+def test_strict_counts_a_compile_warning_of_the_projects_own_files(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _fixture("escapes", tmp_path)
+
+    assert main(["build", str(project), "--strict", "--no-smoke"]) == 1
+
+    assert "escapes/cli.py:5: " in capsys.readouterr().err
+    assert not (project / "dist" / "escapes").exists()

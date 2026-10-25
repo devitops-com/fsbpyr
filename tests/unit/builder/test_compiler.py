@@ -145,3 +145,31 @@ def test_a_thread_threading_does_not_know_keeps_the_pool_from_forking(
         release.release()
 
     assert methods == ["forkserver"]
+
+
+def test_compile_warnings_come_with_their_line_and_leave_the_bytecode_alone() -> None:
+    plain = compiler.compile_module(b"X = 1\n", "m.py")
+    code, emitted = compiler.compile_warned(b"X = 1\nY = '\\d'\n", "m.py")
+
+    assert [(line, text.partition(":")[0]) for line, text in emitted] in (
+        [(2, "SyntaxWarning")], [(2, "DeprecationWarning")])  # by Python version  # fmt: skip
+    assert "invalid escape sequence" in emitted[0][1]
+    assert compiler.compile_module(b"X = 1\nY = '\\d'\n", "m.py") == code != plain
+    assert compiler.compile_warned(b"X = 1\n", "m.py")[1] == ()
+
+
+@pytest.mark.usefixtures("pooled")
+def test_workers_carry_the_warnings_back(tmp_path: Path) -> None:
+    jobs = []
+    for i in range(4):
+        path = tmp_path / f"w{i}.py"
+        path.write_text("R = '\\d'\n")
+        jobs.append(Job(("dist", path.name), path, path.name, hints=False))
+    pool = Compiler(jobs, level=9, include_source=True)
+    try:
+        got = [pool.get(job.key, job.path, job.rel, False) for job in jobs]
+    finally:
+        pool.close()
+
+    assert pool._pool is not None
+    assert all(r.warnings and r.warnings[0][0] == 1 for r in got)
