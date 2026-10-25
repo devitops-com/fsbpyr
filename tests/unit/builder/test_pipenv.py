@@ -14,7 +14,7 @@ from fsbpyr.build import lock_warnings
 from fsbpyr.closure import marker_environment
 from fsbpyr.foreign import ForeignLockError
 from fsbpyr.manifest import LockError, lock_record, read_lock
-from fsbpyr.pipenv import export, other_indexes, python_of, stale
+from fsbpyr.pipenv import export, other_indexes, python_of, stale, tool_names
 from fsbpyr.project import LockSource, Project, ProjectError
 from fsbpyr.pyversion import resolve
 from fsbpyr.staging import StagingOptions, staging_plan
@@ -100,7 +100,8 @@ def test_a_package_wanted_by_an_extra_stays_in_when_its_marker_names_the_extra(
 
 
 def test_a_version_that_is_not_pinned_is_refused_naming_the_entry(tmp_path: Path) -> None:
-    for spec in ({"hashes": []}, {"version": ">=1"}, {"version": "===1.0"}):
+    specs: list[dict[str, Any]] = [{"hashes": []}, {"version": ">=1"}, {"version": "===1.0"}]
+    for spec in specs:
         directory = _lock(tmp_path, {"loose": spec})
         with pytest.raises(ForeignLockError, match=r"Pipfile.lock: loose is not pinned with `==`"):
             export(directory, environment=LINUX)
@@ -219,7 +220,9 @@ def test_packages_of_another_index_are_a_note_and_install_from_the_configured_on
     assert other_indexes(_copy(tmp_path / "plain")) is None
 
 
-@pytest.mark.parametrize("text", ["", "[]", "not json", '{"default": []}'])
+@pytest.mark.parametrize(
+    "text", ["", "[]", "not json", '{"default": []}', '{"_meta": {}}', '{"develop": {}}']
+)
 def test_a_file_that_is_no_pipenv_lock_fails_where_it_is_read(tmp_path: Path, text: str) -> None:
     (tmp_path / "Pipfile.lock").write_text(text)
 
@@ -430,3 +433,33 @@ def test_a_directory_with_neither_python_files_nor_a_lock_source_is_still_an_err
 
     with pytest.raises(ProjectError):
         Project.load(tmp_path)
+
+
+def test_a_lock_without_a_pipfile_warns_when_pyproject_declares_dependencies(
+    tmp_path: Path,
+) -> None:
+    project = _copy(tmp_path)
+    (project / "Pipfile").unlink()
+    (project / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "1"\n'
+                                            'dependencies = ["click"]\n')
+
+    message = stale(project)
+
+    assert message is not None and "not the dependencies of pyproject.toml" in message
+    (project / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "1"\n')
+    assert stale(project) is None
+
+
+def test_a_bare_lock_keeps_the_extras_so_their_dependencies_are_not_tools(
+    tmp_path: Path,
+) -> None:
+    default = {"app": _requirement("1.0", extras=["Fast"]), "fastdep": _requirement("2.0")}
+    directory = tmp_path / "t"
+    directory.mkdir()
+    (directory / "Pipfile.lock").write_text(json.dumps({"_meta": {}, "default": default,
+                                                         "develop": {}}))
+
+    listed = tool_names(directory)
+
+    assert [(name, sorted(extras)) for name, extras, _ in listed] == [
+        ("app", ["fast"]), ("fastdep", [])]

@@ -226,7 +226,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   of the project itself is left to fsbpyr's own wheel. A package from a source other than PyPI
   installs from the indexes uv is configured with, the lock's hashes deciding whether it found
   the same files, and the build says so (not counted by `--strict`). `_meta.hash` that is not
-  the Pipfile's is a warning, an error with `--strict`. `_meta.requires` (`python_version` or
+  the Pipfile's is a warning, an error with `--strict`; so is a lock with no Pipfile beside a
+  `pyproject.toml` that declares dependencies, which the lock replaces. `_meta.requires` (`python_version` or
   `python_full_version`) chooses the Python as a `requires-python` of that minor version would,
   but `--python`, `python` in `[tool.fsbpyr]` and `.python-version` outrank it, and a version
   fsbpyr cannot build is a warning. It ranks last among the lock sources (a `requirements.txt`

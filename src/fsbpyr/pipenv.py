@@ -59,7 +59,7 @@ def read(directory: Path) -> dict[str, Any]:
         data = json.loads((directory / LOCK).read_text())
     except (OSError, ValueError) as exc:
         raise ForeignLockError(f"cannot read {LOCK}: {exc}") from exc
-    if not isinstance(data, dict) or not isinstance(data.get("default", {}), dict):
+    if not isinstance(data, dict) or not isinstance(data.get("default"), dict):
         raise ForeignLockError(f"{LOCK} is not a Pipenv lock: it has no `default` section")
     return data
 
@@ -133,8 +133,10 @@ def _entry(name: str, spec: Mapping[str, Any], sources: Mapping[str, str]) -> En
 
 def entries(data: Mapping[str, Any]) -> list[Entry]:
     """The packages of the ``default`` section."""
+    if not isinstance(data.get("default"), dict):
+        raise ForeignLockError(f"{LOCK} is not a Pipenv lock: it has no `default` section")
     sources = _sources(data)
-    return [_entry(name, spec, sources) for name, spec in data.get("default", {}).items()
+    return [_entry(name, spec, sources) for name, spec in data["default"].items()
             if isinstance(spec, dict)]  # fmt: skip
 
 
@@ -179,9 +181,25 @@ def _pipfile_hash(pipfile: Mapping[str, Any]) -> str:
                           ).hexdigest()  # fmt: skip
 
 
+def _replaces_pyproject(directory: Path) -> str | None:
+    try:
+        declared = tomllib.loads((directory / "pyproject.toml").read_text()
+                                 ).get("project", {}).get("dependencies")
+    except (OSError, tomllib.TOMLDecodeError, AttributeError):
+        return None
+    if not declared:
+        return None
+    return (f"{LOCK} is the lock source, with no Pipfile beside it: the build installs the "
+            "lock's `default` section, not the dependencies of pyproject.toml (remove a "
+            f"leftover {LOCK}, or lock them in another format)")  # fmt: skip
+
+
 def stale(directory: Path) -> str | None:
     """A message when the lock's ``_meta.hash`` is not the Pipfile's: the dependencies changed
-    after locking. None when it matches, or when there is no Pipfile or no hash to compare."""
+    after locking. None when it matches or there is no hash to compare. Without a Pipfile, a
+    message when the pyproject.toml beside the lock declares dependencies the lock replaces."""
+    if not (directory / PIPFILE).is_file():
+        return _replaces_pyproject(directory)
     try:
         recorded = read(directory)["_meta"]["hash"]["sha256"]
         current = _pipfile_hash(tomllib.loads((directory / PIPFILE).read_text()))
@@ -219,7 +237,8 @@ def tool_names(directory: Path) -> list[tuple[str, frozenset[str], Marker | None
     lock's ``default`` entries when there is no Pipfile (a lock names the dependencies too)."""
     pipfile = directory / PIPFILE
     if not pipfile.is_file():
-        return [(entry.name, frozenset(), _marker(entry.marker, entry) if entry.marker else None)
+        return [(entry.name, frozenset(entry.extras),
+                 _marker(entry.marker, entry) if entry.marker else None)
                 for entry in entries(read(directory))]  # fmt: skip
     try:
         table = tomllib.loads(pipfile.read_text()).get("packages", {})
