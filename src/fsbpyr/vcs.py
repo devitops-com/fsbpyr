@@ -80,17 +80,21 @@ def commit_time(directory: Path) -> int | None:
     return int(text) if text.isdecimal() else None
 
 
-def work_tree_files(directory: Path) -> list[str] | None:
-    """The files below ``directory``, relative to it, that a git work tree holds: tracked, and
-    untracked but not ignored (what a user expects ``uv run main.py`` to see). None without
-    git or outside a work tree."""
+def work_tree_files(directory: Path) -> tuple[list[str], list[str]] | None:
+    """The files below ``directory``, relative to it, that a git work tree holds: the tracked
+    ones, and the untracked but not ignored ones, which a build leaves out (a ``secrets.py``
+    nobody ignored is not the project's until it is added). None without git or outside a
+    work tree."""
     git = shutil.which("git")
     if git is None:
         return None
-    listed = _git(git, directory, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
-    if listed is None or listed.returncode != 0:
+    tracked = _git(git, directory, "ls-files", "-z", "--cached")
+    if tracked is None or tracked.returncode != 0:
         return None
-    return sorted(set(filter(None, listed.stdout.split("\0"))))
+    others = _git(git, directory, "ls-files", "-z", "--others", "--exclude-standard")
+    untracked = others.stdout if others is not None and others.returncode == 0 else ""
+    return (sorted(set(filter(None, tracked.stdout.split("\0")))),
+            sorted(set(filter(None, untracked.split("\0")))))  # fmt: skip
 
 
 def version_string(state: Mapping[str, object] | None) -> str:

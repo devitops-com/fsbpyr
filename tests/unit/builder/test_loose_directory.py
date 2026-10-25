@@ -54,6 +54,52 @@ def test_a_setup_cfg_alone_is_still_refused(tmp_path: Path) -> None:
         Project.load(ops)
 
 
+def test_a_pyproject_of_settings_only_is_the_settings_of_the_scripts_beside_it(
+    tmp_path: Path,
+) -> None:
+    ops = _dir(tmp_path / "ops", {
+        "a.py": GUARD, "b.py": GUARD, "util.py": "X = 1\n",
+        "pyproject.toml": '[tool.fsbpyr]\nglibc = "2.28"\n\n[tool.ruff]\nline-length = 99\n',
+    })  # fmt: skip
+
+    project = Project.load(ops)
+
+    assert (project.loose, project.bare, project.uv_root) == (True, True, None)
+    assert project.scripts == {"a": "_fsbpyr_scripts.a", "b": "_fsbpyr_scripts.b"}
+    assert project.tool == {"glibc": "2.28"}
+    assert sorted(Package.load(ops).sources) == ["a.py", "b.py", "util.py"]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"pyproject.toml": '[project]\nname = "x"\n'},
+        {"pyproject.toml": '[build-system]\nrequires = []\n'},
+        {"pyproject.toml": "[tool.poetry]\nname = 'x'\n"},
+        {"pyproject.toml": "[tool.fsbpyr]\n", "setup.py": ""},
+        {"pyproject.toml": "[tool.fsbpyr]\n", "setup.cfg": ""},
+    ],
+)  # fmt: skip
+def test_a_pyproject_that_is_a_project_is_not_a_settings_file(
+    tmp_path: Path, extra: Mapping[str, str]
+) -> None:
+    ops = _dir(tmp_path / "ops", {"a.py": GUARD, **extra})
+
+    assert not Project.load(ops).bare
+
+
+def test_a_tool_table_in_a_command_files_block_is_reported_as_ignored(tmp_path: Path) -> None:
+    ops = _dir(tmp_path / "ops", {
+        "a.py": _block('[tool.fsbpyr]', 'glibc = "2.28"') + GUARD,
+        "b.py": _block('[tool.ruff]', 'line-length = 99') + GUARD,
+    })  # fmt: skip
+
+    warnings = Package.load(ops).warnings
+
+    assert len(warnings) == 1
+    assert warnings[0].startswith("a.py: [tool.fsbpyr] in a '# /// script' block is ignored")
+
+
 def test_a_uv_lock_beside_scripts_is_not_a_project_to_sync(tmp_path: Path) -> None:
     ops = _dir(tmp_path / "ops", {"a.py": GUARD, "uv.lock": ""})
 
@@ -152,19 +198,36 @@ def test_python_files_below_directories_that_are_no_python_names_are_reported(
 
 
 @git
-def test_git_decides_what_is_packaged_and_an_ignored_secret_is_not(tmp_path: Path) -> None:
+def test_git_decides_what_is_packaged_and_an_untracked_secret_is_not(tmp_path: Path) -> None:
     ops = _dir(tmp_path / "ops", {
         "a.py": GUARD, "secrets.py": "KEY = 'x'\n", "local_settings.py": "PW = 'y'\n",
-        ".gitignore": "secrets.py\n", ".env": "K=1\n",
+        "ignored.py": "Z = 1\n", "tool": SHEBANG + "print(1)\n", ".gitignore": "ignored.py\n",
+        ".env": "K=1\n",
     })  # fmt: skip
     env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
-    subprocess.run([str(shutil.which("git")), "init", "-q", str(ops)], check=True, env=env)
+    git_exe = str(shutil.which("git"))
+    subprocess.run([git_exe, "init", "-q", str(ops)], check=True, env=env)
+    subprocess.run([git_exe, "-C", str(ops), "add", "a.py"], check=True, env=env)
 
     package = Package.load(ops)
 
-    # untracked and not ignored: packaged (git ls-files --others --exclude-standard), as
-    # `uv run` would import it
-    assert sorted(package.sources) == ["a.py", "local_settings.py"]
+    # tracked files only: an untracked file, ignored or not, is left out; the ones that are
+    # not ignored are named, so that nobody wonders where they went
+    assert sorted(package.sources) == ["a.py"]
+    named = sorted(w.split(" is not packaged")[0] for w in package.warnings)
+    assert named == ["local_settings.py", "secrets.py", "tool"]
+
+
+@git
+def test_a_work_tree_with_nothing_tracked_packages_nothing_rather_than_everything(
+    tmp_path: Path,
+) -> None:
+    ops = _dir(tmp_path / "ops", {"a.py": GUARD, "secrets.py": "KEY = 'x'\n"})
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+    subprocess.run([str(shutil.which("git")), "init", "-q", str(ops)], check=True, env=env)
+
+    with pytest.raises(ProjectError, match="no Python files"):
+        Package.load(ops)
 
 
 # --- links -----------------------------------------------------------------------------------

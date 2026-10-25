@@ -6,7 +6,8 @@ nothing is written into the source tree. The wheel holds the project's ``*.py`` 
 nothing else (a ``.env`` or a key file is never in it) under the reserved root ``_fsbpyr_scripts/``,
 which keeps their relative paths; the boot puts the script's directory on ``sys.path`` first, so
 siblings import as they do under ``uv run``. The files come from ``git ls-files`` inside a git
-work tree, else from a walk that skips what is not the project's.
+work tree (an untracked Python file is left out, with a warning), else from a walk that skips
+what is not the project's.
 
 A directory with no pyproject.toml, setup.py or setup.cfg is packaged the same way (research
 UC6): its Python files are the ``*.py`` files and the extensionless files whose first line is a
@@ -41,7 +42,7 @@ from packaging.version import InvalidVersion, Version
 
 from .entry import _SKIPPED_DIRECTORIES, has_main_guard
 from .links import COMMAND_NAME
-from .project import ProjectError
+from .project import ProjectError, settings_only
 from .vcs import work_tree_files
 
 ROOT = "_fsbpyr_scripts"  # the wheel's top-level directory; a module is ``_fsbpyr_scripts.<path>``
@@ -98,6 +99,8 @@ class Package:
             data = tomllib.loads((directory / "pyproject.toml").read_text())
         except (OSError, tomllib.TOMLDecodeError) as exc:
             raise ProjectError(f"{directory / 'pyproject.toml'}: {exc}") from exc
+        if settings_only(directory, data):
+            return cls._from_directory(directory, declared=declared)
         table = data["project"]
         if not isinstance(table.get("name"), str):
             raise ProjectError(f"{directory / 'pyproject.toml'}: [project] needs a name")
@@ -113,10 +116,12 @@ class Package:
         name = directory_name(directory)
         sources, origins, warnings = discover_directory(directory)
         if not sources:
-            raise ProjectError(f"{directory} has no pyproject.toml or setup.py and no Python "
-                               "files to package")  # fmt: skip
+            what = ("a pyproject.toml of settings only" if (directory / "pyproject.toml").is_file()
+                    else "no pyproject.toml or setup.py")  # fmt: skip
+            raise ProjectError(f"{directory} has {what} and no Python files to package")
         commands, files = _directory_commands(name, sources, origins, warnings)
         dependencies, requires_python = _inline_requirements(files)
+        warnings += _ignored_settings(files)
         table: dict[str, Any] = {"name": name, "dependencies": [] if declared else dependencies}
         if requires_python is not None:
             table["requires-python"] = requires_python
@@ -226,15 +231,29 @@ def _metadata(table: dict[str, Any]) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def _project_files(directory: Path, *, scripts: bool) -> Iterator[tuple[str, Path, bool]]:
+def _project_files(
+    directory: Path, *, scripts: bool, warnings: list[str]
+) -> Iterator[tuple[str, Path, bool]]:
     """(relative path, real file, is a ``*.py`` file) of each regular file of the project that
     can be Python: the ``*.py`` files and, with ``scripts``, the extensionless ones (names
     starting with a dot are skipped then). A link to a file outside the tree is an error for a
-    ``*.py`` file; an extensionless one is passed over unread."""
+    ``*.py`` file; an extensionless one is passed over unread. In a git work tree only the
+    tracked files count; an untracked Python file that is not ignored is added to ``warnings``."""
     listed = work_tree_files(directory)
-    paths = listed or _walk(directory)
-    root = Path(os.path.realpath(directory))
     venvs: dict[str, bool] = {}
+    if listed is None:
+        paths = _walk(directory)
+    else:
+        paths = listed[0]
+        for rel in listed[1]:
+            parts = rel.split("/")
+            if _is_python_file(directory / rel, parts[-1], scripts=scripts) and not _pruned(
+                directory, parts[:-1], venvs
+            ):
+                warnings.append(f"{rel} is not packaged: git does not track it; `git add` it "
+                                "(or ignore it) so that the build knows whether it belongs "
+                                "to the project")  # fmt: skip
+    root = Path(os.path.realpath(directory))
     for rel in sorted(paths):
         parts = rel.split("/")
         python = rel.endswith(".py")
@@ -260,12 +279,26 @@ def _project_files(directory: Path, *, scripts: bool) -> Iterator[tuple[str, Pat
                                "fsbpyr packages the project's own files only")  # fmt: skip
 
 
+def _is_python_file(path: Path, leaf: str, *, scripts: bool) -> bool:
+    """Whether a file can be Python by its name (``*.py``) or, with ``scripts``, by the shebang
+    of an extensionless one."""
+    if leaf.endswith(".py"):
+        return True
+    if not scripts or "." in leaf:
+        return False
+    try:
+        with path.open("rb") as handle:
+            return python_shebang(handle.read(_SHEBANG_HEAD))
+    except OSError:
+        return False
+
+
 def discover(directory: Path) -> tuple[dict[str, bytes], tuple[str, ...]]:
     """The project's Python files (relative posix path -> content, sorted) and warnings for the
     files that cannot be imported. A symlink to a file outside the tree is an error."""
     sources: dict[str, bytes] = {}
     warnings: list[str] = []
-    for rel, real, _ in _project_files(directory, scripts=False):
+    for rel, real, _ in _project_files(directory, scripts=False, warnings=warnings):
         parts = rel.split("/")
         if not all(part.isidentifier() for part in (*parts[:-1], parts[-1].removesuffix(".py"))):
             warnings.append(f"{rel} is not packaged: its name or a directory name is not a valid "
@@ -321,7 +354,7 @@ def discover_directory(directory: Path) -> tuple[dict[str, bytes], dict[str, str
     sources: dict[str, bytes] = {}
     origins: dict[str, str] = {}
     warnings: list[str] = []
-    for rel, real, python in _project_files(directory, scripts=True):
+    for rel, real, python in _project_files(directory, scripts=True, warnings=warnings):
         if not python:
             with real.open("rb") as handle:
                 if not python_shebang(handle.read(_SHEBANG_HEAD)):
@@ -461,6 +494,16 @@ def inline_metadata(source: bytes, where: str) -> dict[str, Any]:
     except tomllib.TOMLDecodeError as exc:
         line = text.count("\n", 0, blocks[0].start()) + 1
         raise ProjectError(f"{where}:{line}: invalid '# /// script' block: {exc}") from exc
+
+
+def _ignored_settings(files: dict[str, bytes]) -> list[str]:
+    """A warning for each file whose PEP 723 block has a ``[tool.fsbpyr]`` table: a directory
+    build takes its settings from the command line and the directory's pyproject.toml."""
+    message = ("{}: [tool.fsbpyr] in a '# /// script' block is ignored in a directory build; "
+               "pass the option on the command line or put it in [tool.fsbpyr] of the "
+               "directory's pyproject.toml")  # fmt: skip
+    return [message.format(where) for where, data in sorted(files.items())
+            if "fsbpyr" in (inline_metadata(data, where).get("tool") or {})]
 
 
 def _inline_requirements(files: dict[str, bytes]) -> tuple[list[str], str | None]:

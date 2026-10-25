@@ -251,6 +251,7 @@ def test_man_page_documents_every_tool_fsbpyr_key(capsys: pytest.CaptureFixture[
 
 def test_every_tool_fsbpyr_key_is_accepted_and_no_other(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[tool.fsbpyr]\nbogus = 1\n")
+    (tmp_path / "a.py").write_text("")  # settings alone beside scripts: a directory of scripts
 
     with pytest.raises(ConfigError) as error:
         load_config(Project.load(tmp_path))
@@ -352,6 +353,7 @@ def _readme_tool_fsbpyr_sample(directory: Path) -> BuildConfig:
     readme = (ROOT / "README.md").read_text()
     sample = readme.partition("```toml\n[tool.fsbpyr]\n")[2].partition("```")[0]
     (directory / "pyproject.toml").write_text("[tool.fsbpyr]\n" + sample)
+    (directory / "a.py").write_text("")  # settings alone beside scripts: a directory of scripts
     return load_config(Project.load(directory))
 
 

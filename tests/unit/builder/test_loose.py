@@ -65,7 +65,6 @@ def _tree(root: Path, pyproject: str = HEAD, extra: Mapping[str, str] | None = N
          "[tool.pdm]\ndistribution = false\n", True),
         (HEAD + "[tool.pdm]\ndistribution = true\n[build-system]\nrequires = []\n", False),
         (HEAD + "[tool.uv.workspace]\nmembers = ['a']\n", False),
-        ('[tool.fsbpyr]\nstrict = true\n', False),
     ],
 )  # fmt: skip
 def test_a_project_table_without_a_build_system_is_built_by_fsbpyr(
@@ -74,6 +73,15 @@ def test_a_project_table_without_a_build_system_is_built_by_fsbpyr(
     (tmp_path / "pyproject.toml").write_text(pyproject)
 
     assert Project.load(tmp_path).loose is loose
+
+
+def test_a_pyproject_of_settings_only_beside_no_python_file_has_nothing_to_package(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("[tool.fsbpyr]\nstrict = true\n")
+
+    with pytest.raises(ProjectError, match="no Python files to package"):
+        Project.load(tmp_path)
 
 
 def test_a_setup_py_project_is_not_loose(tmp_path: Path) -> None:
@@ -169,7 +177,7 @@ def test_a_directory_with_no_python_file_has_nothing_to_package(tmp_path: Path) 
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
-def test_in_a_git_work_tree_the_files_are_the_tracked_and_the_untracked_not_ignored(
+def test_in_a_git_work_tree_the_files_are_the_tracked_ones_and_untracked_ones_are_reported(
     tmp_path: Path,
 ) -> None:
     project = _tree(tmp_path, main_py=GUARD, tracked_py="", new_py="", secrets_py="TOKEN = 1",
@@ -180,7 +188,11 @@ def test_in_a_git_work_tree_the_files_are_the_tracked_and_the_untracked_not_igno
     subprocess.run([*git, "add", "main.py", "tracked.py", "gone.py"], check=True)
     (project / "gone.py").unlink()
 
-    assert list(Package.load(project).sources) == ["main.py", "new.py", "tracked.py"]
+    package = Package.load(project)
+
+    assert list(package.sources) == ["main.py", "tracked.py"]
+    assert [w.split(" is not packaged")[0] for w in package.warnings] == ["new.py"]
+    assert "git does not track it" in package.warnings[0]
 
 
 # --- the wheel -------------------------------------------------------------------------------

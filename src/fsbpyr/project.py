@@ -66,6 +66,8 @@ class Project:
                 data = tomllib.loads(pyproject.read_text())
             except tomllib.TOMLDecodeError as exc:
                 raise ProjectError(f"{pyproject}: {exc}") from exc
+            if settings_only(directory, data):
+                return cls._bare(directory, tool=dict(data.get("tool", {}).get("fsbpyr", {})))
         elif (directory / "setup.py").is_file():
             data = {}
         elif (directory / "setup.cfg").is_file():
@@ -91,14 +93,15 @@ class Project:
         )
 
     @classmethod
-    def _bare(cls, directory: Path) -> Project:
+    def _bare(cls, directory: Path, tool: dict[str, Any] | None = None) -> Project:
         """A directory of Python files (research UC6); its commands, and what their PEP 723
-        blocks declare, come from reading the files."""
+        blocks declare, come from reading the files. ``tool``: the ``[tool.fsbpyr]`` table of a
+        pyproject.toml that holds settings and nothing else."""
         from .loose import Package  # noqa: PLC0415  loose imports this module's error
 
         package = Package.load(directory)
         return cls(directory=directory, name=package.name, requires_python=package.requires_python,
-                   scripts=dict(package.commands), loose=True, bare=True,
+                   scripts=dict(package.commands), tool=tool or {}, loose=True, bare=True,
                    dependencies=package.dependencies)  # fmt: skip
 
     @classmethod
@@ -254,6 +257,16 @@ def vcs_requirements(requirements: Path) -> list[str]:
     and the like): a commit SHA pins the source, but uv's --require-hashes wants a hash."""
     return [f"{requirements.name}:{number}: {text}" for number, text in _requirement_lines(
         requirements) if _VCS.search(text)]
+
+
+def settings_only(directory: Path, data: dict[str, Any]) -> bool:
+    """A pyproject.toml that holds tool settings (``[tool.fsbpyr]``, ``[tool.ruff]``) and no
+    project: no [project], no [build-system], no Poetry, and no setup.py or setup.cfg beside
+    it. Next to a directory of scripts it is their settings file, not a project for a build
+    backend (whose flat-layout discovery fails on several top-level modules)."""
+    return (set(data) <= {"tool"} and "poetry" not in data.get("tool", {})
+            and not (directory / "setup.py").is_file()
+            and not (directory / "setup.cfg").is_file())  # fmt: skip
 
 
 def _without_build_system(data: dict[str, Any]) -> bool:
