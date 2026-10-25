@@ -10,6 +10,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-25
+
 ### Changed
 - **An app that starts itself as a Python interpreter is refused rather than run again** (D44).
   A child the app starts with `sys.executable -m MODULE`, `-c CODE` or a `.py` file of the app
