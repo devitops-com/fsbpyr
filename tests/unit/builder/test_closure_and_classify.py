@@ -1081,3 +1081,20 @@ def test_compile_warnings_of_the_projects_own_files_are_build_warnings(tmp_path:
     warned = [w for w in content.warnings if "invalid escape sequence" in w]
     assert len(warned) == 1 and warned[0].startswith("app/rx.py:2: ")  # not dep/__init__.py
     assert classify(dists, extension_suffixes=(".so",), include_source=False).warnings == ()
+
+
+def test_a_python_file_below_a_directory_that_is_no_name_is_reported_for_the_project_only(
+    tmp_path: Path,
+) -> None:
+    site = tmp_path / "site"
+    files = {"app/__init__.py": b"", "app/sub-dir/c.py": b"X = 1\n", "app/ok/__init__.py": b""}
+    _dist(site, "app", "1.0", files)
+    _dist(site, "dep", "1.0", {"dep/__init__.py": b"", "dep/sub-dir/c.py": b"X = 1\n"})
+    dists = list(SiteIndex.scan(site).dists.values())
+
+    content = classify(dists, extension_suffixes=(".so",), include_source=False, project="app")
+
+    warned = [w for w in content.warnings if "not a valid Python name" in w]
+    assert len(warned) == 1 and warned[0].startswith("app/sub-dir/c.py is stored as a file")
+    assert "app/sub-dir/c.py" in {f.path for f in content.files}  # still a resource
+    assert classify(dists, extension_suffixes=(".so",), include_source=False).warnings == ()

@@ -125,6 +125,17 @@ def module_name(rel: str) -> tuple[str, bool] | None:
     return ".".join(parts), is_package
 
 
+def _unimportable_warning(dist: InstalledDist, rel: str) -> list[str]:
+    """A warning for a ``.py`` file of the project that is stored as a file because a directory
+    above it is no Python name (``pkg/sub-dir/c.py``): no import reaches it."""
+    if rel.startswith(f"{dist.dist_info}/") or all(
+        part.isidentifier() for part in rel.split("/")[:-1]
+    ):
+        return []
+    return [f"{rel} is stored as a file, not as a module: a directory name is not a valid "
+            "Python name, so no import reaches it"]  # fmt: skip
+
+
 def extension_name(rel: str, suffixes: tuple[str, ...]) -> tuple[str, bool, int] | None:
     """Dotted name, is-package flag (``__init__`` compiled by Cython and the like) and suffix
     rank of an extension module file, if importable. CPython calls ``PyInit_<stem>``, so a
@@ -334,6 +345,8 @@ class _Collector:
                     else "not an ELF shared object")  # fmt: skip
             self.warnings.append(f"{dist.name}: {rel} kept as data ({what})")
         names = self._names(rel, module_name) if rel.endswith(".py") else []
+        if rel.endswith(".py") and not names and dist.name == self.project:
+            self.warnings += _unimportable_warning(dist, rel)
         large = path.stat().st_size > _IN_MEMORY
         if names and large:  # compiling needs it whole (D38)
             self.warnings.append(f"{dist.name}: {rel} kept as data (over {_IN_MEMORY >> 20} MiB: "
