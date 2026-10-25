@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .inspection import InspectError, read
 from .runtime.registry import cache_root, secure_directory
-from .selfupdate import REPO, UpdateError, release_numbers, unpack
+from .selfupdate import REPO, UpdateError, check_glibc, release_numbers, unpack
 from .targets import host_target
 from .vcs import own_version, release_asset
 
@@ -53,7 +53,7 @@ def _fetch(python: str, tag: str, final: Path) -> None:
     try:
         unpack(url, new)
         new.chmod(_MODE)
-        read(new, verify=True)
+        check_glibc(read(new, verify=True).info.get("glibc"))
         new.rename(final)
     except (UpdateError, InspectError) as exc:
         raise DispatchError(

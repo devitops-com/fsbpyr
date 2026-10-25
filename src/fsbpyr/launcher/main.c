@@ -151,6 +151,9 @@ int main(int argc, char **argv) {
     config.pathconfig_warnings = 0;
     config.module_search_paths_set = 1; /* empty sys.path until the boot module installs its hook */
     config.import_time = getenv("FSBPYR_IMPORTTIME") != NULL;
+    /* the one PYTHON* variable honoured, as CPython reads it: set and non-empty (D14) */
+    const char *unbuffered = getenv("PYTHONUNBUFFERED");
+    if (unbuffered != NULL && unbuffered[0] != '\0') config.buffered_stdio = 0;
     check(PyConfig_SetBytesArgv(&config, argc, argv));
     check(PyConfig_SetBytesString(&config, &config.executable, fsb_self.executable));
     pin_prefixes(&config);

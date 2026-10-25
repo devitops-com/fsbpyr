@@ -5,9 +5,12 @@ the background; `FSBPYR_GC=0` turns that off."""
 
 import fcntl
 import os
+import pwd
 import select
+import shutil
 import subprocess
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -225,3 +228,43 @@ def test_a_start_waiting_for_a_tree_a_run_removes_takes_it_afresh(
 
     assert waited and synced == "synced\n" and running.returncode == 0
     assert (tree / "site" / "x.libs" / "libx.so").read_bytes() == b"\x7fELF x" * 999
+
+
+@pytest.fixture
+def homeless_app(runtime: Runtime, tmp_path: Path) -> Iterator[Path]:
+    """An app of a name of its own (per test: they may run in parallel): with no usable HOME
+    its cache is the passwd home's."""
+    name = f"homeless-gc-{tmp_path.name}"
+    native = File("x.libs/libx.so", FileKind.NATIVE_LIB, Blob.zstd(b"\x7fELF x" * 999, digest=True),
+                  mode=0o755)  # fmt: skip
+    modules, files = app_content({"x.py": _SYNCS.replace("sys.stdin.read()", "pass")})
+    out = tmp_path / "bin" / name
+    out.parent.mkdir()
+    build_executable(runtime, App(name, "x:main", modules=modules, files=(*files, native)), out)
+    yield out
+    shutil.rmtree(Path(pwd.getpwuid(os.getuid()).pw_dir) / ".cache" / name, ignore_errors=True)
+
+
+@pytest.mark.parametrize("home", [None, "", "relative/home"],
+                         ids=["unset", "empty", "relative"])  # fmt: skip
+def test_the_launcher_finds_the_passwd_home_without_a_usable_home(
+    homeless_app: Path, home: str | None
+) -> None:
+    """The boot code uses the passwd home for an unset, empty or relative HOME; the launcher's
+    collection (D38) must find the same root (it needed an absolute HOME)."""
+    cache = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".cache" / homeless_app.name
+    env = {key: value for key, value in os.environ.items()
+           if key not in ("FSBPYR_GC", "FSBPYR_CACHE_DIR", "XDG_CACHE_HOME", "HOME")}  # fmt: skip
+    if home is not None:
+        env["HOME"] = home
+
+    first = subprocess.run([homeless_app], capture_output=True, text=True, check=False,
+                           env={**env, "FSBPYR_GC": "0"}, timeout=60)  # fmt: skip
+    assert first.returncode == 0 and first.stdout == "synced\n", first.stderr
+    _old_tree(cache)
+    _stamp(cache, 2 * DAY)
+    again = subprocess.run([homeless_app], capture_output=True, text=True, check=False,
+                           env=env, timeout=60)  # fmt: skip
+
+    assert again.returncode == 0, again.stderr
+    assert _collected(cache, 30)

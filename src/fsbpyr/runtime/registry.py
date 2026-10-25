@@ -7,6 +7,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import pwd
 import shutil
 import stat
 import sys
@@ -85,11 +86,28 @@ def _digest(path: Path) -> str:
     return tree_digest(path.read_bytes()).hex()
 
 
+def _home() -> Path:
+    """$HOME if absolute, else (unset, empty or relative) the passwd entry's, as the boot code
+    and the launcher have it (native.home_directory, due.c)."""
+    home = os.environ.get("HOME", "")
+    if os.path.isabs(home):
+        return Path(home)
+    try:
+        entry = pwd.getpwuid(os.getuid()).pw_dir
+    except KeyError:
+        entry = ""
+    if not os.path.isabs(entry):
+        raise RuntimeError(
+            "cannot find the home directory; set HOME, XDG_CACHE_HOME or FSBPYR_CACHE_DIR"
+        )
+    return Path(entry)
+
+
 def cache_home() -> Path:
     """${XDG_CACHE_HOME:-~/.cache}; a relative XDG_CACHE_HOME is ignored, as the XDG spec has
     it and as the boot code does (native.cache_directory)."""
     base = os.environ.get("XDG_CACHE_HOME", "")
-    return Path(base) if os.path.isabs(base) else Path.home() / ".cache"
+    return Path(base) if os.path.isabs(base) else _home() / ".cache"
 
 
 def cache_root() -> Path:

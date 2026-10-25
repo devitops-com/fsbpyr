@@ -2,6 +2,7 @@
 
 import importlib
 import os
+import pwd
 import stat
 import types
 from importlib.machinery import ExtensionFileLoader
@@ -79,13 +80,25 @@ def _files(spec: importlib.machinery.ModuleSpec) -> tuple[int, ...]:
 def test_cache_directory_precedence(
     native: types.ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("HOME", "/home/u")
+    home = {"HOME": "/home/u"}
     where = native.cache_directory
 
-    assert where("app", {"FSBPYR_CACHE_DIR": "/c", "XDG_CACHE_HOME": "/x"}) == "/c"
-    assert where("app", {"XDG_CACHE_HOME": "/x"}) == "/x/app"
-    assert where("app", {"XDG_CACHE_HOME": "relative"}) == "/home/u/.cache/app"
-    assert where("app", {"FSBPYR_CACHE_DIR": "rel"}) == os.path.abspath("rel")
+    assert where("app", {"FSBPYR_CACHE_DIR": "/c", "XDG_CACHE_HOME": "/x", **home}) == "/c"
+    assert where("app", {"XDG_CACHE_HOME": "/x", **home}) == "/x/app"
+    assert where("app", {"XDG_CACHE_HOME": "relative", **home}) == "/home/u/.cache/app"
+    assert where("app", {"FSBPYR_CACHE_DIR": "rel", **home}) == os.path.abspath("rel")
+
+
+@pytest.mark.parametrize("home", [None, "", "relative"], ids=["unset", "empty", "relative"])
+def test_an_unusable_home_means_the_passwd_home(
+    native: types.ModuleType, monkeypatch: pytest.MonkeyPatch, home: str | None
+) -> None:
+    """The rule the launcher's due.c follows too (its collection must find the same root)."""
+    entry = types.SimpleNamespace(pw_dir="/home/passwd")
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: entry)
+    environ = {} if home is None else {"HOME": home}
+
+    assert native.cache_directory("app", environ) == "/home/passwd/.cache/app"
 
 
 def test_extension_spec_points_into_the_generation_site_tree(

@@ -10,6 +10,21 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Changed
+- **`PYTHONUNBUFFERED` is honoured** (D14). Set and non-empty, it makes an app's stdout and
+  stderr unbuffered as CPython does, so a service's log lines reach a pipe as they are printed
+  and survive a SIGTERM. It is the only `PYTHON*` variable the apps read.
+- **`fsbpyr self update` refuses an executable that needs a newer glibc than the host has.** The
+  glibc its build_info records is compared with the host's before anything is replaced; the
+  message names both versions.
+
+### Fixed
+- **The launcher's background cache collection (D38) now runs with `HOME` unset or empty.** The
+  launcher needed an absolute `$HOME` while the boot code fell back to the passwd home, so such an
+  app's cache was never collected (and with `HOME=''` the two disagreed about the cache root). An
+  unset, empty or relative `HOME` now means the passwd home in the launcher, the boot code and
+  the runtime registry alike.
+
 ## [0.25.0] - 2026-10-25
 
 ### Changed
