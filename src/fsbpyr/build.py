@@ -31,7 +31,9 @@ from .closure import (
 from .config import BuildConfig
 from .elf import ElfError, glibc_requirement, is_elf
 from .entry import source_has_candidate
+from .importcheck import REMOVED_IN, Unresolved, check_command, top_level_names
 from .links import LinkError, check_links, make_links
+from .loose import Package
 from .manifest import SCHEMA, LockError, built_here, dist_records, lock_record
 from .natives import opened
 from .payload.format import NATIVE_KINDS, ModuleKind
@@ -317,6 +319,10 @@ def lock_warnings(project: Project, source: LockSource, requirements: str | None
     """What is not reproducible about the lock source: no lock at all, or unpinned lines."""
     if source is LockSource.UNLOCKED:
         warnings = ["unlocked build: dependencies resolved now, not reproducible"]
+        for foreign in ("poetry.lock", "pdm.lock"):
+            if (project.directory / foreign).is_file():
+                warnings.append(f"{foreign} is not read: the dependencies in [project] are "
+                                "resolved now (uv.lock or requirements.txt would lock them)")
         if split := sorted((project.directory / "requirements").glob("*.txt")):
             names = ", ".join(path.name for path in split)
             warnings.append(Uncounted(f"no requirements.txt, but requirements/ holds {names}; "
@@ -387,7 +393,8 @@ def check_before_staging(project: Project, config: BuildConfig) -> None:
     if config.entry is None and project.static_scripts and len(project.scripts) > 1:
         command_table(project.scripts)  # raises for a name that is no command
     if (config.entry is None and project.static_scripts and project.static_entry_points
-            and not project.scripts and not source_has_candidate(project.directory)):
+            and not project.scripts and not project.loose
+            and not source_has_candidate(project.directory)):
         # no script, no __main__.py, no guarded module: staging cannot find an entry either
         raise several_scripts_error(name, project.scripts)
     if config.output is not None:
@@ -397,6 +404,77 @@ def check_before_staging(project: Project, config: BuildConfig) -> None:
         message := unknown_extras_error(name, config.extras, project.extras)
     ):
         raise ProjectError(message)
+
+
+def load_package(project: Project, config: BuildConfig, warnings: list[str]) -> Package | None:
+    """The files and commands of a project without a build system (None for any other); the
+    build fails here when it has no command and ``--entry`` names none."""
+    if not project.loose:
+        return None
+    package = Package.load(project.directory)
+    warnings += package.warnings
+    if config.entry is None and not package.commands:
+        raise ProjectError(f"{package.name} has no [project.scripts] and no Python file with an "
+                           "if __name__ == '__main__' guard; choose one with --entry (a "
+                           "command name or _fsbpyr_scripts.module[:attr]); a file whose name "
+                           "is no Python name is not packaged")
+    return package
+
+
+def _unresolved_warning(
+    command: str, problems: list[Unresolved], project: Project, python: tuple[int, int]
+) -> str:
+    """The warning for a command skipped for imports that nothing resolves: file:line of each
+    (the first few), why a removed standard library module is missing, and where the module
+    may come from."""
+    shown = "; ".join(problem.describe() for problem in problems[:3])
+    more = f" (and {len(problems) - 3} more)" if len(problems) > 3 else ""
+    text = f"command {command} skipped: not in the executable: {shown}{more}"
+    removed = {problem.module.partition(".")[0] for problem in problems} & REMOVED_IN.keys()
+    hints = [f"{name} was removed in Python {REMOVED_IN[name][0]}.{REMOVED_IN[name][1]}; build "
+             f"with --python {REMOVED_IN[name][0]}.{REMOVED_IN[name][1] - 1}"
+             for name in sorted(removed) if REMOVED_IN[name] <= python]  # fmt: skip
+    if {problem.module.partition(".")[0] for problem in problems} - set(removed):
+        hints += ["declare it in [project] dependencies (a project's own file is found next to "
+                  "the script that imports it)"]
+        if (project.directory / ".venv").is_dir():
+            hints[-1:] = ["a .venv is not read for undeclared dependencies; `uv pip freeze "
+                          "--python .venv/bin/python > requirements.txt` writes what it holds, "
+                          "and the build reads requirements.txt"]  # fmt: skip
+    return f"{text}. {'. '.join(hints)}"
+
+
+def check_script_imports(  # noqa: PLR0913  the package and what resolves its imports
+    package: Package,
+    project: Project,
+    config: BuildConfig,
+    site: Path,
+    runtime: Runtime,
+    *,
+    warnings: list[str],
+) -> frozenset[str]:
+    """Follow the static imports of each command of a project without a build system and warn
+    about the commands that import what the executable lacks; their names are returned. --strict
+    fails on the first such warning; so does a build with no command left."""
+    known = top_level_names(site) | {n.partition(".")[0] for n in runtime_module_names(runtime)}
+    major, minor = (int(part) for part in runtime.python_version.split(".")[:2])
+    python = (major, minor)
+    chosen = package.commands
+    if config.entry in package.commands:
+        chosen = {config.entry: package.commands[config.entry]}
+    elif config.entry is not None:  # a module: its own imports, not the table's
+        chosen = {config.entry: config.entry}
+    skipped = set()
+    for command, target in chosen.items():
+        if problems := check_command(target, package.sources, known):
+            warnings.append(_unresolved_warning(command, problems, project, python))
+            skipped.add(command)
+    if skipped and config.strict:
+        check_strict(warnings)
+    if skipped and skipped == set(chosen):
+        raise BuildError(f"{package.name}: no command can run in the executable, each imports "
+                         "what it does not hold")  # fmt: skip
+    return frozenset(skipped)
 
 
 def smoke_test(executable: Path, app_name: str, output: Path | None = None) -> None:
@@ -503,7 +581,7 @@ def _make_output_dir(directory: Path, made: list[Path]) -> None:
     directory.mkdir(parents=True, exist_ok=True)
 
 
-def _build(  # noqa: PLR0913  the build's state and the progress keyword
+def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keyword; one pass
     directory: Path,
     config: BuildConfig,
     log: Callable[[str], None],
@@ -517,6 +595,7 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
     soon as it exists, ``made`` the output directory if this build created it."""
     project = Project.load(directory)
     check_before_staging(project, config)
+    package = load_package(project, config, warnings)
     uv = find_uv()  # before anything slow: a build cannot go far without it (D26)
     uv_used = uv_version(uv)
     warnings += python_warnings(project, config)
@@ -548,7 +627,9 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                 index = SiteIndex.scan(plan.site)
         dist = _installed_project(index, wheel, project, config)
         walk = index.walk(dist, extras=config.extras, python_version=runtime.python_version)
-        app_name, entrypoint = resolve_entry(dist, config.entry, log)
+        app_name, entrypoint = resolve_entry(dist, config.entry, log, omit=(
+            check_script_imports(package, project, config, index.site, runtime, warnings=warnings)
+            if package is not None else ()))  # fmt: skip
         output = (config.output or project.directory / "dist" / app_name).resolve()
         check_output(output)
         commands = _commands_to_link(entrypoint, output)

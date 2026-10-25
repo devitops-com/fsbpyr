@@ -72,8 +72,12 @@ def test_an_extra_the_static_project_lacks_fails_early(tmp_path: Path) -> None:
         check_before_staging(project, BuildConfig(entry="a", extras=("nope",)))
 
 
-STATIC_NO_SCRIPTS = '[project]\nname = "app"\nversion = "1"\n'
-DYNAMIC_ENTRY_POINTS = STATIC_NO_SCRIPTS + 'dynamic = ["entry-points"]\n'
+STATIC_NO_SCRIPTS = (
+    '[project]\nname = "app"\nversion = "1"\n'
+    '[build-system]\nrequires = ["uv_build"]\nbuild-backend = "uv_build"\n'
+)  # a project without [build-system] is built by fsbpyr itself (loose.py)
+DYNAMIC_ENTRY_POINTS = STATIC_NO_SCRIPTS.replace(
+    'version = "1"\n', 'version = "1"\ndynamic = ["entry-points"]\n')
 GUARDED = 'if __name__ == "__main__":\n    pass\n'
 
 

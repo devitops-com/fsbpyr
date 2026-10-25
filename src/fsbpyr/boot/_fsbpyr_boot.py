@@ -39,6 +39,7 @@ NONE = _fsbpyr.NONE
 INFO = _fsbpyr.info()
 ROOT = INFO["executable"]
 _PREFIX = ROOT + "/"
+_SCRIPTS = "_fsbpyr_scripts."  # the root of a project without a build system (loose.py)
 _INTERNAL = ("_fsbpyr_boot", "_fsbpyr_rt")  # boot code, hidden from module listings
 # Modules adjusted right after they load (_fsbpyr_rt.fixups): CA store fallback, multiprocessing
 # children started from this very binary, bundled libraries by bare name, parso's file times,
@@ -471,6 +472,11 @@ def _inside_executable_note(exc: BaseException | None) -> str | None:
         filename = exc.filename if isinstance(exc, OSError) else None
         if isinstance(filename, str) and filename.startswith(_PREFIX):
             package = filename[len(_PREFIX) :].partition("/")[0]
+            if package == _SCRIPTS[:-1]:  # --fs-package cannot extract it: not a regular package
+                return (
+                    f"fsbpyr: {filename} is inside the executable, which holds the project's "
+                    "Python files only: read other files from a path outside it\n"
+                )
             if _fsbpyr.find_module(package) is not None:
                 return (
                     f"fsbpyr: {filename} is inside the executable; {package} reads files next "
@@ -488,8 +494,25 @@ def _resolve(entrypoint: str) -> object:
     return target
 
 
+def _script_directory(entrypoint: str) -> None:
+    """A target below the scripts root runs as `python dir/script.py` does: the directory of
+    its module comes first on sys.path, so its siblings import."""
+    if entrypoint.startswith(_SCRIPTS):
+        module = entrypoint.partition(":")[0]
+        sys.path.insert(0, _PREFIX + module.rpartition(".")[0].replace(".", "/"))
+
+
 def _check_entrypoint(entrypoint: str) -> None:
-    """The selftest of one target: import the module and look the attribute up, without calling."""
+    """The selftest of one target: import the module and look the attribute up, without calling.
+    A script of a project without a build system is only found: its top-level code does the
+    work (deploy, delete, restart) and must not run on the build host."""
+    _script_directory(entrypoint)
+    if ":" not in entrypoint and entrypoint.startswith(_SCRIPTS):
+        record = _fsbpyr.find_module(entrypoint)
+        if record is None:
+            raise ModuleNotFoundError(f"No module named {entrypoint}", name=entrypoint)
+        if record[1] == MODULE:
+            return
     _resolve(entrypoint)
     if ":" not in entrypoint and hasattr(sys.modules[entrypoint], "__path__"):
         from importlib.util import find_spec  # noqa: PLC0415
@@ -673,6 +696,7 @@ def run() -> None:
         from _fsbpyr_rt.commands import choose  # noqa: PLC0415
 
         entrypoint = choose(commands, sys.argv)
+    _script_directory(entrypoint)
     if ":" not in entrypoint:
         import runpy  # noqa: PLC0415
 

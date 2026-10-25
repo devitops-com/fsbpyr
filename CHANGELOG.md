@@ -26,6 +26,27 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   the command's name. Command names must match `[A-Za-z0-9][A-Za-z0-9_.+-]*`. All links share
   one instance budget (D45). A one-command build is unchanged except that it carries the new
   `_fsbpyr_rt.commands` module, which only a table loads.
+- **A project with a `[project]` table and no `[build-system]` builds as `uv run main.py` runs
+  it.** That is `uv init --no-package`, and Poetry `package-mode = false` and PDM
+  `distribution = false` projects; a uv workspace root keeps its build. Today these fell back to
+  setuptools: two modules failed with "Multiple top-level modules", a `utils/` package was
+  dropped, and `<name>.egg-info` was left in the tree. fsbpyr now writes the project's wheel
+  itself with the standard library (no build backend, no project code, nothing written into the
+  tree, the same bytes twice): the project's `*.py` files and nothing else, under the reserved
+  root `_fsbpyr_scripts/`, from `git ls-files` (tracked and untracked, not ignored) or a pruned
+  walk; links out of the tree are refused, and a `.py` file below a directory that is no Python
+  name is reported and left out. The dependencies come from `uv.lock` as before, else
+  `[project.dependencies]` unlocked; `poetry.lock` and `pdm.lock` are not read (the build says
+  so). The commands are `[project.scripts]`, else the modules with a main guard (one: the
+  project's command; several: a multi-command executable, named after the files, `main.py` after
+  the project, a collision fails naming both). A script runs as `__main__` with its directory
+  first on `sys.path`, so `import utils` works; `__file__` is below `<exe>/_fsbpyr_scripts/`.
+  The smoke test finds a script and does not import it, so a script's top-level code never runs
+  on the build host. A static import check follows each command's imports and skips a command
+  that imports what the executable lacks, with `file:line` (`--strict` fails; none left fails),
+  and names a standard library module removed in the build's Python (`cgi`, `imp`, ...) with
+  the older `--python` that has it. The uncaught-error note for a file read next to a script no
+  longer advises `--fs-package`.
 - **A project with no console scripts builds from its `__main__` package or guarded module.**
   With no `--entry`, the build picks the project's only top-level package with a `__main__.py`
   (run as `python -m pkg`), else its only top-level module with an `if __name__ == "__main__":`
@@ -41,6 +62,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   README and `docs/compatibility.md` list SLES 15 SP6 and newer.
 
 ### Changed
+- **A project without a build system whose `[project.scripts]` point into `src/`** must name
+  `_fsbpyr_scripts.src.pkg.mod:main`; the build says so. It built through setuptools before.
+- **The smoke test of a `module` or inferred entry runs that module's top-level code on the
+  build host,** as it always did; README now says so.
 - **`--strict`'s early refusal of VCS requirement lines also applies to a requirements file with
   `--hash=` lines.** uv reads such a file in `--require-hashes` mode too, and its VCS lines then
   failed inside uv with its generic message; the build now refuses them first, naming the file

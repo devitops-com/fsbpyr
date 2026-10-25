@@ -45,6 +45,8 @@ class Project:
     static_scripts: bool = False
     static_extras: bool = False
     static_entry_points: bool = False
+    # no build system to run: fsbpyr writes the wheel of the project's Python files (loose.py)
+    loose: bool = False
 
     @classmethod
     def load(cls, directory: Path) -> Project:
@@ -76,6 +78,7 @@ class Project:
             static_scripts=declared and "scripts" not in dynamic,
             static_extras=declared and "optional-dependencies" not in dynamic,
             static_entry_points=declared and "entry-points" not in dynamic,
+            loose=_without_build_system(data),
         )
 
     @property
@@ -194,6 +197,18 @@ def vcs_requirements(requirements: Path) -> list[str]:
     and the like): a commit SHA pins the source, but uv's --require-hashes wants a hash."""
     return [f"{requirements.name}:{number}: {text}" for number, text in _requirement_lines(
         requirements) if _VCS.search(text)]
+
+
+def _without_build_system(data: dict[str, Any]) -> bool:
+    """A [project] that no build system packages (D5, owner decision 2026-10-25): no
+    [build-system] table (never setuptools' legacy fallback), or Poetry ``package-mode = false``
+    / PDM ``distribution = false``. A uv workspace root keeps its build."""
+    tool = data.get("tool", {})
+    if "project" not in data or "workspace" in tool.get("uv", {}):
+        return False
+    return ("build-system" not in data
+            or tool.get("poetry", {}).get("package-mode") is False
+            or tool.get("pdm", {}).get("distribution") is False)  # fmt: skip
 
 
 def _workspace_table(pyproject: Path) -> dict[str, Any] | None:

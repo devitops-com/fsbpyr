@@ -5,7 +5,7 @@ from __future__ import annotations
 import configparser
 import json
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from email.parser import HeaderParser
 from pathlib import Path
@@ -16,6 +16,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
 from .entry import installed_candidates
+from .loose import MODULE_GROUP
 
 _EXTRAS_SUFFIX = re.compile(r"\s*\[[^\]]*\]\s*$")
 _COMMAND_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]*")
@@ -39,6 +40,11 @@ class InstalledDist:
 
     def console_scripts(self) -> dict[str, str]:
         return self._entries("console_scripts")
+
+    def commands(self) -> dict[str, str]:
+        """The console scripts, and the modules a project without a build system runs
+        (loose.py)."""
+        return {**self._entries("console_scripts"), **self._entries(MODULE_GROUP)}
 
     def gui_scripts(self) -> dict[str, str]:
         return self._entries("gui_scripts")
@@ -211,12 +217,15 @@ def infer_entry(dist: InstalledDist) -> tuple[str, str, str]:
 
 
 def resolve_entry(
-    dist: InstalledDist, entry: str | None, log: Callable[[str], None] = lambda _: None
+    dist: InstalledDist,
+    entry: str | None,
+    log: Callable[[str], None] = lambda _: None,
+    omit: Collection[str] = (),
 ) -> tuple[str, str]:
     """(application name, entry point) from --entry or the project's console scripts (several:
     the project's name and a command table), else the inferred package or module (``log`` says
-    which and why)."""
-    scripts = dist.console_scripts()
+    which and why). The commands in ``omit`` do not exist."""
+    scripts = {name: target for name, target in dist.commands().items() if name not in omit}
     if entry is None:
         if len(scripts) == 1:
             return next(iter(scripts.items()))

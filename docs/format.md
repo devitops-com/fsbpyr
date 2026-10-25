@@ -112,6 +112,12 @@ a single command stays the plain target. The launcher treats the entrypoint as a
 At start the boot code picks the command from `argv[0]`'s basename (also without `.py`), else
 from `argv[1]` as an exact name, which it removes from `sys.argv`.
 
+**Scripts.** A target below the module `_fsbpyr_scripts` (a project without a build system, README
+"Projects without a build system") is started after the boot code puts the target's module
+directory (`<exe>/` and the dotted name's path without its last part) first on `sys.path`; a
+target without `:attr` is run as `__main__` and the selftest only finds it, never imports it. No
+format change.
+
 All offsets inside the payload are relative to the payload start. The value `0xFFFFFFFF`
 (`NONE`) means "no reference" in every u32 index field.
 

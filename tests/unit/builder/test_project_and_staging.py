@@ -49,6 +49,10 @@ dependencies = ["click>=8"]
 [project.scripts]
 hello = "hello_app.cli:main"
 
+[build-system]
+requires = ["uv_build"]
+build-backend = "uv_build"
+
 [tool.fsbpyr]
 extras = ["fancy"]
 include-source = false
