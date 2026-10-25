@@ -116,8 +116,11 @@ from `argv[1]` as an exact name, which it removes from `sys.argv`.
 **Scripts.** A target below the module `_fsbpyr_scripts` (a project without a build system, a directory of scripts or a single script, README
 "Projects without a build system", "A directory of scripts", "A single script") is started after the boot code puts the target's module
 directory (`<exe>/` and the dotted name's path without its last part) first on `sys.path`; a
-target without `:attr` is run as `__main__` and the selftest only finds it, never imports it. No
-format change.
+target without `:attr` is run as `__main__` and the selftest only finds it, never imports it. A
+directory below `_fsbpyr_scripts` whose name is no Python name (`sub-dir`) is recorded under its
+mangled name (`sub_dir`: each character no identifier holds becomes `_`, a leading `_` for a
+digit, the rule for file names); the path hook maps an entry named by the on-disk name to the
+recorded one, so modules are still looked up by exact dotted names. No format change.
 
 All offsets inside the payload are relative to the payload start. The value `0xFFFFFFFF`
 (`NONE`) means "no reference" in every u32 index field.

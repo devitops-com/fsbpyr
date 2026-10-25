@@ -77,6 +77,34 @@ def test_path_hook_claims_only_payload_paths(boot: ModuleType) -> None:
             boot.path_hook(foreign)
 
 
+def test_path_hook_normalizes_dotdot_but_never_above_the_executable(boot: ModuleType) -> None:
+    scripts = boot.ROOT + "/_fsbpyr_scripts"
+
+    assert boot.path_hook(f"{scripts}/tools/../lib").directory == "_fsbpyr_scripts/lib"
+    assert boot.path_hook(f"{scripts}/tools/./../lib/").directory == "_fsbpyr_scripts/lib"
+    assert boot.path_hook(f"{scripts}/a/b/../../c").directory == "_fsbpyr_scripts/c"
+    assert boot.path_hook(f"{scripts}/..").directory == ""
+    for above in (boot.ROOT + "/..", f"{scripts}/../..", f"{scripts}/a/../../../lib"):
+        with pytest.raises(ImportError):
+            boot.path_hook(above)
+
+
+def test_a_directory_below_the_scripts_root_that_is_no_python_name_is_its_mangled_one(
+    boot: ModuleType,
+) -> None:
+    loose = importlib.import_module("fsbpyr.loose")
+    names = ["sub-dir", "2024-tools", "v1.2", "ok_dir", "a b", "-", "ünï-code", "class"]
+    scripts = boot.ROOT + "/_fsbpyr_scripts"
+
+    for name in names:
+        assert boot._module_part(name) == loose._module_stem(name)
+    finder = boot.path_hook(f"{scripts}/2024-tools/sub-dir")
+    assert (finder.directory, finder._prefix) == (
+        "_fsbpyr_scripts/2024-tools/sub-dir", "_fsbpyr_scripts._2024_tools.sub_dir.")
+    assert finder._aliasable and boot.path_hook(f"{scripts}/lib")._aliasable
+    assert boot.path_hook(boot.ROOT + "/sub-dir")._aliasable is False  # elsewhere: Python names
+
+
 def test_package_spec_and_execution(boot: ModuleType) -> None:
     spec = boot.path_hook(boot.ROOT).find_spec("pkg")
 

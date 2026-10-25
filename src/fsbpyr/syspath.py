@@ -2,7 +2,9 @@
 (the common ``sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 "pylib"))``), found with ast for the import check (importcheck.py). A path that cannot be
 followed is told apart from one the payload cannot serve: the first may hold anything, the second
-holds nothing.
+holds nothing. The path hook normalizes ``..`` itself (never above the executable), so a written
+``..`` is followed as the hook does; a directory that is no Python name is searched under its
+payload name (loose.py).
 """
 
 from __future__ import annotations
@@ -10,13 +12,14 @@ from __future__ import annotations
 import ast
 import posixpath
 
-_NORMALIZERS = frozenset({"os.path.abspath", "os.path.realpath", "os.path.normpath"})
+from .loose import _module_stem
+
 _SAME_PATH = frozenset({"str", "os.fspath", "Path", "pathlib.Path", "PurePath", "os.path.abspath",
                         "os.path.realpath", "os.path.normpath"})  # fmt: skip
 _SAME_METHODS = frozenset({"resolve", "absolute"})
 _PATH_CALLS = frozenset({"append", "insert", "extend"})
 
-type _Found = tuple[tuple[str, ...], bool]  # parts below the scripts root, normalized
+type _Found = tuple[str, ...]  # parts below the scripts root
 
 
 def _dotted(node: ast.expr) -> str:
@@ -32,19 +35,15 @@ def _literal(node: ast.expr) -> str | None:
 
 
 def _parent(inner: _Found | None) -> _Found | None:
-    return None if inner is None or not inner[0] else (inner[0][:-1], inner[1])
-
-
-def _same(inner: _Found | None, normalizes: bool) -> _Found | None:
-    return None if inner is None else (inner[0], inner[1] or normalizes)
+    return inner[:-1] if inner else None
 
 
 def _location(node: ast.expr, file: tuple[str, ...]) -> _Found | None:
     """The path ``node`` builds from ``__file__`` as the parts below the scripts root (``file``
-    is the script's own path) and whether a call normalized it (abspath, resolve ...); None when
-    it is built from anything else. Written ``..`` parts stay in the parts."""
+    is the script's own path); None when it is built from anything else. Written ``..`` parts
+    stay in the parts."""
     if isinstance(node, ast.Name):
-        return (file, False) if node.id == "__file__" else None
+        return file if node.id == "__file__" else None
     if isinstance(node, ast.Call):
         return _call_location(node, file)
     if isinstance(node, ast.Attribute) and node.attr == "parent":
@@ -61,37 +60,35 @@ def _call_location(node: ast.Call, file: tuple[str, ...]) -> _Found | None:
     if name == "os.path.join" and node.args:
         return _join(node.args, file)
     if name in _SAME_PATH and len(node.args) == 1:
-        return _same(_location(node.args[0], file), name in _NORMALIZERS)
+        return _location(node.args[0], file)
     if isinstance(node.func, ast.Attribute) and node.func.attr in _SAME_METHODS:
-        return _same(_location(node.func.value, file), node.func.attr == "resolve")
+        return _location(node.func.value, file)
     return None
 
 
 def _join(nodes: list[ast.expr], file: tuple[str, ...], *, glue: bool = False) -> _Found | None:
     """``os.path.join(base, "a", "b")``, ``base / "a"`` or (``glue``) ``base + "/a"``."""
-    base = _location(nodes[0], file)
-    if base is None:
+    parts = _location(nodes[0], file)
+    if parts is None:
         return None
-    parts, normalized = base
     for node in nodes[1:]:
         text = _literal(node)
         if text is None or text.startswith("/") != glue:  # a path is joined, a string glued
             return None
         parts = (*parts, *(part for part in text.split("/") if part))
-    return parts, normalized
+    return parts
 
 
-def _directory(parts: tuple[str, ...], normalized: bool) -> str | None:
-    """The scripts-root-relative directory a ``sys.path`` entry names, None when it goes above
-    the scripts root or still holds ``..`` (the payload's path hook does not take it)."""
+def _directory(parts: _Found) -> str | None:
+    """The scripts-root-relative directory a ``sys.path`` entry names, in its payload name (a
+    directory that is no Python name is stored mangled); None when ``..`` takes it above the
+    scripts root, where the project has no files."""
     if ".." in parts or "." in parts:
-        if not normalized:
-            return None
         path = posixpath.normpath("/".join(parts)) if parts else "."
         if path == ".." or path.startswith("../"):
             return None
         parts = tuple(part for part in path.split("/") if part != ".")
-    return "/".join(parts)
+    return "/".join(_module_stem(part) for part in parts)
 
 
 def path_entries(tree: ast.Module, file: str) -> tuple[list[str], bool]:
@@ -111,7 +108,7 @@ def path_entries(tree: ast.Module, file: str) -> tuple[list[str], bool]:
                 location = None if entry is None else _location(entry, where)
                 if location is None:
                     dynamic = True
-                elif (directory := _directory(*location)) is not None:
+                elif (directory := _directory(location)) is not None:
                     found.append(directory)
         elif isinstance(node, ast.Assign | ast.AugAssign):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]

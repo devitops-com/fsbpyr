@@ -182,19 +182,41 @@ def test_a_file_is_not_read_to_find_out_it_is_hidden(tmp_path: Path) -> None:
     assert sorted(Package.load(ops).sources) == ["a.py"]
 
 
-def test_python_files_below_directories_that_are_no_python_names_are_reported(
+def test_python_files_below_directories_that_are_no_python_names_are_stored_under_mangled_ones(
     tmp_path: Path,
 ) -> None:
     ops = _dir(tmp_path / "ops", {
         "a.py": GUARD, "sub-dir/c.py": "X = 1\n", "plugins-v2/check": SHEBANG + "print(1)\n",
-        "2fa/d.py": "X = 1\n",
+        "2fa/d.py": "X = 1\n", "sub-dir/in-ner/e.py": GUARD,
     })  # fmt: skip
 
     package = Package.load(ops)
 
-    assert sorted(package.sources) == ["a.py"]
-    assert len(package.warnings) == 3
-    assert any(w.startswith("plugins-v2/check is not packaged") for w in package.warnings)
+    assert sorted(package.sources) == ["_2fa/d.py", "a.py", "plugins_v2/_x_check.py",
+                                       "sub_dir/c.py", "sub_dir/in_ner/e.py"]  # fmt: skip
+    assert package.origins["sub_dir/in_ner/e.py"] == "sub-dir/in-ner/e.py"
+    assert package.commands == {
+        "a": "_fsbpyr_scripts.a", "check": "_fsbpyr_scripts.plugins_v2._x_check",
+        "e": "_fsbpyr_scripts.sub_dir.in_ner.e"}  # fmt: skip
+    assert package.warnings == ()
+
+
+def test_two_directories_with_one_mangled_name_are_an_error(tmp_path: Path) -> None:
+    ops = _dir(tmp_path / "ops", {"a.py": GUARD, "sub-dir/c.py": "X = 1\n",
+                                  "sub_dir/d/e.py": "X = 1\n"})  # fmt: skip
+
+    with pytest.raises(ProjectError, match="the directories sub-dir and sub_dir are both sub_dir"):
+        Package.load(ops)
+
+
+def test_a_mangled_directory_and_a_module_file_with_one_payload_name_are_an_error(
+    tmp_path: Path,
+) -> None:
+    ops = _dir(tmp_path / "ops", {"a.py": GUARD, "sub-dir/tool.py": "X = 1\n",
+                                  "sub_dir.py": "X = 1\n"})  # fmt: skip
+
+    with pytest.raises(ProjectError, match=r"directory sub-dir and sub_dir\.py are both sub_dir"):
+        Package.load(ops)
 
 
 @git
@@ -540,11 +562,27 @@ def test_the_files_found_through_that_directory_are_followed() -> None:
     assert _unresolved(files) == ["tools/pylib/deeper.py:1: import absent"]
 
 
-def test_a_path_with_dotdot_that_nothing_normalized_is_not_followed() -> None:
+def test_a_path_with_dotdot_is_followed_as_the_path_hook_normalizes_it() -> None:
     hack = "sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'lib'))"
     files = {"tools/probe.py": HACK.format(hack=hack), "lib/shared.py": "X = 1\n"}
 
-    assert _unresolved(files) == ["tools/probe.py:3: import shared"]  # the path hook takes no ..
+    assert _unresolved(files) == []
+    assert _unresolved({**files, "lib/shared.py": "import absent\n"}) == [
+        "lib/shared.py:1: import absent"]  # fmt: skip
+
+
+def test_a_path_with_dotdot_above_the_scripts_root_holds_none_of_the_projects_files() -> None:
+    hack = "sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'lib'))"
+    files = {"tools/probe.py": HACK.format(hack=hack), "lib/shared.py": "X = 1\n"}
+
+    assert _unresolved(files) == ["tools/probe.py:3: import shared"]
+
+
+def test_a_directory_that_is_no_python_name_is_searched_under_its_payload_name() -> None:
+    hack = "sys.path.append(os.path.join(os.path.dirname(__file__), 'sub-dir'))"
+    files = {"tools/probe.py": HACK.format(hack=hack), "tools/sub_dir/shared.py": "X = 1\n"}
+
+    assert _unresolved(files) == []
 
 
 def test_a_sys_path_change_that_cannot_be_followed_makes_imports_optional() -> None:

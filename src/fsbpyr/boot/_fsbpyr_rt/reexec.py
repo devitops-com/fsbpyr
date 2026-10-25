@@ -8,6 +8,10 @@ such a child runs the module, the code or the script as CPython would, interpret
 accepted and ignored. Without the setting (the default) a child that asks for Python is refused
 with exit 70, since running the app in it would start the app again and again (D44); with
 ``interpreter-reexec = false`` it gets the app, for apps whose own options are named -m or -c.
+The one exception to the refusal is a script of the payload that is one of the app's own
+commands (``[sys.executable, <exe>/_fsbpyr_scripts/x.py, args]``, a script that starts its
+sibling as ``python x.py args`` would): it runs that command, which is no more than the app does
+when it is started under that command's name (owner decision 2026-10-25).
 """
 
 import ast
@@ -15,6 +19,7 @@ import importlib.util
 import json
 import runpy
 import sys
+from collections.abc import Collection
 
 from _fsbpyr_rt.mp import _parent_runs_this_executable  # type: ignore[import-not-found]
 from _fsbpyr_rt.restart import after_flags  # type: ignore[import-not-found]
@@ -92,6 +97,13 @@ def _script_module(path: str, prefix: str) -> str | None:
     return name.removesuffix(".__main__") if parts[-1] == "__main__" else name
 
 
+def _own_command(command: Command, prefix: str, targets: Collection[str]) -> bool:
+    """Whether ``command`` is a script of the payload that is the target of one of the app's own
+    commands (a module run as ``__main__``, ``_fsbpyr_scripts.tools.x``)."""
+    option, path, _ = command
+    return option == _SCRIPT and _script_module(path, prefix) in targets
+
+
 def _run(command: Command, prefix: str) -> bool:
     option, target, arguments = command
     if option == _SCRIPT:
@@ -110,17 +122,19 @@ def _run(command: Command, prefix: str) -> bool:
     return True
 
 
-def run_child(argv: list[str], build_info: str, prefix: str) -> bool:
+def run_child(
+    argv: list[str], build_info: str, prefix: str, targets: Collection[str] = ()
+) -> bool:
     """Run what ``argv`` asks for if the build allows it and the app started this process;
-    exits 70 if the build did not choose and it asks for Python; False if the app runs as
-    usual."""
+    exits 70 if the build did not choose and it asks for Python, unless it is a script that is
+    the target of one of the app's own commands (``targets``); False if the app runs as usual."""
     command = child_command(argv, prefix)
     if command is None:
         return False
     setting = json.loads(build_info).get("interpreter_reexec")
     if setting is False or not _parent_runs_this_executable():
         return False
-    if setting is True:
+    if setting is True or _own_command(command, prefix, targets):
         return _run(command, prefix)
     if not asks_for_python(command):
         return False

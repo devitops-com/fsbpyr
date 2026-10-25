@@ -190,6 +190,119 @@ def test_a_subdirectory_tool_imports_a_sibling_and_the_pylib_hack_finds_its_modu
     assert _run(directory / "dist" / "top", tmp_path).stdout == "top\n"
 
 
+PATHS = {
+    "tools/probe.py": SHEBANG + "import os\nimport sys\n\n"
+    "sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))\n"
+    "import x\n\nif __name__ == '__main__':\n    print('probe', x.VALUE, __name__)\n",
+    "lib/x.py": "VALUE = 'lib/x'\n",
+    # the entry climbs above the executable, and comes back down to a directory of the payload
+    "tools/climb.py": "import os\nimport sys\n\n"
+    "sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', "
+    "'_fsbpyr_scripts', 'lib'))\ntry:\n    import x\nexcept ImportError:\n    x = None\n\n"
+    "if __name__ == '__main__':\n    print('climb', x)\n",
+    "sub-dir/tool.py": "import helper\n\nif __name__ == '__main__':\n"
+    "    print('tool', helper.NAME, __name__)\n",
+    "sub-dir/helper.py": "NAME = 'helper in sub-dir'\n",
+    "2024-tools/report.py": "import helper\n\nif __name__ == '__main__':\n"
+    "    print('report', helper.NAME)\n",
+    "2024-tools/helper.py": "NAME = 'helper in 2024-tools'\n",
+    "top.py": "import os\nimport sys\n\n"
+    "sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sub-dir'))\n"
+    "import helper\n\nif __name__ == '__main__':\n    print('top', helper.NAME)\n",
+    "tools/spawn.py": "import os\nimport subprocess\nimport sys\n\n"
+    "here = os.path.dirname(os.path.abspath(__file__))\n\nif __name__ == '__main__':\n"
+    "    done = subprocess.run([sys.executable, os.path.join(here, 'sibling.py'), 'x', 'y'],\n"
+    "                          capture_output=True, text=True, check=False)\n"
+    "    print('child', done.returncode, repr(done.stdout), repr(done.stderr))\n",
+    "tools/sibling.py": "import os\nimport sys\n\nif __name__ == '__main__':\n"
+    "    print('sibling', sys.argv[1:], os.path.basename(sys.path[0]), __name__)\n",
+    "tools/helperscript.py": "print('helperscript ran')\n",
+    "tools/refused.py": "import os\nimport subprocess\nimport sys\n\n"
+    "here = os.path.dirname(os.path.abspath(__file__))\n\nif __name__ == '__main__':\n"
+    "    for args in (['-m', 'json.tool'], [os.path.join(here, 'helperscript.py')]):\n"
+    "        done = subprocess.run([sys.executable, *args], capture_output=True, text=True,\n"
+    "                              check=False)\n"
+    "        print(done.returncode, 'refusing to run' in done.stderr, repr(done.stdout))\n",
+    "sub-dir/nspawn.py": "import os\nimport subprocess\nimport sys\n\n"
+    "here = os.path.dirname(os.path.abspath(__file__))\n\nif __name__ == '__main__':\n"
+    "    done = subprocess.run([sys.executable, os.path.join(here, 'nsibling.py')],\n"
+    "                          capture_output=True, text=True, check=False)\n"
+    "    print('child', done.returncode, repr(done.stdout), repr(done.stderr))\n",
+    "sub-dir/nsibling.py": "import sys\n\nif __name__ == '__main__':\n"
+    "    print('nsibling', len(sys.path[0]) > 0)\n",
+    "tools/restart.py": "import os\nimport subprocess\nimport sys\n\n"
+    "if __name__ == '__main__':\n"
+    "    link = os.path.join(os.path.dirname(sys.argv[0]), 'sibling')\n"
+    "    done = subprocess.run([sys.executable, link, 'z'], capture_output=True, text=True,\n"
+    "                          check=False)\n"
+    "    print('child', done.returncode, repr(done.stdout), repr(done.stderr))\n",
+}
+
+
+@pytest.fixture(scope="module")
+def paths(tmp_path_factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
+    directory = _write(tmp_path_factory.mktemp("paths-case") / "fleet", PATHS)
+    err = io.StringIO()
+    with redirect_stderr(err):
+        assert _build(directory) == 0
+    assert "skipped" not in err.getvalue() and "not packaged" not in err.getvalue()
+    return directory
+
+
+@pytest.mark.parametrize(
+    ("command", "script", "output"),
+    [
+        ("probe", "tools/probe.py", "probe lib/x __main__\n"),
+        ("climb", "tools/climb.py", "climb None\n"),
+        ("tool", "sub-dir/tool.py", "tool helper in sub-dir __main__\n"),
+        ("report", "2024-tools/report.py", "report helper in 2024-tools\n"),
+        ("top", "top.py", "top helper in sub-dir\n"),
+        ("sibling", "tools/sibling.py", "sibling [] tools __main__\n"),
+    ],
+)  # fmt: skip
+def test_paths_with_dotdot_and_directories_that_are_no_python_names_work_as_they_do_for_python(
+    paths: Path, tmp_path: Path, command: str, script: str, output: str
+) -> None:
+    result = _run(paths / "dist" / command, tmp_path)
+
+    assert (result.returncode, result.stdout) == (0, output), result.stderr
+    assert result.stdout == _python(paths / script)
+
+
+def test_a_script_starts_its_sibling_command_through_sys_executable(
+    paths: Path, tmp_path: Path
+) -> None:
+    result = _run(paths / "dist" / "spawn", tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "child 0 \"sibling ['x', 'y'] tools __main__\\n\" ''\n"
+    assert result.stdout == _python(paths / "tools" / "spawn.py")
+
+
+def test_a_script_in_a_mangled_directory_starts_its_sibling(paths: Path, tmp_path: Path) -> None:
+    result = _run(paths / "dist" / "nspawn", tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "child 0 'nsibling True\\n' ''\n"
+    assert result.stdout == _python(paths / "sub-dir" / "nspawn.py")
+
+
+def test_a_script_starts_its_sibling_through_the_sibling_link(paths: Path, tmp_path: Path) -> None:
+    result = _run(paths / "dist" / "restart", tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "child 0 \"sibling ['z'] tools __main__\\n\" ''\n"
+
+
+def test_every_other_helper_interpreter_child_of_a_script_is_still_refused(
+    paths: Path, tmp_path: Path
+) -> None:
+    result = _run(paths / "dist" / "refused", tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "70 True ''\n70 True ''\n"  # -m json.tool; a file that is no command
+
+
 def test_an_undeclared_import_skips_its_command_and_an_optional_one_does_not(
     tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -93,7 +93,20 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
     fails), and names a standard library module removed in the build's Python (`cgi`, `imp`, ...)
     with the older `--python` that has it. The build warns about files a script reads next to its
     `__file__` (`file:line`), and a `.py` file below a directory that is no Python name is
-    reported for the project's own files, not only in a scripts root.
+    reported for the project's own files (a directory of scripts packages it, see below).
+  - **Scripts find their siblings by relative paths, in directories with any name, and start
+    each other.** The executable's path hook resolves a `..` in a `sys.path` entry inside the
+    executable (`sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))`
+    imports `lib/`), and an entry that would climb above the executable is not served from it;
+    the static import check follows the same path. In a directory of scripts, a directory whose
+    name is no Python name (`sub-dir/`, `2024-tools/`) is packaged, stored under the name made
+    as a file's (`sub_dir/`, `_2024_tools/`; two directories that give one name fail the build):
+    a script in it is a command with its directory first on `sys.path`, and
+    `sys.path.append(os.path.join(os.path.dirname(__file__), "sub-dir"))` finds its modules; the
+    build no longer warns that it leaves such files out. A script that starts one of the app's
+    own commands as `subprocess.run([sys.executable, <sibling's __file__>, ...])` gets that
+    command, run as `python sibling.py` would, instead of exit 70 (D44 stays for every other
+    helper-interpreter child, and a path that is a command's link already ran the command).
 - **A project with no console scripts builds from its `__main__` package or guarded module.**
   With no `--entry`, the build picks the project's only top-level package with a `__main__.py`
   (run as `python -m pkg`), else its only top-level module with an `if __name__ == "__main__":`

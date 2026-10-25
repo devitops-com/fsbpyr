@@ -327,9 +327,9 @@ bundled on any system.
   `site-packages`, and then a file only a `.gitignore` would exclude is packaged: keep it out
   of the directory. A link to a `.py` file outside the directory fails
   the build and a link to any other file outside it is passed over; links to directories are
-  not followed. The home directory and `/` are no project directories. Only directories with
-  Python names become import paths: a `.py` file or a script below `sub-dir/` is not packaged,
-  and the build warns.
+  not followed. The home directory and `/` are no project directories. A directory whose name
+  is no Python name (`sub-dir/`, `2024-tools/`) is packaged too, under its mangled name (see
+  "Names that are no Python names").
 - **Commands:** a file with an `if __name__ == "__main__":` guard at module level or a python
   shebang is a command. The build reads the files and runs none of them. `conftest.py`,
   `test_*.py`, `*_test.py` and files below a top-level `tests/` or `test/` are packaged and are
@@ -347,7 +347,13 @@ bundled on any system.
   in front (`_x_queue.py`), since `python3` never imports such a file and it must not shadow the
   standard library for its siblings. It runs as `__main__`, and its `__file__` is that path inside
   the executable. Files with Python names keep them, so `import util` finds the `util.py` next to
-  the script.
+  the script. A directory whose name is no Python name (`sub-dir/`, `2024-tools/`) is stored under
+  the name made the same way (`sub_dir/`, `_2024_tools/`), and so are the Python files below it:
+  a script in it is a command and runs with that directory first on `sys.path`, so it imports its
+  siblings, and `sys.path.append(os.path.join(os.path.dirname(__file__), "sub-dir"))` finds the
+  modules in it, as for CPython. A script's `__file__` and `sys.path[0]` show the stored name
+  (`.../sub_dir`). Two directories that give one name (`sub-dir` and `sub_dir`) fail the build,
+  naming both.
 - **Settings:** there is no project to hold them, so a `pyproject.toml` that holds tool settings
   and nothing else (no `[project]`, no `[build-system]`, no Poetry tables) beside the scripts is
   their settings file: `[tool.fsbpyr]` (`glibc = "2.28"`, `python`, `strict`, ...) is read as in any
@@ -368,11 +374,18 @@ bundled on any system.
   ImportError` gives no warning. A directory that a file adds to `sys.path` with a path built from
   its own `__file__` (`sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
   "pylib"))`) is searched; a `sys.path` change the check cannot follow makes the unresolved
-  imports of the command optional.
+  imports of the command optional. A `..` in such a path is followed as the executable follows it
+  (`os.path.join(os.path.dirname(__file__), "..", "lib")` is the `lib/` beside the script's
+  directory); a path that goes above the executable holds none of the directory's files.
 - **At run time** a link runs its script as `python3 script.py` would: as `__main__`, `argv` as
   given (`argv[0]` the full path of the start), the script's directory first on `sys.path`. A sibling named like a standard library
   module (`calendar.py`) wins over the library, as it does for CPython. The `pylib` hack above
-  finds the modules of `pylib/`.
+  finds the modules of `pylib/`. A `..` in a `sys.path` entry that points into the executable is
+  resolved inside it, and an entry that would climb above the executable is not served from it.
+  A script that starts a sibling command as `subprocess.run([sys.executable, <sibling's
+  __file__>])` gets that command (exit status and output as `python sibling.py` gives them, its
+  directory first on `sys.path`) and is not refused as a helper interpreter ("Helper
+  interpreters").
 - **Files next to a script** are not in the executable. The build warns for each read next to
   `__file__` it finds in the scripts (`file:line`; a heuristic that knows `open`, `read_text`,
   `os.listdir` and the like, not every way to read), and an uncaught error on such a path says
@@ -802,8 +815,10 @@ executable), and what it gets depends on the build:
   code or the script (from the executable) as Python would, interpreter flags such as `-u` or
   `-B` accepted and ignored;
 - built with neither option: it is refused, with exit 70 and a message naming what it asked
-  for and the option. Running the app in its place would make every such child start the app
-  again, and every copy start more: joblib's `n_jobs=2` makes three copies per copy;
+  for and the option, except for a script that is one of the app's own commands (a script of a
+  directory of scripts starting its sibling as `[sys.executable, <exe>/_fsbpyr_scripts/x.py]`),
+  which runs that command as `python x.py` would. Running the app in its place would make every such child start
+  the app again, and every copy start more: joblib's `n_jobs=2` makes three copies per copy;
 - built with `--no-interpreter-reexec` (`interpreter-reexec = false`): it runs the app, with
   these arguments, for an app whose own options are named `-m` or `-c` and which starts itself
   with them. A `-c` whose value is a name or a constant, such as `-c config.toml`, is the app's

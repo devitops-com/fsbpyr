@@ -12,10 +12,11 @@ what is not the project's.
 A directory with no pyproject.toml, setup.py or setup.cfg is packaged the same way (research
 UC6): its Python files are the ``*.py`` files and the extensionless files whose first line is a
 python or ``uv run`` shebang; every file with a main guard or such a shebang is a command, named
-after the file. A file whose name is no Python name (``check-disk``) is stored under a mangled
-module name in the same directory (``check_disk.py``) and still runs as ``__main__``; its
-``__file__`` is that path inside the executable. Dependencies come from requirements.txt or
-pylock.toml, else from the union of the commands' PEP 723 blocks.
+after the file. A file or directory whose name is no Python name (``check-disk``, ``sub-dir/``)
+is stored under a mangled name in the same place (``check_disk.py``, ``sub_dir/``) and still
+runs as ``__main__``; its ``__file__`` is that path inside the executable, and the boot's path
+hook maps the entry ``<exe>/_fsbpyr_scripts/sub-dir`` to ``sub_dir`` by the same rule. Dependencies
+come from requirements.txt or pylock.toml, else from the union of the commands' PEP 723 blocks.
 """
 
 from __future__ import annotations
@@ -349,21 +350,20 @@ def _module_stem(stem: str) -> str:
 def discover_directory(directory: Path) -> tuple[dict[str, bytes], dict[str, str], list[str]]:
     """The Python files of a directory without pyproject.toml: payload path -> content (sorted),
     payload path -> project file, and warnings. A file whose name is no Python name is stored as
-    ``<mangled name>.py`` in its directory; two files with one payload path are an error. Files
-    in directories that are no Python names are reported and left out."""
+    ``<mangled name>.py`` in its directory, a directory that is no Python name under its mangled
+    name; two files with one payload path, or two directories with one mangled name, are an
+    error."""
     sources: dict[str, bytes] = {}
     origins: dict[str, str] = {}
     warnings: list[str] = []
+    folders_of: dict[str, str] = {}  # payload directory -> project directory
     for rel, real, python in _project_files(directory, scripts=True, warnings=warnings):
         if not python:
             with real.open("rb") as handle:
                 if not python_shebang(handle.read(_SHEBANG_HEAD)):
                     continue
-        *folders, leaf = rel.split("/")
-        if not all(part.isidentifier() for part in folders):
-            warnings.append(f"{rel} is not packaged: a directory name is not a valid Python "
-                            "name, so no import reaches it")  # fmt: skip
-            continue
+        *project_folders, leaf = rel.split("/")
+        folders = _payload_folders(project_folders, folders_of)
         stem = _module_stem(leaf.removesuffix(".py"))
         if not python and leaf.isidentifier():  # python3 never imports an extensionless file
             stem = f"_x_{stem}"
@@ -374,7 +374,26 @@ def discover_directory(directory: Path) -> tuple[dict[str, bytes], dict[str, str
                                "for each character that is not one); rename one of them"
                                )  # fmt: skip
         sources[payload], origins[payload] = real.read_bytes(), rel
+    for where, project in folders_of.items():
+        if where != project and f"{where}.py" in sources:
+            raise ProjectError(f"the directory {project} and {origins[where + '.py']} are both "
+                               f"{where} in the executable; rename one of them")
     return dict(sorted(sources.items())), origins, warnings
+
+
+def _payload_folders(folders: list[str], taken: dict[str, str]) -> list[str]:
+    """The payload names of a file's directories (each one that is no Python name mangled);
+    two project directories with one payload path are an error. ``taken`` maps the payload
+    paths seen to their project paths."""
+    payload: list[str] = []
+    for depth, part in enumerate(folders, 1):
+        payload.append(_module_stem(part))
+        where, project = "/".join(payload), "/".join(folders[:depth])
+        if taken.setdefault(where, project) != project:
+            raise ProjectError(f"the directories {taken[where]} and {project} are both {where} "
+                               "in the executable (a name that is no Python name is stored with "
+                               "'_' for each character that is not one); rename one of them")
+    return payload
 
 
 def _pruned(directory: Path, parts: list[str], venvs: dict[str, bool]) -> bool:

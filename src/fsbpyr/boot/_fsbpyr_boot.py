@@ -60,6 +60,17 @@ def _directory(path: str) -> str:
     return path.rpartition("/")[0]
 
 
+def _module_part(part: str) -> str:
+    """A directory name below the scripts root as its payload name: what no identifier holds
+    becomes ``_``, and a name that starts with a digit gets a ``_`` in front (``sub-dir`` ->
+    ``sub_dir``, ``2024-tools`` -> ``_2024_tools``). The rule of ``_module_stem`` in loose.py,
+    which names the directory in the payload."""
+    if part.isidentifier():
+        return part
+    mangled = "".join(char if f"_{char}".isidentifier() else "_" for char in part)
+    return mangled if mangled.isidentifier() else f"_{mangled}"
+
+
 def _is_extension_package(name: str) -> bool:
     """A compiled ``__init__`` (Cython and the like) makes an extension module a package."""
     record = _fsbpyr.find_module(name)
@@ -200,13 +211,17 @@ class PayloadPathFinder:
         self.directory = directory
         self.location = location  # _PREFIX, or an FS_REQUIRED cache prefix
         self._loader = LOADER if location == _PREFIX else PayloadLoader(location)
-        self._prefix = directory.replace("/", ".") + "." if directory else ""
+        # Below the scripts root a directory that is no Python name (``sub-dir``) is stored under
+        # its mangled name (loose.py): the entry is the on-disk name, the payload's is ``sub_dir``.
+        parts = directory.split("/")
+        names = [_module_part(part) for part in parts] if parts[0] == _SCRIPTS[:-1] else parts
+        self._prefix = ".".join(names) + "." if directory else ""
+        self._aliasable = bool(directory) and all(name.isidentifier() for name in names)
 
     def find_spec(self, fullname: str, target: object = None) -> ModuleSpec | None:
         if _directory(fullname.replace(".", "/")) == self.directory:
             return self._spec(fullname, fullname)
-        parts = self.directory.split("/")
-        if not self.directory or not all(part.isidentifier() for part in parts):
+        if not self._aliasable:
             return None
         # An entry below the root (``sys.path.append(<exe>/pkg/_vendor)``): the module is
         # imported by its short name and lives in the payload as ``pkg._vendor.<name>``.
@@ -298,19 +313,35 @@ def _in_fs_package(directory: str) -> bool:
     return any(directory == root or directory.startswith(root + "/") for root in _FS_ROOTS)
 
 
+def _without_dotdot(parts: list[str]) -> list[str] | None:
+    """``parts`` with each ``..`` removed together with the part before it, None if one has no
+    part to remove (the entry names a directory above the root)."""
+    kept: list[str] = []
+    for part in parts:
+        if part != "..":
+            kept.append(part)
+        elif kept:
+            kept.pop()
+        else:
+            return None
+    return kept
+
+
 def path_hook(entry: str) -> PayloadPathFinder:
-    """Claim ``<exe>`` and ``<exe>/<dir>`` (normalizing '', '.' and trailing components), and
-    the same below the native cache's site directory: the files of an extracted FS_REQUIRED
-    package are there, any other directory stands for the payload's (mypyc names the directory
-    its extension was extracted to as the compiled package's ``__path__``, whatever the
-    spec says)."""
+    """Claim ``<exe>`` and ``<exe>/<dir>`` (normalizing '', '.', '..' and trailing components; an
+    entry that climbs above ``<exe>`` is not the payload's), and the same below the native
+    cache's site directory: the files of an extracted FS_REQUIRED package are there, any other
+    directory stands for the payload's (mypyc names the directory its extension was extracted
+    to as the compiled package's ``__path__``, whatever the spec says)."""
     for location in _locations():
         if entry == location[:-1] or entry.startswith(location):
             parts = [part for part in entry[len(location) :].split("/") if part not in ("", ".")]
-            if ".." not in parts:
-                directory = "/".join(parts)
-                served = location if location == _PREFIX or _in_fs_package(directory) else _PREFIX
-                return PayloadPathFinder(directory, served)
+            kept = _without_dotdot(parts) if ".." in parts else parts
+            if kept is None:
+                continue  # it climbs above the executable: not the payload's
+            directory = "/".join(kept)
+            served = location if location == _PREFIX or _in_fs_package(directory) else _PREFIX
+            return PayloadPathFinder(directory, served)
     raise ImportError("not an fsbpyr payload path", path=entry)
 
 
@@ -677,9 +708,9 @@ def _restart() -> None:
 def _interpreter_child(commands: "dict[str, str] | None" = None) -> bool:
     """The app re-executed through ``sys.executable`` with ``-m MODULE``, ``-c CODE`` or a
     script of the payload runs that instead with interpreter-reexec (D23), and is refused
-    without the setting (D44). A start named for one of the ``commands`` of a multi-command
-    executable, under another name than the executable's, is that command's own (owner
-    decision 2026-10-25)."""
+    without the setting (D44), unless the script is one of the app's own commands. A start named
+    for one of the ``commands`` of a multi-command executable, under another name than the
+    executable's, is that command's own (owner decision 2026-10-25)."""
     argv = sys.argv
     flagged = "-m" in argv[1:-1] or "-c" in argv[1:-1]
     if not flagged and not any(arg.startswith(_PREFIX) for arg in argv[1:]):
@@ -691,7 +722,8 @@ def _interpreter_child(commands: "dict[str, str] | None" = None) -> bool:
             return False
     from _fsbpyr_rt.reexec import run_child  # type: ignore[import-not-found]  # noqa: PLC0415
 
-    handled: bool = run_child(argv, INFO["build_info"], _PREFIX)
+    targets = commands.values() if commands is not None else (INFO["entrypoint"],)
+    handled: bool = run_child(argv, INFO["build_info"], _PREFIX, tuple(targets))
     return handled
 
 
