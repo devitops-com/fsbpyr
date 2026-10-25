@@ -672,6 +672,17 @@ def _interpreter_child(commands: "dict[str, str] | None" = None) -> bool:
     return handled
 
 
+def _service_policies() -> None:
+    """JOURNAL_STREAM and SIGTERM as process 1 (D14). The common start costs an environ lookup
+    and a pid check; the rest is imported only when either applies."""
+    journal = posix.environ.get(b"JOURNAL_STREAM")
+    pid = posix.getpid()
+    if journal is not None or pid == 1:
+        from _fsbpyr_rt.service import start  # type: ignore[import-not-found]  # noqa: PLC0415
+
+        start(journal, pid)
+
+
 def run() -> None:
     _locate_frozen_modules()
     sys.path_hooks.insert(0, path_hook)
@@ -700,6 +711,7 @@ def run() -> None:
         from _fsbpyr_rt.commands import parse  # noqa: PLC0415
 
         commands = parse(entrypoint)
+    _service_policies()  # also for the -m/-c helper starts of an app that is process 1
     if _multiprocessing_child() or _interpreter_child(commands):
         return
     collection = posix.environ.get(b"FSBPYR_GC")  # D38: any other value runs the app

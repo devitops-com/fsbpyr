@@ -177,6 +177,13 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   counts it like the other warnings. The bytecode is unchanged.
 
 ### Changed
+- **`JOURNAL_STREAM` line-buffers the journal, and SIGTERM ends an app that is process 1** (D14).
+  When systemd's `JOURNAL_STREAM` (`device:inode`) names the file stdout or stderr is, that stream
+  is line-buffered, so each line reaches the journal as it is printed and survives a SIGTERM;
+  `PYTHONUNBUFFERED` still wins. An app that runs as process 1 (a container without an init) used
+  to ignore SIGTERM, as `python app.py` does, because the kernel drops a signal that process 1 has
+  no handler for; it now exits with status 143, unless the app installed a SIGTERM handler of its
+  own. Neither costs the common start more than an environment lookup and a pid check.
 - **`PYTHONUNBUFFERED` is honoured** (D14). Set and non-empty, it makes an app's stdout and
   stderr unbuffered as CPython does, so a service's log lines reach a pipe as they are printed
   and survive a SIGTERM. It is the only `PYTHON*` variable the apps read.
