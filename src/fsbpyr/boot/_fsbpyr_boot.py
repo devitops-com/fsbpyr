@@ -10,6 +10,13 @@ The payload appears to Python as one virtual directory tree rooted at the execut
 ``sys.path == [<exe>]`` and module ``a.b`` has ``__file__ == <exe>/a/b.py``. A path hook claims
 ``<exe>`` and every ``<exe>/<dir>`` entry, so the stock PathFinder resolves packages, namespace
 packages and subpackages exactly as it does for a site-packages directory.
+
+The one exception is the scripts root (``_fsbpyr_scripts/``, the project's own files, loose.py):
+a module of it appears next to the executable, ``__file__ == <dir of exe>/<path below the root>``,
+as it does beside a script run by path, so that the files a script reads next to ``__file__``
+(config, state, logs) are the host's, deployed beside the executable (owner decision 2026-10-25,
+D24). The code is still the payload's: the path hook claims those directories too and code
+objects keep the payload's ``co_filename``, so tracebacks show the payload's source.
 """
 
 import _imp
@@ -40,12 +47,17 @@ INFO = _fsbpyr.info()
 ROOT = INFO["executable"]
 _PREFIX = ROOT + "/"
 _SCRIPTS = "_fsbpyr_scripts."  # the root of a project without a build system (loose.py)
+_SCRIPTS_DIR = _SCRIPTS[:-1] + "/"
+_BIN = ROOT.rpartition("/")[0] + "/"  # the executable's directory: where scripts appear to live
 _INTERNAL = ("_fsbpyr_boot", "_fsbpyr_rt")  # boot code, hidden from module listings
 # Modules adjusted right after they load (_fsbpyr_rt.fixups): CA store fallback, multiprocessing
 # children started from this very binary, bundled libraries by bare name, parso's file times,
 # cv2's loader.
 _FIXUPS = frozenset({"ssl", "multiprocessing.spawn", "ctypes", "parso.file_io",
                      "cv2.load_config_py3"})  # fmt: skip
+_SCRIPT_APP = _SCRIPTS in INFO["entrypoint"]  # some command is a script of the scripts root
+if sys.version_info >= (3, 14) and _SCRIPT_APP:
+    _FIXUPS |= {"argparse"}  # prog of a script started by the path its __file__ is
 # The native cache's site directory (with "/"), once an FS_REQUIRED package was extracted
 # there: modules of such packages live below it, and the path hook claims it too.
 _FS_PREFIXES: list[str] = []
@@ -69,6 +81,14 @@ def _module_part(part: str) -> str:
         return part
     mangled = "".join(char if f"_{char}".isidentifier() else "_" for char in part)
     return mangled if mangled.isidentifier() else f"_{mangled}"
+
+
+def _shown(prefix: str, path: str) -> str:
+    """Where the module whose payload path is ``path`` appears to live: a module of the scripts
+    root next to the executable, any other below ``prefix``."""
+    if prefix == _PREFIX and path.startswith(_SCRIPTS_DIR):
+        return _BIN + path[len(_SCRIPTS_DIR) :]
+    return prefix + path
 
 
 def _is_extension_package(name: str) -> bool:
@@ -130,10 +150,13 @@ class PayloadLoader(_LoaderBase):
         return self._record(fullname)[1] == PACKAGE
 
     def get_filename(self, fullname: str) -> str:
-        return self.prefix + self._record(fullname)[7]
+        return _shown(self.prefix, self._record(fullname)[7])
 
     def get_data(self, path: str) -> bytes:
         """``pkgutil.get_data`` and ``open(os.path.join(dirname(__file__), ...))`` emulation."""
+        if self.prefix == _PREFIX and path.startswith(_BIN) and not path.startswith(_PREFIX):
+            # a script's __file__-relative path
+            path = _PREFIX + _SCRIPTS_DIR + path[len(_BIN) :]
         prefix = next((p for p in (_PREFIX, self.prefix) if path.startswith(p)), None)
         record = _fsbpyr.find_file(path[len(prefix) :]) if prefix is not None else None
         if record is None:
@@ -264,7 +287,7 @@ class PayloadPathFinder:
         spec = ModuleSpec(
             fullname,
             loader,
-            origin=location + path,
+            origin=_shown(location, path),
             loader_state=record,
             is_package=kind == PACKAGE,
         )
@@ -327,12 +350,30 @@ def _without_dotdot(parts: list[str]) -> list[str] | None:
     return kept
 
 
+def _overlay_finder(entry: str) -> PayloadPathFinder | None:
+    """The finder of a directory of the scripts root as it appears next to the executable
+    (``<dir of exe>/<dir below the root>``, ``_shown``), or None for any other entry: the code
+    is the payload's, so that a stale ``.py`` copy on the disk never shadows it. The host's
+    other files in those directories are not looked at."""
+    if entry != _BIN[:-1] and not entry.startswith(_BIN):
+        return None
+    parts = [part for part in entry[len(_BIN) :].split("/") if part not in ("", ".")]
+    kept = _without_dotdot(parts) if ".." in parts else parts
+    if kept is None:
+        return None
+    record = _fsbpyr.find_module(".".join([_SCRIPTS[:-1], *map(_module_part, kept)]))
+    if record is None or record[1] not in (PACKAGE, NAMESPACE):
+        return None
+    return PayloadPathFinder("/".join([_SCRIPTS_DIR[:-1], *kept]))
+
+
 def path_hook(entry: str) -> PayloadPathFinder:
     """Claim ``<exe>`` and ``<exe>/<dir>`` (normalizing '', '.', '..' and trailing components; an
     entry that climbs above ``<exe>`` is not the payload's), and the same below the native
     cache's site directory: the files of an extracted FS_REQUIRED package are there, any other
     directory stands for the payload's (mypyc names the directory its extension was extracted
-    to as the compiled package's ``__path__``, whatever the spec says)."""
+    to as the compiled package's ``__path__``, whatever the spec says). A directory next to the
+    executable that is a directory of the scripts root is claimed too (``_overlay_finder``)."""
     for location in _locations():
         if entry == location[:-1] or entry.startswith(location):
             parts = [part for part in entry[len(location) :].split("/") if part not in ("", ".")]
@@ -342,6 +383,8 @@ def path_hook(entry: str) -> PayloadPathFinder:
             directory = "/".join(kept)
             served = location if location == _PREFIX or _in_fs_package(directory) else _PREFIX
             return PayloadPathFinder(directory, served)
+    if (finder := _overlay_finder(entry)) is not None:
+        return finder
     raise ImportError("not an fsbpyr payload path", path=entry)
 
 
@@ -503,8 +546,24 @@ def _inside_executable_note(exc: BaseException | None) -> str | None:
         filename = exc.filename if isinstance(exc, OSError) else None
         if isinstance(filename, str) and filename.startswith(_PREFIX):
             return _note_for(filename)
+        if (
+            isinstance(exc, FileNotFoundError)
+            and isinstance(filename, str)
+            and filename.startswith(_BIN)
+            and _overlay_finder(filename.rpartition("/")[0]) is not None
+        ):
+            return _deploy_note(filename)
         exc = exc.__cause__ or exc.__context__
     return None
+
+
+def _deploy_note(filename: str) -> str:
+    """The D24 note for a file that is not there, below the executable's directory, in an app of
+    scripts: a script reads the files next to its ``__file__`` from there (``_shown``)."""
+    return (
+        f"fsbpyr: {filename} is missing; the files a script reads next to its __file__ are read "
+        f"next to the executable, from {_BIN}: deploy it there\n"
+    )
 
 
 def _note_for(filename: str) -> str:
@@ -512,11 +571,11 @@ def _note_for(filename: str) -> str:
     regular package (one with an ``__init__.py``) and nothing else: not a namespace directory,
     not a flat module, not the scripts root."""
     parts = filename[len(_PREFIX) :].split("/")
-    if parts[0] == _SCRIPTS[:-1]:  # a script's __file__ is its path in the payload
+    if parts[0] == _SCRIPTS[:-1]:  # a script's __file__ is its path next to the executable
         return (
             f"fsbpyr: {filename} is inside the executable, which holds the project's Python "
-            "files only and not the files next to a script; read the file from a path outside "
-            "the executable\n"
+            "files only; the files a script reads next to its __file__ are read next to the "
+            f"executable, from {_shown(_PREFIX, '/'.join(parts))}: deploy the file there\n"
         )
     record = _fsbpyr.find_module(parts[0])
     if record is None or record[1] not in (PACKAGE, NAMESPACE):  # <exe>/x.conf, a flat module's
@@ -553,10 +612,12 @@ def _resolve(entrypoint: str) -> object:
 
 def _script_directory(entrypoint: str) -> None:
     """A target below the scripts root runs as `python dir/script.py` does: the directory of
-    its module comes first on sys.path, so its siblings import."""
+    its module comes first on sys.path, so its siblings import. That directory is where
+    ``__file__`` says (``_shown``): next to the executable."""
     if entrypoint.startswith(_SCRIPTS):
         module = entrypoint.partition(":")[0]
-        sys.path.insert(0, _PREFIX + module.rpartition(".")[0].replace(".", "/"))
+        below = module.rpartition(".")[0].removeprefix(_SCRIPTS[:-1]).replace(".", "/")
+        sys.path.insert(0, _BIN + below[1:] if below else _BIN[:-1] or "/")
 
 
 def _check_entrypoint(entrypoint: str) -> None:
@@ -713,7 +774,8 @@ def _interpreter_child(commands: "dict[str, str] | None" = None) -> bool:
     executable's, is that command's own (owner decision 2026-10-25)."""
     argv = sys.argv
     flagged = "-m" in argv[1:-1] or "-c" in argv[1:-1]
-    if not flagged and not any(arg.startswith(_PREFIX) for arg in argv[1:]):
+    roots = (_PREFIX, _BIN) if _SCRIPT_APP else _PREFIX  # a script is named by its __file__
+    if not flagged and not any(arg.startswith(roots) for arg in argv[1:]):
         return False  # the common case costs three scans of argv
     if commands is not None:
         from _fsbpyr_rt.commands import is_sibling  # type: ignore[import-not-found]  # noqa: PLC0415
@@ -723,7 +785,8 @@ def _interpreter_child(commands: "dict[str, str] | None" = None) -> bool:
     from _fsbpyr_rt.reexec import run_child  # type: ignore[import-not-found]  # noqa: PLC0415
 
     targets = commands.values() if commands is not None else (INFO["entrypoint"],)
-    handled: bool = run_child(argv, INFO["build_info"], _PREFIX, tuple(targets))
+    overlay = _BIN if _SCRIPT_APP else None
+    handled: bool = run_child(argv, INFO["build_info"], _PREFIX, tuple(targets), overlay)
     return handled
 
 

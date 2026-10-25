@@ -120,7 +120,11 @@ target without `:attr` is run as `__main__` and the selftest only finds it, neve
 directory below `_fsbpyr_scripts` whose name is no Python name (`sub-dir`) is recorded under its
 mangled name (`sub_dir`: each character no identifier holds becomes `_`, a leading `_` for a
 digit, the rule for file names); the path hook maps an entry named by the on-disk name to the
-recorded one, so modules are still looked up by exact dotted names. No format change.
+recorded one, so modules are still looked up by exact dotted names. A module of this root has
+`__file__` and `spec.origin` `<dir of the executable>/<path below the root>` (a file next to the
+executable, D24), and the path hook claims those directories too, so the code is the payload's
+while the files a script reads next to `__file__` are the host's; its code objects keep the
+payload's `co_filename`. No format change.
 
 All offsets inside the payload are relative to the payload start. The value `0xFFFFFFFF`
 (`NONE`) means "no reference" in every u32 index field.

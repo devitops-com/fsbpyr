@@ -224,7 +224,23 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - **The uncaught-error note for a file below the executable says when `--fs-package` does not
   apply.** A top-level module that reads `<exe>/x.conf` (the path is no module) now gets a note, a
   namespace directory is told to get an `__init__.py` first (a regular package below it is named),
-  and the note for a script says the executable holds Python files only.
+  and the note for a script says where the file is read (next to the executable, see below).
+- **A script's `__file__` is next to the executable, and what it reads there is the host's file**
+  (D24; the owner reversed decision 5.7(a) on 2026-10-25). For the scripts of a project without a
+  build system, a directory of scripts and a single script, `__file__` and `spec.origin` are the
+  executable's directory plus the file's path in the project (`/opt/tools/sub/x.py`), where they
+  were `<exe>/_fsbpyr_scripts/sub/x.py`, so `open(os.path.join(os.path.dirname(__file__),
+  "config.ini"))` reads the `config.ini` deployed beside the binary, as beside a script run by
+  path. The code is still the executable's: the path hook claims those directories too, so a
+  stale `.py` copy beside the binary is never imported and `sys.path.append(dirname(__file__) +
+  "/pylib")` serves the packaged `pylib`; code objects keep the payload file name, so a traceback
+  shows the packaged source lines. Packaged projects are unchanged. A `name.py` link started by
+  its own path keeps `argparse`'s prog the file's name on 3.14.9 and later, a sibling started as
+  `[sys.executable, <its __file__>]` is still the app's own command, and the build's report of
+  reads next to `__file__`, the uncaught-error note for a missing file there and README
+  say to deploy the file beside the binary. The script's own source is no file there:
+  `open(__file__)` fails unless a copy is deployed. A start pays a string check; the rest is
+  imported only by scripts that use it.
 - **A project without a build system whose `[project.scripts]` point into `src/`** must name
   `_fsbpyr_scripts.src.pkg.mod:main`; the build says so. It built through setuptools before.
 - **The smoke test of a `module` or inferred entry runs that module's top-level code on the

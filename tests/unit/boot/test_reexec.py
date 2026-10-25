@@ -301,3 +301,27 @@ def test_a_payload_path_that_is_no_module_runs_the_app(
     argv = [EXE, f"{tmp_path}/nowhere/tool.py"]
 
     assert reexec.run_child(argv, ON, f"{tmp_path}/") is False
+
+
+def test_a_script_is_named_by_the_path_it_says_it_lives_at(
+    reexec: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In an app of scripts a module's ``__file__`` is next to the executable (owner decision
+    2026-10-25): a child started with that path, or with the path inside the executable, runs it."""
+    shown = {"_fsbpyr_scripts.tools.probe": "/srv/bin/tools/probe.py"}
+    monkeypatch.setattr(
+        reexec.importlib.util, "find_spec",
+        lambda name: types.SimpleNamespace(origin=shown[name]) if name in shown else None,
+    )  # fmt: skip
+    argv = [EXE, "-u", "/srv/bin/tools/probe.py", "a"]
+
+    assert reexec.child_command(argv, "/srv/bin/app/", "/srv/bin/") == (
+        "script", "/srv/bin/tools/probe.py", ["a"])
+    assert reexec._script_module("/srv/bin/tools/probe.py", "/srv/bin/app/", "/srv/bin/") == (
+        "_fsbpyr_scripts.tools.probe")
+    assert reexec._script_module(
+        "/srv/bin/app/_fsbpyr_scripts/tools/probe.py", "/srv/bin/app/", "/srv/bin/"
+    ) == "_fsbpyr_scripts.tools.probe"  # fmt: skip
+    # a file of the host that is no script of the payload is the app's own argument
+    assert reexec.child_command([EXE, "/srv/bin/other.py"], "/srv/bin/app/", "/srv/bin/") is None
+    assert reexec.child_command(argv, "/srv/bin/app/") is None  # not an app of scripts

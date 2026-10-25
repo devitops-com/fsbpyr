@@ -222,7 +222,7 @@ def test_a_file_below_a_directory_that_is_no_python_name_is_reported(
     assert "sub-dir/c.py is not packaged" in capsys.readouterr().err
 
 
-def test_reading_a_file_next_to_a_script_does_not_advise_fs_package(
+def test_a_file_next_to_a_script_is_read_beside_the_executable(
     tmp_path: Path, runtime: Runtime
 ) -> None:
     source = ("from pathlib import Path\n\nif __name__ == '__main__':\n"
@@ -233,6 +233,8 @@ def test_reading_a_file_next_to_a_script_does_not_advise_fs_package(
     assert _build(project) == 0
 
     result = _run(tmp_path / "out" / "app", tmp_path)
-    assert result.returncode == 1 and "NotADirectoryError" in result.stderr
-    assert "holds the project's Python files only" in result.stderr
+    assert result.returncode == 1 and "FileNotFoundError" in result.stderr
+    assert f"{tmp_path / 'out'}/data.json is missing" in result.stderr
     assert "--fs-package" not in result.stderr
+    (tmp_path / "out" / "data.json").write_text('{"host": 1}')
+    assert _run(tmp_path / "out" / "app", tmp_path).stdout == '{"host": 1}\n'

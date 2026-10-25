@@ -403,7 +403,7 @@ def test_multiprocessing_children_of_a_script_command_work(
     assert (result.returncode, result.stdout) == (0, "[1, 4, 9]\n"), result.stderr
 
 
-def test_a_file_read_next_to_a_script_is_reported_and_the_error_says_where_it_is(
+def test_a_file_read_next_to_a_script_is_reported_and_read_next_to_the_executable(
     tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
 ) -> None:
     directory = _write(tmp_path / "ops", {
@@ -417,8 +417,10 @@ def test_a_file_read_next_to_a_script_is_reported_and_the_error_says_where_it_is
 
     err = capsys.readouterr().err
     assert "reader.py:5: reads a file next to its own __file__" in err
+    assert "read next to the executable" in err
     result = _run(directory / "dist" / "reader", tmp_path)
     assert result.returncode == 1
-    assert "NotADirectoryError" in result.stderr
-    assert "holds the project's Python files only" in result.stderr
+    assert "FileNotFoundError" in result.stderr
+    assert f"{directory / 'dist'}/x.conf is missing" in result.stderr
+    assert "deploy it there" in result.stderr
     assert "--fs-package" not in result.stderr

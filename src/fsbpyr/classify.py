@@ -581,15 +581,15 @@ class _Collector:
         self._hint_executables()
 
     def _hint_script_reads(self) -> None:
-        """The reads next to ``__file__`` in the project's scripts (decision 5.7(a)): the
-        executable holds their Python files only, so a file they read there is not in it."""
+        """The reads next to ``__file__`` in the project's scripts (decision 5.7(a), reversed
+        2026-10-25: their ``__file__`` is next to the executable): the executable holds their
+        Python files only, so a file they read there is the host's, deployed beside it."""
         for _, rel, line in sorted(self.reads):
             if rel.startswith(f"{ROOT}/"):
                 self.warnings.append(
                     f"{self._shown(rel)}:{line}: reads a file next to its own __file__, which "
-                    "the executable does not hold (only the project's Python files are "
-                    "packaged, and __file__ is a path inside the executable): keep the file "
-                    "outside it, next to the binary for instance, and read it from there"
+                    "is read next to the executable (the executable holds only the project's "
+                    "Python files): deploy the file there, beside the binary"
                 )
 
     def _hint_file_reads(self) -> None:

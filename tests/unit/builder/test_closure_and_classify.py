@@ -836,7 +836,7 @@ def test_reads_next_to_file_in_the_scripts_root_are_always_reported_by_project_f
 
     reads = [w for w in content.warnings if "next to its own __file__" in w]
     assert [w.partition(": ")[0] for w in reads] == ["check-disk:2", "sub/plain.py:2"]
-    assert "does not hold" in reads[0] and "outside it" in reads[0]
+    assert "read next to the executable" in reads[0] and "beside the binary" in reads[0]
     assert not [w for w in content.warnings if "these packages read files" in w]  # no --hints
 
 

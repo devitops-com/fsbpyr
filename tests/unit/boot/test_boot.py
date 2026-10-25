@@ -64,7 +64,12 @@ def test_every_module_with_a_fixup_is_listed(boot: ModuleType) -> None:
     """The boot module names them without importing _fsbpyr_rt.fixups."""
     fixups = importlib.import_module("_fsbpyr_rt.fixups")
 
-    assert set(fixups.FIXUPS) == boot._FIXUPS
+    assert set(fixups.FIXUPS) - {"argparse"} == boot._FIXUPS - {"argparse"}  # argparse: scripts
+
+
+def test_argparse_is_fixed_up_only_in_apps_of_scripts(boot: ModuleType) -> None:
+    """Where 3.14 and later give a script run by its file path a ``-m`` prog (fixups)."""
+    assert "argparse" not in boot._FIXUPS and boot._SCRIPT_APP is False
 
 
 def test_path_hook_claims_only_payload_paths(boot: ModuleType) -> None:
@@ -576,7 +581,8 @@ def test_the_note_for_the_scripts_root_does_not_advise_fs_package(
     note = _note(boot, monkeypatch, f"{boot.ROOT}/_fsbpyr_scripts/sub/x.conf",
                  _fsbpyr_scripts=boot.NAMESPACE)  # fmt: skip
 
-    assert "holds the project's Python files only" in note and "outside the executable" in note
+    assert "holds the project's Python files only" in note and "deploy the file there" in note
+    assert f"from {boot.ROOT.rpartition('/')[0]}/sub/x.conf" in note
     assert "--fs-package" not in note
 
 

@@ -283,8 +283,10 @@ setuptools' legacy fallback. A uv workspace root (`[tool.uv.workspace]`) keeps i
   stores such a file under a module name instead).
 - **At run time** a script runs as `__main__` with its directory first on `sys.path` and
   `sys.argv` as given, so `import utils` finds a sibling `utils.py` or `utils/`, as under
-  `uv run`. `__file__` is a path below `<exe>/_fsbpyr_scripts/`, inside the executable: a script
-  that reads files next to it fails ([docs/compatibility.md](docs/compatibility.md)).
+  `uv run`. `__file__` is the file's path below the executable's directory (`/opt/tools/main.py` for
+  `main.py` of the project, with the executable in `/opt/tools`), so a file the script reads next
+  to it is the host's, deployed beside the executable ("Files next to a script" below,
+  [docs/compatibility.md](docs/compatibility.md)).
 - **The smoke test only finds the scripts,** it does not import them: their top-level code does
   the work (deploy, delete, restart). For a `--entry module` build, an inferred guarded module
   and a `module:function` entry the smoke test imports the module, which runs its top-level code
@@ -348,7 +350,7 @@ bundled on any system.
   of a name that starts with a digit (`check_disk.py`, `_10_backup.py`); two files that give one
   name fail the build, naming both. An extensionless file with a Python name (`queue`) gets `_x_`
   in front (`_x_queue.py`), since `python3` never imports such a file and it must not shadow the
-  standard library for its siblings. It runs as `__main__`, and its `__file__` is that path inside
+  standard library for its siblings. It runs as `__main__`, and its `__file__` is that path next to
   the executable. Files with Python names keep them, so `import util` finds the `util.py` next to
   the script. A directory whose name is no Python name (`sub-dir/`, `2024-tools/`) is stored under
   the name made the same way (`sub_dir/`, `_2024_tools/`), and so are the Python files below it:
@@ -389,11 +391,24 @@ bundled on any system.
   __file__>])` gets that command (exit status and output as `python sibling.py` gives them, its
   directory first on `sys.path`) and is not refused as a helper interpreter ("Helper
   interpreters").
-- **Files next to a script** are not in the executable. The build warns for each read next to
-  `__file__` it finds in the scripts (`file:line`; a heuristic that knows `open`, `read_text`,
-  `os.listdir` and the like, not every way to read), and an uncaught error on such a path says
-  the executable holds Python files only. Keep the file outside the executable, next to it for
-  instance, and read it from there.
+- **Files next to a script** are the host's, not the executable's. A script's `__file__` is where
+  the script would be beside the executable (the executable's directory and the file's path in the
+  project: `/opt/tools/sub/x.py` for `sub/x.py` with the executable in `/opt/tools`), so
+  `open(os.path.join(os.path.dirname(__file__), "config.ini"))` reads the
+  `config.ini` deployed beside the executable (config, state, logs), and the build tree's copy
+  is never read. The code is still the executable's: a stale `check-disk.py` left beside the
+  binary by an earlier copy deployment is never imported, 
+  `sys.path.append(os.path.dirname(__file__) + "/pylib")` serves the executable's `pylib`, and a traceback shows the source lines of the
+  build. A file or directory that is no Python name is deployed under its stored name
+  (`sub_dir/`, `check_disk.py`). The executable holds the project's Python files only, so the data
+  files must be put beside it: the build warns for each read next to `__file__` it finds in the
+  scripts (`file:line`; a heuristic that knows `open`, `read_text`, `os.listdir` and the like, not
+  every way to read), and an uncaught `FileNotFoundError` below the executable's directory says the
+  file is read there. The script's own source is not a file there (`open(__file__)` fails unless a
+  copy is deployed): use `importlib.resources` or the loader's `get_source`; `inspect.getsource`
+  works too, but shows a copy deployed beside the executable instead of the payload's source. A
+  package of the project (a project with a build system) is not affected: its `__file__` is below
+  the executable, `--fs-package` applies.
 - **Deploy:** the build prints how to install the result on a host, for example
   `install -m 755 dist/ops-scripts "$DEST"/ops-scripts` and `for c in check-disk check_mem; do ln -sf
   ops-scripts "$DEST/$c"; done`. A crontab, unit or agent line such as
