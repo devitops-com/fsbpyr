@@ -29,6 +29,12 @@ LIBRARY = (
 UV = shutil.which("uv")
 
 
+@pytest.fixture(autouse=True)
+def _no_active_venv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The venv rung reads $VIRTUAL_ENV too; the one these tests run in must not supply pins."""
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+
+
 def _write(root: Path, files: Mapping[str, str]) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     for rel, text in files.items():
@@ -203,6 +209,33 @@ def test_an_import_nothing_provides_skips_the_script_with_the_freeze_hint(
 
 
 needs_uv = pytest.mark.skipif(UV is None, reason="needs uv")
+
+
+@needs_uv
+def test_a_venv_beside_a_script_with_no_block_supplies_the_pins(
+    tmp_path: Path, runtime: Runtime
+) -> None:
+    directory = _write(tmp_path / "ops", {
+        "show.py": "from markdown_it import MarkdownIt\n\nif __name__ == '__main__':\n"
+        "    print('show', MarkdownIt().render('*x*').strip())\n",
+    })  # fmt: skip
+    assert UV is not None
+    subprocess.run([UV, "venv", "--quiet", "--python", sys.executable, str(directory / "venv")],
+                   check=True)  # fmt: skip
+    subprocess.run([UV, "pip", "install", "--offline", "--quiet", "--python",
+                    str(directory / "venv" / "bin" / "python"), "markdown-it-py"],
+                   check=True)  # fmt: skip
+
+    code, _, err = _build(directory / "show.py", tmp_path / "out" / "show", "--offline")
+
+    assert code == 0, err
+    assert "the versions in venv were read as files" in err
+    assert "`uv pip freeze --python venv/bin/python` lists them for the '# /// script' block" in err
+    assert "requirements.txt" not in err
+    result = _run(tmp_path / "out" / "show", tmp_path)
+    assert (result.returncode, result.stdout) == (0, "show <p><em>x</em></p>\n"), result.stderr
+    assert _build(directory / "show.py", tmp_path / "out" / "strict", "--offline",
+                  "--strict")[0] == 1  # fmt: skip
 
 
 @needs_uv

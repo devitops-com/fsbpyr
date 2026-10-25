@@ -6,6 +6,7 @@ import re
 import sys
 import tempfile
 import types
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -171,7 +172,10 @@ def _staged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sources: dict[str, 
             (plan.site / rel).parent.mkdir(parents=True, exist_ok=True)
         _installed(plan.site, "app", "py3-none-any",
                    {rel: text.encode() for rel, text in sources.items()})  # fmt: skip
-        return plan.wheel_dir / "app-1-py3-none-any.whl"
+        wheel = plan.wheel_dir / "app-1-py3-none-any.whl"
+        wheel.parent.mkdir(parents=True, exist_ok=True)
+        zipfile.ZipFile(wheel, "w").close()  # an empty wheel: the build reads its .data/scripts
+        return wheel
 
     monkeypatch.setattr("fsbpyr.build.run_plan", run_plan)
     return project

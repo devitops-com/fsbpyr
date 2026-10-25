@@ -91,12 +91,16 @@ symptom and its remedy.
   executable with all of them (see "Several commands in one executable"). A project with a
   `[project]` table and no `[build-system]` builds from its Python files (see "Projects without a
   build system"), and so does a directory of scripts with no project file at all ("A directory of
-  scripts"); `fsbpyr build FILE` builds one script ("A single script"). Legacy `setup.py` `scripts=` files are not packaged (the build warns). And a
+  scripts"); `fsbpyr build FILE` builds one script ("A single script"). A directory with no Python
+  file and a requirements file builds the tools the file names ("A tool from its requirements
+  file"). Legacy `scripts=` files that start with `#!python` in the project's wheel are commands
+  too ("Legacy scripts"); other legacy scripts are not packaged (the build warns). And a
   `requires-python`, if it sets one, that admits one of 3.12 to 3.15 (see "Which Python").
 - **Lock sources,** the first one found: a requirements file that `--requirements` or
   `requirements` names, `uv.lock` (the project's or its uv workspace's), `pylock.toml`,
-  `requirements.txt`. With none, the build resolves the dependencies itself and warns that it
-  is not reproducible. From `uv.lock`, dependency groups (`dev` among them) are not packaged.
+  `requirements.txt`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`. With none, the build resolves
+  the dependencies itself and warns that it is not reproducible. From `uv.lock`, dependency
+  groups (`dev` among them) are not packaged. See "Poetry and PDM locks" and "Pipfile.lock".
 
 ## Supported targets
 
@@ -132,8 +136,8 @@ The build host needs [uv](https://docs.astral.sh/uv/) on `PATH`, and network acc
 time (uv fetches the Python it builds with and the locked dependencies; later builds work from its cache, or
 with `--offline`). git is optional: with it, the executable records the commit it was built
 from. The output defaults to `dist/<console-script-name>` (`dist/<project name>` for several
-commands, `dist/<directory name>` for a directory of scripts, `dist/<file stem>` beside a single
-script). A directory of scripts or a single script is built with no project file at all; the sections
+commands, `dist/<directory name>` for a directory of scripts or a tool binary, `dist/<file stem>`
+beside a single script). A directory of scripts or a single script is built with no project file at all; the sections
 "Projects without a build system", "A directory of scripts" and "A single script" below say how.
 
 uv picks wheels that run on glibc 2.34 (manylinux_2_34; manylinux_2_28 with `--glibc 2.28`). A dependency without one is built
@@ -246,6 +250,92 @@ Things to know:
 - All links of an executable share one instance limit (`FSBPYR_MAX_INSTANCES`, "At run time").
 - `fsbpyr inspect` shows the commands and what each runs.
 
+### Legacy scripts
+
+The files that a project's `setup.py` installs with `scripts=` (or setuptools' `script-files`)
+are Python scripts when the wheel holds them with the first line `#!python`: setuptools writes
+that for a file that starts with `#!/usr/bin/env python`, and an installer rewrites it to its
+interpreter, so the build reads the wheel. Each is a command named after the file (hyphens
+kept) beside the console scripts: with only legacy scripts the build makes the executable from
+them, with several commands it makes the links of "Several commands in one executable", and a
+name that is also a console script fails the build, naming both. A script runs as `python
+script` runs it: as `__main__`, `argv[0]` the path it was started by, with its own directory first
+on `sys.path`, and the project's package imports. The source is stored in the executable under a
+module name (`check-disk` as `check_disk.py`, a name without `.py` that is an identifier, `tool`,
+as `_x_tool.py`); as for the scripts of a directory, `__file__` is that name next to the
+executable, and the files deployed beside the executable are the ones the script reads. A legacy script that does not start with `#!python` (a shell script)
+is not packaged; the build warns, naming it.
+
+### Poetry and PDM locks
+
+A project with a `poetry.lock` (any lock-version) or a `pdm.lock` (lock_version 4) is a locked
+build. fsbpyr reads the lock, never writes into the project, and gives uv a requirements
+file made in its staging directory: the main (Poetry) or default (PDM) group, markers evaluated
+for the Python and platform the app is built for, and every hash the lock lists for a package,
+with `--require-hashes` when every package has one. Dev groups are not packaged. `--extra NAME`
+adds the packages of the lock's extra (Poetry's `[extras]`, PDM's group of that name); an extra
+the lock lacks is an error. They rank after `requirements.txt`: a requirements file beside
+the lock, or `--requirements`, wins, and so does a `uv.lock`.
+
+- **Poetry 1.5 to 1.8** (lock-version 2.0) record no group per package. fsbpyr starts from the
+  pyproject's `[tool.poetry.dependencies]` (or `[project.dependencies]`) and follows the
+  dependencies the lock records, so dev-only packages stay out. A `python =` constraint on a
+  dependency must be a PEP 440 specifier (`<3.12`), not `^3.12`: the build says which dependency.
+- **PDM** (lock_version 4) needs the group of each package: a lock made with the
+  `inherit_metadata` strategy, or a lock that holds the default group only. Otherwise the build
+  stops and says to lock again or to pass a requirements file.
+- **Path, VCS and URL entries.** A path dependency is installed as a regular package, as for a
+  requirements file, from the path the lock names (relative to the project). A VCS entry keeps
+  its commit (`resolved_reference` or `revision`). A URL entry keeps its hash. These have no hash
+  to require, so uv checks the hashes of the other packages and does not demand one of these.
+- **Refused, naming the entry:** a package from another package index (the credentials are not
+  in the lock; pass a requirements file with `--requirements`), a VCS entry that pins no commit, a
+  path that does not exist, and a package locked at two versions that both apply to the target.
+- **A lock older than the dependencies** (Poetry's `content-hash`, PDM's `content_hash` differ
+  from the pyproject's) is a warning, and an error with `--strict`; the build still installs the
+  lock as it is.
+
+`fsbpyr inspect` shows the lock as `poetry.lock sha256:...` or `pdm.lock sha256:...`, and the JSON
+`build_info` records the kind and, for each distribution, the hash of the locked wheel.
+
+### Pipfile.lock
+
+A `Pipfile.lock` is a locked build the same way, for a project and for a directory of scripts
+(a legacy Pipenv app is usually a directory of code with no `pyproject.toml`; unlike
+`poetry.lock` and `pdm.lock`, the lock is read there). fsbpyr installs the lock's `default`
+section, never `develop`, with each entry's pinned version, every hash and its markers
+evaluated for the app's Python and platform, and `--require-hashes` when every entry has
+hashes. It ranks last of the lock sources (after `uv.lock`, `pylock.toml`, `requirements.txt`,
+`poetry.lock` and `pdm.lock`): a requirements file beside it, or `--requirements`, wins. A lock
+is complete, so `--extra` adds nothing.
+
+- **The Python.** `_meta.requires` (`python_version = "3.12"`, or `python_full_version`) chooses
+  the Python as a `requires-python` for that minor version would ("Which Python"). `--python`,
+  `python` in `[tool.fsbpyr]` and a `.python-version` outrank it, with no error. A version
+  fsbpyr cannot build for is a warning, and the rule goes on without it.
+- **A lock older than the Pipfile** (`_meta.hash` is not the Pipfile's hash) is a warning, and
+  an error with `--strict`; the build still installs the lock as it is. Without a Pipfile there
+  is nothing to compare. The hash is computed as Pipenv's `plette` library does it; the formula
+  was written from that code and has not been checked against a lock that Pipenv wrote.
+- **Other indexes.** An entry whose `index` is a `[[source]]` that is not PyPI installs from the
+  indexes uv is configured with (`UV_INDEX_URL`, `UV_EXTRA_INDEX_URL`, `uv.toml`), not from the
+  lock's URL, which may name credentials by variable; the lock's hashes decide whether uv found
+  the same files, and the build says which packages and hosts. `--strict` does not count the
+  note.
+- **Git, file and path entries.** A `git` entry keeps its `ref`, which must be a commit. A
+  `file` entry keeps its hash. A `path` entry is installed as a regular package, `editable` or
+  not, as for a requirements file; a path that does not exist, a `ref` that is no commit, a
+  version that is not `==`, and `hg`, `svn` and `bzr` entries are refused, naming the entry. A
+  `path` entry that is the project itself (`pipenv install -e .`) is not installed: fsbpyr
+  installs the project's own wheel.
+- **A tool binary.** A directory with a `Pipfile.lock` and no Python file builds the tools in
+  the Pipfile's `[packages]` ("A tool from its requirements file"); without a Pipfile, a lock
+  names its dependencies too, and the tools are the packages no other package of the lock
+  needs.
+
+`fsbpyr inspect` shows the lock as `Pipfile.lock sha256:...`. A Pipfile.lock's hashes have no file
+names, so the JSON `build_info` has no `artifact_sha256` for its distributions.
+
 ### Projects without a build system
 
 A project with a `[project]` table and no `[build-system]` is what `uv init --no-package` writes
@@ -267,10 +357,11 @@ setuptools' legacy fallback. A uv workspace root (`[tool.uv.workspace]`) keeps i
 - **How it is built:** fsbpyr writes the project's wheel itself (the Python files under a
   reserved top-level directory `_fsbpyr_scripts/`), runs no project code and writes nothing into
   the source tree. Two builds of one tree are the same bytes. The dependencies come from
-  `uv.lock` as for any project; without one, `[project.dependencies]` (and the `--extra`s) are
-  resolved now, with the warning for an unlocked build. `poetry.lock` and `pdm.lock` are not
-  read, nor is Poetry 1's `[tool.poetry.dependencies]`; a `.venv` is never read for undeclared
-  dependencies.
+  `uv.lock` as for any project, or `poetry.lock` / `pdm.lock` / `Pipfile.lock` ("Poetry and PDM
+  locks", "Pipfile.lock"); without a lock, `[project.dependencies]` (and the `--extra`s) are resolved now, with the warning for an
+  unlocked build. Poetry 1's `[tool.poetry.dependencies]` is not read without a lock, and a
+  `package-mode = false` project needs a `[project]` table; a `.venv` is never read for
+  undeclared dependencies (a directory of scripts and a single script do read one, below).
 - **Commands:** `[project.scripts]` if present (`main:run` runs `_fsbpyr_scripts.main:run`),
   else the modules with an `if __name__ == "__main__":` guard (a `__main__.py` counts too). One
   is the command named like the project; several make a multi-command executable
@@ -370,11 +461,12 @@ bundled on any system.
   the command files, resolved at build time, so the build warns that it is unlocked. The
   `requires-python` entries of the blocks are intersected, and a conflict between them fails the
   build, naming the files. A requirements file or `pylock.toml` replaces the blocks'
-  dependencies. With none of them the scripts get no packages. A `.venv` is never read.
+  dependencies. With none of them, the venv the scripts run in supplies pins for the imports
+  nothing else provides ("The venv rung" below); without one the scripts get no packages.
 - **Imports are checked** for each command as in "Projects without a build system": an import
   that nothing in the directory, the dependencies or the standard library resolves skips the
   command with a warning that names `file:line`, and with a `.venv` in the directory, the
-  `uv pip freeze --python .venv/bin/python > requirements.txt` that records it. `--strict` fails
+  `uv pip freeze --python .venv/bin/python > requirements.txt` that records what it holds. `--strict` fails
   the build, and so does a build with no command left. An import under `try`/`except
   ImportError` gives no warning. A directory that a file adds to `sys.path` with a path built from
   its own `__file__` (`sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -382,6 +474,20 @@ bundled on any system.
   imports of the command optional. A `..` in such a path is followed as the executable follows it
   (`os.path.join(os.path.dirname(__file__), "..", "lib")` is the `lib/` beside the script's
   directory); a path that goes above the executable holds none of the directory's files.
+- **The venv rung.** When nothing declares a dependency (no requirements file, `pylock.toml`
+  or PEP 723 `dependencies`) and a command's import is unresolved, the build reads the venv the
+  scripts run in: `.venv`, `venv` or `env` in the directory (with a `pyvenv.cfg`), else
+  `$VIRTUAL_ENV`. It reads files only and never starts the venv's Python: each installed
+  distribution's `METADATA`, `top_level.txt` and `RECORD` say which one provides the import (a
+  PyPI name is never guessed from an import name). Those distributions, and the
+  distributions their `Requires-Dist` need as installed, are pinned `name==version` and
+  installed fresh by uv for the app's platform (`manylinux_2_34`, or 2.28 with `--glibc 2.28`);
+  nothing is copied from the venv. The build warns that the dependencies came from the venv and
+  prints the `uv pip freeze --python <venv>/bin/python > requirements.txt` that declares them;
+  `--strict` fails on that warning. A pin that has no wheel for the target fails in uv, with
+  uv's reason; an editable or path install that is needed is refused (it is your own tree); an
+  import the venv does not provide stays unresolved, as above. `fsbpyr inspect` shows the lock
+  as `inferred from <venv>` with the pins (`build_info.lock.kind` is `inferred`).
 - **At run time** a link runs its script as `python3 script.py` would: as `__main__`, `argv` as
   given (`argv[0]` the full path of the start), the script's directory first on `sys.path`. A sibling named like a standard library
   module (`calendar.py`) wins over the library, as it does for CPython. The `pylib` hack above
@@ -441,6 +547,57 @@ looks, with an absolute target (`ln -sf /opt/tools/ops-scripts /etc/cron.daily/c
 - Every start checks the whole executable (D31, "Integrity"); the cost grows with the file's size,
   and one executable serves every command.
 
+### A tool from its requirements file
+
+`cd tools && fsbpyr build` in a directory with no Python file and a lock source builds the tools
+the lock names: `requirements.txt` saying `ansible-core==2.17.*`, or `httpie==3.2.4`, or a
+`pylock.toml`, or a `Pipfile.lock`, or a file given with `--requirements` (or `requirements` in `[tool.fsbpyr]` of a
+`pyproject.toml` of settings). The directory is an empty project whose requirements are the tools;
+the result is one executable, named after the directory, whose commands are the console scripts
+of those tools, with a link per command and the deploy lines of "A directory of scripts". One
+command makes `dist/<command>`. A directory that holds a Python file is a directory of scripts,
+whatever its requirements say: its scripts are the commands, and the tools' scripts are not added.
+
+- **Which tools:** the distributions the file names directly, one per requirement line (`name[extra]`,
+  `name @ URL`, a URL with `#egg=name` or a wheel or sdist file name; `-r` files are followed,
+  constraints (`-c`) and options name nothing, and a line that gives no name, such as a path, is
+  refused: write `name @ URL`). A file that lists every installed distribution, as `pip freeze`,
+  `uv pip freeze` and `pylock.toml` do, names the dependencies too, so there the tools are the
+  listed distributions that no other listed distribution requires (by `Requires-Dist`, read from
+  the staged site). A `Pipfile.lock` names its dependencies as well; with a `Pipfile` beside it,
+  the tools are the Pipfile's `[packages]` instead ("Pipfile.lock"). The build says which it took and why, and the commands it found:
+  `requirements.txt lists all 4 installed distributions, so the tools are the 1 that no other
+  listed distribution requires: flake8`. In a file of tools alone every listed distribution is a
+  tool, `requests` among them if you name it, though it has no command.
+- **Commands:** the `console_scripts` and `gui_scripts` of the tools (pip and uv install both as
+  ordinary launchers on Linux). A dependency's scripts are not commands
+  (`ansible-core`'s are; its `jinja2` dependency's are not; name `jinja2` in a file of tools alone
+  to have them). A tool with no script of its own is a meta-package: `ansible` requires
+  `ansible-core`, so `ansible==10.*` gives the commands of `ansible-core`. Its direct
+  requirements, under the runtime's markers and the extras asked for, are the tools in its place,
+  and so on down to a distribution with scripts (the build names the meta-package and the tools
+  taken through it); a library with no script, listed beside tools, is passed through the same
+  way, so a script of its dependencies becomes a command. Two tools with one script name, a
+  console and a gui script among them, fail the build naming both distributions; no script at all
+  fails it, saying what the file named. `--entry NAME` builds one of the commands alone. The smoke test
+  checks every command as for any several-command executable: it imports each target's module and
+  looks its function up (library code, imported as for any console script).
+- **Build:** the lock is installed as for any pip project (a `requirements.txt` that is not pinned
+  warns, `--strict` and `--hash` lines work as before), then the commands are tied to links.
+  Nothing of the project is packaged: the executable holds the tools and their dependencies. The
+  distribution that stands for the directory is named after it, or `<name>-tools` when a
+  requirement has that name (`mkdir httpie; echo httpie==3.2.4 > httpie/requirements.txt`).
+- **Helper interpreters:** a tool that starts helpers through `sys.executable` (Ansible's local
+  connection, worker pools, `multiprocessing` outside the cases fsbpyr recognizes) exits 70 unless
+  the binary is built with `--interpreter-reexec`. The build cannot tell which tools do; it prints
+  the note it prints for any app when a library that starts helper interpreters is packaged, and
+  you test the commands you need. See [Helper interpreters](#helper-interpreters).
+- **Interpreter-like commands** (`ipython`, `ansible-console`) are reachable through the
+  executable's name (`tools ipython`) as through their links; a `sudo` rule must name the link
+  (`/opt/tools/ansible`), not the executable.
+- **Licences:** you redistribute the tools. Their licence files are collected as for any app
+  (`fsbpyr inspect --licenses`), which is the notices the distributions ship.
+
 ### A single script
 
 `fsbpyr build report.py` builds one script: a `*.py` file, or an extensionless file whose first
@@ -461,8 +618,8 @@ next to `__file__`.
   is unlocked), `requires-python` chooses the Python as a project's does, including the fetch of
   another Python's fsbpyr, and a `[tool.fsbpyr]` table (`# [tool.fsbpyr]`, `# strict = true`) is
   read as in `pyproject.toml`, with unknown keys rejected. Without a block the script has no
-  dependencies: the import check names an import nothing provides, with the freeze command when
-  a `.venv` is next to it. A `.venv` is never read.
+  dependencies unless a venv supplies pins (the "venv rung" below): the import check names an
+  import nothing provides, with the freeze command when a `.venv` is next to it.
 - **A script lock:** a `report.py.lock` beside the script (`uv lock --script report.py`) locks
   the build: the dependencies are installed from it, `--locked` fails the build when the block
   has outgrown it (run `uv lock --script` again), and `fsbpyr inspect` shows `script.lock`. fsbpyr

@@ -194,7 +194,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
               DispatchError, PayloadError, ProjectError, RuntimeCacheError, StagingError,
               OSError)  # fmt: skip
     try:
-        loaded = Project.load(project)
+        loaded = Project.load(project, requirements)
         config = load_config(
             loaded,
             python=python,

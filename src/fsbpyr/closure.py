@@ -6,7 +6,7 @@ import configparser
 import json
 import re
 from collections.abc import Callable, Collection, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email.parser import HeaderParser
 from pathlib import Path
 from typing import Any
@@ -37,14 +37,15 @@ class InstalledDist:
     entry_points: str
     direct_url: dict[str, Any] | None
     provides_extra: tuple[str, ...] = ()  # canonical names
+    legacy: Mapping[str, str] = field(default_factory=dict)  # legacy scripts: name -> module
 
     def console_scripts(self) -> dict[str, str]:
         return self._entries("console_scripts")
 
     def commands(self) -> dict[str, str]:
-        """The console scripts, and the modules a project without a build system runs
-        (loose.py)."""
-        return {**self._entries("console_scripts"), **self._entries(MODULE_GROUP)}
+        """The console scripts, the modules a project without a build system runs (loose.py)
+        and the legacy scripts of its wheel (legacy.py)."""
+        return {**self._entries("console_scripts"), **self._entries(MODULE_GROUP), **self.legacy}
 
     def gui_scripts(self) -> dict[str, str]:
         return self._entries("gui_scripts")
@@ -124,9 +125,7 @@ class SiteIndex:
 
     def walk(self, root: InstalledDist, *, extras: tuple[str, ...], python_version: str) -> Walk:
         """Requires-Dist closure under the runtime's marker environment (consistency check)."""
-        environment = {key: str(value) for key, value in default_environment().items()}
-        environment["python_full_version"] = python_version
-        environment["python_version"] = ".".join(python_version.split(".")[:2])
+        environment = marker_environment(python_version)
         seen: dict[str, set[str]] = {}
         warnings: list[str] = []
         pending = [(root, set(extras))]
@@ -136,7 +135,7 @@ class SiteIndex:
                 continue
             seen.setdefault(dist.name, set()).update(active)
             for line in dist.requires:
-                requirement = _requirement(line, dist)
+                requirement = requirement_of(line, dist)
                 if requirement.marker is not None and not any(
                     requirement.marker.evaluate({**environment, "extra": extra})
                     for extra in (active or {""})
@@ -157,7 +156,16 @@ class SiteIndex:
         return Walk(reachable, unreachable, tuple(warnings))
 
 
-def _requirement(line: str, dist: InstalledDist) -> Requirement:
+def marker_environment(python_version: str) -> dict[str, str]:
+    """The marker environment of the app: this host's (a build is for the platform it runs
+    on) with the runtime's Python, "3.14.1"."""
+    environment = {key: str(value) for key, value in default_environment().items()}
+    environment["python_full_version"] = python_version
+    environment["python_version"] = ".".join(python_version.split(".")[:2])
+    return environment
+
+
+def requirement_of(line: str, dist: InstalledDist) -> Requirement:
     try:
         return Requirement(line)
     except InvalidRequirement as exc:
@@ -183,7 +191,7 @@ def command_table(scripts: Mapping[str, str]) -> str:
     word: the build fails naming one that is not plain."""
     for name in scripts:
         if not COMMAND_NAME.fullmatch(name):
-            raise ClosureError(f"console script name {name!r} is not valid for a command of a "
+            raise ClosureError(f"command name {name!r} is not valid for a command of a "
                                "multi-command executable: letters, digits and _.+- only, "
                                "starting with a letter or digit")  # fmt: skip
     return "\n".join(f"{name}={target}" for name, target in sorted(scripts.items()))

@@ -176,16 +176,18 @@ def _outside_directory(rel: str) -> str:
 
 
 def _legacy_script_warnings(dist: InstalledDist) -> list[str]:
-    """One warning for each file the project installs under bin/ that is not a console or gui
-    script (setup.py ``scripts=``): the bin/ exemption drops them."""
-    entry_scripts = {*dist.console_scripts(), *dist.gui_scripts()}
+    """One warning for each file the project installs under bin/ that is neither a console or
+    gui script nor a legacy script that starts with ``#!python`` (setup.py ``scripts=``, a shell
+    script say): the bin/ exemption drops them."""
+    entry_scripts = {*dist.console_scripts(), *dist.gui_scripts(), *dist.legacy}
     legacy = sorted({
         PurePosixPath(rel).name for rel in map(_record_path, dist.record)
         if _outside(rel) and _outside_directory(rel) == "bin"
         and PurePosixPath(rel).name not in entry_scripts
     })  # fmt: skip
-    return [f"{dist.name}: legacy script {name} is not packaged (legacy setup.py scripts are "
-            f"not supported; use [project.scripts] console scripts or --entry)" for name in legacy]
+    return [f"{dist.name}: legacy script {name} is not packaged (only a legacy script that "
+            f"starts with #!python is; use [project.scripts] console scripts or --entry)"
+            for name in legacy]
 
 
 def _packaged(rel: str) -> bool:

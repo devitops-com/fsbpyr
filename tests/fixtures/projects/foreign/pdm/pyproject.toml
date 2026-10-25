@@ -1,0 +1,19 @@
+[project]
+name = "foreign-pdm"
+version = "0.1.0"
+description = "fsbpyr test fixture: a PDM lock, distribution = false"
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.1",
+    "rich>=13",
+    "colorama>=0.4.6; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+fancy = ["packaging>=24"]
+
+[tool.pdm]
+distribution = false
+
+[tool.pdm.dev-dependencies]
+dev = ["iniconfig>=2"]

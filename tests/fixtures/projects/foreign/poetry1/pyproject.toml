@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "foreign-poetry1"
+version = "0.1.0"
+description = "fsbpyr test fixture: a Poetry 1.8 lock (lock-version 2.0: no groups)"
+authors = []
+
+[tool.poetry.dependencies]
+python = "^3.12"
+click = ">=8.1"
+rich = ">=13"
+colorama = {version = ">=0.4.6", markers = "sys_platform == 'win32'"}
+packaging = {version = ">=24", optional = true}
+
+[tool.poetry.extras]
+fancy = ["packaging"]
+
+[tool.poetry.group.dev.dependencies]
+iniconfig = ">=2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+foreign-poetry1 = "foreign_poetry1:main"

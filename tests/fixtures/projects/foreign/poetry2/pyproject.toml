@@ -1,0 +1,19 @@
+[project]
+name = "foreign-poetry"
+version = "0.1.0"
+description = "fsbpyr test fixture: a Poetry 2 lock, package-mode = false"
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.1",
+    "rich>=13",
+    "colorama>=0.4.6; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+fancy = ["packaging>=24"]
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.group.dev.dependencies]
+iniconfig = ">=2"
