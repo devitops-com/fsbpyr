@@ -163,6 +163,19 @@ def _outside_directory(rel: str) -> str:
     return parts[0] if parts else ""
 
 
+def _legacy_script_warnings(dist: InstalledDist) -> list[str]:
+    """One warning for each file the project installs under bin/ that is not a console or gui
+    script (setup.py ``scripts=``): the bin/ exemption drops them."""
+    entry_scripts = {*dist.console_scripts(), *dist.gui_scripts()}
+    legacy = sorted({
+        PurePosixPath(rel).name for rel in map(_record_path, dist.record)
+        if _outside(rel) and _outside_directory(rel) == "bin"
+        and PurePosixPath(rel).name not in entry_scripts
+    })  # fmt: skip
+    return [f"{dist.name}: legacy script {name} is not packaged (legacy setup.py scripts are "
+            f"not supported; use [project.scripts] console scripts or --entry)" for name in legacy]
+
+
 def _packaged(rel: str) -> bool:
     parts = PurePosixPath(rel).parts
     return bool(parts) and not (
@@ -286,6 +299,8 @@ class _Collector:
                 )
             if rel != f"{info}/RECORD":
                 self._add_path(dist, rel)
+        if dist.name == self.project:
+            self.warnings += _legacy_script_warnings(dist)
         if outside:
             where = ", ".join(f"{directory}/" for directory in sorted(outside))
             self.warnings.append(

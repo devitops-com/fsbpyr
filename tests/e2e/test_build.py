@@ -467,7 +467,7 @@ def test_a_failed_uv_build_shows_the_reason(
             '[build-system]\nrequires = ["setuptools>=69"]\n'
             'build-backend = "setuptools.build_meta"\n'
         ),
-        "one.py": "",
+        "one.py": "if __name__ == '__main__':\n    pass\n",
         "two.py": "",
     })  # fmt: skip
 
@@ -704,3 +704,98 @@ def test_a_changed_hash_in_pylock_toml_fails_the_build(
 
     assert "Hash mismatch" in capsys.readouterr().err
     assert not out.exists()
+
+
+_SETUPTOOLS = (
+    '[build-system]\nrequires = ["setuptools>=69"]\nbuild-backend = "setuptools.build_meta"\n'
+)
+_MAIN_GUARD = "def main():\n    print('ran', __name__)\n\nif __name__ == '__main__':\n    main()\n"
+
+
+def test_a_project_with_a_main_package_and_no_scripts_runs_as_python_m(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _write(tmp_path / "mp", {
+        "pyproject.toml": '[project]\nname = "mp"\nversion = "1.0"\n' + _SETUPTOOLS,
+        "src/mp/__init__.py": "",
+        "src/mp/__main__.py": "import sys\nprint('main', __name__, sys.argv[1:])\n",
+    })  # fmt: skip
+
+    assert main(["build", str(project)]) == 0
+
+    result = _run(project / "dist" / "mp", "a")
+    assert (result.returncode, result.stdout) == (0, "main __main__ ['a']\n")
+    assert "mp has no console scripts: package mp is the only one with __main__.py" in (
+        capsys.readouterr().out
+    )
+
+
+def test_a_single_guarded_module_with_no_scripts_builds_and_runs(tmp_path: Path) -> None:
+    project = _write(tmp_path / "solo", {
+        "pyproject.toml": (
+            '[project]\nname = "solo"\nversion = "1.0"\n' + _SETUPTOOLS
+            + '[tool.setuptools]\npy-modules = ["solo"]\n'
+        ),
+        "solo.py": _MAIN_GUARD,
+    })  # fmt: skip
+
+    assert main(["build", str(project)]) == 0
+
+    result = _run(project / "dist" / "solo")
+    assert (result.returncode, result.stdout) == (0, "ran __main__\n")
+
+
+def test_a_main_package_and_a_guarded_module_are_ambiguous(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _write(tmp_path / "both", {
+        "pyproject.toml": (
+            '[project]\nname = "both"\nversion = "1.0"\n' + _SETUPTOOLS
+            + '[tool.setuptools]\npackages = ["pkg"]\npy-modules = ["tool"]\n'
+        ),
+        "pkg/__init__.py": "",
+        "pkg/__main__.py": "",
+        "tool.py": _MAIN_GUARD,
+    })  # fmt: skip
+
+    assert main(["build", str(project)]) == 1
+
+    err = capsys.readouterr().err
+    assert "pkg (package with __main__.py), tool (module with a main guard)" in err
+
+
+def test_a_static_project_with_no_scripts_and_no_candidate_fails_before_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _write(tmp_path / "lib", {
+        "pyproject.toml": '[project]\nname = "lib"\nversion = "1.0"\n' + _SETUPTOOLS,
+        "src/lib/__init__.py": "",
+        "src/lib/util.py": "def f():\n    pass\n",
+    })  # fmt: skip
+    monkeypatch.setattr("fsbpyr.build.find_uv", lambda: pytest.fail("uv was looked for"))
+
+    assert main(["build", str(project)]) == 1
+
+    assert "has console scripts: none; choose one with --entry" in capsys.readouterr().err
+    assert not (project / "dist").exists()
+
+
+def test_a_setuptools_scripts_file_is_reported_as_not_packaged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _write(tmp_path / "legacy", {
+        "pyproject.toml": (
+            '[project]\nname = "legacy"\nversion = "1.0"\n'
+            '[project.scripts]\nlegacy = "legacy:main"\n'
+            + _SETUPTOOLS
+        ),
+        "setup.py": "from setuptools import setup\nsetup(scripts=['bin/old-tool'])\n",
+        "bin/old-tool": "#!/bin/sh\necho old\n",
+        "legacy/__init__.py": "def main():\n    print('new')\n",
+    })  # fmt: skip
+
+    assert main(["build", str(project)]) == 0
+
+    err = capsys.readouterr().err
+    assert "legacy: legacy script old-tool is not packaged" in err
+    assert "legacy: legacy script legacy " not in err

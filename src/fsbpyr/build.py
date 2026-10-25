@@ -26,6 +26,7 @@ from .closure import (
 )
 from .config import BuildConfig
 from .elf import ElfError, glibc_requirement, is_elf
+from .entry import source_has_candidate
 from .manifest import SCHEMA, LockError, built_here, dist_records, lock_record
 from .natives import opened
 from .payload.format import NATIVE_KINDS, ModuleKind
@@ -351,6 +352,10 @@ def check_before_staging(project: Project, config: BuildConfig) -> None:
     name = project.name or project.directory.name
     if config.entry is None and project.static_scripts and len(project.scripts) > 1:
         raise several_scripts_error(name, project.scripts)
+    if (config.entry is None and project.static_scripts and project.static_entry_points
+            and not project.scripts and not source_has_candidate(project.directory)):
+        # no script, no __main__.py, no guarded module: staging cannot find an entry either
+        raise several_scripts_error(name, project.scripts)
     if config.output is not None:
         check_output(config.output)
     if config.strict:
@@ -504,7 +509,7 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                 index = SiteIndex.scan(plan.site)
         dist = _installed_project(index, wheel, project, config)
         walk = index.walk(dist, extras=config.extras, python_version=runtime.python_version)
-        app_name, entrypoint = resolve_entry(dist, config.entry)
+        app_name, entrypoint = resolve_entry(dist, config.entry, log)
         output = (config.output or project.directory / "dist" / app_name).resolve()
         check_output(output)
         _make_output_dir(output.parent, made)

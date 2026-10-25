@@ -64,3 +64,37 @@ def test_an_extra_the_static_project_lacks_fails_early(tmp_path: Path) -> None:
     check_before_staging(project, BuildConfig(entry="a", extras=("Fancy",)))
     with pytest.raises(ProjectError, match=r"no extra 'nope'.*its extras: fancy"):
         check_before_staging(project, BuildConfig(entry="a", extras=("nope",)))
+
+
+STATIC_NO_SCRIPTS = '[project]\nname = "app"\nversion = "1"\n'
+DYNAMIC_ENTRY_POINTS = STATIC_NO_SCRIPTS + 'dynamic = ["entry-points"]\n'
+GUARDED = 'if __name__ == "__main__":\n    pass\n'
+
+
+def test_a_static_project_with_no_script_and_no_candidate_fails_early(tmp_path: Path) -> None:
+    project = _project(tmp_path, STATIC_NO_SCRIPTS)
+    (tmp_path / "lib.py").write_text("X = 1\n")
+
+    with pytest.raises(ClosureError, match="choose one with --entry"):
+        check_before_staging(project, BuildConfig())
+    check_before_staging(project, BuildConfig(entry="lib"))
+
+
+@pytest.mark.parametrize(
+    ("pyproject", "files"),
+    [
+        (DYNAMIC_ENTRY_POINTS, {}),
+        (STATIC_NO_SCRIPTS, {"app.py": GUARDED}),
+        (STATIC_NO_SCRIPTS, {"src/app/__main__.py": ""}),
+        (STATIC_NO_SCRIPTS, {"app.py": "﻿" + GUARDED}),
+    ],
+)
+def test_a_possible_candidate_lets_a_scriptless_project_through(
+    tmp_path: Path, pyproject: str, files: dict[str, str]
+) -> None:
+    project = _project(tmp_path, pyproject)
+    for name, text in files.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text(text, encoding="utf-8")
+
+    check_before_staging(project, BuildConfig())

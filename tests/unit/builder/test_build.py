@@ -103,6 +103,7 @@ def test_builds_without_uv_fail_before_looking_for_a_runtime(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "app.py").write_text("if __name__ == '__main__':\n    pass\n")  # an entry candidate
     monkeypatch.setattr("shutil.which", lambda name: None)
     monkeypatch.setattr("fsbpyr.build.select_runtime", lambda version: pytest.fail("runtime"))
 
@@ -122,6 +123,7 @@ def test_an_error_carries_the_warnings_collected_before_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "app.py").write_text("if __name__ == '__main__':\n    pass\n")  # an entry candidate
     _stand_ins(monkeypatch)
 
     def run_plan(plan: StagingPlan, project_dir: Path, **_: object) -> Path:

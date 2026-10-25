@@ -81,8 +81,11 @@ symptom and its remedy.
   projects too.
 - **Project:** a console script (`[project.scripts]`, or the build backend's own table such as
   setuptools' `entry_points`), or `--entry` with a script's name, a module or
-  `module:function`; and a `requires-python`, if it sets one, that admits one of 3.12 to 3.15
-  (see "Which Python").
+  `module:function`. With no console script and no `--entry`, the build runs the project's only
+  package with a `__main__.py` (as `python -m`), else its only top-level module with an
+  `if __name__ == "__main__":` guard, and says which; with several candidates it lists them and
+  asks for `--entry`. Legacy `setup.py` `scripts=` files are not packaged (the build warns). And a
+  `requires-python`, if it sets one, that admits one of 3.12 to 3.15 (see "Which Python").
 - **Lock sources,** the first one found: a requirements file that `--requirements` or
   `requirements` names, `uv.lock` (the project's or its uv workspace's), `pylock.toml`,
   `requirements.txt`. With none, the build resolves the dependencies itself and warns that it
@@ -138,8 +141,8 @@ build-constraint-dependencies` (read by `uv sync`, for `uv.lock` projects) or fr
 | Option | |
 |---|---|
 | `--python X.Y` | the Python to build for, 3.12 to 3.15, inside `requires-python` (default: `python` in `[tool.fsbpyr]`, else `.python-version`, else `requires-python` decides) |
-| `--entry NAME` | console script name, `module` or `module:function` (default: the only script) |
-| `-o, --output PATH` | where to write the executable (default: `dist/` and the console script's name) |
+| `--entry NAME` | console script name, `module` or `module:function` (default: the only script, else the only `__main__` package or guarded module) |
+| `-o, --output PATH` | where to write the executable (default: `dist/` and the entry's name) |
 | `--requirements FILE` | pinned requirements file, for pip projects without `pylock.toml` |
 | `--extra NAME` | install a project extra (repeat); requirements and pylock files must already contain its dependencies |
 | `--fs-package PACKAGE` | a package whose files must exist on disk (repeat) |

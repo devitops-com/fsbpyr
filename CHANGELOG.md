@@ -10,6 +10,16 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Added
+- **A project with no console scripts builds from its `__main__` package or guarded module.**
+  With no `--entry`, the build picks the project's only top-level package with a `__main__.py`
+  (run as `python -m pkg`), else its only top-level module with an `if __name__ == "__main__":`
+  guard (found with `ast`, never by importing it), and prints which one and why. Several
+  candidates, or a package and a module, keep the "choose one with --entry" error and list them.
+- **A build warns about dropped legacy scripts.** Files a project's `setup.py` installs with
+  `scripts=` were dropped without a word; the warning now names each and says that legacy
+  scripts are not packaged (use `[project.scripts]` or `--entry`).
+
 ### Changed
 - **`PYTHONUNBUFFERED` is honoured** (D14). Set and non-empty, it makes an app's stdout and
   stderr unbuffered as CPython does, so a service's log lines reach a pipe as they are printed
@@ -19,6 +29,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   message names both versions.
 
 ### Fixed
+- **A static project with no console scripts, no `--entry` and no `__main__.py` or guarded
+  module fails before uv stages anything**, with the same message, instead of after the full
+  build and install.
 - **`-e ./libs/common` lines in a requirements file build.** They are installed as regular
   packages (`uv pip install --no-editable`) instead of failing with "installed in editable
   mode"; the build warns that such a line is whatever the tree holds. Lines pinned by a commit

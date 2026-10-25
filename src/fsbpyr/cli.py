@@ -88,10 +88,11 @@ def cli(ctx: click.Context) -> None:
                    "`requires-python` decides)")  # fmt: skip
 @click.option("--entry", metavar="NAME", shell_complete=_complete_entry,
               help="console script name, `module` or `module:function` "
-                   "(default: the only script)")  # fmt: skip
+                   "(default: the only script, else the only `__main__` package or "
+                   "guarded module)")  # fmt: skip
 @click.option("-o", "--output", type=click.Path(path_type=Path),
-              help="where to write the executable (default: `dist/` and the console "
-                   "script's name)")  # fmt: skip
+              help="where to write the executable (default: `dist/` and the entry's "
+                   "name)")  # fmt: skip
 @click.option("--requirements", metavar="FILE", type=click.Path(),
               help="pinned requirements file, for pip projects without `pylock.toml`")  # fmt: skip
 @click.option("--extra", "extras", metavar="NAME", multiple=True, shell_complete=_complete_extra,

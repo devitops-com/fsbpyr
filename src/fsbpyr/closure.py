@@ -5,7 +5,7 @@ from __future__ import annotations
 import configparser
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from email.parser import HeaderParser
 from pathlib import Path
@@ -14,6 +14,8 @@ from typing import Any
 from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
+
+from .entry import installed_candidates
 
 _EXTRAS_SUFFIX = re.compile(r"\s*\[[^\]]*\]\s*$")
 
@@ -35,15 +37,19 @@ class InstalledDist:
     provides_extra: tuple[str, ...] = ()  # canonical names
 
     def console_scripts(self) -> dict[str, str]:
+        return self._entries("console_scripts")
+
+    def gui_scripts(self) -> dict[str, str]:
+        return self._entries("gui_scripts")
+
+    def _entries(self, section: str) -> dict[str, str]:
         parser = configparser.ConfigParser(delimiters=("=",), interpolation=None)
         parser.optionxform = str  # type: ignore[assignment,method-assign]
         parser.read_string(self.entry_points)
-        if not parser.has_section("console_scripts"):
+        if not parser.has_section(section):
             return {}
         # "module:attr [extra1, extra2]": the extras only mattered to the installer
-        return {
-            name: _EXTRAS_SUFFIX.sub("", value) for name, value in parser["console_scripts"].items()
-        }
+        return {name: _EXTRAS_SUFFIX.sub("", value) for name, value in parser[section].items()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,12 +157,16 @@ def _requirement(line: str, dist: InstalledDist) -> Requirement:
         raise ClosureError(f"{dist.name}: invalid Requires-Dist {line!r}: {exc}") from exc
 
 
-def several_scripts_error(name: str, scripts: Iterable[str]) -> ClosureError:
-    """No --entry, and the project's console scripts are not exactly one."""
+def several_scripts_error(
+    name: str, scripts: Iterable[str], candidates: str = ""
+) -> ClosureError:
+    """No --entry, and the project's console scripts are not exactly one; ``candidates``
+    describes the packages and modules that entry inference found but could not choose from."""
     choices = ", ".join(sorted(scripts)) or "none"
+    found = f"; found: {candidates}" if candidates else ""
     return ClosureError(
         f"{name} has console scripts: {choices}; choose one with --entry "
-        "(a script name, 'module' or 'module:function')"
+        f"(a script name, 'module' or 'module:function'){found}"
     )
 
 
@@ -172,13 +182,35 @@ def unknown_extras_error(name: str, wanted: Iterable[str], known: Iterable[str])
     )
 
 
-def resolve_entry(dist: InstalledDist, entry: str | None) -> tuple[str, str]:
-    """(application name, entry point) from --entry or the project's console scripts."""
+def infer_entry(dist: InstalledDist) -> tuple[str, str, str]:
+    """(application name, entry point, why) for a project with no console scripts: its only
+    package with __main__.py, else its only module with a main guard (run as ``python -m`` /
+    as the script, UC5)."""
+    found = installed_candidates(dist.site, dist.record)
+    if len(found.packages) == 1 and not found.modules:
+        name = found.packages[0]
+        why = f"package {name} is the only one with __main__.py; run as python -m {name}"
+        return name, name, why
+    if len(found.modules) == 1 and not found.packages:
+        name = found.modules[0]
+        return name, name, f"module {name} is the only one with an if __name__ == '__main__' guard"
+    raise several_scripts_error(dist.name, (), found.described())
+
+
+def resolve_entry(
+    dist: InstalledDist, entry: str | None, log: Callable[[str], None] = lambda _: None
+) -> tuple[str, str]:
+    """(application name, entry point) from --entry or the project's console scripts, else the
+    inferred package or module (``log`` says which and why)."""
     scripts = dist.console_scripts()
     if entry is None:
         if len(scripts) == 1:
             return next(iter(scripts.items()))
-        raise several_scripts_error(dist.name, scripts)
+        if scripts:
+            raise several_scripts_error(dist.name, scripts)
+        name, entrypoint, why = infer_entry(dist)
+        log(f"{dist.name} has no console scripts: {why}")
+        return name, entrypoint
     if entry in scripts:
         return entry, scripts[entry]
     module, _, attribute = entry.partition(":")

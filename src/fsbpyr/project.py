@@ -44,6 +44,7 @@ class Project:
     # `scripts` / `extras` are all there is, and a build can be checked before staging
     static_scripts: bool = False
     static_extras: bool = False
+    static_entry_points: bool = False
 
     @classmethod
     def load(cls, directory: Path) -> Project:
@@ -74,6 +75,7 @@ class Project:
             tool=dict(data.get("tool", {}).get("fsbpyr", {})),
             static_scripts=declared and "scripts" not in dynamic,
             static_extras=declared and "optional-dependencies" not in dynamic,
+            static_entry_points=declared and "entry-points" not in dynamic,
         )
 
     @property
