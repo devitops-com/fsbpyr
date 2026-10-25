@@ -216,7 +216,25 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   missing path and a package locked at two versions that both apply are refused, naming the
   entry. A lock whose content hash is not the pyproject's is a warning, and an error with
   `--strict`. They rank after `requirements.txt` as lock sources. `build_info.lock.kind` and
-  `fsbpyr inspect` show `poetry.lock` or `pdm.lock`. `Pipfile.lock` is not read.
+  `fsbpyr inspect` show `poetry.lock` or `pdm.lock`.
+- **`Pipfile.lock` locks a build.** A project or a directory of scripts (a legacy Pipenv app is
+  mostly that) with a `Pipfile.lock` is built from the lock's `default` section, never
+  `develop`: the same conversion in the staging directory, each entry's pinned version, all
+  its hashes and its markers for the app's Python and platform, with `--require-hashes`. A
+  `git` entry keeps its commit (a `ref` that is no commit is refused), a `file` entry its hash,
+  and a `path` entry (`editable` or not) installs as a regular package; `pipenv install -e .`
+  of the project itself is left to fsbpyr's own wheel. A package from a source other than PyPI
+  installs from the indexes uv is configured with, the lock's hashes deciding whether it found
+  the same files, and the build says so (not counted by `--strict`). `_meta.hash` that is not
+  the Pipfile's is a warning, an error with `--strict`. `_meta.requires` (`python_version` or
+  `python_full_version`) chooses the Python as a `requires-python` of that minor version would,
+  but `--python`, `python` in `[tool.fsbpyr]` and `.python-version` outrank it, and a version
+  fsbpyr cannot build is a warning. It ranks last among the lock sources (a `requirements.txt`
+  beside it wins), and unlike `poetry.lock` and `pdm.lock` a directory of scripts reads it.
+  A directory with a `Pipfile.lock` and no Python file builds the tools in the Pipfile's
+  `[packages]`, or, with no Pipfile, the packages of the lock that no other package of it
+  needs ("A tool from its requirements file"). `build_info.lock.kind` and `fsbpyr inspect` show
+  `Pipfile.lock`; its hashes carry no file names, so a distribution has no `artifact_sha256`.
 - **The venv a script runs in gives the dependencies nothing declares.** A directory of scripts
   or a single script with no requirements file, `pylock.toml`, lock or PEP 723 dependencies, and
   an import nothing in the executable provides, used to skip the command with a hint. Now the

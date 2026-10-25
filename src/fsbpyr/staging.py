@@ -28,6 +28,7 @@ from pathlib import Path
 
 from packaging.utils import canonicalize_name
 
+from . import pipenv
 from .closure import marker_environment
 from .foreign import export
 from .loose import Package
@@ -62,7 +63,7 @@ class StagingOptions:
     platform: str | None = None
     strict: bool = False  # requirements files must pin and hash every line (uv --require-hashes)
     package: Package | None = None  # the files the build checked: the wheel of a loose project
-    # the markers of the target, for the locks that are converted (poetry.lock, pdm.lock)
+    # the markers of the target, for the locks that are converted (Poetry, PDM and Pipenv)
     environment: Mapping[str, str] | None = None
 
 
@@ -221,7 +222,7 @@ def _plan(
     hashes: list[str] = []
     if source is LockSource.PYLOCK:
         lock = project.directory / LockSource.PYLOCK.value
-    elif source in (LockSource.POETRY_LOCK, LockSource.PDM_LOCK):
+    elif source in (LockSource.POETRY_LOCK, LockSource.PDM_LOCK, LockSource.PIPFILE_LOCK):
         lock, hashes = _foreign_requirements(project, source, work, options)
     else:
         lock = project.requirements_path(options.requirements)
@@ -236,10 +237,13 @@ def _plan(
 def _foreign_requirements(
     project: Project, source: LockSource, work: Path, options: StagingOptions
 ) -> tuple[Path, list[str]]:
-    """The requirements file of a Poetry or PDM lock, written in the work directory, and uv's
-    hash option for it: --require-hashes when every line carries a hash."""
-    exported = export(source, project.directory, extras=options.extras, environment=(
-        options.environment or marker_environment(f"{options.python}.0")))  # fmt: skip
+    """The requirements file of a Poetry, PDM or Pipenv lock, written in the work directory, and
+    uv's hash option for it: --require-hashes when every line carries a hash."""
+    environment = options.environment or marker_environment(f"{options.python}.0")
+    exported = (pipenv.export(project.directory, environment=environment)
+                if source is LockSource.PIPFILE_LOCK
+                else export(source, project.directory, extras=options.extras,
+                            environment=environment))  # fmt: skip
     path = work / f"{source.value}.requirements.txt"
     path.write_text(exported.text)
     return path, ["--require-hashes"] * exported.hashed

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from fnmatch import fnmatch
 from pathlib import Path
@@ -32,6 +32,7 @@ class LockSource(Enum):
     SCRIPT_LOCK = "script.lock"  # uv's `<script>.lock` (uv lock --script), a uv.lock for one file
     POETRY_LOCK = "poetry.lock"  # converted to requirements at staging (foreign.py)
     PDM_LOCK = "pdm.lock"
+    PIPFILE_LOCK = "Pipfile.lock"  # JSON, converted to requirements at staging (pipenv.py)
     # no declared source, the versions found in the scripts' venv (venvdeps.py); staged like
     # an unlocked build, from pins in the project's wheel
     INFERRED = "inferred"
@@ -65,11 +66,26 @@ class Project:
     # a directory with no Python file and a lock source: a tool binary (tools.py), whose commands
     # are the console scripts of the distributions the lock names
     tools: bool = False
+    # "3.12": the Python a Pipfile.lock asks for, when that is the lock source (pyversion.py)
+    lock_python: str | None = None
 
     @classmethod
     def load(cls, directory: Path, requirements: str | None = None) -> Project:
         """The project of ``directory`` (or of a script). ``requirements``: the requirements file
         the build is given, which a directory without Python files needs to be a tool binary."""
+        project = cls._read(directory, requirements)
+        try:
+            source = project.lock_source(requirements)
+        except ProjectError:  # the build says so, with its own message
+            return project
+        if source is not LockSource.PIPFILE_LOCK:
+            return project
+        from .pipenv import python_of  # noqa: PLC0415  pipenv imports this module
+
+        return replace(project, lock_python=python_of(project.directory / source.value))
+
+    @classmethod
+    def _read(cls, directory: Path, requirements: str | None) -> Project:
         directory = directory.resolve()
         if directory.is_file():
             return cls._script(directory)
@@ -115,8 +131,8 @@ class Project:
         """A directory of Python files (research UC6); its commands, and what their PEP 723
         blocks declare, come from reading the files. ``tool``: the ``[tool.fsbpyr]`` table of a
         pyproject.toml that holds settings and nothing else. Without a Python file, a lock
-        source (``requirements``, the table's, pylock.toml or requirements.txt) makes it a tool
-        binary."""
+        source (``requirements``, the table's, pylock.toml, requirements.txt or Pipfile.lock) makes
+        it a tool binary."""
         from .loose import NoPythonFiles, Package, directory_name  # noqa: PLC0415  see above
 
         try:
@@ -124,7 +140,8 @@ class Project:
         except NoPythonFiles:
             given = requirements or (tool or {}).get("requirements")
             if given is None and not any(
-                (directory / name).is_file() for name in ("pylock.toml", DEFAULT_REQUIREMENTS)
+                (directory / name).is_file()
+                for name in ("pylock.toml", DEFAULT_REQUIREMENTS, LockSource.PIPFILE_LOCK.value)
             ):
                 raise
             return cls(directory=directory, name=directory_name(directory), tool=tool or {},
@@ -188,7 +205,7 @@ class Project:
 
     def lock_source(self, requirements: str | None = None) -> LockSource:
         """An explicit requirements file, else uv.lock (own or workspace), pylock.toml,
-        requirements.txt, poetry.lock, pdm.lock, else unlocked (plan §3.6 3)."""
+        requirements.txt, poetry.lock, pdm.lock, Pipfile.lock, else unlocked (plan §3.6 3)."""
         if requirements is not None:
             if not self.requirements_path(requirements).is_file():
                 raise ProjectError(
@@ -207,10 +224,13 @@ class Project:
 
     def _foreign_lock(self) -> LockSource | None:
         """The Poetry or PDM lock beside the pyproject.toml of a project (not of a directory of
-        scripts, whose dependencies are the scripts')."""
+        scripts, whose dependencies are the scripts'), else a Pipfile.lock, which a directory of
+        scripts has as well: legacy Pipenv apps are mostly that."""
         for source in (LockSource.POETRY_LOCK, LockSource.PDM_LOCK):
             if not self.bare and (self.directory / source.value).is_file():
                 return source
+        if (self.directory / LockSource.PIPFILE_LOCK.value).is_file():
+            return LockSource.PIPFILE_LOCK
         return None
 
     def lock_path(self, source: LockSource, requirements: str | None = None) -> Path | None:
@@ -219,7 +239,8 @@ class Project:
             return self.uv_root / LockSource.UV_LOCK.value
         if source is LockSource.SCRIPT_LOCK:
             return self.script_lock
-        if source in (LockSource.PYLOCK, LockSource.POETRY_LOCK, LockSource.PDM_LOCK):
+        if source in (LockSource.PYLOCK, LockSource.POETRY_LOCK, LockSource.PDM_LOCK,
+                      LockSource.PIPFILE_LOCK):  # fmt: skip
             return self.directory / str(source.value)
         if source is LockSource.REQUIREMENTS:
             return self.requirements_path(requirements)

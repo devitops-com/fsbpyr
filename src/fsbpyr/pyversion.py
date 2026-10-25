@@ -5,8 +5,11 @@ when unsupported or outside ``requires-python``), then a ``.python-version`` pin
 supported version inside the range (outside the range an error, an unsupported one a warning
 before the rule applies), then ``requires-python``: the lowest supported minor version that
 satisfies a lower bound, the highest below an upper-only bound, a pinned minor as pinned. A
-project without a bound that picks one (none, or only ``!=``) uses the Python of the fsbpyr
-that builds it. ``cli.py`` dispatches to another fsbpyr when the result is not its own.
+Pipfile.lock that is the lock source asks for a minor version in ``_meta.requires`` and counts
+as a ``requires-python`` of that version, except that ``--python``, the settings and
+``.python-version`` outrank it without an error, and a version fsbpyr cannot build for is a
+warning. A project without a bound that picks one (none, or only ``!=``) uses the Python of the
+fsbpyr that builds it. ``cli.py`` dispatches to another fsbpyr when the result is not its own.
 """
 
 import re
@@ -99,6 +102,11 @@ def resolve(project: Project, requested: str | None, *, own: str) -> Choice:
     if not fitting:
         raise ProjectError(f"requires-python {project.requires_python!r} allows none of the "
                            f"Python versions fsbpyr builds for ({_listed(names)})")  # fmt: skip
+    if project.lock_python is not None:
+        if project.lock_python in fitting:
+            return Choice(project.lock_python, warnings)
+        warnings += (f"Pipfile.lock asks for Python {project.lock_python}, which is not one "
+                     f"fsbpyr builds this project for ({', '.join(fitting)}); ignored",)
     operators = {spec.operator for spec in allowed or ()}
     if operators & _LOWER_BOUNDS:
         return Choice(fitting[0], warnings)

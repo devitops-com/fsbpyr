@@ -8,6 +8,7 @@ from the package's sdist, so its bytes depend on that host's build backend and e
 """
 
 import hashlib
+import json
 import os
 import tomllib
 from collections.abc import Iterable, Mapping
@@ -19,8 +20,9 @@ from urllib.parse import unquote, urlsplit
 from packaging.tags import Tag, parse_tag
 from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
 
+from . import pipenv
 from .closure import InstalledDist
-from .foreign import Entry, read_entries
+from .foreign import Entry, ForeignLockError, read_entries
 from .project import LockSource, has_hash_option
 from .venvdeps import Inferred
 
@@ -41,6 +43,7 @@ class LockedPackage:
     version: str | None = None
     wheels: Mapping[str, str] = field(default_factory=dict)  # wheel file name -> sha256 (hex)
     sdist: str | None = None  # sha256 (hex)
+    pinned: bool = False  # the lock lists hashes of files it does not name (Pipfile.lock)
 
 
 def _hex(value: object) -> str | None:
@@ -83,17 +86,18 @@ _FOREIGN_SOURCES = {"registry": "registry", "index": "registry", "git": "git", "
 
 
 def _foreign_package(entry: Entry) -> LockedPackage:
-    """A Poetry or PDM entry: its wheels by file name, and the sdist's hash."""
+    """A Poetry, PDM or Pipenv entry: its wheels by file name, and the sdist's hash."""
     wheels = {name: digest for name, digest in entry.files.items() if name.endswith(".whl")}
     sdists = [digest for name, digest in entry.files.items() if not name.endswith(".whl")]
-    return LockedPackage(_FOREIGN_SOURCES[entry.kind], entry.version, wheels,
-                         sdists[-1] if sdists else None)  # fmt: skip
+    return LockedPackage(_FOREIGN_SOURCES[entry.kind], entry.version or None, wheels,
+                         sdists[-1] if sdists else None, bool(entry.digests))  # fmt: skip
 
 
 def _foreign_packages(source: LockSource, text: str) -> dict[str, list[LockedPackage]]:
     try:
-        entries = read_entries(source, tomllib.loads(text))
-    except tomllib.TOMLDecodeError as exc:
+        entries = (pipenv.entries(json.loads(text)) if source is LockSource.PIPFILE_LOCK
+                   else read_entries(source, tomllib.loads(text)))  # fmt: skip
+    except (tomllib.TOMLDecodeError, ValueError, AttributeError, ForeignLockError) as exc:
         raise LockError(f"cannot read {source.value}: {exc}") from exc
     packages: dict[str, list[LockedPackage]] = {}
     for entry in entries:
@@ -103,7 +107,7 @@ def _foreign_packages(source: LockSource, text: str) -> dict[str, list[LockedPac
 
 def read_lock(source: LockSource, text: str) -> dict[str, list[LockedPackage]]:
     """The packages of a lock, by canonical name; empty for requirements and unlocked."""
-    if source in (LockSource.POETRY_LOCK, LockSource.PDM_LOCK):
+    if source in (LockSource.POETRY_LOCK, LockSource.PDM_LOCK, LockSource.PIPFILE_LOCK):
         return _foreign_packages(source, text)
     if source not in (LockSource.UV_LOCK, LockSource.SCRIPT_LOCK, LockSource.PYLOCK):
         return {}
@@ -126,7 +130,7 @@ def _hashed(source: LockSource, text: str, packages: Mapping[str, list[LockedPac
         return True
     if source is LockSource.REQUIREMENTS:
         return has_hash_option(text)
-    return any(p.wheels or p.sdist for entries in packages.values() for p in entries)
+    return any(p.wheels or p.sdist or p.pinned for entries in packages.values() for p in entries)
 
 
 def lock_record(

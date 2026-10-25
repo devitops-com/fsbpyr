@@ -1,13 +1,14 @@
 """A tool binary: the console scripts of the tools a requirements file names (research §3,
 candidate 10, owner decision 2026-10-25).
 
-A directory with no Python file and a lock source (requirements.txt, pylock.toml, a requirements
-file given with ``--requirements``) is an empty project whose requirements are the tools: the
-build installs the lock as for any project and the console scripts of the distributions the
-file names become the executable's commands. A requirements file names its distributions
-directly (``-r`` includes are followed, constraints name nothing). A file that lists every
-installed distribution (``pip freeze``, pylock.toml) names the dependencies too, so there the
-tools are the listed distributions no other listed distribution requires. A dependency's
+A directory with no Python file and a lock source (requirements.txt, pylock.toml, Pipfile.lock,
+a requirements file given with ``--requirements``) is an empty project whose requirements are
+the tools: the build installs the lock as for any project and the console scripts of the
+distributions the file names become the executable's commands. A requirements file names its
+distributions directly (``-r`` includes are followed, constraints name nothing). A file that
+lists every installed distribution (``pip freeze``, pylock.toml, a Pipfile.lock) names the
+dependencies too, so there the tools are the listed distributions no other listed distribution
+requires; a Pipfile beside its lock names the tools in ``[packages]``. A dependency's
 scripts are never commands. ``gui_scripts`` are not commands either: they open windows and need
 a display.
 """
@@ -32,6 +33,8 @@ from packaging.utils import (
 )
 
 from .closure import ClosureError, InstalledDist, SiteIndex, marker_environment, requirement_of
+from .foreign import ForeignLockError
+from .pipenv import tool_names
 from .project import LockSource, Project, ProjectError, requirement_lines
 
 _INCLUDE = re.compile(r"(?:-r\s*|--requirement(?:\s+|=))(\S.*)")
@@ -69,7 +72,18 @@ def listed_distributions(project: Project, source: LockSource, requirements: str
     assert path is not None  # noqa: S101  a tool binary has a lock source
     if source is LockSource.PYLOCK:
         return _pylock(path)
+    if source is LockSource.PIPFILE_LOCK:
+        return _pipfile(path.parent)
     return _requirements(path, set())
+
+
+def _pipfile(directory: Path) -> list[Listed]:
+    """The Pipfile's ``[packages]`` are the tools; a Pipfile.lock alone names its dependencies
+    as well, so it is read like a freeze."""
+    try:
+        return [Listed(name, extras, marker) for name, extras, marker in tool_names(directory)]
+    except ForeignLockError as exc:
+        raise ProjectError(str(exc)) from exc
 
 
 def _pylock(path: Path) -> list[Listed]:

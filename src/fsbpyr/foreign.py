@@ -1,4 +1,4 @@
-"""Poetry and PDM locks as the lock of a build (research UC3, D5).
+"""Poetry and PDM locks as the lock of a build (research UC3, D5); Pipfile.lock is pipenv.py.
 
 The lock is read here and converted, in the staging work directory and never in the user's
 tree, into a pip requirements file that the existing requirements plan installs (staging.py):
@@ -70,10 +70,11 @@ class Entry:
     optional: bool = False
     dependencies: tuple[Edge, ...] = ()
     extras: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # extra -> canonical names
+    digests: tuple[str, ...] = ()  # sha256 of files the lock does not name (Pipfile.lock)
 
     @property
     def label(self) -> str:
-        return f"{self.name} {self.version}"
+        return f"{self.name} {self.version}".strip()
 
 
 @dataclass(frozen=True, slots=True)
@@ -435,8 +436,8 @@ def _line(entry: Entry, directory: Path, lock: str) -> tuple[str, bool]:
             "does not take from a lock (its credentials are not in the file); pass a "
             "requirements file with --requirements")  # fmt: skip
     if entry.kind == REGISTRY:
-        return f"{entry.name}=={entry.version}{_hash_lines(entry.files.values())}", bool(
-            entry.files)  # fmt: skip
+        digests = [*entry.files.values(), *entry.digests]
+        return f"{entry.name}=={entry.version}{_hash_lines(digests)}", bool(digests)
     if entry.kind in (LOCAL, PATH):
         return f"{entry.name} @ {_local_url(entry.where, directory, entry, lock)}", False
     if entry.kind == GIT:

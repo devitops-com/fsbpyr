@@ -98,9 +98,9 @@ symptom and its remedy.
   `requires-python`, if it sets one, that admits one of 3.12 to 3.15 (see "Which Python").
 - **Lock sources,** the first one found: a requirements file that `--requirements` or
   `requirements` names, `uv.lock` (the project's or its uv workspace's), `pylock.toml`,
-  `requirements.txt`, `poetry.lock`, `pdm.lock`. With none, the build resolves the dependencies
-  itself and warns that it is not reproducible. From `uv.lock`, dependency groups (`dev` among
-  them) are not packaged. See "Poetry and PDM locks".
+  `requirements.txt`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`. With none, the build resolves
+  the dependencies itself and warns that it is not reproducible. From `uv.lock`, dependency
+  groups (`dev` among them) are not packaged. See "Poetry and PDM locks" and "Pipfile.lock".
 
 ## Supported targets
 
@@ -293,8 +293,45 @@ the lock, or `--requirements`, wins, and so does a `uv.lock`.
   lock as it is.
 
 `fsbpyr inspect` shows the lock as `poetry.lock sha256:...` or `pdm.lock sha256:...`, and the JSON
-`build_info` records the kind and, for each distribution, the hash of the locked wheel. `Pipfile.lock`
-is not read.
+`build_info` records the kind and, for each distribution, the hash of the locked wheel.
+
+### Pipfile.lock
+
+A `Pipfile.lock` is a locked build the same way, for a project and for a directory of scripts
+(a legacy Pipenv app is usually a directory of code with no `pyproject.toml`; unlike
+`poetry.lock` and `pdm.lock`, the lock is read there). fsbpyr installs the lock's `default`
+section, never `develop`, with each entry's pinned version, every hash and its markers
+evaluated for the app's Python and platform, and `--require-hashes` when every entry has
+hashes. It ranks last of the lock sources (after `uv.lock`, `pylock.toml`, `requirements.txt`,
+`poetry.lock` and `pdm.lock`): a requirements file beside it, or `--requirements`, wins. A lock
+is complete, so `--extra` adds nothing.
+
+- **The Python.** `_meta.requires` (`python_version = "3.12"`, or `python_full_version`) chooses
+  the Python as a `requires-python` for that minor version would ("Which Python"). `--python`,
+  `python` in `[tool.fsbpyr]` and a `.python-version` outrank it, with no error. A version
+  fsbpyr cannot build for is a warning, and the rule goes on without it.
+- **A lock older than the Pipfile** (`_meta.hash` is not the Pipfile's hash) is a warning, and
+  an error with `--strict`; the build still installs the lock as it is. Without a Pipfile there
+  is nothing to compare. The hash is computed as Pipenv's `plette` library does it; the formula
+  was written from that code and has not been checked against a lock that Pipenv wrote.
+- **Other indexes.** An entry whose `index` is a `[[source]]` that is not PyPI installs from the
+  indexes uv is configured with (`UV_INDEX_URL`, `UV_EXTRA_INDEX_URL`, `uv.toml`), not from the
+  lock's URL, which may name credentials by variable; the lock's hashes decide whether uv found
+  the same files, and the build says which packages and hosts. `--strict` does not count the
+  note.
+- **Git, file and path entries.** A `git` entry keeps its `ref`, which must be a commit. A
+  `file` entry keeps its hash. A `path` entry is installed as a regular package, `editable` or
+  not, as for a requirements file; a path that does not exist, a `ref` that is no commit, a
+  version that is not `==`, and `hg`, `svn` and `bzr` entries are refused, naming the entry. A
+  `path` entry that is the project itself (`pipenv install -e .`) is not installed: fsbpyr
+  installs the project's own wheel.
+- **A tool binary.** A directory with a `Pipfile.lock` and no Python file builds the tools in
+  the Pipfile's `[packages]` ("A tool from its requirements file"); without a Pipfile, a lock
+  names its dependencies too, and the tools are the packages no other package of the lock
+  needs.
+
+`fsbpyr inspect` shows the lock as `Pipfile.lock sha256:...`. A Pipfile.lock's hashes have no file
+names, so the JSON `build_info` has no `artifact_sha256` for its distributions.
 
 ### Projects without a build system
 
@@ -317,8 +354,8 @@ setuptools' legacy fallback. A uv workspace root (`[tool.uv.workspace]`) keeps i
 - **How it is built:** fsbpyr writes the project's wheel itself (the Python files under a
   reserved top-level directory `_fsbpyr_scripts/`), runs no project code and writes nothing into
   the source tree. Two builds of one tree are the same bytes. The dependencies come from
-  `uv.lock` as for any project, or `poetry.lock` / `pdm.lock` ("Poetry and PDM locks"); without
-  a lock, `[project.dependencies]` (and the `--extra`s) are resolved now, with the warning for an
+  `uv.lock` as for any project, or `poetry.lock` / `pdm.lock` / `Pipfile.lock` ("Poetry and PDM
+  locks", "Pipfile.lock"); without a lock, `[project.dependencies]` (and the `--extra`s) are resolved now, with the warning for an
   unlocked build. Poetry 1's `[tool.poetry.dependencies]` is not read without a lock, and a
   `package-mode = false` project needs a `[project]` table; a `.venv` is never read for
   undeclared dependencies (a directory of scripts and a single script do read one, below).
@@ -473,7 +510,7 @@ looks, with an absolute target (`ln -sf /opt/tools/ops-scripts /etc/cron.daily/c
 
 `cd tools && fsbpyr build` in a directory with no Python file and a lock source builds the tools
 the lock names: `requirements.txt` saying `ansible-core==2.17.*`, or `httpie==3.2.4`, or a
-`pylock.toml`, or a file given with `--requirements` (or `requirements` in `[tool.fsbpyr]` of a
+`pylock.toml`, or a `Pipfile.lock`, or a file given with `--requirements` (or `requirements` in `[tool.fsbpyr]` of a
 `pyproject.toml` of settings). The directory is an empty project whose requirements are the tools;
 the result is one executable, named after the directory, whose commands are the console scripts
 of those tools, with a link per command and the deploy lines of "A directory of scripts". One
@@ -486,7 +523,8 @@ whatever its requirements say: its scripts are the commands, and the tools' scri
   refused: write `name @ URL`). A file that lists every installed distribution, as `pip freeze`,
   `uv pip freeze` and `pylock.toml` do, names the dependencies too, so there the tools are the
   listed distributions that no other listed distribution requires (by `Requires-Dist`, read from
-  the staged site). The build says which it took and why, and the commands it found:
+  the staged site). A `Pipfile.lock` names its dependencies as well; with a `Pipfile` beside it,
+  the tools are the Pipfile's `[packages]` instead ("Pipfile.lock"). The build says which it took and why, and the commands it found:
   `requirements.txt lists all 4 installed distributions, so the tools are the 1 that no other
   listed distribution requires: flake8`. In a file of tools alone every listed distribution is a
   tool, `requests` among them if you name it, though it has no command.

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
-from . import pyversion
+from . import pipenv, pyversion
 from .assemble import App, build_temporary, runtime_module_names
 from .boot._fsbpyr_rt.commands import parse
 from .bytecode import SUPPORTED_PYTHON
@@ -357,8 +357,17 @@ def lock_warnings(project: Project, source: LockSource, requirements: str | None
         return warnings
     if source is LockSource.REQUIREMENTS:
         return unpinned_warning(unpinned_requirements(project.requirements_path(requirements)))
+    return _converted_lock_warnings(source, project.directory)
+
+
+def _converted_lock_warnings(source: LockSource, directory: Path) -> list[str]:
+    """What is wrong with a Poetry, PDM or Pipenv lock beside its project: out of date, and
+    (Pipenv) packages from another index, a note on the host's uv that --strict does not count."""
     if source in (LockSource.POETRY_LOCK, LockSource.PDM_LOCK):
-        return [message] if (message := foreign_stale(source, project.directory)) else []
+        return [message] if (message := foreign_stale(source, directory)) else []
+    if source is LockSource.PIPFILE_LOCK:
+        note = pipenv.other_indexes(directory)
+        return [*filter(None, [pipenv.stale(directory), note and Uncounted(note)])]
     return []
 
 
