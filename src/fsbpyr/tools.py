@@ -9,8 +9,10 @@ distributions directly (``-r`` includes are followed, constraints name nothing).
 lists every installed distribution (``pip freeze``, pylock.toml, a Pipfile.lock) names the
 dependencies too, so there the tools are the listed distributions no other listed distribution
 requires; a Pipfile beside its lock names the tools in ``[packages]``. A dependency's
-scripts are never commands. ``gui_scripts`` are not commands either: they open windows and need
-a display.
+scripts are never commands. A tool with no console or gui script of its own is a meta-package
+(``ansible`` requires ``ansible-core``): its direct requirements are the tools in its place.
+``gui_scripts`` are commands as ``console_scripts`` are: pip and uv install them as ordinary
+launchers on Linux.
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ _EDITABLE = re.compile(r"(?:-e|--editable)(?:\s+|=)\s*")
 _EGG = re.compile(r"[#&]egg=([A-Za-z0-9._-]+)")
 _FREEZE_OMITS = ("pip", "setuptools", "wheel", "distribute")  # what pip freeze never lists
 _SHOWN = 5  # names in a message
+_META_DEPTH = 8  # meta-packages followed down to a distribution with scripts
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,25 +185,74 @@ def _named(
     return named
 
 
+def _dependencies(
+    name: str, extras: frozenset[str], index: SiteIndex, environment: dict[str, str]
+) -> dict[str, frozenset[str]]:
+    """The direct requirements of an installed distribution under the runtime's markers and the
+    extras asked for, with the extras each asks for."""
+    dist = index.dists[name]
+    found: dict[str, frozenset[str]] = {}
+    for line in dist.requires:
+        requirement = requirement_of(line, dist)
+        dependency = canonicalize_name(requirement.name)
+        if dependency == name:
+            continue
+        if requirement.marker is None or any(
+            requirement.marker.evaluate({**environment, "extra": extra})
+            for extra in {"", *extras}
+        ):
+            found[dependency] = found.get(dependency, frozenset()) | frozenset(
+                canonicalize_name(extra) for extra in requirement.extras)
+    return found
+
+
 def _required(
     named: dict[str, frozenset[str]], index: SiteIndex, environment: dict[str, str]
 ) -> set[str]:
     """The named distributions another named distribution requires (its dependencies under the
     runtime's markers, with the extras asked for)."""
-    required: set[str] = set()
-    for name, extras in named.items():
-        dist = index.dists[name]
-        for line in dist.requires:
-            requirement = requirement_of(line, dist)
-            dependency = canonicalize_name(requirement.name)
-            if dependency == name or dependency not in named:
-                continue
-            if requirement.marker is None or any(
-                requirement.marker.evaluate({**environment, "extra": extra})
-                for extra in {"", *extras}
-            ):
-                required.add(dependency)
-    return required
+    return {
+        dependency
+        for name, extras in named.items()
+        for dependency in _dependencies(name, extras, index, environment)
+        if dependency in named
+    }
+
+
+def _scripts_of(dist: InstalledDist) -> list[tuple[str, str]]:
+    """The commands a tool gives: its console scripts and its gui scripts."""
+    return [*dist.console_scripts().items(), *dist.gui_scripts().items()]
+
+
+def _through_metas(
+    tops: dict[str, frozenset[str]], index: SiteIndex, environment: dict[str, str]
+) -> tuple[list[str], list[str]]:
+    """The tools in place of ``tops`` (name -> extras asked for), and a note per meta-package
+    taken through. A top with no script of its own is replaced by its direct requirements,
+    recursively; a cycle or ``_META_DEPTH`` levels stop it."""
+    notes: list[str] = []
+
+    def take(name: str, extras: frozenset[str], path: tuple[str, ...]) -> list[str]:
+        if name in path or len(path) > _META_DEPTH or name not in index.dists:
+            return []
+        if _scripts_of(index.dists[name]):
+            return [name]
+        slot = len(notes)
+        notes.append("")  # the meta-package's note goes before those of the ones below it
+        taken: list[str] = []
+        for dependency, asked in _dependencies(name, extras, index, environment).items():
+            taken += [t for t in take(dependency, asked, (*path, name)) if t not in taken]
+        notes[slot] = _meta_note(name, taken) if taken else ""
+        return taken
+
+    tools: list[str] = []
+    for name, extras in tops.items():
+        tools += [t for t in take(name, extras, ()) if t not in tools]
+    return tools, [note for note in notes if note]
+
+
+def _meta_note(name: str, taken: list[str]) -> str:
+    return f"{name} has no console script of its own; the tools taken through it: {_shown(taken)}"
 
 
 def _shown(names: list[str]) -> str:
@@ -211,36 +263,37 @@ def _shown(names: list[str]) -> str:
 def tool_scripts(
     index: SiteIndex, listed: list[Listed], *, project: str, source: str, python_version: str
 ) -> Tools:
-    """The commands of the tools ``listed`` names, after the install: their console scripts. A
-    file that lists every installed distribution except the project has the listed
-    distributions no other one requires as tools; else every listed distribution is one. Two
-    tools with one script name, or none with a console script, are errors."""
+    """The commands of the tools ``listed`` names, after the install: their console and gui
+    scripts. A file that lists every installed distribution except the project has the listed
+    distributions no other one requires as tools; else every listed distribution is one. A tool
+    with no script is replaced by its direct requirements (a meta-package). Two tools with one
+    script name, or none with a script, are errors."""
     environment = marker_environment(python_version)
     named = _named(listed, index, environment, source)
     # a freeze: dependencies are listed too (but never the ones pip freeze leaves out)
     complete = set(index.dists) - {project, *_FREEZE_OMITS} <= set(named)
     required = _required(named, index, environment) if complete else set()
-    tools = [name for name in named if name not in required]
+    tops = [name for name in named if name not in required]
+    tools, meta_notes = _through_metas({n: named[n] for n in tops}, index, environment)
     if required:
         notes = [f"{source} lists all {len(named)} installed distributions, so the tools are "
-                 f"the {len(tools)} that no other listed distribution requires: "
-                 f"{_shown(tools)}"]  # fmt: skip
+                 f"the {len(tops)} that no other listed distribution requires: "
+                 f"{_shown(tops)}"]  # fmt: skip
     else:
-        notes = [f"the tools are the {len(tools)} distributions {source} names: {_shown(tools)}"]
+        notes = [f"the tools are the {len(tops)} distributions {source} names: {_shown(tops)}"]
+    notes += meta_notes
     scripts: dict[str, str] = {}
     owners: dict[str, str] = {}
     for name in tools:
-        dist = index.dists[name]
-        for command, target in dist.console_scripts().items():
+        for command, target in _scripts_of(index.dists[name]):
             if command in owners:
                 raise ClosureError(
-                    f"{owners[command]} and {name} both have the console script {command!r}; "
+                    f"{owners[command]} and {name} both have the script {command!r}; "
                     "one executable cannot have two commands of one name: build them from "
                     "separate directories")
             scripts[command], owners[command] = target, name
-        notes += _gui_note(dist)
     if not scripts:
-        raise ClosureError(_no_commands(source, tools, named, complete=bool(required)))
+        raise ClosureError(_no_commands(source, tops, named, complete=bool(required)))
     notes.append("commands: " + "; ".join(
         f"{', '.join(sorted(c for c, o in owners.items() if o == name))} ({name} "
         f"{index.dists[name].version})" for name in tools if name in owners.values()))  # fmt: skip
@@ -248,19 +301,14 @@ def tool_scripts(
     return Tools(dict(sorted(scripts.items())), owners, tuple(notes), requires)
 
 
-def _gui_note(dist: InstalledDist) -> list[str]:
-    gui = sorted(dist.gui_scripts())
-    return [f"{dist.name}: gui_scripts are not commands: {', '.join(gui)}"] if gui else []
-
-
 def _no_commands(source: str, tools: list[str], named: dict[str, frozenset[str]],
                  *, complete: bool) -> str:  # fmt: skip
     if complete:
         return (f"{source} lists every installed distribution, so only the {len(tools)} that no "
                 f"other one requires were taken as tools ({_shown(tools)}), and none has a "
-                "console script: the executable would have no command; list the tools alone "
+                "console or gui script: the executable would have no command; list the tools alone "
                 "to choose them")  # fmt: skip
-    return (f"{source} names {_shown(list(named))}, and none has a console script: the "
+    return (f"{source} names {_shown(list(named))}, and none has a console or gui script: the "
             "executable would have no command")  # fmt: skip
 
 

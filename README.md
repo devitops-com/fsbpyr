@@ -528,12 +528,15 @@ whatever its requirements say: its scripts are the commands, and the tools' scri
   `requirements.txt lists all 4 installed distributions, so the tools are the 1 that no other
   listed distribution requires: flake8`. In a file of tools alone every listed distribution is a
   tool, `requests` among them if you name it, though it has no command.
-- **Commands:** the `console_scripts` of the tools. A dependency's scripts are not commands
+- **Commands:** the `console_scripts` and `gui_scripts` of the tools (pip and uv install both as
+  ordinary launchers on Linux). A dependency's scripts are not commands
   (`ansible-core`'s are; its `jinja2` dependency's are not; name `jinja2` in a file of tools alone
-  to have them), and `gui_scripts` are not either:
-  they open windows and need a display (the build says which it left out). Two tools with one
-  script name fail the build naming both distributions; no console script at all fails it, saying
-  what the file named. `--entry NAME` builds one of the commands alone. The smoke test
+  to have them). A tool with no script of its own is a meta-package: `ansible` requires
+  `ansible-core`, so `ansible==10.*` gives the commands of `ansible-core`. Its direct
+  requirements, under the runtime's markers and the extras asked for, are the tools in its place,
+  and so on down to a distribution with scripts (the build names the meta-package and the tools
+  taken through it). Two tools with one script name, a console and a gui script among them, fail
+  the build naming both distributions; no script at all fails it, saying what the file named. `--entry NAME` builds one of the commands alone. The smoke test
   checks every command as for any several-command executable: it imports each target's module and
   looks its function up (library code, imported as for any console script).
 - **Build:** the lock is installed as for any pip project (a `requirements.txt` that is not pinned

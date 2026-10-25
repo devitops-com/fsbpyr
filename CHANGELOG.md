@@ -113,9 +113,13 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   name nothing; a line that gives no name, such as a path, is refused). A file that lists every
   installed distribution (`pip freeze`, `uv pip freeze`, `pylock.toml`) has as tools only the
   listed distributions that no other listed distribution requires, and the build prints which it
-  took and why. A dependency's scripts are not commands, and neither are `gui_scripts` (the build
-  names those it left out). Two tools with one script name fail the build naming both
-  distributions; no console script at all fails it, saying what the file named. A directory with
+  took and why. A dependency's scripts are not commands. A tool with no console or gui script of
+  its own is a meta-package (`ansible` requiring `ansible-core`): its direct requirements, under
+  the runtime's markers and the extras asked for, are the tools in its place, down to a
+  distribution with scripts (a cycle or eight levels stop it), and the build names the
+  meta-package and the tools taken through it. `gui_scripts` are commands like console scripts
+  (pip and uv install them as ordinary launchers on Linux). Two tools with one script name fail the build naming both
+  distributions (a console and a gui script of one name clash too); no script at all fails it, saying what the file named. A directory with
   a Python file is a directory of scripts as before. README ("A tool from its requirements
   file") and `docs/compatibility.md` cover tools that start helpers through `sys.executable`
   (exit 70 unless built with `--interpreter-reexec`), commands that are interpreters (reachable

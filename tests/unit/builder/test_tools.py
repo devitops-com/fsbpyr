@@ -241,13 +241,13 @@ def test_an_extra_asked_for_makes_its_dependency_a_dependency() -> None:
 def test_two_tools_with_one_script_name_are_an_error_naming_both() -> None:
     index = _index(_dist("one", (), "run = one:main"), _dist("two", (), "run = two:main"))
 
-    with pytest.raises(ClosureError, match=r"one and two both have the console script 'run'"):
+    with pytest.raises(ClosureError, match=r"one and two both have the script 'run'"):
         tool_scripts(index, _listed_by(["one", "two"]), project="p", source="r.txt",
                      python_version=PYTHON)  # fmt: skip
 
 
 def test_no_console_script_is_an_error_saying_what_the_file_named() -> None:
-    index = _index(_dist("lib-a"), _dist("lib-b", (), gui="viewer = lib_b:main"), _dist("dep"))
+    index = _index(_dist("lib-a"), _dist("lib-b"), _dist("dep"))
 
     with pytest.raises(ClosureError, match=r"requirements.txt names lib-a, lib-b, and none has"):
         tool_scripts(index, _listed_by(["lib-a", "lib-b"]), project="p",
@@ -255,21 +255,130 @@ def test_no_console_script_is_an_error_saying_what_the_file_named() -> None:
 
 
 def test_a_complete_listing_without_a_console_script_says_which_were_considered() -> None:
-    index = _index(_dist("app", ("lib",)), _dist("lib", (), "x = lib:main"))
+    index = _index(_dist("app", ("lib",)), _dist("lib"))
 
     with pytest.raises(ClosureError, match=r"lists every installed distribution.*\(app\)"):
         tool_scripts(index, _listed_by(["app", "lib"]), project="p", source="freeze.txt",
                      python_version=PYTHON)  # fmt: skip
 
 
-def test_gui_scripts_are_not_commands_and_the_note_says_so() -> None:
-    index = _index(_dist("t", (), "t = t:main", gui="t-gui = t:gui"))
+def test_gui_scripts_are_commands_like_console_scripts() -> None:
+    index = _index(_dist("t", (), "t = t:main", gui="t-gui = t:gui"),
+                   _dist("viewer", (), gui="v = v:main"))  # fmt: skip
 
-    tools = tool_scripts(index, _listed_by(["t"]), project="p", source="r.txt",
+    tools = tool_scripts(index, _listed_by(["t", "viewer"]), project="p", source="r.txt",
                          python_version=PYTHON)  # fmt: skip
 
-    assert tools.scripts == {"t": "t:main"}
-    assert "t: gui_scripts are not commands: t-gui" in tools.notes
+    assert tools.scripts == {"t": "t:main", "t-gui": "t:gui", "v": "v:main"}
+    assert tools.owners["t-gui"] == "t" and tools.owners["v"] == "viewer"
+    assert "commands: t, t-gui (t 1.0); v (viewer 1.0)" in tools.notes[-1]
+
+
+def test_a_console_and_a_gui_script_of_one_name_are_a_clash_within_or_across_tools() -> None:
+    within = _index(_dist("t", (), "run = t:main", gui="run = t:gui"))
+    across = _index(_dist("a", (), "run = a:main"), _dist("b", (), gui="run = b:gui"))
+
+    with pytest.raises(ClosureError, match=r"t and t both have the script 'run'"):
+        tool_scripts(within, _listed_by(["t"]), project="p", source="r.txt",
+                     python_version=PYTHON)  # fmt: skip
+    with pytest.raises(ClosureError, match=r"a and b both have the script 'run'"):
+        tool_scripts(across, _listed_by(["a", "b"]), project="p", source="r.txt",
+                     python_version=PYTHON)  # fmt: skip
+
+
+def test_a_meta_package_gives_its_requirements_as_tools() -> None:
+    index = _index(
+        _dist("ansible", ("ansible-core>=2", "jinja2"), ""),
+        _dist("ansible-core", ("jinja2",), "ansible = ansible.cli:main"),
+        _dist("jinja2", (), "jinja = jinja2.cli:main"),
+    )
+
+    tools = tool_scripts(index, _listed_by(["ansible"]), project="p", source="requirements.txt",
+                         python_version=PYTHON)  # fmt: skip
+
+    assert sorted(tools.scripts) == ["ansible", "jinja"]  # the direct requirements, no deeper
+    assert tools.notes[1] == ("ansible has no console script of its own; the tools taken "
+                              "through it: ansible-core, jinja2")  # fmt: skip
+
+
+def test_a_meta_package_in_a_freeze_takes_the_tool_and_not_the_tools_dependencies() -> None:
+    index = _index(
+        _dist("ansible", ("ansible-core",)),
+        _dist("ansible-core", ("jinja2",), "ansible = ansible.cli:main"),
+        _dist("jinja2", (), "jinja = jinja2.cli:main"),
+        _dist("p"),
+    )
+
+    tools = tool_scripts(index, _listed_by(["ansible", "ansible-core", "jinja2"]), project="p",
+                         source="freeze.txt", python_version=PYTHON)  # fmt: skip
+
+    assert tools.scripts == {"ansible": "ansible.cli:main"}
+    assert "the tools taken through it: ansible-core" in tools.notes[1]
+
+
+def test_a_meta_package_of_meta_packages_is_followed_to_the_tools() -> None:
+    index = _index(
+        _dist("top", ("mid", "tool-b; python_version < '3.8'", "extra-dep; extra == 'more'")),
+        _dist("mid", ("tool-a",)),
+        _dist("tool-a", (), "a = tool_a:main"),
+        _dist("tool-b", (), "b = tool_b:main"),
+        _dist("extra-dep", (), "c = extra_dep:main"),
+    )
+
+    plain = tool_scripts(index, _listed_by(["top"]), project="p", source="r.txt",
+                         python_version=PYTHON)  # fmt: skip
+    more = tool_scripts(index, [Listed("top", frozenset({"more"}))], project="p", source="r.txt",
+                        python_version=PYTHON)  # fmt: skip
+
+    assert plain.scripts == {"a": "tool_a:main"}  # tool-b: false marker
+    assert plain.notes[1:3] == (
+        "top has no console script of its own; the tools taken through it: tool-a",
+        "mid has no console script of its own; the tools taken through it: tool-a")  # fmt: skip
+    assert sorted(more.scripts) == ["a", "c"]  # the extra asked for is the meta-package's
+
+
+def test_a_tool_with_scripts_next_to_a_meta_package_keeps_its_dependencies_out() -> None:
+    index = _index(
+        _dist("app", ("lib",), "app = app:main"),
+        _dist("lib", (), "lib = lib:main"),
+        _dist("meta", ("other",)),
+        _dist("other", (), "other = other:main"),
+    )
+
+    tools = tool_scripts(index, _listed_by(["app", "meta"]), project="p", source="r.txt",
+                         python_version=PYTHON)  # fmt: skip
+
+    assert sorted(tools.scripts) == ["app", "other"]
+
+
+def test_a_cycle_of_meta_packages_stops_and_the_other_way_out_is_taken() -> None:
+    index = _index(
+        _dist("one", ("two",)),
+        _dist("two", ("one", "tool")),
+        _dist("tool", (), "t = tool:main"),
+    )
+
+    tools = tool_scripts(index, _listed_by(["one"]), project="p", source="r.txt",
+                         python_version=PYTHON)  # fmt: skip
+
+    assert tools.scripts == {"t": "tool:main"}
+
+
+def test_meta_packages_with_nothing_beyond_them_are_no_commands() -> None:
+    index = _index(_dist("one", ("two",)), _dist("two", ("one",)))
+
+    with pytest.raises(ClosureError, match=r"names one, and none has a console or gui script"):
+        tool_scripts(index, _listed_by(["one"]), project="p", source="r.txt",
+                     python_version=PYTHON)  # fmt: skip
+
+
+def test_the_meta_package_chain_stops_at_the_depth_limit() -> None:
+    chain = [_dist(f"m{i}", (f"m{i + 1}",)) for i in range(20)]
+    index = _index(*chain, _dist("m20", (), "end = m20:main"))
+
+    with pytest.raises(ClosureError, match="none has"):
+        tool_scripts(index, _listed_by(["m0"]), project="p", source="r.txt",
+                     python_version=PYTHON)  # fmt: skip
 
 
 def test_a_missing_distribution_is_an_error_unless_a_marker_excludes_it() -> None:

@@ -251,7 +251,7 @@ def test_entry_builds_one_of_the_commands_alone(tmp_path: Path, runtime: Runtime
 # --- the odd cases, with local distributions ---------------------------------------------------
 
 
-def test_only_the_console_scripts_of_a_tool_are_commands_not_its_dependencys_nor_gui_scripts(
+def test_the_console_and_gui_scripts_of_a_tool_are_commands_not_its_dependencys(
     tmp_path: Path, runtime: Runtime
 ) -> None:
     dependency = _tool(tmp_path / "libs" / "dep", "dep-lib", console="dep-run")
@@ -262,11 +262,33 @@ def test_only_the_console_scripts_of_a_tool_are_commands_not_its_dependencys_nor
     code, out, err = _build(directory)
 
     assert code == 0, err
-    assert "gui_scripts are not commands: app-gui" in out
+    assert "commands: app-gui, app-run, app-two (app-tool 1.0)" in out
     assert sorted(path.name for path in (directory / "dist").iterdir()) == [
-        "app-run", "app-two", "ops"]  # fmt: skip
+        "app-gui", "app-run", "app-two", "ops"]  # fmt: skip
     assert _run(directory / "dist" / "app-two", tmp_path).stdout == "app-two app-tool\n"
+    assert _run(directory / "dist" / "app-gui", tmp_path).stdout == "app-gui app-tool\n"
     assert _run(directory / "dist" / "ops", tmp_path, "app-run").stdout == "app-run app-tool\n"
+    assert _run(directory / "dist" / "ops", tmp_path, "dep-run").returncode != 0
+
+
+def test_a_meta_package_gives_the_commands_of_the_tools_it_requires(
+    tmp_path: Path, runtime: Runtime
+) -> None:
+    dependency = _tool(tmp_path / "libs" / "dep", "dep-lib", console="dep-run")
+    tool = _tool(tmp_path / "libs" / "core", "core-tool", console="core-run", gui="core-gui",
+                 requires=dependency)  # fmt: skip
+    meta = _tool(tmp_path / "libs" / "meta", "meta-pack", requires=tool)
+    directory = _write(tmp_path / "ops", {"requirements.txt": f"{meta}\n"})
+
+    code, out, err = _build(directory)
+
+    assert code == 0, err
+    assert ("meta-pack has no console script of its own; the tools taken through it: core-tool"
+            in out)  # fmt: skip
+    assert sorted(path.name for path in (directory / "dist").iterdir()) == [
+        "core-gui", "core-run", "ops"]  # fmt: skip
+    assert _run(directory / "dist" / "ops", tmp_path, "core-run").stdout == "core-run core-tool\n"
+    assert _run(directory / "dist" / "core-gui", tmp_path).stdout == "core-gui core-tool\n"
     assert _run(directory / "dist" / "ops", tmp_path, "dep-run").returncode != 0
 
 
@@ -279,7 +301,7 @@ def test_a_tool_without_a_console_script_is_an_error_saying_what_the_file_named(
     code, _, err = _build(directory)
 
     assert code == 1
-    assert "requirements.txt names plain-lib, and none has a console script" in err
+    assert "requirements.txt names plain-lib, and none has a console or gui script" in err
     assert not (directory / "dist").exists()
 
 
@@ -293,7 +315,7 @@ def test_two_tools_with_one_script_name_are_an_error_naming_both(
     code, _, err = _build(directory)
 
     assert code == 1
-    assert "tool-one and tool-two both have the console script 'run'" in err
+    assert "tool-one and tool-two both have the script 'run'" in err
     assert not (directory / "dist").exists()
 
 
