@@ -13,6 +13,7 @@ Each row gives what you see, why, and what to do.
 | Symptom | Cause | Remedy |
 |---|---|---|
 | `NotADirectoryError: [Errno 20] Not a directory: '<exe>/<pkg>/data.json'`, or an existence check on such a path returns `False` | A package reads files next to its `__file__`. Its `__file__` is below the executable, which is one file, not a directory. An uncaught `OSError` ends with the note `fsbpyr: <path> is inside the executable; <package> reads files next to its __file__: rebuild with --fs-package <package>`; the note is absent when the app catches the error or replaces `sys.excepthook` (typer and rich do) | Build with `--fs-package <package>` (or `fs-packages` in `[tool.fsbpyr]`); `fsbpyr build --hints` lists likely packages |
+| A hard link to the executable runs the app with `sys.executable`, `__file__` and `sys.path[0]` below the link's own path; a symlink gives the target's | `sys.executable` is the resolved path of the name the app was started by (D14): a symlink resolves to the file, a hard link is a name of its own. A rebuild replaces the file, so a hard link keeps the old build while the new path runs the new one. The D44 check applies to a hard-link start as to any other | Name commands with symlinks, or branch on `sys.argv[0]`; recreate hard links after a rebuild |
 | `PYTHONPATH`, `PYTHONHOME`, `PYTHONDONTWRITEBYTECODE` and the other `PYTHON*` variables have no effect; `sys.flags.utf8_mode` is 1 | The interpreter runs isolated, with UTF-8 mode on and no site import (D14). | Use `FSBPYR_*` variables or the app's own options |
 | `sys.prefix` is the executable's directory; files outside `site-packages` (`share/`, `etc/`, scripts a wheel installs elsewhere) are not in the app | The launcher pins every prefix to the directory of the executable; the build packages the modules and package data of the locked distributions | Ship such files next to the app, or read them through the package that owns them (`importlib.resources`) |
 | `ModuleNotFoundError` for `tkinter`, `idlelib`, `ensurepip`, `turtledemo` or `test`; `_dbm` (so `dbm.ndbm`) is missing | The build leaves these out of the standard library; `_tkinter` and `_dbm` are the two shared objects of the interpreter build, and neither is bundled. GUI toolkits that ship as wheels (Qt, wx) are not blocked, but no test covers them | Do not import them; `dbm.dumb` is pure Python |
@@ -28,8 +29,9 @@ The executable carries CPython, the standard library and the locked distribution
 these from the machine:
 
 - **glibc 2.34 or newer** on Linux x86-64 or aarch64 (RHEL 9, Amazon Linux 2023, Ubuntu
-  22.04, Debian 12 and newer). `fsbpyr inspect` shows the glibc the executable actually needs.
-  Only 2.34 and newer is tested: the distributions below, releases their vendors support.
+  22.04, Debian 12 and newer, SLES 15 SP6 and newer). `fsbpyr inspect` shows the glibc the
+  executable actually needs. SLES 15 SP4 and SP5 (glibc 2.31) are not supported. Only 2.34 and
+  newer is tested: the distributions below, releases their vendors support.
 - **The libraries native code links and the build did not bundle.** `fsbpyr build` prints
   `target needs: glibc >= X.Y; libstdc++.so.6 (GLIBCXX_..., CXXABI_...), libgcc_s.so.1`, and
   `fsbpyr inspect` shows it again. Install those libraries on the target. A build warns when a
@@ -75,6 +77,7 @@ are skipped (README, "Python 3.15").
 | `docker.io/library/amazonlinux:2023` | 2.34 |
 | `docker.io/library/ubuntu:22.04` | 2.35 |
 | `docker.io/library/debian:12` | 2.36 |
+| `registry.suse.com/bci/bci-base:15.7` | 2.38 (SLES 15 SP7) |
 | `docker.io/library/ubuntu:24.04` | 2.39 |
 | `docker.io/library/almalinux:10` | 2.39 |
 | `docker.io/opensuse/leap:16.0` | 2.40 |

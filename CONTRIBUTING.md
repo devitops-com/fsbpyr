@@ -60,7 +60,7 @@ The tiers, from fastest to most complete:
   for the tests that map a second range of user ids with `podman unshare`: the stage has no
   podman. It copies the checkout (without `.venv` and `dist`) into the container, so run it
   from a checkout with its `.git` directory, not a linked worktree.
-- Portability (`tests/e2e/test_portability.py`, `podman run` on 11 distributions, 10 on aarch64
+- Portability (`tests/e2e/test_portability.py`, `podman run` on 12 distributions, 11 on aarch64
   where `archlinux:latest` has no image): needs podman on the host and is not part of `make
   test-container`. CI runs it per target and Python after the suite job.
 

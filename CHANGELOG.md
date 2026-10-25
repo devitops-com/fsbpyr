@@ -10,7 +10,17 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Added
+- **SLES 15 SP6 and SP7 are supported and tested.** Their glibc is 2.38 and fsbpyr apps run on
+  them; the 0.24.0 entry's statement that SLES/openSUSE Leap 15 are no longer supported holds for
+  SLES 15 SP4 and SP5 (glibc 2.31) and openSUSE Leap 15 only. The portability matrix gains
+  `registry.suse.com/bci/bci-base:15.7` (SLES 15 SP7, 12 images now, 11 on aarch64), and the
+  README and `docs/compatibility.md` list SLES 15 SP6 and newer.
+
 ### Changed
+- **`docs/compatibility.md` says what a hard link to an app does.** `sys.executable`, `__file__`
+  and `sys.path[0]` of a start through a hard link are below the link's own path, a symlink gives
+  the target's, and a rebuild leaves a hard link on the old build.
 - **Compile warnings of the project's own files are build warnings.** A `SyntaxWarning` or
   `DeprecationWarning` that compiling emits (`"\d"` in a normal string, say) used to show
   neither at build time nor at run time, while a venv run of the script prints it. The build now
