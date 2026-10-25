@@ -13,7 +13,8 @@ requires = ["uv_build>=0.12.17,<0.13.0"]
 build-backend = "uv_build"
 
 [tool.fsbpyr]
-# Without it the build's smoke test fails: cv2's loader executes config.py next to its
-# __init__ ("OpenCV loader: missing configuration file"); with it the loader fails as
-# commands.toml says
-fs-packages = ["cv2"]
+# cv2's loader executes config.py next to its __init__ ("OpenCV loader: missing configuration
+# file"); scikit-image's lazy_loader reads the .pyi stubs next to its modules, and its data
+# functions read their images from the package directory; imageio-ffmpeg runs its bundled
+# ffmpeg from a path built from __file__ (the build warns about it)
+fs-packages = ["cv2", "imageio_ffmpeg", "skimage"]

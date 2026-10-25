@@ -186,6 +186,18 @@ def test_multiprocessing_children_start_from_this_binary(fixups: ModuleType) -> 
     assert chosen == ["/proc/self/exe"]
 
 
+def test_cv2s_loader_puts_its_directory_first(
+    fixups: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OpenCV's switch: its loader inserts its directory at sys.path[0], ahead of the
+    executable, which would find the cv2 package again."""
+    monkeypatch.setattr(sys, "OpenCV_REPLACE_SYS_PATH_0", False, raising=False)  # removed after
+
+    fixups.apply(ModuleType("cv2.load_config_py3"))
+
+    assert sys.OpenCV_REPLACE_SYS_PATH_0 is True  # type: ignore[attr-defined]
+
+
 class _FileIO:
     """parso.file_io.FileIO as far as the fixup needs: its time is that of a file on disk."""
 

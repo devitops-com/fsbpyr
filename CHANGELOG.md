@@ -42,6 +42,18 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   where systemd's user manager offers one.
 
 ### Fixed
+- **An fs-package comes with its distribution's plugin libraries.** Every shared library the
+  package's distribution ships is extracted with it, also those nothing links, which it opens
+  from a directory: openmm's in `OpenMM.libs/lib/plugins`, so that it finds its CPU and OpenCL
+  platforms (with `fs-packages = ["openmm"]`), not only `Reference`.
+- **OpenCV imports** (with `fs-packages = ["cv2"]`). cv2's loader put its directory into
+  `sys.path` behind the executable, found the cv2 package again instead of its binary, and
+  stopped with "recursion is detected"; fsbpyr sets OpenCV's own switch that puts the
+  directory first.
+- **A wheel's ELF file for another machine no longer stops the build**: it is kept as data,
+  with a warning, as no loader on the target can load it (another machine, 32-bit or
+  big-endian). debugpy has no aarch64 wheel, and its universal wheel carries an x86-64
+  library: apps with ipykernel or Jupyter could not be built on aarch64.
 - **Libraries another distribution bundles are found at build time.** A native file's `DT_NEEDED`
   entry that no search path provides is taken from the payload's shared objects of another
   top-level directory by file name or SONAME (torchvision's extensions need torch's `libc10.so`

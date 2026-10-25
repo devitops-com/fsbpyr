@@ -1,13 +1,3 @@
-# Fails today (found by this corpus): openmm loads its plugins (CPU, OpenCL, ...) with
-# Platform.loadPluginsFromDirectory(<libOpenMM.so's directory>/plugins), and the build packages
-# OpenMM.libs/lib/plugins/*.so but extracts only the shared objects an extension module needs
-# (libOpenMM.so and three more), so <cache>/OpenMM.libs/lib/plugins does not exist and
-# openmm.Platform lists only 'Reference' instead of 'CPU', 'OpenCL', 'Reference'. Without the
-# setting openmm.version.openmm_library_path (<executable>/OpenMM.libs/lib) is not a directory;
-# with fs-packages = ["openmm"] it is the cache's, and the plugins are still missing:
-# OpenMM.libs is not a package, so no setting extracts its files.
-known-failure = "openmm's plugin libraries are not extracted: the platforms are ['Reference'], not CPU, OpenCL, Reference"
-
 expect = "after 100 steps potential"
 
 [[command]]

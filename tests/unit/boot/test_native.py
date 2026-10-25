@@ -13,7 +13,7 @@ import pytest
 from fsbpyr import bytecode
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.payload.format import FileKind, ModuleKind
-from fsbpyr.payload.spec import Blob, File, Module
+from fsbpyr.payload.spec import Blob, Dist, File, Module
 
 from .conftest import FAKE_RUNTIME
 
@@ -23,9 +23,11 @@ LIB = "fast.libs/libhelper.so"
 CY = f"cy/__init__{SUFFIX}"
 RCY = f"vendored/rcy/__init__{SUFFIX}"  # below a .pth root, named rcy
 DUPS = ("fast/libdup.so", "cy/libdup.so")  # one file name in two packages
+PLUGIN = "fast.libs/plugins/libplugin.so"  # fast's distribution ships it; nothing links it
 CONTENT = {EXT: b"\x7fELF speed" * 50, LIB: b"\x7fELF helper" * 50, CY: b"\x7fELF cy",
            RCY: b"\x7fELF rcy", DUPS[0]: b"\x7fELF dup fast",
-           DUPS[1]: b"\x7fELF dup cy"}  # fmt: skip
+           DUPS[1]: b"\x7fELF dup cy", PLUGIN: b"\x7fELF plugin"}  # fmt: skip
+FAST_DIST = Dist("fast", "fast-1.0.dist-info", "1.0")
 
 
 def _code(rel: str) -> Blob:
@@ -35,8 +37,9 @@ def _code(rel: str) -> Blob:
 @pytest.fixture(scope="module")
 def executable(tmp_path_factory: pytest.TempPathFactory) -> Path:
     natives = tuple(
-        File(rel, FileKind.NATIVE_LIB if rel in (LIB, *DUPS) else FileKind.NATIVE_EXT,
-             Blob.zstd(data, digest=True), mode=0o755, closure=(LIB,) if rel == EXT else ())
+        File(rel, FileKind.NATIVE_LIB if rel in (LIB, *DUPS, PLUGIN) else FileKind.NATIVE_EXT,
+             Blob.zstd(data, digest=True), mode=0o755, closure=(LIB,) if rel == EXT else (),
+             dist=FAST_DIST.name if rel.startswith("fast") else None)
         for rel, data in CONTENT.items()
     )  # fmt: skip
     modules = (
@@ -47,7 +50,7 @@ def executable(tmp_path_factory: pytest.TempPathFactory) -> Path:
         Module("cy.helpers", "cy/helpers.py", ModuleKind.MODULE, code=_code("cy/helpers.py")),
     )
     out = tmp_path_factory.mktemp("native") / "native-demo"
-    build_executable(FAKE_RUNTIME, App("native-demo", "fast", modules, natives), out)
+    build_executable(FAKE_RUNTIME, App("native-demo", "fast", modules, natives, (FAST_DIST,)), out)
     return out
 
 
@@ -443,3 +446,18 @@ def test_an_fs_package_comes_with_the_libraries_its_extensions_need(
     assert (site / EXT).read_bytes() == CONTENT[EXT]
     assert (site / LIB).read_bytes() == CONTENT[LIB]  # outside the package's directory
     assert not (site / CY).exists()
+
+
+def test_an_fs_package_comes_with_the_libraries_its_distribution_ships(
+    native: types.ModuleType,
+) -> None:
+    """Libraries nothing links, which the package opens from a directory (openmm's plugins,
+    in OpenMM.libs/lib/plugins); not those of other distributions."""
+    site = Path(native.native_cache().site)
+
+    native.materialize_package("fast")
+
+    assert (site / PLUGIN).read_bytes() == CONTENT[PLUGIN]
+    assert not (site / DUPS[1]).exists()  # cy's: of no distribution
+    native.materialize_package("cy")
+    assert (site / DUPS[1]).exists()  # below the package

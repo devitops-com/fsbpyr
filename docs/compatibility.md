@@ -119,10 +119,11 @@ no tests: it publishes a commit whose run passed. Each app is a project in
 built executable, each run with an empty home directory of its own, and compares exit code,
 stdout and stderr ([tests/corpus/README.md](../tests/corpus/README.md)). An app is skipped on a
 Python where a package of its lock has no wheel for manylinux_2_34 (`tests/support/no-wheels.txt`:
-on 3.15, 23 apps; `tensorflow` also on 3.14, and it has no 3.14 or 3.15 wheels at all). A
-failing row is marked in its directory's `commands.toml` (**fails** below): the test expects
-the failure and goes red once it is fixed. The `[tool.fsbpyr]` column is what the app needs
-beyond the defaults; each setting's reason is a comment in its `pyproject.toml`.
+on 3.15, 23 apps; `tensorflow` also on 3.14, and it has no 3.14 or 3.15 wheels at all). An
+app that fails is marked in its directory's `commands.toml` as a known failure: the test
+expects the failure and goes red once it is fixed; no app is marked at present. The
+`[tool.fsbpyr]` column is what the app needs beyond the defaults; each setting's reason is a
+comment in its `pyproject.toml`.
 
 ### AI research and machine learning
 
@@ -142,9 +143,9 @@ beyond the defaults; each setting's reason is a comment in its `pyproject.toml`.
 | `faiss` | faiss-cpu's SWIG module and OpenMP | none |
 | `numba` | the JIT compiler, the parallel threading layer and `cache=True` | `allow-system-libs = ["libgomp.so.1.0.0", "libtbb.so.12"]`, `fs-packages = ["corpus_numba"]` |
 | `nlp` | nltk, spaCy (language data imported by name), sentencepiece, tiktoken's plugin namespace | `fs-packages = ["spacy", "thinc"]` |
-| `vision` | scikit-image's lazy_loader stubs, imageio-ffmpeg's bundled binary run as a subprocess; **fails**: cv2's loader puts its directory into `sys.path` behind the executable and finds the cv2 package again, not its binary | `fs-packages = ["cv2"]` |
+| `vision` | cv2's loader putting its directory into `sys.path` to import its binary, scikit-image's lazy_loader stubs and data images, imageio-ffmpeg's bundled binary run as a subprocess | `fs-packages = ["cv2", "imageio_ffmpeg", "skimage"]` |
 | `matplotlib` | matplotlib and seaborn: fonts and data of mpl-data, Agg rendering | none |
-| `jupyter` | nbclient running a notebook in an ipykernel started as `sys.executable -m ipykernel_launcher`, IPython in process, jedi (the standard library's sources come from the payload, `fixups.py`); the kernelspec search is cut to ipykernel's own (`XDG_DATA_DIRS`): a built app has no `share/`, and a host's `/usr/share/jupyter/kernels/python3` (Debian's python3-ipykernel) would start the system's Python as the kernel | `fs-packages = ["debugpy", "IPython", "nbformat", "parso"]`, `interpreter-reexec = true` |
+| `jupyter` | nbclient running a notebook in an ipykernel started as `sys.executable -m ipykernel_launcher`, IPython in process, jedi (the standard library's sources come from the payload, `fixups.py`); the kernelspec search is cut to ipykernel's own (`XDG_DATA_DIRS`): a built app has no `share/`, and a host's `/usr/share/jupyter/kernels/python3` (Debian's python3-ipykernel) would start the system's Python as the kernel; on aarch64, debugpy's universal wheel carries an x86-64 library, kept as data | `fs-packages = ["debugpy", "IPython", "nbformat", "parso"]`, `interpreter-reexec = true` |
 | `hydra` | a config package, `_target_` instantiation, plugin discovery in the `hydra_plugins` namespace | none |
 | `optuna` | a study in SQLite, whose storage runs alembic migrations kept next to optuna's modules | `fs-packages = ["optuna"]` |
 
@@ -179,7 +180,7 @@ beyond the defaults; each setting's reason is a comment in its `pyproject.toml`.
 | `materials` | ase's data files and EMT calculator, spglib | `fs-packages = ["ase"]` |
 | `pyscf` | C libraries loaded with `numpy.ctypeslib`, basis-set files | `fs-packages = ["pyscf"]` |
 | `qiskit` | transpiler plugins through entry points, the Aer simulator | `fs-packages = ["qiskit", "qiskit_aer"]` |
-| `openmm` | plugins loaded as shared libraries from a directory next to OpenMM's library; **fails**: the plugin libraries are not extracted (they are in `OpenMM.libs`, not in a package), so only the Reference platform is found | none |
+| `openmm` | plugins loaded as shared libraries from a directory next to OpenMM's library (`OpenMM.libs/lib/plugins`, outside any package) | `fs-packages = ["openmm"]` |
 
 ### Services
 

@@ -9,6 +9,7 @@ from .targets import host_target
 
 type ElfData = bytes | mmap.mmap  # a file's content, or its file mapped (D38)
 _HEADER = struct.Struct("<HHIQQQIHHHHHH")  # e_type .. e_shstrndx, after e_ident[16]
+_MACHINE_END = 20  # e_ident[16], e_type, e_machine
 _PHDR = struct.Struct("<IIQQQQQQ")  # type, flags, offset, vaddr, paddr, filesz, memsz, align
 _DYN = struct.Struct("<qQ")
 _SHDR = struct.Struct("<IIQQQQIIQQ")  # name, type, flags, addr, offset, size, link, info, ...
@@ -41,6 +42,16 @@ class DynamicInfo:
 
 def is_elf(data: ElfData) -> bool:
     return data[:4] == b"\x7fELF"
+
+
+def is_foreign(head: bytes) -> bool:
+    """Whether the ELF object whose first bytes are ``head`` is for another machine than the
+    host's (another ``e_machine``, or 32-bit or big-endian): no loader here can load it. False
+    when ``head`` is too short to tell (a damaged file): reading it reports what is wrong."""
+    if len(head) < _MACHINE_END:
+        return False
+    machine = int.from_bytes(head[_MACHINE_END - 2 : _MACHINE_END], "little")
+    return head[4:6] != b"\x02\x01" or machine != host_target().elf_machine
 
 
 def _unpack(layout: struct.Struct, data: ElfData, offset: int) -> tuple[int, ...]:

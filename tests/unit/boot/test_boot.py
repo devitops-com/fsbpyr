@@ -60,6 +60,13 @@ def test_listed_modules_get_their_fixup_after_loading(
     assert seen == [("pkg.cli", "cli")]  # after the module's code ran; only listed modules
 
 
+def test_every_module_with_a_fixup_is_listed(boot: ModuleType) -> None:
+    """The boot module names them without importing _fsbpyr_rt.fixups."""
+    fixups = importlib.import_module("_fsbpyr_rt.fixups")
+
+    assert set(fixups.FIXUPS) == boot._FIXUPS
+
+
 def test_path_hook_claims_only_payload_paths(boot: ModuleType) -> None:
     assert boot.path_hook(boot.ROOT).directory == ""
     assert boot.path_hook(boot.ROOT + "/pkg/sub").directory == "pkg/sub"
