@@ -198,7 +198,10 @@ Invariants:
 - NAMESPACE has no `code`, `source` or `file`.
 - EXTENSION has `file` pointing at a NATIVE_EXT record, and no `code`.
 - FS_REQUIRED_ROOT marks regular packages (PACKAGE) only: on first import every file below the
-  package's directory is extracted, and the package's modules get `__file__`/`__path__` there.
+  package's directory is extracted, with the closures of its extensions (libraries outside the
+  directory, such as `torchvision.libs`) and every NATIVE_LIB of the distributions its files
+  belong to (by their `dist`: plugins it opens from a directory, such as openmm's), and the
+  package's modules get `__file__`/`__path__` there.
 - Every `code` blob is a zstd frame with the content-checksum flag set, or a member of a block
   (itself such a frame). `marshal.loads` is not safe against corrupt input, so the bytes it gets
   have passed a checksum. The checksum covers a block's content, not which slice of it a member

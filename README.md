@@ -9,6 +9,8 @@ system libraries its native dependencies link
 (often libstdc++ and libgcc_s; `fsbpyr inspect` lists them): no Python, no virtual
 environment, no installation step.
 Modules are imported straight from the file, so startup stays close to plain CPython.
+Some packages need a setting or two; [Does my app need settings?](#does-my-app-need-settings)
+says which, for the 65 applications fsbpyr is tested on and for packages it has not seen.
 
 ## Quickstart
 
@@ -44,6 +46,33 @@ dist/hello
 These lines call fsbpyr by its path: a new `~/.local/bin` is on `PATH` only from the next
 login (Debian's and Ubuntu's `~/.profile` add it when it exists). The compressed download, the
 attestation check and building fsbpyr from source are in [Getting fsbpyr](#getting-fsbpyr).
+
+## Does my app need settings?
+
+Many apps build and run with no settings. Some packages need a line in `[tool.fsbpyr]`: they
+read their own files at paths built from `__file__` (`fs-packages`), link libraries that no
+wheel bundles (`allow-system-libs`), or start helper Python processes (`interpreter-reexec`).
+**Look your packages up in [docs/compatibility.md](docs/compatibility.md#tested-on-real-applications)
+first:** it lists the 65 real applications fsbpyr is tested on, from AI research and science to
+web services, what each one covers and the exact settings it needs. On Python 3.14, 35 of the
+64 that run there need none; most of the others name one or two packages in `fs-packages`.
+
+For a package that is not listed, build the app, run its main commands, and follow what fsbpyr
+says:
+
+- An uncaught file error on a path inside the executable (usually `NotADirectoryError`) ends
+  with `fsbpyr: <path> is inside the executable; <package> reads files next to its __file__:
+  rebuild with --fs-package <package>`. The note is missing when the app catches the error or
+  installs its own `sys.excepthook` (typer and rich do), and a package that only checks whether
+  its files exist sees `False` and may fail later in another way. `fsbpyr build --hints` lists
+  packages that may read files next to `__file__` (guesses).
+- A build that stops on `native files need libraries that are neither bundled nor standard
+  system libraries` prints the `allow-system-libs` line that lets the target provide them.
+- A child process that exits 70 with `fsbpyr: refusing to run ... as Python` asks for
+  `interpreter-reexec` ([Helper interpreters](#helper-interpreters)).
+
+The table in [docs/compatibility.md](docs/compatibility.md#differs-from-a-venv) explains each
+symptom and its remedy.
 
 ## Requirements
 
@@ -418,6 +447,10 @@ Pure-Python apps run straight from the executable. Native extensions, and the pa
 in `fs-packages` (plus the known ones: babel, botocore, certifi, litellm, matplotlib and
 torch), are extracted on first use into `${XDG_CACHE_HOME:-~/.cache}/<app>`, or
 `$FSBPYR_CACHE_DIR` when set; resources an app asks for as a path are extracted there too.
+A package in `fs-packages` comes with the libraries its extensions need from outside it and
+with every shared library its distribution ships (openmm opens its plugins from a directory),
+and `ctypes.CDLL` of a bare file name the system cannot load finds the app's bundled library
+of that name (PyTables' `libblosc2.so`).
 With `--best-compression` that first use takes longer, since xz decodes more slowly than zstd:
 the launcher decodes each library in pieces of 4 MiB on up to 8 threads (numpy's first import:
 about +70 ms; onnxruntime's together with numpy's: about +80 ms; measured at 0.8.0, not

@@ -10,6 +10,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-25
+
 ### Changed
 - **An app that starts itself as a Python interpreter is refused rather than run again** (D44).
   A child the app starts with `sys.executable -m MODULE`, `-c CODE` or a `.py` file of the app
@@ -22,13 +24,40 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   stays the app's in every build.
 
 ### Added
+- **Python 3.15.** A fourth fsbpyr runs on CPython 3.15.1 (`fsbpyr-3.15-<target>`, for both
+  targets) and builds apps that run on it; the others build a 3.15 project by fetching it, as
+  they do 3.12's. 3.14 stays the default (owner, 2026-10-23): `.python-version`, `make build`
+  and the installer without `--python` keep to it, and the installer now takes its default
+  from `.python-version` rather than from the newest Python it has. What 3.15 needed:
+  - canonical bytecode takes marshal version 6 (frozendict, which compile() never emits);
+  - extension suffixes come from the interpreter rather than PYTHON.json, which for 3.15.1 lacks
+    `.abi3t.so` and the abi3 suffixes with the architecture: cryptography's 3.15 wheel
+    (`_rust.abi3t.so`) did not import;
+  - its JIT registers frames with libgcc's unwinder, which would raise the glibc baseline to
+    2.35 (`_dl_find_object`); the launcher wraps `_dl_find_object` to use glibc's own where it
+    exists and the loaded objects' program headers on 2.34 (D43);
+  - a multiprocessing forkserver whose preload sets `on_error` (3.15) is recognized;
+  - `fsbpyr inspect` no longer reads a RECORD digest with characters outside base64's alphabet
+    as valid (3.15's decoder skips them).
+
+  onnxruntime, PyYAML, orjson (whose 3.15 wheels need glibc 2.39) and gnureadline have no
+  wheel for 3.15 on the glibc 2.34 baseline yet: onnxruntime cannot be installed on 3.15, the
+  others build from their source distributions, which needs a compiler and is not
+  reproducible elsewhere. The tests skip what needs them on 3.15
+  (`tests/support/no-wheels.txt`). The README's "Python 3.15" says what to expect and
+  recommends 3.14 until the wheels arrive. Runtime ids, old → new (the launcher changed):
+  - x86-64: 3.12 `2802099b1e2f` → `9049e39d30fe`, 3.13 `db1aa8b7e5a1` → `f9457c914b09`,
+    3.14 `e43c48d54bac` → `942f7ca276a0`, 3.15 `555b9ccd65f1`;
+  - aarch64: 3.12 `c7dcb94ca154` → `55fca5b8b177`, 3.13 `fd4779d965e7` → `5748326d5108`,
+    3.14 `63acc7e1d471` → `9edc7de433d5`, 3.15 `1fb41b74cc31`.
 - **An app's copies running at once are limited** (D45). Every start holds one of the
   executable's slots while it runs (an OFD lock in `/dev/shm`, freed by the kernel when the
   process ends), and a start that finds them all taken exits 70. An app that starts itself
   again and again, by whatever route (`sys.executable -m`, `-c`, a shell, a script) and in
   whatever shape, stops at the limit: 4 per CPU and 16, at least 64 and at most 1024.
-  `FSBPYR_MAX_INSTANCES` sets it (`0`: no limit). Where the guard cannot work (no
-  `/dev/shm`, a file someone else made there, no OFD locks) the app starts unguarded.
+  `FSBPYR_MAX_INSTANCES` sets it (`0`: no limit). Where the guard cannot work (neither
+  `/dev/shm` nor `$XDG_RUNTIME_DIR`, a file someone else made there, no OFD locks) the app
+  starts unguarded.
 - `--interpreter-reexec` also runs a `.py` file of the app as Python (`sys.executable
   <exe>/pkg/tool.py`), as py-cpuinfo and torch's inductor start theirs.
 - The build names the packaged libraries known to start helper interpreters (joblib,
@@ -92,38 +121,6 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - **On 3.14 and 3.15 the forkserver imports the app's entry module before forking workers**, as
   a venv's imports the console script: torch's DataLoader workers no longer import torch each.
   The module comes from the executable, never from the command line (D22).
-
-## [0.25.0] - 2026-10-23
-
-### Added
-- **Python 3.15.** A fourth fsbpyr runs on CPython 3.15.1 (`fsbpyr-3.15-<target>`, for both
-  targets) and builds apps that run on it; the others build a 3.15 project by fetching it, as
-  they do 3.12's. 3.14 stays the default (owner, 2026-10-23): `.python-version`, `make build`
-  and the installer without `--python` keep to it, and the installer now takes its default
-  from `.python-version` rather than from the newest Python it has. What 3.15 needed:
-  - canonical bytecode takes marshal version 6 (frozendict, which compile() never emits);
-  - extension suffixes come from the interpreter rather than PYTHON.json, which for 3.15.1 lacks
-    `.abi3t.so` and the abi3 suffixes with the architecture: cryptography's 3.15 wheel
-    (`_rust.abi3t.so`) did not import;
-  - its JIT registers frames with libgcc's unwinder, which would raise the glibc baseline to
-    2.35 (`_dl_find_object`); the launcher wraps `_dl_find_object` to use glibc's own where it
-    exists and the loaded objects' program headers on 2.34 (D43);
-  - a multiprocessing forkserver whose preload sets `on_error` (3.15) is recognized;
-  - `fsbpyr inspect` no longer reads a RECORD digest with characters outside base64's alphabet
-    as valid (3.15's decoder skips them).
-
-  onnxruntime, PyYAML, orjson (whose 3.15 wheels need glibc 2.39) and gnureadline have no
-  wheel for 3.15 on the glibc 2.34 baseline yet: onnxruntime cannot be installed on 3.15, the
-  others build from their source distributions, which needs a compiler and is not
-  reproducible elsewhere. The tests skip what needs them on 3.15
-  (`tests/support/no-wheels.txt`). The README's "Python 3.15" says what to expect and
-  recommends 3.14 until the wheels arrive. Runtime ids, old → new (the launcher changed):
-  - x86-64: 3.12 `2802099b1e2f` → `282353998cfd`, 3.13 `db1aa8b7e5a1` → `6b9a06deed47`,
-    3.14 `e43c48d54bac` → `bb7355139ff5`, 3.15 `d7b164c2b695`;
-  - aarch64: 3.12 `c7dcb94ca154` → `4e29760fea67`, 3.13 `fd4779d965e7` → `5cb6f4775994`,
-    3.14 `63acc7e1d471` → `3b9f8d14d1ed`, 3.15 `d51013d14760`.
-
-### Fixed
 - **The README's rebuild of a release passes the asset's Python.** `fsbpyr-3.12-...` and
   `fsbpyr-3.13-...` built the checkout with the Python its `.python-version` names, 3.14, by
   handing the build to the release's 3.14 executable, so the comparison failed; `--python`

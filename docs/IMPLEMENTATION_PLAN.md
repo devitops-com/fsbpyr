@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.19, 2026-10-23 (fsbpyr 0.25.0). Phases 0–8, 6b, 6c and 10 are complete (Phase 7 reduced by D37; Phase 8 in six steps, 8a–8f). Phase 9 (owner decision 2026-10-18) is done for self-update, one fsbpyr per Python version (3.12 to 3.15; 3.14 stays the default, D43), the installer and Linux aarch64 with glibc; musl and macOS on Apple Silicon are put aside (owner decision 2026-10-21; no Windows), and signed releases come later (not MVP, owner decision 2026-10-18). Apps and releases cover Linux x86-64 and aarch64 with a glibc 2.34 baseline (D42); uv is required (D26); the CLI runs on click, which also gives the completions and the man page (D40); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.20, 2026-10-25 (fsbpyr 0.25.0). Phases 0–8, 6b, 6c and 10 are complete (Phase 7 reduced by D37; Phase 8 in six steps, 8a–8f). Phase 11 (the gaps the corpus of 65 apps found, owner decisions 2026-10-24) is done for the corpus: every app matches its venv; four smaller gaps found on the way stay open. No app can start itself without end (D44, D45). Phase 9 (owner decision 2026-10-18) is done for self-update, one fsbpyr per Python version (3.12 to 3.15; 3.14 stays the default, D43), the installer and Linux aarch64 with glibc; musl and macOS on Apple Silicon are put aside (owner decision 2026-10-21; no Windows), and signed releases come later (not MVP, owner decision 2026-10-18). Apps and releases cover Linux x86-64 and aarch64 with a glibc 2.34 baseline (D42); uv is required (D26); the CLI runs on click, which also gives the completions and the man page (D40); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -1955,14 +1955,14 @@ cache, and cold where it matters). **Exit:** the comparison is committed in
 
 ### Phase 11 — Gaps the corpus found (owner decisions 2026-10-24: small, contained fixes first, then the gaps every Python has)
 
-The corpus of 65 apps (TST-3, 0.26.0) found gaps of fsbpyr's own, each a `known-failure` in
+The corpus of 65 apps (TST-3, 0.25.0) found gaps of fsbpyr's own, each a `known-failure` in
 the app's `tests/corpus/<app>/commands.toml` with the cause as far as it is known; the test
 expects the failure and goes red once it is fixed (then the line goes). On 2026-10-24, x86-64,
 55 of 65 apps matched their venv on 3.12 and 3.13, 54 of 64 on 3.14 and 35 of 42 on 3.15; with
 the fixes below, every one: 65 of 65 on 3.12 and 3.13, 64 of 64 on 3.14 and 42 of 42 on 3.15
-(2026-10-25; on aarch64, CI's corpus job found jupyter's build stopping, fixed below).
+(2026-10-25), and the same on aarch64 in CI once jupyter's build there was fixed (below).
 
-**Fixed (0.26.0):**
+**Fixed (0.25.0):**
 
 | Gap | Apps | Cause | Fix |
 |---|---|---|---|
@@ -1988,6 +1988,47 @@ the fixes below, every one: 65 of 65 on 3.12 and 3.13, 64 of 64 on 3.14 and 42 o
 | A compiled module's own `OSError` is reported as an extraction failure (2026-10-24) | `black` without `fs-packages` | mypyc runs a compiled package's body inside `create_module`, where `PayloadExtensionLoader` wraps every `OSError` as "cannot extract native code for ... into <cache>"; blib2to3's read of `Grammar.txt` looked like a cache problem | wrap only the errors of the extraction itself |
 | `FileFinder` over a payload directory finds nothing (2026-10-24) | `torchvision` without `fs-packages` | torchvision finds its ops library with `importlib.machinery.FileFinder(os.path.dirname(__file__))`, which lists a directory; inside the executable it finds nothing and the ops never register (a silent failure) | serve a `FileFinder` on a payload directory, or recognise it in the hints |
 | Kernels of the host (2026-10-24) | apps that start Jupyter kernels | the build packages no `share/` files, so jupyter_client finds the host's kernelspecs first and may run a notebook in the system's Python | package a distribution's `share/jupyter/kernels`, or document it with the isolation the corpus app uses (`XDG_DATA_DIRS`) |
+
+**Next: settings without guesswork (owner decision 2026-10-25).** The settings an app needs
+are the most likely thing to stop a new user: `[tool.fsbpyr]` has to name the packages that read
+files next to their `__file__` (`fs-packages`), the libraries the target provides
+(`allow-system-libs`) and helper interpreters (`interpreter-reexec`), and today a user finds
+them by trying. The goal is either to detect all of them, or to give users a clear procedure,
+with tooling, to find them for a package the corpus has not tested. The investigation of
+2026-10-24 (corpus at 457aecb, before the fixes above):
+
+- `allow-system-libs`: count a native file as an extension module only if it has its
+  `PyInit_` symbol, not by its file name (removes casadi's and boosting's setting, checked with
+  the closure code on their wheels), and allow, with a warning naming them, the libraries of
+  extension modules that every importer imports under `try/except ImportError` (numba; a scan
+  only). A list of libraries "present everywhere" does not work: libgomp is missing on Debian,
+  Ubuntu and openSUSE images.
+- `interpreter-reexec`: a narrow mode that runs only the known helper command lines of the
+  libraries the build finds (joblib's loky worker and resource tracker, `ipykernel_launcher`,
+  py-cpuinfo's script). Enabling it whenever such a library is in the lock is right for 3 of
+  the 11 corpus apps that have one, and `true` for every app widens what a child can run.
+- `fs-packages`: static analysis has no good operating point (today's `--hints`: precision
+  0.25, recall 0.64; improved rules: recall 0.86 but precision 0.15 on apps not used to design
+  them). Extracting every package that ships data files found 30 of the 33 packages,
+  extracting everything 33 of 33 with the same output in all 15 apps compared (first run up to
+  0.2 s slower on this host, a cache 20 to 100 MB larger). A trace loop (`--suggest-settings`:
+  build without settings, run the app's commands under a tracer in the boot, rebuild until
+  nothing new turns up, then prune by rebuilding without each suggestion) got about 55 of 58
+  apps exactly; it misses reads from C code (casadi), failures that are not file reads (grpc:
+  the `resolve()` gap above) and numba's `cache=True`, and sees only what the commands
+  exercise. PyInstaller's and Nuitka's package tables are GPL and AGPL and answer another
+  question (which files to include), so there is nothing to reuse.
+
+Agreed on 2026-10-24 and not done (paused for the corpus fixes): the `PyInit_` and
+guarded-import rules, the narrow reexec mode, `--suggest-settings` and quieter, ranked hints.
+They remove `allow-system-libs` and `interpreter-reexec` from the corpus, but every app that
+sets them except hdf5 also needs `fs-packages`. Open: whether `fs-packages` becomes automatic
+(extract the packages that ship data files, or every imported package), which would leave most
+apps with no settings at all, and the procedure for a package nobody has tested (the README's
+"Does my app need settings?" is its first version). The six apps fixed since the investigation
+(black, twisted, torchvision, jupyter, openmm, vision) have not been measured against these
+approaches.
+
 ---
 
 ## 7. Test strategy
