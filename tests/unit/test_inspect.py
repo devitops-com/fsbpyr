@@ -122,6 +122,31 @@ def test_inspect_shows_the_app_and_the_fsbpyr_it_was_built_with(
     ]
 
 
+def test_inspect_shows_the_glibc_baseline_of_an_app_built_for_another(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    executable = _executable(tmp_path, ("glibc", "2.28"), ("glibc_baseline", "2.28"))
+
+    lines = _inspect(executable, capsys)
+    assert main(["inspect", "--json", str(executable)]) == 0
+    document = json.loads(capsys.readouterr().out)
+
+    assert lines[2:4] == ["python     3.14.8, glibc >= 2.28", "baseline   glibc 2.28"]
+    assert document["glibc_baseline"] == "2.28"
+
+
+def test_inspect_reports_the_default_baseline_for_apps_that_record_none(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    executable = _executable(tmp_path, ("glibc", "2.34"))
+
+    lines = _inspect(executable, capsys)
+    assert main(["inspect", "--json", str(executable)]) == 0
+
+    assert not any(line.startswith("baseline") for line in lines)  # the text stays as it was
+    assert json.loads(capsys.readouterr().out)["glibc_baseline"] == "2.34"
+
+
 def test_inspect_lists_the_entry_point_and_what_the_target_must_provide(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

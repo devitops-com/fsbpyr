@@ -25,9 +25,10 @@ from fsbpyr.payload.reader import Executable
 from fsbpyr.project import LockSource
 
 from ..support import wheels
-from ..support.images import images_for
+from ..support.images import EL8_IMAGES, images_for
 from ..support.stderr import NO_HOSTNAME, ONNX_HOST
 from .test_compat import MATRIX
+from .test_el8 import HELLO_OUTPUT, NATIVE_OUTPUT, native_project
 from .test_natives import EXPECTED as HEAVY
 
 PODMAN = shutil.which("podman")
@@ -218,3 +219,38 @@ def test_reported_glibc_requirement_matches_the_binary(
     highest = max((v for v in found if v is not None), default=None)
     assert highest is not None and reported == f"{highest[0]}.{highest[1]}"
     assert highest <= (2, 34)  # the baseline these distributions provide
+
+
+@pytest.fixture(scope="module")
+def el8_apps(tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest) -> Path:
+    """`hello` and an app with a manylinux_2_28 wheel, built with --glibc 2.28 (D46): from a
+    prebuilt set that has them, else here, with the EL8 runtime. A release's glibc 2.28 stubs
+    are assets of their own, so the prebuilt set of a run on a release executable may lack them."""
+    if prebuilt := os.environ.get("FSBPYR_PORTABILITY_APPS"):
+        if not (Path(prebuilt) / "hello-el8").is_file():
+            pytest.skip("no glibc 2.28 apps in FSBPYR_PORTABILITY_APPS")
+        return Path(prebuilt)
+    request.getfixturevalue("el8_runtime")
+    directory = tmp_path_factory.mktemp("el8-apps")
+    hello = directory / "src" / "hello"
+    shutil.copytree(FIXTURES / "hello", hello)
+    options = ["--glibc", "2.28"]
+    assert main(["build", str(hello), "-o", str(directory / "hello-el8"), *options]) == 0
+    project = native_project(tmp_path_factory)
+    assert main(["build", str(project), "-o", str(directory / "native-el8"), *options]) == 0
+    return directory
+
+
+@pytest.mark.parametrize("image", EL8_IMAGES)
+def test_el8_apps_run_on_el8(el8_apps: Path, image: str) -> None:
+    script = ("export FSBPYR_CACHE_DIR=/tmp/cache; /apps/hello-el8 5 x 2>&1; echo \"rc=$?\"; "
+              "/apps/native-el8 2>&1; echo \"rc=$?\"")  # fmt: skip
+
+    result = subprocess.run(
+        [PODMAN or "podman", "run", "--rm", "--network=none", "--pids-limit", "512", "--memory",
+         "4g", "-v", f"{el8_apps}:/apps:ro,Z", image, "sh", "-c", script],
+        capture_output=True, text=True, timeout=900, check=False,
+    )  # fmt: skip
+
+    assert result.stdout.splitlines() == [HELLO_OUTPUT, "rc=5", NATIVE_OUTPUT, "rc=0"], (
+        image, result.stdout, result.stderr)

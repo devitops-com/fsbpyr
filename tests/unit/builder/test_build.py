@@ -14,6 +14,7 @@ from fsbpyr.build import (
     BuildError,
     StrictError,
     _provenance,
+    baseline_record,
     best_compression_unused,
     build,
     builder_uv,
@@ -105,7 +106,7 @@ def test_builds_without_uv_fail_before_looking_for_a_runtime(
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
     (tmp_path / "app.py").write_text("if __name__ == '__main__':\n    pass\n")  # an entry candidate
     monkeypatch.setattr("shutil.which", lambda name: None)
-    monkeypatch.setattr("fsbpyr.build.select_runtime", lambda version: pytest.fail("runtime"))
+    monkeypatch.setattr("fsbpyr.build.select_runtime", lambda *_, **__: pytest.fail("runtime"))
 
     with pytest.raises(StagingError, match="needs uv"):
         build(tmp_path, BuildConfig())
@@ -115,7 +116,7 @@ def _stand_ins(monkeypatch: pytest.MonkeyPatch) -> None:
     """uv and the runtime: build() runs neither, and builds for the boot tests' stand-in."""
     monkeypatch.setattr("fsbpyr.build.find_uv", lambda: Path("uv"))
     monkeypatch.setattr("fsbpyr.build.uv_version", lambda uv: "0.13.1")
-    monkeypatch.setattr("fsbpyr.build.select_runtime", lambda version: FAKE_RUNTIME)
+    monkeypatch.setattr("fsbpyr.build.select_runtime", lambda *_, **__: FAKE_RUNTIME)
     monkeypatch.setattr("fsbpyr.build.git_state", lambda directory, warn: None)
 
 
@@ -285,7 +286,7 @@ STUB_2_25 = make_elf(versions=(("libc.so.6", ("GLIBC_2.2.5", "GLIBC_2.25")),))
         (((2, 36), "a/_new.so"), "2.36", True),
     ],
 )
-def test_glibc_requirement_is_the_highest_of_stub_and_natives(
+def test_glibc_requirement_is_the_highest_of_stub_natives_and_baseline(
     natives: tuple[tuple[int, int], str] | None, expected: str, warns: bool
 ) -> None:
     requirement, warnings = glibc_report(STUB_2_25, natives, baseline=(2, 34))
@@ -547,3 +548,26 @@ def test_libraries_starting_helper_interpreters_are_named_unless_the_build_runs_
 def test_no_hint_with_interpreter_reexec_or_without_such_a_library() -> None:
     assert helper_interpreter_hints(_modules("joblib.externals.loky"), True) == []
     assert helper_interpreter_hints(_modules("numpy", "joblib"), None) == []
+
+
+def test_a_native_file_above_the_2_28_baseline_warns_with_that_baseline() -> None:
+    natives = ((2, 31), "a/_new.so")
+
+    requirement, warnings = glibc_report(STUB_2_25, natives, baseline=(2, 28))
+
+    assert requirement == "2.31"
+    assert warnings == ["a/_new.so needs glibc 2.31, more than the 2.28 baseline; on older "
+                        "systems it fails when imported"]  # fmt: skip
+    assert glibc_report(STUB_2_25, natives, baseline=(2, 34))[1] == []
+
+
+def test_the_default_baseline_adds_nothing_to_build_info() -> None:
+    assert baseline_record("2.34") == ()
+    assert baseline_record("2.28") == (("glibc_baseline", "2.28"),)
+
+
+def test_a_launcher_older_than_the_2_28_baseline_still_reports_2_28() -> None:
+    """The EL8 stub is linked against glibc 2.28's headers and may use older symbols only; the
+    app is built and tested for 2.28, which the summary says."""
+    assert glibc_report(STUB_2_25, None, baseline=(2, 28)) == ("2.28", [])
+    assert glibc_report(STUB_2_25, ((2, 17), "a/_x.so"), baseline=(2, 28)) == ("2.28", [])

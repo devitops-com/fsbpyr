@@ -83,6 +83,20 @@ class StubBuildError(RuntimeError):
     """The compiler or linker failed."""
 
 
+IDENTITY_MARKER = b"fsbpyr-stub-identity="  # main.c: followed by the runtime id, then a NUL
+
+
+def stub_identity(data: bytes) -> str | None:
+    """The runtime id the stub ``data`` was linked as (main.c); None for a file that carries
+    none: not a stub of ours, or one linked before stubs recorded it."""
+    start = data.find(IDENTITY_MARKER)
+    if start < 0:
+        return None
+    start += len(IDENTITY_MARKER)
+    end = data.find(b"\0", start)
+    return None if end < 0 else data[start:end].decode("ascii", "replace")
+
+
 def outlined_atomics(toolchain: Toolchain, triple: str) -> Path | None:
     """The library with the outlined atomics (``__aarch64_cas4_acq_rel`` and the like) that
     PBS's aarch64 objects call: clang's compiler-rt builtins, which the link takes them from
@@ -122,6 +136,7 @@ def stub_command(  # noqa: PLR0913  # the build's inputs, and which variant
     *,
     sanitize: bool = False,
     atomics: Path | None = None,
+    identity: str | None = None,
 ) -> list[str]:
     magic = int.from_bytes(dist.bytecode_magic, "little")
     return [
@@ -139,6 +154,8 @@ def stub_command(  # noqa: PLR0913  # the build's inputs, and which variant
         ),
         f"--ld-path={toolchain.lld}",
         f"-DFSBPYR_BYTECODE_MAGIC=0x{magic:08x}u",
+        # the stub's own id, out of the flags that the runtime id hashes
+        *([f'-DFSBPYR_RUNTIME_ID="{identity}"'] if identity is not None else []),
         f"-I{dist.include}",
         f"-I{sources[0].parent}",
         "-o",
@@ -166,12 +183,14 @@ def _copy_launcher(target: Path) -> list[Path]:
 
 
 def build_stub(
-    dist: PbsDist, toolchain: Toolchain, out: Path, *, sanitize: bool = False
+    dist: PbsDist, toolchain: Toolchain, out: Path, *, sanitize: bool = False,
+    identity: str | None = None,
 ) -> tuple[str, ...]:
-    """Link the launcher into ``out``; what the compiler and linker printed (their warnings), a
-    line each. A stack frame over the limit fails it: LTO inlines across sources, and CPython's
-    code into ours, and sizes the frames again at the link, where only a warning says so (D38;
-    cache_sync took 8888 bytes, unnoticed, until 0.15.0)."""
+    """Link the launcher into ``out``, recording ``identity`` (the runtime id) in it; what the
+    compiler and linker printed (their warnings), a line each. A stack frame over the limit
+    fails it: LTO inlines across sources, and CPython's code into ours, and sizes the frames
+    again at the link, where only a warning says so (D38; cache_sync took 8888 bytes,
+    unnoticed, until 0.15.0)."""
     inputs = link_inputs(
         dist, set(ar.members(dist.root / dist.info["build_info"]["core"]["static_lib"]))
     )
@@ -183,7 +202,8 @@ def build_stub(
         _copy_launcher(work)
         sources = [Path(name) for name in LAUNCHER_SOURCES]
         command = stub_command(dist, inputs, toolchain, sources, Path(_LINKED), sanitize=sanitize,
-                               atomics=outlined_atomics(toolchain, dist.triple))  # fmt: skip
+                               atomics=outlined_atomics(toolchain, dist.triple),
+                               identity=identity)  # fmt: skip
         result = subprocess.run(command, cwd=work, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             raise StubBuildError(f"launcher link failed:\n{result.stderr[-_ERROR_TAIL:]}")

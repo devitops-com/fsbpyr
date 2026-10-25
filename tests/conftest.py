@@ -45,7 +45,9 @@ EXPECTED_SKIPS = {
     # package without a wheel for the Python (tests/support/no-wheels.txt)
     "full": ("3.12's takes one resource name", "no wheel for Python "),
     # full-suite.yml's portability job: podman on the runner host, and every image pulled
-    "portability": ("no wheel for Python ",),
+    # (the release executable of that job has no glibc 2.28 stubs: the separate EL8 workflow
+    # publishes them, and its apps join the prebuilt set then)
+    "portability": ("no wheel for Python ", "no glibc 2.28 apps"),
 }
 # The corpus projects (TST-3) carry test files of their own, which their built apps run
 collect_ignore_glob = ["corpus/*"]
@@ -109,7 +111,8 @@ def pytest_configure(config: pytest.Config) -> None:
 
 def _prepare_for_workers(kept: Path) -> None:
     """pytest-xdist: the runtime's downloads and both runtimes once, here, before the workers
-    start, each of which would otherwise fetch and build them for its own cache."""
+    start, each of which would otherwise fetch and build them for its own cache (the glibc 2.34
+    release and sanitized runtimes, and the glibc 2.28 one of the EL8 tests)."""
     from fsbpyr.build import TARGET_PYTHON  # noqa: PLC0415
     from fsbpyr.runtime.toolchain import ToolchainError  # noqa: PLC0415
 
@@ -117,8 +120,8 @@ def _prepare_for_workers(kept: Path) -> None:
 
     downloads.fill(TARGET_PYTHON, kept)
     try:
-        for sanitize in (False, True):
-            downloads.build_kept_runtime(TARGET_PYTHON, kept, sanitize=sanitize)
+        for sanitize, baseline in ((False, "2.34"), (True, "2.34"), (False, "2.28")):
+            downloads.build_kept_runtime(TARGET_PYTHON, kept, sanitize=sanitize, baseline=baseline)
     except ToolchainError:  # no compiler here: the end-to-end tests skip in the workers
         pass
 

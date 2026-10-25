@@ -28,10 +28,28 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   Rocky Linux 8.10's glibc 2.28, libgcc 8 and kernel 4.18 headers, read from the pinned RPMs by
   a reader of fsbpyr's own (no `rpm` tool is needed). A runtime built this way has an id of its
   own and never mixes with the default one (Debian 12's sysroot, glibc 2.34, which stays the
-  default); `fsbpyr runtime list` now shows each runtime's glibc. Nothing builds apps with it
-  yet: `fsbpyr build --glibc` follows. The launcher compiles its `_dl_find_object` wrapper only
+  default); `fsbpyr runtime list` now shows each runtime's glibc; `fsbpyr build --glibc 2.28`
+  (below) builds apps with it. The launcher compiles its `_dl_find_object` wrapper only
   where the headers have it (glibc 2.35); the default stub behaves as before, but its source
   changed, so its runtime id does.
+- **`fsbpyr build --glibc 2.28` builds an app for EL8** (RHEL 8, Rocky Linux 8, AlmaLinux 8),
+  as does `glibc = "2.28"` in `[tool.fsbpyr]`; the command line wins, other values are rejected
+  with the allowed ones, and `--glibc 2.34` is the default and builds as before. For 2.28 uv
+  picks `manylinux_2_28` wheels, a dependency without one is built from its
+  sdist against the EL8 sysroot, the warnings about libstdc++, libgcc_s and libz use
+  auditwheel's manylinux_2_28 limits, and `fsbpyr inspect` shows `baseline   glibc 2.28`
+  (`glibc_baseline` in `--json` and in the build information; builds for the default record
+  nothing new). The launcher for 2.28 is a separate release asset, one per Python and target
+  (`fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28`, plain or `.xz`, with its SHA-256 in
+  `SHA256SUMS-glibc2.28`): a release fsbpyr pairs its own standard library with the stub of its
+  own release, taken from a file placed in the directory of the fsbpyr executable (for machines
+  without GitHub access), else from its cache, else downloaded and verified. EL8 assets are
+  published separately and not with every release: without them the build stops and says so,
+  naming the asset to place. fsbpyr run from a checkout or a wheel uses the runtime that `fsbpyr runtime
+  build --glibc 2.28` made, and never fetches. Every launcher now records the runtime id it
+  was linked as, and a stub that is not the one of this fsbpyr's release, Python and target is
+  refused; the default launcher's runtime id changed for that (its behaviour did not). See
+  the README, "Older systems".
 
 ### Changed
 - **`PYTHONUNBUFFERED` is honoured** (D14). Set and non-empty, it makes an app's stdout and

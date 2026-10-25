@@ -396,12 +396,12 @@ def _first_column(section: str) -> set[str]:
     return set(_FIRST_CELL.findall(text.partition("\n## ")[0]))
 
 
-def test_compatibility_distribution_table_is_the_portability_images() -> None:
-    from ..support.images import IMAGES  # noqa: PLC0415
+def test_compatibility_distribution_tables_are_the_portability_images() -> None:
+    from ..support.images import EL8_IMAGES, IMAGES  # noqa: PLC0415
 
     text = COMPATIBILITY.read_text().partition("## Tested on")[2].partition("`compat` app")[0]
 
-    assert set(_FIRST_CELL.findall(text)) == set(IMAGES)
+    assert set(_FIRST_CELL.findall(text)) == {*IMAGES, *EL8_IMAGES}
 
 
 def test_compatibility_checks_table_is_the_compat_matrix() -> None:

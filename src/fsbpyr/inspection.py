@@ -26,6 +26,7 @@ from .elf import ElfError, section
 from .natives import init_symbol
 from .payload.format import NATIVE_KINDS, NONE, FileKind, PayloadError
 from .payload.reader import Executable, FileRecord, Payload
+from .runtime.pins import DEFAULT_BASELINE
 from .sizes import PARTS, Sizes, measure
 from .system import target_needs
 from .vcs import version_string
@@ -299,6 +300,13 @@ def _setting_lines(info: dict[str, object]) -> list[str]:
     return lines
 
 
+def _baseline(info: dict[str, object]) -> str:
+    """The glibc baseline the app was built for (D46): recorded for the options other than
+    the default, which every earlier build is."""
+    recorded = info.get("glibc_baseline")
+    return recorded if isinstance(recorded, str) else DEFAULT_BASELINE
+
+
 def _tops(names: list[str]) -> list[str]:
     return sorted({name.partition(".")[0] for name in names})
 
@@ -318,6 +326,7 @@ def as_json(report: Report, *, all_modules: bool = False) -> str:
         "python": report.info.get("python"),
         "uv": report.info.get("uv"),
         "glibc": report.info.get("glibc"),
+        "glibc_baseline": _baseline(report.info),
         "toolchain": list(report.toolchain),
         "entry": report.entrypoint,
         "digest": report.digest,
@@ -439,6 +448,8 @@ def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
         f"app        {app_line}",
         f"built with fsbpyr {_shown(_built_with(report.info))}",
         f"python     {_shown(report.info.get('python', UNKNOWN))}{glibc_text}",
+        *([f"baseline   glibc {_shown(_baseline(report.info))}"]
+          if "glibc_baseline" in report.info else []),
         f"uv         {_shown(report.info.get('uv', UNKNOWN))}",
         f"size       {report.size / 1e6:.1f} MB, {_plural(len(report.dists), 'distribution')}",
         f"compressed {_shown(_compression(report))}",

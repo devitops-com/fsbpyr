@@ -259,3 +259,31 @@ def test_sysroot_names_of_every_libc_are_ours_to_collect() -> None:
     assert names.fullmatch("debian10-glibc2.28-aarch64")  # a sysroot of an older fsbpyr
     assert names.fullmatch("alpine314-musl1.2.2-aarch64")
     assert not names.fullmatch("debian10-bionic2.28-x86_64")
+
+
+@pytest.mark.parametrize(("manylinux", "x86_64", "aarch64"), [
+    ("2.34", "x86_64-manylinux_2_34", "aarch64-manylinux_2_34"),
+    ("2.28", "x86_64-manylinux_2_28", "aarch64-manylinux_2_28"),
+])  # fmt: skip
+def test_uv_platform_follows_the_glibc_baseline(manylinux: str, x86_64: str, aarch64: str) -> None:
+    assert targets.target_named("x86_64-linux-gnu").platform_for(manylinux) == x86_64
+    assert targets.target_named("aarch64-linux-gnu").platform_for(manylinux) == aarch64
+
+
+def test_the_default_baselines_platform_is_the_targets_own() -> None:
+    for target in targets.TARGETS:
+        assert target.platform_for(pins.DEFAULT_BASELINE) == target.uv_platform
+
+
+@pytest.mark.parametrize("baseline", pins.BASELINES)
+def test_every_baselines_platform_names_the_sysroots_manylinux(baseline: str) -> None:
+    for triple in ("x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"):
+        sysroot = pins.sysroot_for(triple, baseline)
+        platform = targets.target_named(triple).platform_for(sysroot.manylinux)
+        assert platform.endswith("manylinux_" + baseline.replace(".", "_"))
+
+
+def test_musl_and_macos_have_no_manylinux_platform() -> None:
+    for name in ("x86_64-linux-musl", "aarch64-macos"):
+        target = targets.target_named(name)
+        assert target.platform_for("2.28") == target.uv_platform

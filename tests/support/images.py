@@ -14,6 +14,12 @@ IMAGES = (  # glibc 2.34 (the baseline) up to the newest releases: what their ve
     "docker.io/library/fedora:latest",  # 2.43
     "docker.io/library/archlinux:latest",  # 2.44
 )
+# The EL8 images (glibc 2.28) that `fsbpyr build --glibc 2.28` is for (tests/e2e/test_el8.py);
+# both have an arm64 variant (`podman manifest inspect`, checked 2026-10-25).
+EL8_IMAGES = (
+    "docker.io/library/rockylinux:8",
+    "docker.io/library/almalinux:8",
+)
 # Images with no arm64 variant (`podman manifest inspect`, checked 2026-10-22 and, for
 # bci-base:15.7, 2026-10-25: the other eleven have one); Arch Linux ARM is a different project's.
 NO_ARM64 = frozenset({"docker.io/library/archlinux:latest"})

@@ -55,6 +55,10 @@ class UpdateError(RuntimeError):
     """The update cannot be done; the message says why and what to do instead."""
 
 
+class NotFound(UpdateError):
+    """The server has no such file (404): the release does not publish it."""
+
+
 @dataclass(frozen=True, slots=True)
 class Release:
     tag: str
@@ -136,6 +140,11 @@ def latest_release(asset: str) -> Release:
     return Release(tag, numbers, assets[name])
 
 
+def _failed(url: str, exc: Exception) -> UpdateError:
+    missing = isinstance(exc, urllib.error.HTTPError) and exc.code == 404
+    return (NotFound if missing else UpdateError)(f"downloading {url} failed: {exc}")
+
+
 def unpack(url: str, target: Path) -> None:
     """``url`` (an xz file), unpacked as it arrives into ``target``."""
     decoder = lzma.LZMADecompressor(format=lzma.FORMAT_XZ)
@@ -146,9 +155,22 @@ def unpack(url: str, target: Path) -> None:
             while chunk := response.read(_CHUNK):
                 out.write(decoder.decompress(chunk))
     except (OSError, lzma.LZMAError, EOFError) as exc:
-        raise UpdateError(f"downloading {url} failed: {exc}") from exc
+        raise _failed(url, exc) from exc
     if not decoder.eof:
         raise UpdateError(f"{url} ended before the end of its xz stream")
+
+
+def download_text(url: str, limit: int = _CHUNK) -> str:
+    """``url``'s body as text, of at most ``limit`` bytes (a checksums file)."""
+    try:
+        request = urllib.request.Request(url, headers=_ACCEPT)  # noqa: S310  the release's URL
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
+            body: bytes = response.read(limit + 1)
+    except OSError as exc:
+        raise _failed(url, exc) from exc
+    if len(body) > limit:
+        raise UpdateError(f"{url} is larger than {limit} bytes")
+    return body.decode("utf-8", "replace")
 
 
 def _glibc_version(text: object) -> tuple[int, ...] | None:

@@ -253,11 +253,15 @@ def test_build_runtime_orchestrates_and_caches(
     linked_against: list[Path] = []
     monkeypatch.setattr(sysroot, "fetch_sysroot", lambda pin, cache: cache / "sysroots" / pin.name)
 
+    identities: list[str | None] = []
+
     def build_stub(
-        dist: pbs.PbsDist, toolchain: Toolchain, out: Path, *, sanitize: bool = False
+        dist: pbs.PbsDist, toolchain: Toolchain, out: Path, *, sanitize: bool = False,
+        identity: str | None = None,
     ) -> tuple[str, ...]:
         assert toolchain.sysroot is not None and not sanitize
         linked_against.append(toolchain.sysroot)
+        identities.append(identity)
         out.write_bytes(b"STUB")
         return ("ld.lld-22: warning: from the link",)
 
@@ -300,6 +304,7 @@ def test_build_runtime_orchestrates_and_caches(
     assert (tmp_path / "runtimes" / runtime.runtime_id / ".lock").is_file()  # held (D38)
     assert registry.list_runtimes(tmp_path) == [(runtime.runtime_id, "3.14.8", baseline)]
     assert linked_against == [tmp_path / "sysroots" / sysroot_pin.name]  # stubbed
+    assert identities == [runtime.runtime_id]  # the stub records the id it is cached under
     # every warning of the build is shown, not only its failures
     assert {"ld.lld-22: warning: from the link", "x.py: SyntaxWarning: from the stdlib"} <= set(
         messages

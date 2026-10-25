@@ -311,12 +311,18 @@ def select_runtime(
     python: str, cache: Path | None = None, baseline: str = pins.DEFAULT_BASELINE
 ) -> Runtime:
     """Our own embedded runtime when it matches ``python`` and the glibc ``baseline``
-    (self-hosting), else the cache."""
+    (self-hosting); a released executable's own stdlib with its release's stub of another
+    baseline (stubs.py); else the cache."""
     own = running_executable()
     if own is not None:
         runtime = Runtime.from_executable(own)
-        if runtime.python_version.startswith(python + ".") and runtime.baseline == baseline:
-            return runtime
+        if runtime.python_version.startswith(python + "."):
+            if runtime.baseline == baseline:
+                return runtime
+            from . import stubs  # noqa: PLC0415  stubs.py needs this module
+
+            if (paired := stubs.paired(runtime, baseline, cache)) is not None:
+                return paired
     return find_runtime(python, cache, baseline=baseline)
 
 
@@ -336,8 +342,8 @@ def find_runtime(
         other = baseline != pins.DEFAULT_BASELINE
         raise RuntimeCacheError(
             f"no runtime for Python {python}{f' and glibc {baseline}' if other else ''}; run "
-            f"`fsbpyr runtime build --python {python}{f' --glibc {baseline}' if other else ''}`, "
-            "or use the release binary, which carries its own"
+            f"`fsbpyr runtime build --python {python}{f' --glibc {baseline}' if other else ''}`"
+            + ("" if other else ", or use the release binary, which carries its own")
         )
     return Runtime.load(directory)
 
@@ -369,7 +375,8 @@ def build_runtime(  # noqa: PLR0913  # what to build, where, how to say so, whic
     log(f"linking launcher with {toolchain.clang} ({how})")
     with tempfile.TemporaryDirectory(prefix="fsbpyr-stub-") as tmp:
         stub_path = Path(tmp) / _STUB
-        for line in stub.build_stub(dist, toolchain, stub_path, sanitize=sanitize):
+        for line in stub.build_stub(dist, toolchain, stub_path, sanitize=sanitize,
+                                    identity=directory.name):
             log(line)  # every warning shown, not only failures
         stub_bytes = stub_path.read_bytes()
     log("compiling the standard library")

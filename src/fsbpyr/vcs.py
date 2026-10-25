@@ -107,6 +107,19 @@ def release_asset(python: str, target: str) -> str:
     return f"fsbpyr-{python}-{target}"
 
 
+def release_stub_asset(python: str, target: str, glibc: str) -> str:
+    """The release asset (without ``.xz``) of the stub linked for the glibc baseline ``glibc``
+    ("2.28", EL8) that goes with the fsbpyr of ``python`` on ``target``: just the launcher,
+    ``fsbpyr-stub-3.12-x86_64-linux-gnu-glibc2.28``. A release may carry none (D46)."""
+    return f"fsbpyr-stub-{python}-{target}-glibc{glibc}"
+
+
+def release_stub_sums(glibc: str) -> str:
+    """The release asset listing the SHA-256 of each stub of the baseline ``glibc`` as
+    ``sha256sum`` does, over the stubs themselves (the names without ``.xz``)."""
+    return f"SHA256SUMS-glibc{glibc}"
+
+
 def release_asset_record(project: str, python: str, target: str) -> tuple[tuple[str, str], ...]:
     """build_info's ``release_asset``, for fsbpyr's own executable only: the asset it is
     released as, which ``fsbpyr self update`` fetches the same variant of."""

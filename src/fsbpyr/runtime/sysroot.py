@@ -123,8 +123,8 @@ def build_flags(root: Path, env: Mapping[str, str], layout: str = "multiarch") -
     if layout == "redhat":  # Red Hat's: the headers are where --sysroot looks, the gcc directory
         lib = root / "usr" / "lib64"  # is <triple>-redhat-linux/<version>
         gcc = sorted((root / "usr" / "lib" / "gcc").glob("*/*"))[-1:]
-        if target.triple.startswith("aarch64-"):  # a precaution (unverified on arm64): keeps a
-            cflags.append("-mno-outline-atomics")  # gcc 10+ off libgcc 8's atomics helpers
+        # no -mno-outline-atomics for aarch64: Rocky's libgcc.a (gcc 8.5) has the __aarch64_*
+        # helpers, and gcc older than 10 rejects the flag
         libs = [lib]
     else:
         if target.multiarch is None:

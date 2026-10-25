@@ -70,6 +70,31 @@ def runtime(request: pytest.FixtureRequest) -> registry.Runtime:
     return registry.find_runtime(TARGET_PYTHON, sanitize=sanitize)
 
 
+@pytest.fixture(scope="session")
+def el8_runtime() -> registry.Runtime:
+    """The runtime of the tests' Python linked for glibc 2.28 (EL8, D46), built once like
+    ``runtime`` is: its stub is what `fsbpyr build --glibc 2.28` puts into apps, and what a
+    release publishes as its EL8 asset."""
+    baseline = "2.28"
+    try:
+        return registry.find_runtime(TARGET_PYTHON, baseline=baseline)
+    except registry.RuntimeCacheError:
+        pass
+    pinned = downloads.pinned(TARGET_PYTHON, baseline)
+    kept = Path(os.environ[DOWNLOADS_VARIABLE]) if os.environ.get(DOWNLOADS_VARIABLE) else None
+    for name, how in downloads.seed(pinned, kept, registry.cache_root()).items():
+        _download_status.setdefault(name, how)
+    try:
+        if kept is None:
+            return registry.build_runtime(TARGET_PYTHON, log=lambda _: None, baseline=baseline)
+        downloads.build_kept_runtime(TARGET_PYTHON, kept, sanitize=False, baseline=baseline)
+    except ToolchainError as exc:  # pragma: no cover - depends on the host
+        pytest.skip(f"cannot build a runtime here: {exc}")
+    downloads.seed_runtime(TARGET_PYTHON, kept, registry.cache_root(), sanitize=False,
+                           baseline=baseline)  # fmt: skip
+    return registry.find_runtime(TARGET_PYTHON, baseline=baseline)
+
+
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:
     corpus.collect(report)
 

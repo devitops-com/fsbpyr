@@ -7,6 +7,7 @@ The runtimes built from them are kept there too, in a cache of their own (``cach
 once (before the workers of a parallel run start), and copied into each session's cache. A
 runtime's id covers what it is built from, so a kept one is rebuilt only when that changes."""
 
+import json
 import os
 import shutil
 from pathlib import Path
@@ -25,45 +26,61 @@ def pinned(python: str, baseline: str = pins.DEFAULT_BASELINE) -> dict[str, str]
 
 
 def fill(python: str, kept: Path) -> None:
-    """Download into ``kept`` the pinned files it lacks: once, before the workers of a parallel
+    """Download into ``kept`` the pinned files it lacks, the sysroots of every glibc baseline
+    included: once, before the workers of a parallel
     run start, each of which would otherwise fetch them for its own cache."""
     pin = pins.pin_for(python, registry.host_triple())
     sources = {f"{pin.name}.tar.zst": (pin.url, pin.sha256)}
-    for url, sha256 in pins.sysroot_for(pin.triple).packages:
-        sources[url.rpartition("/")[2]] = (url, sha256)
+    for baseline in pins.BASELINES:
+        for url, sha256 in pins.sysroot_for(pin.triple, baseline).packages:
+            sources[url.rpartition("/")[2]] = (url, sha256)
     for name, (url, sha256) in sources.items():
         if not _matches(kept / name, sha256):
             pbs.download(url, sha256, kept / name)
 
 
-def build_kept_runtime(python: str, kept: Path, *, sanitize: bool) -> None:
-    """``python``'s runtime built into ``kept``'s cache, from the kept downloads, unless it is
-    there; that Python's older runtimes there go."""
+def build_kept_runtime(
+    python: str, kept: Path, *, sanitize: bool, baseline: str = pins.DEFAULT_BASELINE
+) -> None:
+    """``python``'s runtime for the glibc ``baseline`` built into ``kept``'s cache, from the kept
+    downloads, unless it is there; that Python's older runtimes of the baseline there go."""
     cache = registry.secure_directory(kept / "cache")
-    name = registry.runtime_id(pins.pin_for(python, registry.host_triple()), sanitize=sanitize)
+    pin = pins.pin_for(python, registry.host_triple())
+    name = registry.runtime_id(pin, sanitize=sanitize, baseline=baseline)
     if (cache / "runtimes" / name / "runtime.json").is_file():
         return  # built (by the main process of a parallel run, or an earlier session)
-    files = pinned(python)
+    files = pinned(python, baseline)
     seed(files, kept, cache)
-    built = registry.build_runtime(python, cache=cache, log=lambda _: None, sanitize=sanitize)
+    built = registry.build_runtime(python, cache=cache, log=lambda _: None, sanitize=sanitize,
+                                   baseline=baseline)  # fmt: skip
     keep(files, kept, cache)
-    prune_runtimes(cache, built.runtime_id)
+    prune_runtimes(cache, built.runtime_id, baseline)
 
 
-def prune_runtimes(cache: Path, current: str) -> None:
-    """Remove the runtimes in ``cache`` that ``current`` replaces: same Python, target and
-    variant (release or sanitized), another id."""
+def prune_runtimes(cache: Path, current: str, baseline: str = pins.DEFAULT_BASELINE) -> None:
+    """Remove the runtimes in ``cache`` that ``current`` replaces: same Python, target, variant
+    (release or sanitized) and glibc baseline, another id."""
     tag = current.rsplit("-", 2 if current.endswith("-sanitized") else 1)[0]
     for old in (cache / "runtimes").glob(f"{tag}-*"):
-        if old.name != current and old.name.endswith("-sanitized") == current.endswith(
+        if old.name == current or old.name.endswith("-sanitized") != current.endswith(
             "-sanitized"
         ):
+            continue
+        meta = old / "runtime.json"
+        # without metadata: a leftover; without a baseline recorded: the default's
+        recorded = json.loads(meta.read_text()).get("baseline", pins.DEFAULT_BASELINE) \
+            if meta.is_file() else baseline
+        if recorded == baseline:
             shutil.rmtree(old)
 
 
-def seed_runtime(python: str, kept: Path, cache: Path, *, sanitize: bool) -> None:
-    """Copy ``python``'s runtime from ``kept``'s cache into ``cache``, unless it is there."""
-    name = registry.runtime_id(pins.pin_for(python, registry.host_triple()), sanitize=sanitize)
+def seed_runtime(
+    python: str, kept: Path, cache: Path, *, sanitize: bool, baseline: str = pins.DEFAULT_BASELINE
+) -> None:
+    """Copy ``python``'s runtime for ``baseline`` from ``kept``'s cache into ``cache``, unless it
+    is there."""
+    pin = pins.pin_for(python, registry.host_triple())
+    name = registry.runtime_id(pin, sanitize=sanitize, baseline=baseline)
     target = registry.secure_directory(cache) / "runtimes" / name
     if target.exists():
         return

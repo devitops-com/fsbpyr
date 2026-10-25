@@ -200,6 +200,36 @@ def test_a_compression_flag_on_the_command_line_wins_over_the_project(tmp_path: 
     assert (config.fast_compression, config.best_compression) == (True, False)
 
 
+def test_glibc_defaults_to_2_34_and_comes_from_the_project_or_the_command_line(
+    tmp_path: Path,
+) -> None:
+    default = load_config(Project.load(_project(tmp_path, PYPROJECT)))
+    project = Project.load(_project(tmp_path, PYPROJECT + 'glibc = "2.28"\n'))
+
+    assert default.glibc == "2.34"
+    assert load_config(project).glibc == "2.28"
+    assert load_config(project, glibc="2.34").glibc == "2.34"  # the command line wins, both ways
+    assert load_config(Project.load(_project(tmp_path, PYPROJECT)), glibc="2.28").glibc == "2.28"
+    assert load_config(project, glibc=None).glibc == "2.28"  # unset on the command line
+
+
+@pytest.mark.parametrize("value", ['"2.17"', '"2.28 "', '""', '"2.36"'])
+def test_an_unknown_glibc_is_rejected_with_the_allowed_ones(tmp_path: Path, value: str) -> None:
+    project = Project.load(_project(tmp_path, PYPROJECT + f"glibc = {value}\n"))
+
+    with pytest.raises(ConfigError, match=r"glibc .* is not a glibc fsbpyr builds for; "
+                       r"supported: 2\.34, 2\.28"):
+        load_config(project)
+
+
+@pytest.mark.parametrize("value", ["2.28", "228", "true", '["2.28"]'])
+def test_glibc_must_be_a_string(tmp_path: Path, value: str) -> None:
+    project = Project.load(_project(tmp_path, PYPROJECT + f"glibc = {value}\n"))
+
+    with pytest.raises(ConfigError, match=r"glibc has the wrong type"):
+        load_config(project)
+
+
 def test_allowed_system_libs_come_from_tool_table_or_cli(tmp_path: Path) -> None:
     project = Project.load(_project(tmp_path, PYPROJECT + 'allow-system-libs = ["libssl.so.3"]\n'))
 

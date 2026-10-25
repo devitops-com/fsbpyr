@@ -280,18 +280,13 @@ def test_build_flags_of_the_red_hat_layout(tmp_path: Path, monkeypatch: pytest.M
         f"-L{root}/usr/lib64", "-Wl,-z,now"]  # fmt: skip
 
 
-def test_aarch64_el8_builds_avoid_outlined_atomics(
+def test_aarch64_red_hat_flags_add_no_outline_atomics_flag(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A precaution for EL8's libgcc 8 (the owner's brief; Rocky's does ship the __aarch64_*
-    helpers, so it is not a measured defect, and an arm64 build is unverified): a gcc 10 or
-    newer host compiler keeps atomics inline. Debian 12's libgcc 12 needs no flag."""
+    """Rocky's libgcc.a (gcc 8.5) has the __aarch64_* helpers, and gcc older than 10 rejects
+    -mno-outline-atomics: the flags are the x86-64 ones."""
+    _host(monkeypatch, "aarch64-linux-gnu")
     root = tmp_path / "sysroot"
     (root / "usr/lib/gcc/aarch64-redhat-linux/8").mkdir(parents=True)
-    (root / "usr/lib/gcc/aarch64-linux-gnu/12").mkdir(parents=True)
-    _host(monkeypatch, "aarch64-linux-gnu")
 
-    assert build_flags(root, {}, "redhat")["CFLAGS"] == f"--sysroot={root} -mno-outline-atomics"
-    assert "-mno-outline-atomics" not in build_flags(root, {})["CFLAGS"]
-    _host(monkeypatch, "x86_64-linux-gnu")
-    assert "-mno-outline-atomics" not in build_flags(root, {}, "redhat")["CFLAGS"]
+    assert build_flags(root, {}, "redhat")["CFLAGS"] == f"--sysroot={root}"

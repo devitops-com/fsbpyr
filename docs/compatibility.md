@@ -31,12 +31,16 @@ these from the machine:
 - **glibc 2.34 or newer** on Linux x86-64 or aarch64 (RHEL 9, Amazon Linux 2023, Ubuntu
   22.04, Debian 12 and newer, SLES 15 SP6 and newer). `fsbpyr inspect` shows the glibc the
   executable actually needs. SLES 15 SP4 and SP5 (glibc 2.31) are not supported. Only 2.34 and
-  newer is tested: the distributions below, releases their vendors support.
+  newer is tested: the distributions below, releases their vendors support. **EL8** (RHEL 8,
+  Rocky Linux 8, AlmaLinux 8; glibc 2.28) is supported by building with `--glibc 2.28`, which
+  needs the release's glibc 2.28 launcher ([README](../README.md#older-systems-el8-and-glibc-228));
+  such an app needs glibc 2.28 or newer and is tested on the two EL8 images below. Debian 10 and
+  Ubuntu 20.04 have the same glibc or older; they are not tested.
 - **The libraries native code links and the build did not bundle.** `fsbpyr build` prints
   `target needs: glibc >= X.Y; libstdc++.so.6 (GLIBCXX_..., CXXABI_...), libgcc_s.so.1`, and
   `fsbpyr inspect` shows it again. Install those libraries on the target. A build warns when a
   native file needs a `GLIBCXX`, `CXXABI`, `GCC` or `ZLIB` version newer than manylinux_2_34
-  systems provide.
+  systems provide (manylinux_2_28's, with `--glibc 2.28`).
 - **To check a target before deploying,** run the app there with `FSBPYR_SELFTEST=natives`. It
   extracts every native extension into the cache and runs the dynamic loader of the target the
   app was built for in trace mode on each, which resolves libraries and symbol versions
@@ -85,6 +89,14 @@ are skipped (README, "Python 3.15").
 | `docker.io/library/ubuntu:26.04` | 2.43 |
 | `docker.io/library/fedora:latest` | 2.43 |
 | `docker.io/library/archlinux:latest` | 2.44 |
+
+Apps built with `--glibc 2.28` (the pure-Python `hello` and an app with a manylinux_2_28
+`cryptography` wheel; `tests/e2e/test_el8.py`) run on:
+
+| Distribution | glibc |
+|---|---|
+| `docker.io/library/rockylinux:8` | 2.28 |
+| `docker.io/library/almalinux:8` | 2.28 |
 
 The `compat` app runs one small check per library or behaviour in each build:
 

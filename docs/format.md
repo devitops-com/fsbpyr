@@ -305,7 +305,7 @@ project's directory: nothing in it names the builder's paths, time or host.
 | `schema` | `1`. Incremented when a key changes meaning, never for a new key |
 | `lock` | `{kind, path, sha256, hashed}`: `kind` is `uv.lock`, `pylock.toml`, `requirements` or `unlocked`; `path` is relative to the project directory (`../uv.lock` for a workspace member), null if unlocked; `sha256` is of the file; `hashed` says whether it pins artifact hashes |
 | `dists` | `[{name, version, source, artifact_sha256}]`, sorted by name |
-| `runtime` | the runtime's id, `cp<python>-<triple>-<12 hex digits>` (a digest of the launcher, the PBS archive, the sysroot and the layout version) |
+| `runtime` | the runtime's id, `cp<python>-<triple>-<12 hex digits>` (a digest of the launcher, the PBS archive, the sysroot and the layout version); the stub records it too (`fsbpyr-stub-identity=<id>` in its `.rodata`), which is how a build proves a stub it was handed is the one of its own release (D46) |
 | `runtime_tag` | the PBS distribution's tag and the target triple (`<tag>-<triple>`); it seeds `generation_id` |
 | `python` | the target CPython's version (3.12 to 3.15) |
 | `extension_suffixes` | the file name suffixes the runtime's interpreter imports extension modules by, in its order; asked of the interpreter itself since 0.25.0, as PYTHON.json's list lags (3.15.1's lacks `.abi3t.so`) |
@@ -316,6 +316,7 @@ project's directory: nothing in it names the builder's paths, time or host.
 | `runtime_components` | versions the runtime's interpreter reports: `openssl`, `sqlite`, `zlib`, `expat`, `libmpdec`. Read once when the runtime is built; an executable that builds another passes them on |
 | `stub_sha256` | SHA-256 of the bytes before the payload (the stub and its zero padding): `head -c <payload_offset> app \| sha256sum`. The same in every app built by the same fsbpyr release; there is no digest of the builder |
 | `settings` | `{entry, fs_packages, allow_system_libs, extras, include_source}`: `fs_packages` is the effective list (the built-in packages and the configured ones) |
+| `glibc_baseline` | only in an app built with `--glibc 2.28` (D46): the glibc baseline it is built for, `"2.28"`; an app without the key is built for the default, 2.34. `fsbpyr inspect --json` reports it as `glibc_baseline` for every app |
 | `release_asset` | only in fsbpyr's own executable: the release asset (without `.xz`) it is released as, `fsbpyr-3.X-<target>` (e.g. `fsbpyr-3.14-x86_64-linux-gnu`), the target being the host's name from the target table, which `fsbpyr self update` fetches the same Python's build of. 0.21.0 recorded `fsbpyr-<target>` for the newest Python (published until 0.21.0 only); a value that is not today's form makes `self update` use the asset of the Python the executable runs on |
 | `project` | `{name, version}` of the application |
 | `fsbpyr_version` | the builder's version, with the commit where there is one (`fsbpyr inspect`) |
