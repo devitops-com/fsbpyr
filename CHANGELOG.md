@@ -50,6 +50,15 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   was linked as, and a stub that is not the one of this fsbpyr's release, Python and target is
   refused; the default launcher's runtime id changed for that (its behaviour did not). See
   the README, "Older systems".
+- **`make test-vm` runs aarch64 apps on 16K- and 64K-page kernels.** `tools/vm-smoke.py` boots
+  Raspberry Pi 5's kernel (16 KiB pages) and EL8's (64 KiB pages) in `qemu-system-aarch64`
+  (TCG, no KVM) with an initramfs of a pinned Debian trixie (or Rocky Linux 8.10) root file
+  system and the aarch64 apps it is given, runs their commands and checks the page size, the
+  exit codes and the output on the serial console. Kernels and root file systems are pinned by
+  URL and SHA-256 (`tools/vm-pins.toml`). `full-suite.yml` gains a `vm-smoke` job that runs the
+  aarch64 executable and two fixture apps, one with native extensions, on both kernels. The
+  README no longer calls 16K- and 64K-page kernels untested: they are smoke-tested in virtual
+  machines, not on hardware.
 
 ### Changed
 - **`PYTHONUNBUFFERED` is honoured** (D14). Set and non-empty, it makes an app's stdout and

@@ -29,10 +29,10 @@ The tiers, from fastest to most complete:
   (`.github/workflows/build.yml`) with its smoke test and an independent rebuild compared byte
   for byte; everything but the portability tests and the corpus, as the user `tester` in a
   privileged Debian trixie container with rootless podman, so the root-only,
-  supplementary-group and `podman unshare` tests run; the corpus, in a job of its own; and the
-  portability tests. It runs on every push to main that changes more than documentation (a
-  merge; pull requests start no CI), weekly and on request, once per target (x86-64 on
-  `ubuntu-24.04`, aarch64 on `ubuntu-24.04-arm`) and Python, with
+  supplementary-group and `podman unshare` tests run; the corpus, in a job of its own; the
+  portability tests; and the page-size smoke test (below). It runs on every push to main that
+  changes more than documentation (a merge; pull requests start no CI), weekly and on request,
+  once per target (x86-64 on `ubuntu-24.04`, aarch64 on `ubuntu-24.04-arm`) and Python, with
   `FSBPYR_TESTS_REQUIRE_ALL=full` (no skip is expected), and `make release` and the publish job
   require a green run, aarch64 jobs included, for the commit a release is made from. The fuzzer
   runs for 600 s (`FSBPYR_FUZZ_SECONDS`) when `src/fsbpyr/launcher` or `tests/fuzz` changed
@@ -63,6 +63,22 @@ The tiers, from fastest to most complete:
 - Portability (`tests/e2e/test_portability.py`, `podman run` on 12 distributions, 11 on aarch64
   where `archlinux:latest` has no image): needs podman on the host and is not part of `make
   test-container`. CI runs it per target and Python after the suite job.
+- `make test-vm`: aarch64 apps booted in QEMU system VMs (`tools/vm-smoke.py`): the kernel of a
+  Raspberry Pi 5 (16 KiB pages) and EL8's (64 KiB pages), which the aarch64 runners' 4 KiB
+  kernels cannot test. It needs `qemu-system-aarch64` (TCG, no KVM; yours to install) and
+  aarch64 executables, because fsbpyr builds only for its host: `make test-vm VM_ARGS="--app
+  PATH... --run 'COMMAND => TEXT'..."` copies each app into an initramfs on a pinned Debian trixie
+  (or `--userland el8`, Rocky Linux 8.10) root file system, runs each command as root over the
+  serial console, and fails on the wrong page size, a non-zero exit code or output without
+  the text after `=>`. The kernels and root file systems are pinned by URL and SHA-256 in
+  `tools/vm-pins.toml` (`FSBPYR_TEST_DOWNLOADS` keeps the downloads, about 150 MB) and
+  checked on every use. A mirror may drop a pinned file (Rocky's `pub/` replaces old kernel
+  builds): the script then exits 3 naming the file, CI reports a warning, and the pin is
+  renewed with the new URL and SHA-256 (from `Packages.gz` or the repository's `primary.xml`).
+  A boot takes under a minute. CI runs it in the `vm-smoke` job after the
+  suite job, with the aarch64 executable and two fixtures it builds (`hello`, and `native` with
+  two native extensions). It is not part of `make test`: the VM is no pytest test, and
+  `tests/unit/test_vm_smoke.py` covers the pin table and the script's own code.
 
 ## Documentation-only changes
 

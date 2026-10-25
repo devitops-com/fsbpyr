@@ -104,8 +104,9 @@ symptom and its remedy.
 - **Platform:** Linux x86-64 and Linux aarch64 (arm64), with glibc 2.34 or newer, or 2.28 or
   newer for apps built with `--glibc 2.28` ("Older systems"). Each fsbpyr builds apps
   for the platform it runs on; there are no cross builds. The aarch64 builds and tests run on
-  GitHub's arm64 runners, which have 4K pages; kernels with 16K or 64K pages are untested. On
-  a musl system such as Alpine the glibc loader the executable names does not exist, and the
+  GitHub's arm64 runners, which have 4K pages; kernels with 16K pages (Raspberry Pi 5's) and
+  64K pages (EL8's) are smoke-tested in QEMU virtual machines (`make test-vm`), not on hardware.
+  On a musl system such as Alpine the glibc loader the executable names does not exist, and the
   shell reports the executable as "not found" although the file is there.
 - **Interpreter build:** CPython with the GIL only; the launcher refuses to build for a
   free-threaded CPython ([D35](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)).

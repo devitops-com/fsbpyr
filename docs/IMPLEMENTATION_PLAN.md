@@ -1727,7 +1727,10 @@ compare jobs or the short asset names, later entries below and D42 apply.
     nightly run (it would test the same commit night after night).
   - the 64 KiB alignment stays untested on 16K- and 64K-page kernels (no such kernel at hand;
     a `qemu-system-aarch64` VM with a 64K kernel would show it): the docs say it was tested on
-    4K-page kernels only.
+    4K-page kernels only. Smoke-tested since 2026-10-25 (owner decision: "just smoketest with
+    VM"): `tools/vm-smoke.py` (`make test-vm`, CI's `vm-smoke` job) boots Raspberry Pi 5's kernel
+    (16K pages) and Rocky Linux 8.10's (64K) in `qemu-system-aarch64` under TCG and runs
+    aarch64 apps on a pinned Debian trixie root file system; the README says so.
   - 2026-10-22, after 0.21.0 (whose `fsbpyr-3.12`, `fsbpyr-3.13` and unlabeled
     `fsbpyr-<target>` side by side confused new users): every asset names its Python and its
     target, `fsbpyr-3.X-<target>`, the newest Python's too, with `.xz`, notices
