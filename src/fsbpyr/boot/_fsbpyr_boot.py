@@ -738,6 +738,15 @@ def _service_policies() -> None:
         start(journal, pid)
 
 
+def _install_links() -> None:
+    """FSBPYR_INSTALL_LINKS=DIR links the commands into DIR and exits (D14). The common start
+    costs an environ lookup."""
+    if directory := posix.environ.get(b"FSBPYR_INSTALL_LINKS"):
+        from _fsbpyr_rt.links import install  # type: ignore[import-not-found]  # noqa: PLC0415
+
+        sys.exit(install(directory, ROOT, INFO["entrypoint"], INFO["app_name"]))
+
+
 def run() -> None:
     _locate_frozen_modules()
     sys.path_hooks.insert(0, path_hook)
@@ -759,6 +768,7 @@ def run() -> None:
         from _fsbpyr_rt.trace import report  # type: ignore[import-not-found]  # noqa: PLC0415
 
         atexit.register(report)
+    _install_links()
     _execve_argv0()
     _restart()
     entrypoint = INFO["entrypoint"]

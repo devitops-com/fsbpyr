@@ -240,6 +240,9 @@ Things to know:
 - `--smoke-args` runs the executable under its own name, so its first word is the command
   (`--smoke-args "acme-db --version"`); for a command named like the executable, all of the
   arguments are that command's.
+- On the host the copy can make the links itself: `FSBPYR_INSTALL_LINKS=DIR executable` links each
+  command into DIR and exits without running the app (see "Deploy" under "A directory of
+  scripts").
 - All links of an executable share one instance limit (`FSBPYR_MAX_INSTANCES`, "At run time").
 - `fsbpyr inspect` shows the commands and what each runs.
 
@@ -395,7 +398,17 @@ bundled on any system.
   `install -m 755 dist/ops-scripts "$DEST"/ops-scripts` and `for c in check-disk check_mem; do ln -sf
   ops-scripts "$DEST/$c"; done`. A crontab, unit or agent line such as
   `python3 /opt/tools/check-disk.py` must become `/opt/tools/check-disk`: the link is an
-  executable, not a Python file.
+  executable, not a Python file. Or let the copy link itself on the host: `FSBPYR_INSTALL_LINKS=DIR
+  /opt/tools/ops-scripts` links each command into DIR, absolute to the executable's real path,
+  and `check-disk.py` besides `check-disk` for each script command (also one that was no `.py` file), so those lines
+  keep working (a start strips `.py`). It prints what it did and exits without running the app.
+  A second run changes nothing; a file, a directory or a link to something else in the way is
+  reported and kept, the other links are still made, and the exit status is 1; a DIR that is
+  missing or not writable is an error before any link. There is no `--install` option:
+  `sudo ops-scripts --install DIR` under a `<binary> *` sudo rule would let a caller create
+  root-owned links anywhere. sudo's `env_reset` (on by default, see `sudoers(5)`) drops
+  `FSBPYR_*`, so `sudo FSBPYR_INSTALL_LINKS=DIR` works only where `env_keep` or `SETENV` allows
+  it.
 
 #### Monitoring plugins and cron fleets
 
@@ -791,6 +804,7 @@ directory anyone may add to, such as `/tmp`.) Environment variables the executab
 |---|---|
 | `FSBPYR_CACHE_DIR` | cache directory |
 | `FSBPYR_GC=1` | collect the app's cache instead of running the app (see below); `0`: never collect it in the background |
+| `FSBPYR_INSTALL_LINKS=DIR` | link the app's commands into DIR (absolute symlinks to the executable, and `x.py` for each script `x`), print what was done and exit instead of running the app; exit 1 if something was in the way (see "Deploy") |
 | `FSBPYR_TRACE=1` | print what the run loaded and extracted, and how long the integrity check took, as JSON on stderr |
 | `FSBPYR_SELFTEST` | `natives`: check that this machine provides every library and symbol version the native extensions need, one line per missing one, exit 1 if any (glibc targets); any other value: import the entry point and check it instead of running the app (what `--smoke` does) |
 | `FSBPYR_IMPORTTIME` | when set, print CPython's import-time table |

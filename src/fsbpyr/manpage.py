@@ -33,6 +33,10 @@ ENVIRONMENT = (
                          "the ones under FILES."),
     ("FSBPYR_GC", "Built executables only. `1`: collect the app's cache instead of running "
                   "the app. `0`: never collect it in the background."),
+    ("FSBPYR_INSTALL_LINKS", "Built executables only. A directory: link the app's commands into "
+                             "it (absolute symlinks to the executable, and `x.py` for each "
+                             "script `x`), print what was done and exit instead of running the "
+                             "app; exit 1 if a file or another link is in the way."),
     ("FSBPYR_TRACE", "Built executables only. Set: print what the run loaded and extracted, "
                      "and how long the integrity check took, as JSON on standard error."),
     ("FSBPYR_IMPORTTIME", "Built executables only. Set: print CPython's import-time table."),

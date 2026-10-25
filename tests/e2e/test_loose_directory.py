@@ -97,6 +97,7 @@ def test_one_binary_and_a_link_per_command(ops: tuple[Path, Path, str, str]) -> 
     assert sorted(path.name for path in dist.iterdir()) == sorted(["ops-scripts", *COMMANDS])
     assert "packaged although" not in err and "skipped" not in err
     assert "install -m 755" in out and "ln -sf ops-scripts" in out and "python3 $DEST/x.py" in out
+    assert 'FSBPYR_INSTALL_LINKS="$DEST" "$DEST"/ops-scripts' in out
     assert f"for c in {' '.join(sorted(COMMANDS))}; do" in out
 
 

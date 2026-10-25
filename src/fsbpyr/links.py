@@ -58,6 +58,9 @@ def deploy_recipe(binary: Path, commands: Iterable[str]) -> list[str]:
     if linked := [command for command in commands if command != binary.name]:
         lines.append(f"  for c in {' '.join(map(shlex.quote, linked))}; do "
                      f'ln -sf {name} "$DEST/$c"; done')  # fmt: skip
+    lines.append(f'or let the copy make the links (and x.py for each script x) on the host: '
+                 f'FSBPYR_INSTALL_LINKS="$DEST" "$DEST"/{name}')  # fmt: skip
     lines.append("a crontab, unit or agent line such as `python3 $DEST/x.py` must become "
-                 "`$DEST/x`: the link is an executable, not a Python file")  # fmt: skip
+                 "`$DEST/x` or `$DEST/x.py` run directly: the link is an executable, not a "
+                 "Python file")  # fmt: skip
     return lines

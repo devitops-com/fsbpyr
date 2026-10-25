@@ -189,6 +189,17 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   project's own modules; dependencies and the standard library stay silent, and `--strict`
   counts it like the other warnings. The bytecode is unchanged.
 
+- **`FSBPYR_INSTALL_LINKS=DIR app` makes the command links on the target** (D14). The executable
+  links each of its commands into DIR (absolute symlinks to its real path), and `x.py` besides `x`
+  for a command that is a script, so a crontab, unit or NRPE line that runs `/opt/tools/x.py`
+  keeps working; it prints what it did and exits without running the app. A second run changes
+  nothing. A file, a directory or a link to something else in the way is never replaced: it is
+  reported, the other links are still made and the exit status is 1; a missing or unwritable DIR
+  is one error before any link. There is no option: `<binary> --install` would let a `sudo
+  <binary> *` rule create root-owned links anywhere, and sudo's `env_reset` drops `FSBPYR_*`. A
+  start pays one environ lookup; the code is in `_fsbpyr_rt/links.py`, imported only then. The
+  build's deploy recipe mentions it.
+
 ### Changed
 - **`sys.argv[0]` is the full path of the start, as in a venv** (D14). A start by `app` on `PATH`,
   `./app` or a link used to give the name as typed; the launcher now reports `AT_EXECFN` and the
