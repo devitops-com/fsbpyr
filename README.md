@@ -160,7 +160,7 @@ build-constraint-dependencies` (read by `uv sync`, for `uv.lock` projects) or fr
 | `--glibc X.Y` | the glibc the app is built for: 2.34 (default), or 2.28 for EL8 hosts, which needs the glibc 2.28 stub of the fsbpyr release (default: `glibc` in `[tool.fsbpyr]`, else 2.34) |
 | `--entry NAME` | console script name, `module` or `module:function` (default: the only script, else all of them as one multi-command executable, else the only `__main__` package or guarded module) |
 | `-o, --output PATH` | where to write the executable (default: `dist/` and the entry's name, or the project's name for several commands) |
-| `--requirements FILE` | pinned requirements file, for pip projects without `pylock.toml` |
+| `--requirements FILE` | pinned requirements file, for pip projects without `pylock.toml`; in a directory with no Python file it names the tools to build (a tool binary) |
 | `--extra NAME` | install a project extra (repeat); requirements and pylock files must already contain its dependencies |
 | `--fs-package PACKAGE` | a package whose files must exist on disk (repeat) |
 | `--allow-system-lib SONAME` | let native code use this library from the host (repeat) |
@@ -579,15 +579,19 @@ whatever its requirements say: its scripts are the commands, and the tools' scri
   to have them). A tool with no script of its own falls through to its direct
   requirements (under the runtime's markers and the extras asked for) when it is a meta-package,
   a distribution that installs no code of its own (`jupyter`), or when the requirement is named
-  after it: `ansible` requires `ansible-core`, so `ansible==10.*` gives the commands of
-  `ansible-core`; and so on down to a distribution with scripts (the build names the
+  after it (a made-up `acme` that requires `acme-cli` gives the commands of `acme-cli`); and so
+  on down to a distribution with scripts (the build names the
   meta-package and the tools taken through it). Any other distribution with no script is a
   library, not a tool (the build says so): `requests` listed beside `httpie` gives no command,
   and its dependency's `normalizer` is not one. Two tools with one script name, a
   console and a gui script among them, fail the build naming both distributions; no script at all
   fails it, saying what the file named. `--entry NAME` builds one of the commands alone. The smoke test
   checks every command as for any several-command executable: it imports each target's module and
-  looks its function up (library code, imported as for any console script).
+  looks its function up (library code, imported as for any console script). Only synthetic
+  distributions have exercised the fall-through. Real ones differ: `ansible` is the
+  `ansible-community` distribution and gives its own `ansible-community` command, not
+  `ansible-core`'s; `ansible-core` needs `--fs-package ansible` for its data files, and a
+  `jupyter` build needs one for `rfc3987_syntax`.
 - **Build:** the lock is installed as for any pip project (a `requirements.txt` that is not pinned
   warns, `--strict` and `--hash` lines work as before), then the commands are tied to links.
   Nothing of the project is packaged: the executable holds the tools and their dependencies. The
@@ -993,6 +997,16 @@ set-uid, set-gid or with file capabilities (exit 70): the cache location comes f
 caller's environment. A start also exits 70 when as many copies of the app run already as
 the machine allows (`FSBPYR_MAX_INSTANCES` above): an app that keeps starting itself, by
 whatever route, stops there. See [docs/security.md](docs/security.md).
+
+Under systemd, in a container or from cron the executable behaves as follows. A non-empty
+`PYTHONUNBUFFERED` makes stdout and stderr unbuffered. When systemd sends them to the journal
+(`JOURNAL_STREAM` names that file), they are line-buffered, so each line reaches the journal as
+it is printed. As process 1 (a container without an init) SIGTERM ends the app with exit status
+143, so `docker stop` does not wait for SIGKILL; `python app.py` as process 1 would ignore it.
+The app's own handler replaces this one, and a forked child gets the default behavior back. The
+cache root comes from the passwd entry's home when `$HOME` is unset, empty or relative, so a
+service without `HOME` still finds it. ([docs/compatibility.md](docs/compatibility.md) has the
+details.)
 
 ### Helper interpreters
 

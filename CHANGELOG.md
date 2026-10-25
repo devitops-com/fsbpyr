@@ -131,7 +131,7 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   took and why. A dependency's scripts are not commands. A tool with no console or gui script of
   its own falls through to its direct requirements, under the runtime's markers and the extras
   asked for, when it is a meta-package (it installs no code of its own) or for the requirement
-  named after it (`ansible` requiring `ansible-core`), down to a distribution with scripts (a
+  named after it (a made-up `acme` requiring `acme-cli`), down to a distribution with scripts (a
   cycle or eight levels stop it), and the build names the meta-package and the tools taken
   through it; any other distribution with no script is a library, not a tool, and the build says
   so. `gui_scripts` are commands like console scripts (pip and uv
@@ -347,6 +347,20 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   the target's, and a rebuild leaves a hard link on the old build.
 
 ### Fixed
+- **A forked child of an app that is process 1 gets the default SIGTERM back**, so a worker in
+  a long C call dies on SIGTERM as under `python app.py`.
+- **A command name from a single console script is validated** like several are (letters,
+  digits and `_.+-`), so a tool's script name cannot place the executable or a
+  `FSBPYR_INSTALL_LINKS` link outside the output or link directory; the links code also refuses
+  a name with a directory part, and the background collection child makes no links.
+- **A file next to the executable named like a script imports nothing before the parent check.**
+- **A distribution name read from a venv's metadata must be a valid name** before it becomes a
+  pin.
+- **A tool binary from a `Pipfile.lock` with extras** keeps what an extra needs as installed,
+  so a dependency does not become a command.
+- **A Poetry 1 dependency whose `markers` has an `or`** is kept apart from its `python`
+  constraint with parentheses.
+- **`--requirements` help** mentions the tool binary.
 - **A `--hash=` in a comment of a requirements file no longer makes the build expect hashes.**
   One test now decides it for the early VCS-line check, the install and the manifest.
 - **An EL8 stub download stops at 256 MB unpacked** instead of filling the disk before the
