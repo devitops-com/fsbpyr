@@ -9,8 +9,10 @@ distributions directly (``-r`` includes are followed, constraints name nothing).
 lists every installed distribution (``pip freeze``, pylock.toml, a Pipfile.lock) names the
 dependencies too, so there the tools are the listed distributions no other listed distribution
 requires; a Pipfile beside its lock names the tools in ``[packages]``. A dependency's
-scripts are never commands. A tool with no console or gui script of its own is a meta-package
-(``ansible`` requires ``ansible-core``): its direct requirements are the tools in its place.
+scripts are never commands. A tool with no console or gui script of its own that is a
+meta-package (no importable code of its own: ``jupyter``) has its direct requirements as the
+tools in its place; with code of its own it falls through only to a requirement named after it
+(``ansible`` requires ``ansible-core``). Any other such distribution is a library, not a tool.
 ``gui_scripts`` are commands as ``console_scripts`` are: pip and uv install them as ordinary
 launchers on Linux.
 """
@@ -229,8 +231,8 @@ def _through_metas(
 ) -> tuple[list[str], list[str]]:
     """The tools in place of ``tops`` (name -> extras asked for), and a note per meta-package
     taken through. A top with no script of its own is replaced by its direct requirements,
-    recursively; a cycle or ``_META_DEPTH`` levels stop it. A library with no script is taken for
-    a meta-package too: its dependencies' scripts become commands."""
+    recursively, if it is a meta-package (``_has_code``) and else only by those named after it;
+    a cycle or ``_META_DEPTH`` levels stop it. A library that gives no tool is noted as one."""
     notes: list[str] = []
     taken_by: dict[tuple[str, frozenset[str]], list[str]] = {}  # each walked once, noted once
 
@@ -244,9 +246,15 @@ def _through_metas(
         slot = len(notes)
         notes.append("")  # the meta-package's note goes before those of the ones below it
         taken: list[str] = []
+        code = _has_code(index.dists[name])
         for dependency, asked in _dependencies(name, extras, index, environment).items():
+            if code and not dependency.startswith(f"{name}-"):
+                continue
             taken += [t for t in take(dependency, asked, (*path, name)) if t not in taken]
-        notes[slot] = _meta_note(name, taken) if taken else ""
+        if taken:
+            notes[slot] = _meta_note(name, taken)
+        elif code:
+            notes[slot] = f"{name} has no console script and is a library, not a tool"
         taken_by[name, extras] = taken
         return taken
 
@@ -254,6 +262,16 @@ def _through_metas(
     for name, extras in tops.items():
         tools += [t for t in take(name, extras, ()) if t not in tools]
     return tools, [note for note in notes if note]
+
+
+def _has_code(dist: InstalledDist) -> bool:
+    """Whether the distribution installs files of its own besides its .dist-info and .data
+    (a meta-package installs none) and its scripts outside the site."""
+    for line in dist.record:
+        top = line.partition(",")[0].partition("/")[0]
+        if top and top != ".." and not top.endswith((".dist-info", ".data")):
+            return True
+    return False
 
 
 def _meta_note(name: str, taken: list[str]) -> str:

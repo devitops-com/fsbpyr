@@ -127,11 +127,12 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   installed distribution (`pip freeze`, `uv pip freeze`, `pylock.toml`) has as tools only the
   listed distributions that no other listed distribution requires, and the build prints which it
   took and why. A dependency's scripts are not commands. A tool with no console or gui script of
-  its own is a meta-package (`ansible` requiring `ansible-core`): its direct requirements, under
-  the runtime's markers and the extras asked for, are the tools in its place, down to a
-  distribution with scripts (a cycle or eight levels stop it), and the build names the
-  meta-package and the tools taken through it (a library with no script, listed beside tools, is
-  passed through the same way). `gui_scripts` are commands like console scripts (pip and uv
+  its own falls through to its direct requirements, under the runtime's markers and the extras
+  asked for, when it is a meta-package (it installs no code of its own) or for the requirement
+  named after it (`ansible` requiring `ansible-core`), down to a distribution with scripts (a
+  cycle or eight levels stop it), and the build names the meta-package and the tools taken
+  through it; any other distribution with no script is a library, not a tool, and the build says
+  so. `gui_scripts` are commands like console scripts (pip and uv
   install them as ordinary launchers on Linux). Two tools with one script name fail the build
   naming both distributions (a console and a gui script of one name clash too); no script at all
   fails it, saying what the file named. A directory with

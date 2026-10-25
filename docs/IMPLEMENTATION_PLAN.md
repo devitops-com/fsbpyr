@@ -2131,12 +2131,15 @@ and why; any other file has every listed distribution as a tool; two tools with 
 fail naming both distributions, and no console or gui script at all fails naming what the file named.
 Follow-up (decided while building it, 2026-10-25): **`gui_scripts` are commands** like console scripts (pip and
 uv install them as ordinary launchers on Linux; a console and a gui script of one name clash like
-two tools'), and **a tool with no console or gui script is a meta-package whose direct
-requirements** (runtime markers, extras asked for) **are the tools in its place**, recursively to
-a distribution with scripts (`ansible` requiring `ansible-core`; a cycle or depth 8 stops it; the
-build names the meta-package and the tools taken through it); a dependency of a tool that has
-scripts still never becomes a command (a library with no script, listed beside tools, is taken
-for a meta-package: its dependencies' scripts become commands).
+two tools'), and **a tool with no console or gui script falls through to its direct
+requirements** (runtime markers, extras asked for) **when it is a meta-package** (its RECORD lists
+no module or package outside its `.dist-info` and data: `jupyter`) **or for the requirement named
+after it** (the requirement's canonical name starts with the top's and "-": `ansible` requiring
+`ansible-core`, though `ansible` ships code), recursively to a distribution with scripts (a cycle
+or depth 8 stops it; the build names the meta-package and the tools taken through it); any other
+script-less distribution is a library, not a tool (the build says so), and a dependency of a tool
+that has scripts never becomes a command (`httpie` beside `requests`: `normalizer` is no
+command).
 A directory with a Python file stays a directory of scripts, whatever its requirements say. Tools
 that start helpers through `sys.executable` exit 70 (D44) unless built with
 `--interpreter-reexec`; the build prints the existing helper-interpreter note when it knows a

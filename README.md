@@ -572,12 +572,14 @@ whatever its requirements say: its scripts are the commands, and the tools' scri
 - **Commands:** the `console_scripts` and `gui_scripts` of the tools (pip and uv install both as
   ordinary launchers on Linux). A dependency's scripts are not commands
   (`ansible-core`'s are; its `jinja2` dependency's are not; name `jinja2` in a file of tools alone
-  to have them). A tool with no script of its own is a meta-package: `ansible` requires
-  `ansible-core`, so `ansible==10.*` gives the commands of `ansible-core`. Its direct
-  requirements, under the runtime's markers and the extras asked for, are the tools in its place,
-  and so on down to a distribution with scripts (the build names the meta-package and the tools
-  taken through it); a library with no script, listed beside tools, is passed through the same
-  way, so a script of its dependencies becomes a command. Two tools with one script name, a
+  to have them). A tool with no script of its own falls through to its direct
+  requirements (under the runtime's markers and the extras asked for) when it is a meta-package,
+  a distribution that installs no code of its own (`jupyter`), or when the requirement is named
+  after it: `ansible` requires `ansible-core`, so `ansible==10.*` gives the commands of
+  `ansible-core`; and so on down to a distribution with scripts (the build names the
+  meta-package and the tools taken through it). Any other distribution with no script is a
+  library, not a tool (the build says so): `requests` listed beside `httpie` gives no command,
+  and its dependency's `normalizer` is not one. Two tools with one script name, a
   console and a gui script among them, fail the build naming both distributions; no script at all
   fails it, saying what the file named. `--entry NAME` builds one of the commands alone. The smoke test
   checks every command as for any several-command executable: it imports each target's module and
