@@ -370,7 +370,7 @@ bundled on any system.
   "pylib"))`) is searched; a `sys.path` change the check cannot follow makes the unresolved
   imports of the command optional.
 - **At run time** a link runs its script as `python3 script.py` would: as `__main__`, `argv` as
-  given, the script's directory first on `sys.path`. A sibling named like a standard library
+  given (`argv[0]` the full path of the start), the script's directory first on `sys.path`. A sibling named like a standard library
   module (`calendar.py`) wins over the library, as it does for CPython. The `pylib` hack above
   finds the modules of `pylib/`.
 - **Files next to a script** are not in the executable. The build warns for each read next to
@@ -406,7 +406,7 @@ looks, with an absolute target (`ln -sf /opt/tools/ops-scripts /etc/cron.daily/c
 line is a python or `uv run --script` shebang (anything else is refused). The app is named after
 the file's stem, hyphens kept (`check-disk.py` gives `check-disk`), and written to `dist/<name>`
 in the script's directory, or to `-o`. It runs where "A directory of scripts" does (EL8 with `--glibc 2.28`, or
-`glibc = "2.28"` in its block), with the same checks, run-time behaviour (as `__main__`, `argv` untouched, the script's directory first on
+`glibc = "2.28"` in its block), with the same checks, run-time behaviour (as `__main__`, `argv[0]` the full path of the start, the script's directory first on
 `sys.path`, a name that is no Python name stored under a module name) and notes on files read
 next to `__file__`.
 

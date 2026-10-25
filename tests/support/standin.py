@@ -145,6 +145,7 @@ class StandIn(types.ModuleType):
         payload = self._payload
         return {
             "executable": self._path,
+            "execfn": None,
             "app_name": payload.app_name,
             "entrypoint": payload.entrypoint,
             "build_info": payload.build_info,

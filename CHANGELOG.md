@@ -177,6 +177,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   counts it like the other warnings. The bytecode is unchanged.
 
 ### Changed
+- **`sys.argv[0]` is the full path of the start, as in a venv** (D14). A start by `app` on `PATH`,
+  `./app` or a link used to give the name as typed; the launcher now reports `AT_EXECFN` and the
+  boot sets `sys.argv[0]` to that path, made absolute, when its basename is `argv[0]`'s. `exec -a
+  other app` keeps `other`. A multi-command start and the restart idiom read the basename and are
+  unchanged. A relative start gives `/cwd/app` where a venv script keeps `./app`.
 - **`JOURNAL_STREAM` line-buffers the journal, and SIGTERM ends an app that is process 1** (D14).
   When systemd's `JOURNAL_STREAM` (`device:inode`) names the file stdout or stderr is, that stream
   is line-buffered, so each line reaches the journal as it is printed and survives a SIGTERM;

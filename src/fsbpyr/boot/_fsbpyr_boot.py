@@ -637,6 +637,29 @@ def _multiprocessing_child() -> bool:
     return handled
 
 
+def _execve_argv0() -> None:
+    """``sys.argv[0]`` as a venv's script gets it, the path ``execve`` was given made absolute
+    (D14). The caller's own name stays when its basename is not that path's (``exec -a``), and
+    so does the launcher's re-execution (``/proc/self/exe``, ``/dev/fd/N``). The common start
+    costs two string splits."""
+    execfn, argv = INFO["execfn"], sys.argv
+    if execfn is None or not argv or (execfn == argv[0] and execfn.startswith("/")):
+        return
+    if execfn.rpartition("/")[2] != argv[0].rpartition("/")[2] or execfn.startswith("/dev/fd/"):
+        return
+    if execfn == "/proc/self/exe":
+        return
+    if not execfn.startswith("/"):
+        try:
+            directory = posix.getcwd()
+        except OSError:  # the start's directory is gone: the name stays
+            return
+        while execfn.startswith("./"):  # not collapsed: ".." after a link names another file
+            execfn = execfn[2:].lstrip("/")
+        execfn = f"{directory.rstrip('/')}/{execfn}"
+    argv[0] = execfn
+
+
 def _restart() -> None:
     """``[sys.executable, <flags>, sys.argv[0], *args]``, the restart idiom of gunicorn and
     Django, runs the app with ``sys.argv == [sys.argv[0], *args]``, as in a venv. The common
@@ -704,6 +727,7 @@ def run() -> None:
         from _fsbpyr_rt.trace import report  # type: ignore[import-not-found]  # noqa: PLC0415
 
         atexit.register(report)
+    _execve_argv0()
     _restart()
     entrypoint = INFO["entrypoint"]
     commands = None

@@ -100,6 +100,7 @@ def run(fsb: Any) -> dict[str, Any]:
     words = sorted({f[6] for f in (fsb.file_at(i) for i in range(count)) if f[6] != fsb.NONE})
     out["closures"] = [_outcome(fsb.closure, w) for w in [*words, *range(1, 4), *BAD_BLOBS]]
     info = dict(fsb.info())
+    info.pop("execfn")  # the path this process was started by: not the payload's
     info["generation_id"] = info["generation_id"].hex()
     out["info"] = info
     out["streams"] = _streams(fsb, sorted(blobs))

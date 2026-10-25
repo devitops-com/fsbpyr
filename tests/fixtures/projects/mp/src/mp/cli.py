@@ -39,6 +39,11 @@ def main() -> None:
                                check=False)  # fmt: skip
         print(child.returncode, child.stdout.strip(), child.stderr.strip()[-200:])
         return
+    if sys.argv[1:] == ["argv0"]:  # the name this start gave the program (D14)
+        import argparse
+
+        print(sys.argv[0], argparse.ArgumentParser().prog)
+        return
     if sys.argv[1:2] == ["restart"]:  # gunicorn's USR2 and Django's autoreloader do this
         print("argv", sys.argv[1:], flush=True)
         if "MP_RESTARTED" not in os.environ:

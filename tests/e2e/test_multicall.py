@@ -102,6 +102,22 @@ def test_a_link_runs_its_command_with_the_arguments(built: Path, tmp_path: Path,
     assert result.stdout == f"{name.removeprefix('multi-')} ['{name}', 'x', '--y']\n"
 
 
+@pytest.mark.parametrize("form", ["bare", "relative"])
+def test_a_link_started_by_bare_name_or_relative_path_still_runs_its_command(
+    built: Path, tmp_path: Path, form: str
+) -> None:
+    """argv[0] becomes the absolute path of the start (D14); its basename still names the
+    command."""
+    name = "multi-beta"
+    env = {**os.environ, "FSBPYR_CACHE_DIR": str(tmp_path / "cache"), "PATH": f"{built}:/usr/bin"}
+    command = [name if form == "bare" else f"./{name}", "x"]
+
+    result = contain.run(command, env=env, cwd=built, timeout=120)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f"beta ['{name}', 'x']\n"
+
+
 def test_the_dispatcher_form_shifts_argv(built: Path, tmp_path: Path) -> None:
     result = _run(built / "multi", tmp_path, "multi-beta", "x", "--y")
 
