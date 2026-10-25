@@ -17,7 +17,8 @@ from ..support import contain
 
 pytestmark = pytest.mark.slow
 
-FIXTURE = Path(__file__).parents[1] / "fixtures" / "projects" / "multi"
+FIXTURES = Path(__file__).parents[1] / "fixtures" / "projects"
+FIXTURE = FIXTURES / "multi"
 CONTRACT = ["multi-alpha", "multi-beta"]
 
 
@@ -49,6 +50,22 @@ def test_the_build_writes_the_binary_and_a_relative_link_per_command(
     assert sorted(path.name for path in built.iterdir()) == ["multi", *CONTRACT]
     assert not (built / "multi").is_symlink()
     assert [os.readlink(built / name) for name in CONTRACT] == ["multi", "multi"]
+
+
+def test_a_single_command_build_records_a_plain_entrypoint_and_no_table_or_links(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = tmp_path / "hello"
+    shutil.copytree(FIXTURES / "hello", project)
+
+    assert main(["build", str(project)]) == 0
+
+    out = capsys.readouterr().out
+    assert [path.name for path in (project / "dist").iterdir()] == ["hello"]
+    assert "linked" not in out and "commands" not in out
+    assert main(["inspect", str(project / "dist" / "hello"), "--json"]) == 0
+    document = json.loads(capsys.readouterr().out)
+    assert "\n" not in document["entry"] and "commands" not in document
 
 
 def test_the_summary_lists_the_commands_and_links(
@@ -200,3 +217,29 @@ def test_every_start_method_works_from_a_command(built: Path, tmp_path: Path, en
     expected = [line.format(method=m) for m in ("spawn", "forkserver", "fork") for line in (
         "{method} pool [0, 1, 4, 9]", "{method} executor [0, 1, 4]")]  # fmt: skip
     assert result.stdout.splitlines() == expected
+
+
+def test_a_hard_link_is_a_start_under_its_own_name_that_keeps_the_old_build(
+    tmp_path: Path, runtime: Runtime
+) -> None:
+    """A hard link is a file of its own: argv[0] and sys.executable are its path, so a command
+    looks for its siblings beside the link, and a start through sys.executable is refused as
+    for any other command (D44); a rebuild replaces the binary, not the link."""
+    project = tmp_path / "multi"
+    shutil.copytree(FIXTURE, project)
+    assert main(["build", str(project)]) == 0
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    link, sibling = bin_dir / "multi-alpha", bin_dir / "multi-beta"
+    os.link(project / "dist" / "multi", link)
+    sibling.write_text("#!/bin/sh\necho SCRIPT\n")
+    sibling.chmod(0o755)
+
+    beside = _run(link, tmp_path, "sibling", "a")
+    refused = _run(link, tmp_path, "self")
+
+    assert beside.returncode == 0, beside.stderr
+    assert beside.stdout.startswith("0 SCRIPT")  # sys.executable is the link, not dist/multi
+    assert refused.stdout.startswith("70 fsbpyr: refusing to run `-m x` as Python")
+    assert main(["build", str(project)]) == 0
+    assert link.stat().st_ino != (project / "dist" / "multi").stat().st_ino  # the old build
