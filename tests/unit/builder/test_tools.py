@@ -17,7 +17,12 @@ PYTHON = "3.14.0"
 
 
 def _dist(
-    name: str, requires: tuple[str, ...] = (), scripts: str = "", gui: str = "", *, code: bool = False
+    name: str,
+    requires: tuple[str, ...] = (),
+    scripts: str = "",
+    gui: str = "",
+    *,
+    code: bool = False,
 ) -> InstalledDist:
     entry_points = (f"[console_scripts]\n{scripts}\n" if scripts else "") + (
         f"[gui_scripts]\n{gui}\n" if gui else "")
