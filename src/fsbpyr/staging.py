@@ -28,6 +28,7 @@ from pathlib import Path
 
 from packaging.utils import canonicalize_name
 
+from .loose import Package
 from .project import LockSource, Project
 from .vcs import commit_time
 
@@ -63,7 +64,7 @@ class StagingOptions:
 @dataclass(frozen=True, slots=True)
 class StagingPlan:
     site: Path
-    build: list[str]  # builds the project wheel into wheel_dir
+    build: list[str]  # builds the project wheel into wheel_dir; empty: fsbpyr writes it (loose.py)
     install: list[list[str]]  # may reference WHEEL
     wheel_dir: Path
     env: dict[str, str] = field(default_factory=dict)
@@ -116,6 +117,8 @@ def _platform(options: StagingOptions) -> list[str]:
 
 
 def _uv_build(uv: Path, work: Path, project: Project, options: StagingOptions) -> list[str]:
+    if project.loose:  # no build system: fsbpyr writes the wheel itself, _build_wheel
+        return []
     command = [str(uv), "build", "--out-dir", str(work / "wheel"), "--python", options.python]
     # not --quiet: a failure's reason (setuptools' "Multiple top-level modules ...") is uv's output
     return command + ["--offline"] * options.offline + [str(project.directory)]
@@ -258,6 +261,18 @@ def _run(
     raise StagingError(f"{step}: uv failed (exit {result.returncode}):\n{output}")
 
 
+def _write_loose_wheel(
+    project_dir: Path, wheel_dir: Path, env: dict[str, str], log: Callable[[str], None]
+) -> Path:
+    """The wheel of a project without a build system, stamped SOURCE_DATE_EPOCH (``env``, else
+    the environment's; never before 1980)."""
+    log(f"writing {project_dir.name}'s wheel")
+    text = env.get(SOURCE_DATE_EPOCH, os.environ.get(SOURCE_DATE_EPOCH, ""))
+    if not text.strip().isdecimal():
+        raise StagingError(f"{SOURCE_DATE_EPOCH}={text!r} is not a number of seconds")
+    return Package.load(project_dir).write_wheel(wheel_dir, max(int(text), EPOCH_FLOOR))
+
+
 def _build_wheel(  # noqa: PLR0913  the plan, where, and the progress keywords
     plan: StagingPlan,
     project_dir: Path,
@@ -269,6 +284,8 @@ def _build_wheel(  # noqa: PLR0913  the plan, where, and the progress keywords
 ) -> Path:
     """The plan's build of the project wheel, into ``wheel_dir`` with ``env`` added."""
     wheel_dir.mkdir(parents=True, exist_ok=True)
+    if not plan.build:
+        return _write_loose_wheel(project_dir, wheel_dir, {**plan.env, **env}, log)
     build = [str(wheel_dir) if part == str(plan.wheel_dir) else part for part in plan.build]
     with leave_tree_unchanged(project_dir):
         _run(build, project_dir, {**plan.env, **env}, log=log, verbose=verbose)

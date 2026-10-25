@@ -43,6 +43,10 @@ from fsbpyr.staging import StagingError, StagingPlan
 from ...support.elf import make_elf
 from ..boot.conftest import FAKE_RUNTIME
 
+# a project without [build-system] is built by fsbpyr itself (loose.py): these use uv's build
+APP_PROJECT = ('[project]\nname = "app"\nversion = "1"\n'
+               '[build-system]\nrequires = ["uv_build"]\nbuild-backend = "uv_build"\n')
+
 
 def _script(path: Path, body: str) -> Path:
     path.write_text(f"#!/bin/sh\n{body}\n")
@@ -103,7 +107,7 @@ def test_build_without_project_files_fails_cleanly(
 def test_builds_without_uv_fail_before_looking_for_a_runtime(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "pyproject.toml").write_text(APP_PROJECT)
     (tmp_path / "app.py").write_text("if __name__ == '__main__':\n    pass\n")  # an entry candidate
     monkeypatch.setattr("shutil.which", lambda name: None)
     monkeypatch.setattr("fsbpyr.build.select_runtime", lambda *_, **__: pytest.fail("runtime"))
@@ -123,7 +127,7 @@ def _stand_ins(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_an_error_carries_the_warnings_collected_before_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "pyproject.toml").write_text(APP_PROJECT)
     (tmp_path / "app.py").write_text("if __name__ == '__main__':\n    pass\n")  # an entry candidate
     _stand_ins(monkeypatch)
 
@@ -139,7 +143,7 @@ def test_an_error_carries_the_warnings_collected_before_it(
 
 
 def test_split_requirements_files_get_one_hint_naming_the_option(tmp_path: Path) -> None:
-    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "pyproject.toml").write_text(APP_PROJECT)
     (tmp_path / "requirements").mkdir()
     for name in ("base.txt", "prod.txt"):
         (tmp_path / "requirements" / name).write_text("")
@@ -159,7 +163,7 @@ def _staged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sources: dict[str, 
     """A project whose staging installs ``sources`` as the distribution "app"; its directory."""
     project = tmp_path / "project"
     project.mkdir()
-    (project / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (project / "pyproject.toml").write_text(APP_PROJECT)
     _stand_ins(monkeypatch)
 
     def run_plan(plan: StagingPlan, project_dir: Path, **_: object) -> Path:
@@ -503,7 +507,7 @@ def test_dists_built_here_from_sdists_are_named_in_one_line_that_is_no_warning(
         + "b" * 64
         + '" }]\n'
     )
-    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "pyproject.toml").write_text(APP_PROJECT)
     (tmp_path / "uv.lock").write_text(lock)
     site = tmp_path / "site"
     info = site / "pure-1.0.dist-info"

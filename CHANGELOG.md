@@ -11,6 +11,42 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Added
+- **Several console scripts build one executable with all of them.** With no `--entry` and two
+  or more console scripts, the build no longer asks for a choice: it writes `dist/<project>`
+  (or the `-o` path), whose entry point is a table of `name=target` lines (format version
+  unchanged), and a relative symlink `dist/<command>` beside it per command, each made as a
+  temporary link renamed into place. A regular file or directory in the way of a link fails the
+  build before anything is written; an existing symlink is replaced. A start runs the command its
+  `argv[0]` names (`.py` stripped), else the one `argv[1]` names, which is removed from
+  `sys.argv`; with neither the executable lists its commands on stderr and exits 2. A start under
+  a command's link is never a helper interpreter (D44): command A starting `B -m word` runs
+  command B; `sys.executable -m ...` is still refused, and so are hard-link starts. The selftest
+  checks every command, a forkserver preloads the parent's command, `fsbpyr inspect` (and its
+  JSON, as `commands`) and the build summary list the commands, and `--smoke-args` starts with
+  the command's name. Command names must match `[A-Za-z0-9][A-Za-z0-9_.+-]*`. All links share
+  one instance budget (D45). A one-command build is unchanged except that it carries the new
+  `_fsbpyr_rt.commands` module, which only a table loads.
+- **A project with a `[project]` table and no `[build-system]` builds as `uv run main.py` runs
+  it.** That is `uv init --no-package`, and Poetry `package-mode = false` and PDM
+  `distribution = false` projects; a uv workspace root keeps its build. Today these fell back to
+  setuptools: two modules failed with "Multiple top-level modules", a `utils/` package was
+  dropped, and `<name>.egg-info` was left in the tree. fsbpyr now writes the project's wheel
+  itself with the standard library (no build backend, no project code, nothing written into the
+  tree, the same bytes twice): the project's `*.py` files and nothing else, under the reserved
+  root `_fsbpyr_scripts/`, from `git ls-files` (tracked and untracked, not ignored) or a pruned
+  walk; links out of the tree are refused, and a `.py` file below a directory that is no Python
+  name is reported and left out. The dependencies come from `uv.lock` as before, else
+  `[project.dependencies]` unlocked; `poetry.lock` and `pdm.lock` are not read (the build says
+  so). The commands are `[project.scripts]`, else the modules with a main guard (one: the
+  project's command; several: a multi-command executable, named after the files, `main.py` after
+  the project, a collision fails naming both). A script runs as `__main__` with its directory
+  first on `sys.path`, so `import utils` works; `__file__` is below `<exe>/_fsbpyr_scripts/`.
+  The smoke test finds a script and does not import it, so a script's top-level code never runs
+  on the build host. A static import check follows each command's imports and skips a command
+  that imports what the executable lacks, with `file:line` (`--strict` fails; none left fails),
+  and names a standard library module removed in the build's Python (`cgi`, `imp`, ...) with
+  the older `--python` that has it. The uncaught-error note for a file read next to a script no
+  longer advises `--fs-package`.
 - **A project with no console scripts builds from its `__main__` package or guarded module.**
   With no `--entry`, the build picks the project's only top-level package with a `__main__.py`
   (run as `python -m pkg`), else its only top-level module with an `if __name__ == "__main__":`
@@ -88,6 +124,14 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   `skip  no EL8 stubs`, not a failure, and the EL8 assets are no longer reported as unexpected.
 
 ### Changed
+- **A project without a build system whose `[project.scripts]` point into `src/`** must name
+  `_fsbpyr_scripts.src.pkg.mod:main`; the build says so. It built through setuptools before.
+- **The smoke test of a `module` or inferred entry runs that module's top-level code on the
+  build host,** as it always did; README now says so.
+- **`--strict`'s early refusal of VCS requirement lines also applies to a requirements file with
+  `--hash=` lines.** uv reads such a file in `--require-hashes` mode too, and its VCS lines then
+  failed inside uv with its generic message; the build now refuses them first, naming the file
+  and line, with or without `--strict`.
 - **`PYTHONUNBUFFERED` is honoured** (D14). Set and non-empty, it makes an app's stdout and
   stderr unbuffered as CPython does, so a service's log lines reach a pipe as they are printed
   and survive a SIGTERM. It is the only `PYTHON*` variable the apps read.

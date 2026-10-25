@@ -85,7 +85,10 @@ symptom and its remedy.
   `module:function`. With no console script and no `--entry`, the build runs the project's only
   package with a `__main__.py` (as `python -m`), else its only top-level module with an
   `if __name__ == "__main__":` guard, and says which; with several candidates it lists them and
-  asks for `--entry`. Legacy `setup.py` `scripts=` files are not packaged (the build warns). And a
+  asks for `--entry`. With several console scripts and no `--entry`, the build makes one
+  executable with all of them (see "Several commands in one executable"). A project with a
+  `[project]` table and no `[build-system]` builds from its Python files (see "Projects without a
+  build system"). Legacy `setup.py` `scripts=` files are not packaged (the build warns). And a
   `requires-python`, if it sets one, that admits one of 3.12 to 3.15 (see "Which Python").
 - **Lock sources,** the first one found: a requirements file that `--requirements` or
   `requirements` names, `uv.lock` (the project's or its uv workspace's), `pylock.toml`,
@@ -145,8 +148,8 @@ build-constraint-dependencies` (read by `uv sync`, for `uv.lock` projects) or fr
 |---|---|
 | `--python X.Y` | the Python to build for, 3.12 to 3.15, inside `requires-python` (default: `python` in `[tool.fsbpyr]`, else `.python-version`, else `requires-python` decides) |
 | `--glibc X.Y` | the glibc the app is built for: 2.34 (default), or 2.28 for EL8 hosts, which needs the glibc 2.28 stub of the fsbpyr release (default: `glibc` in `[tool.fsbpyr]`, else 2.34) |
-| `--entry NAME` | console script name, `module` or `module:function` (default: the only script, else the only `__main__` package or guarded module) |
-| `-o, --output PATH` | where to write the executable (default: `dist/` and the entry's name) |
+| `--entry NAME` | console script name, `module` or `module:function` (default: the only script, else all of them as one multi-command executable, else the only `__main__` package or guarded module) |
+| `-o, --output PATH` | where to write the executable (default: `dist/` and the entry's name, or the project's name for several commands) |
 | `--requirements FILE` | pinned requirements file, for pip projects without `pylock.toml` |
 | `--extra NAME` | install a project extra (repeat); requirements and pylock files must already contain its dependencies |
 | `--fs-package PACKAGE` | a package whose files must exist on disk (repeat) |
@@ -158,7 +161,7 @@ build-constraint-dependencies` (read by `uv sync`, for `uv.lock` projects) or fr
 | `--hints / --no-hints` | also list packages that may read files next to `__file__`, and system libraries the code may open by name (guesses) |
 | `--interpreter-reexec / --no-interpreter-reexec` | let the app's own children started as `sys.executable -m MODULE`, `-c CODE` or with a script of the app run as Python, or (--no-...) run the app in them, for an app whose own options are named -m or -c; with neither, they are refused (exit 70) |
 | `--smoke / --no-smoke` | run the new executable once as a smoke test (default) or skip it |
-| `--smoke-args ARGS` | also run the new executable once with ARGS (one string, split like a shell would), for example "--version", and fail the build unless it exits 0; only you know which arguments have no side effects |
+| `--smoke-args ARGS` | also run the new executable once with ARGS (one string, split like a shell would), for example "--version", and fail the build unless it exits 0; only you know which arguments have no side effects; with several commands the first word is the command ("acme-db --version") |
 | `--strict / --no-strict` | fail the build, leaving the output as it was, on any warning about the app and on an unlocked build; requirements files must pin and hash every line |
 | `-v, --verbose` | print each uv command and let uv's error output through |
 
@@ -197,6 +200,94 @@ strict = true                # same as --strict
 those arguments, as `-o` (so `argv[0]` is the final path), with stdin from `/dev/null` and
 a 120 s limit, and fails unless it exits 0; the error names the arguments and shows the app's
 stderr. Only you know which arguments are safe, such as `--version` or `--help`.
+
+The smoke test imports the entry module. A `--entry module` build, an inferred guarded module
+and a `module:function` entry therefore run that module's top-level code on the build host; the
+scripts of a project without a build system are only found, never imported.
+
+### Several commands in one executable
+
+A project with several console scripts and no `--entry` builds **one** executable that holds all of
+them, instead of asking for a choice. With `[project.scripts]` `acme-run = "acme.run:main"` and
+`acme-db = "acme.db:main"`, `fsbpyr build` writes `dist/acme` (the project's name, or the `-o`
+path) and, beside it, a relative symlink per command, `dist/acme-run -> acme` and
+`dist/acme-db -> acme`. The build lists them. Names are letters, digits and `_.+-`, starting
+with a letter or digit; another name fails the build, naming it. A command named like the
+executable needs no link. `--entry acme-db` still builds that one command alone, as before. A
+project with one command builds as before.
+
+A start runs the command that its `argv[0]` names (the link, with `.py` stripped if it has it),
+so copy or link the executable under each command's name where the commands belong, in `PATH`
+for example (`ln -s acme /usr/local/bin/acme-db`, or copy the whole `dist/` directory). A start
+under any other name takes the command from the first argument, `acme acme-db --flag`: the
+command sees `sys.argv == ["acme-db", "--flag"]`, as through its link. Started with no command
+or an unknown one, the executable lists its commands on stderr and exits 2. Only the exact
+name counts: `acme /path/to/acme-db` is not a command.
+
+Things to know:
+
+- The build never replaces a file that is not a symlink: a regular file or a directory in the
+  way of a link fails the build before anything is written; an existing symlink is replaced.
+  With `-o`, the links go beside the output.
+- Hard links and copies work as well, but a rebuild replaces the file and leaves them on the
+  old build (see [docs/compatibility.md](docs/compatibility.md)). Prefer symlinks.
+- `--smoke-args` runs the executable under its own name, so its first word is the command
+  (`--smoke-args "acme-db --version"`); for a command named like the executable, all of the
+  arguments are that command's.
+- All links of an executable share one instance limit (`FSBPYR_MAX_INSTANCES`, "At run time").
+- `fsbpyr inspect` shows the commands and what each runs.
+
+### Projects without a build system
+
+A project with a `[project]` table and no `[build-system]` is what `uv init --no-package` writes
+(and plain `uv init` did from uv 0.4 to 0.11): `main.py` and its helpers, `pyproject.toml`,
+`uv.lock`. It also covers Poetry's `package-mode = false` and PDM's `distribution = false` with a
+`[project]` table. `fsbpyr build` builds it as `uv run main.py` runs it, and never uses
+setuptools' legacy fallback. A uv workspace root (`[tool.uv.workspace]`) keeps its build.
+
+- **What is packaged:** the project's Python files, and only those: `main.py`, `utils.py`, a
+  `utils/` package, `src/` too (paths are kept, so a `src/` layout is not a package layout
+  here). In a git work tree the files are the tracked and the untracked but not ignored ones,
+  elsewhere the files found by a walk that skips hidden directories, virtual environments,
+  `__pycache__`, `build`, `dist`, `node_modules` and `site-packages`. A `.env`, a key, a data file
+  or a template is never packaged, whatever git says. A link to a file outside the project
+  directory fails the build; links to directories are not followed. A `.py` file below a directory
+  whose name is no Python name (`sub-dir/c.py`) cannot be imported: it is not packaged and the
+  build warns. The home directory and `/` are no project directories.
+- **How it is built:** fsbpyr writes the project's wheel itself (the Python files under a
+  reserved top-level directory `_fsbpyr_scripts/`), runs no project code and writes nothing into
+  the source tree. Two builds of one tree are the same bytes. The dependencies come from
+  `uv.lock` as for any project; without one, `[project.dependencies]` (and the `--extra`s) are
+  resolved now, with the warning for an unlocked build. `poetry.lock` and `pdm.lock` are not
+  read, nor is Poetry 1's `[tool.poetry.dependencies]`; a `.venv` is never read for undeclared
+  dependencies.
+- **Commands:** `[project.scripts]` if present (`main:run` runs `_fsbpyr_scripts.main:run`),
+  else the modules with an `if __name__ == "__main__":` guard (a `__main__.py` counts too). One
+  is the command named like the project; several make a multi-command executable
+  ("Several commands in one executable"), each named after its file, `main.py` and `__main__.py`
+  after the project; test files (`tests/`, `test_*.py`, `conftest.py`) and nested `__main__.py`
+  are not commands. Two files with one command name fail the build, naming both. A
+  `[project.scripts]` target in `src/` reads `_fsbpyr_scripts.src.pkg.mod:main`. Without
+  either the build asks for `--entry` (a command name or `_fsbpyr_scripts.module[:attr]`). A file
+  with a name like `deploy-prod.py` is not packaged.
+- **At run time** a script runs as `__main__` with its directory first on `sys.path` and
+  `sys.argv` as given, so `import utils` finds a sibling `utils.py` or `utils/`, as under
+  `uv run`. `__file__` is a path below `<exe>/_fsbpyr_scripts/`, inside the executable: a script
+  that reads files next to it fails ([docs/compatibility.md](docs/compatibility.md)).
+- **The smoke test only finds the scripts,** it does not import them: their top-level code does
+  the work (deploy, delete, restart). For a `--entry module` build, an inferred guarded module
+  and a `module:function` entry the smoke test imports the module, which runs its top-level code
+  on the build host.
+- **Imports are checked statically.** For each command the build follows the imports of the
+  script and of the project's modules it reaches, and a required import that is not a project
+  file, an installed distribution or in the standard library skips that command with a warning
+  naming `file:line`, and `--strict` fails the build; with no command left the build fails. An
+  import under `try`/`except ImportError` (or a bare `except`, or `except Exception`) and under
+  `if TYPE_CHECKING:` or a test on `sys.platform`, `os.name` or `sys.version_info` is optional.
+  With a `.venv` in the project the warning gives `uv pip freeze --python .venv/bin/python >
+  requirements.txt`, which the build then reads. A standard
+  library module removed in the build's Python (`cgi` in 3.13, `imp` in 3.12) is named as such,
+  with the `--python` that still has it.
 
 ### Which Python
 

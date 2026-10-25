@@ -92,11 +92,11 @@ def cli(ctx: click.Context) -> None:
                    "`[tool.fsbpyr]`, else 2.34)")  # fmt: skip
 @click.option("--entry", metavar="NAME", shell_complete=_complete_entry,
               help="console script name, `module` or `module:function` "
-                   "(default: the only script, else the only `__main__` package or "
-                   "guarded module)")  # fmt: skip
+                   "(default: the only script, else all of them as one multi-command "
+                   "executable, else the only `__main__` package or guarded module)")  # fmt: skip
 @click.option("-o", "--output", type=click.Path(path_type=Path),
               help="where to write the executable (default: `dist/` and the entry's "
-                   "name)")  # fmt: skip
+                   "name, or the project's name for several commands)")  # fmt: skip
 @click.option("--requirements", metavar="FILE", type=click.Path(),
               help="pinned requirements file, for pip projects without `pylock.toml`")  # fmt: skip
 @click.option("--extra", "extras", metavar="NAME", multiple=True, shell_complete=_complete_extra,
@@ -134,7 +134,8 @@ def cli(ctx: click.Context) -> None:
 @click.option("--smoke-args", "smoke_args_text", metavar="ARGS",
               help="also run the new executable once with ARGS (one string, split like a "
                    "shell would), for example \"--version\", and fail the build unless it "
-                   "exits 0; only you know which arguments have no side effects")  # fmt: skip
+                   "exits 0; only you know which arguments have no side effects; with several "
+                   "commands the first word is the command (\"acme-db --version\")")  # fmt: skip
 @click.option("--strict/--no-strict", default=None,
               help="fail the build, leaving the output as it was, on any warning about the app "
                    "and on an unlocked build; requirements files must pin and hash every "
@@ -224,8 +225,13 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     for warning in result.warnings:
         print(f"fsbpyr: warning: {warning}", file=sys.stderr)
     glibc = f", glibc >= {result.glibc}" if result.glibc else ""
-    print(f"fsbpyr: built {result.output} ({result.size / 1e6:.1f} MB, entry "
-          f"{result.entrypoint}{glibc})")  # fmt: skip
+    entry = f"{len(result.commands)} commands" if result.commands else f"entry {result.entrypoint}"
+    print(f"fsbpyr: built {result.output} ({result.size / 1e6:.1f} MB, {entry}{glibc})")
+    if result.commands:
+        print(f"fsbpyr: commands: {', '.join(result.commands)}; start one through its link, "
+              f"or as {result.output.name} COMMAND")  # fmt: skip
+    for link in result.links:
+        print(f"fsbpyr: linked {link} -> {link.readlink()}")
     if result.target_needs:
         print(f"fsbpyr: target needs: {result.target_needs}")
     return 0
