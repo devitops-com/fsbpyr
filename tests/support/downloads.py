@@ -14,11 +14,12 @@ from pathlib import Path
 from fsbpyr.runtime import pbs, pins, registry
 
 
-def pinned(python: str) -> dict[str, str]:
-    """{file name in the cache's downloads directory: its pinned SHA-256} for ``python``."""
+def pinned(python: str, baseline: str = pins.DEFAULT_BASELINE) -> dict[str, str]:
+    """{file name in the cache's downloads directory: its pinned SHA-256} for ``python`` and the
+    sysroot of the glibc ``baseline``."""
     pin = pins.pin_for(python, registry.host_triple())
     files = {f"{pin.name}.tar.zst": pin.sha256}
-    for url, sha256 in pins.sysroot_for(pin.triple).packages:
+    for url, sha256 in pins.sysroot_for(pin.triple, baseline).packages:
         files[url.rpartition("/")[2]] = sha256
     return files
 

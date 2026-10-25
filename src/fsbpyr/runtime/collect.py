@@ -30,7 +30,8 @@ NAMES = {
     "sysroots": re.compile(rf"[a-z0-9]+-({_SYSROOT_LIBCS})[0-9.]+-[a-z0-9_]+(-[0-9a-f]{{12}})?"),
     DOWNLOADS: re.compile(
         r"cpython-[0-9.]+\+[0-9]+-[a-z0-9_.+-]+\.tar\.zst"
-        r"|[a-z0-9.+-]+_[a-z0-9.+~:-]+_[a-z0-9]+\.deb|tmp[a-z0-9_]+\.part"
+        r"|[a-z0-9.+-]+_[a-z0-9.+~:-]+_[a-z0-9]+\.deb|[a-z0-9._+-]+\.(x86_64|aarch64)\.rpm"
+        r"|tmp[a-z0-9_]+\.part"
     ),
 }
 STAGING = re.compile(r"\.(extract-[a-z0-9_]+|cp[0-9]+-.+)")  # pbs and sysroot, runtime staging
@@ -43,12 +44,14 @@ def needed() -> dict[str, frozenset[str]]:
     """What the running fsbpyr builds with, by subtree: never collected."""
     found: dict[str, set[str]] = {kind: set() for kind in (*ITEMS, DOWNLOADS)}
     for pin in pins.PINS:
-        found["runtimes"] |= {registry.runtime_id(pin), registry.runtime_id(pin, sanitize=True)}
         found["pbs"].add(pin.name)
         found[DOWNLOADS].add(f"{pin.name}.tar.zst")
-        sysroot = pins.sysroot_for(pin.triple)
-        found["sysroots"].add(sysroot.identity)
-        found[DOWNLOADS] |= {url.rpartition("/")[2] for url, _ in sysroot.packages}
+        for baseline in pins.BASELINES:
+            sysroot = pins.sysroot_for(pin.triple, baseline)
+            found["runtimes"] |= {registry.runtime_id(pin, baseline=baseline),
+                                  registry.runtime_id(pin, sanitize=True, baseline=baseline)}
+            found["sysroots"].add(sysroot.identity)
+            found[DOWNLOADS] |= {url.rpartition("/")[2] for url, _ in sysroot.packages}
     return {kind: frozenset(names) for kind, names in found.items()}
 
 

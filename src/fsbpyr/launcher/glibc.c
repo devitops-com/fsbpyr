@@ -12,7 +12,10 @@
    finds a frame's unwind data with it, and 3.15's libpython links that unwinder in (its JIT
    registers the frames of the code it generates, __register_frame). The link's
    --wrap=_dl_find_object sends the lookup here: to glibc's own where glibc has it, else to the
-   program headers of the loaded objects, the way libgcc looked before glibc 2.35. */
+   program headers of the loaded objects, the way libgcc looked before glibc 2.35. Where the
+   headers lack the struct (the EL8 sysroot, glibc 2.28), the wrapper is compiled out: that
+   libgcc (8) finds frames with dl_iterate_phdr and never asks, and the link's --wrap=
+   finds nothing to wrap. */
 #include <dlfcn.h>
 #include <link.h>
 #include <stdatomic.h>
@@ -48,6 +51,8 @@ double __wrap_hypot(double x, double y) {
     }
     return fn(x, y);
 }
+
+#ifdef DLFO_EH_SEGMENT_TYPE /* link.h, glibc 2.35 and later */
 
 typedef int (*find_object_fn)(void *, struct dl_find_object *);
 
@@ -114,3 +119,5 @@ int __wrap__dl_find_object(void *pc, struct dl_find_object *result) {
     }
     return fn(pc, result);
 }
+
+#endif

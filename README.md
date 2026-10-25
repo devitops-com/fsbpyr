@@ -734,10 +734,12 @@ the man page and shell completions it prints:
 `DESTDIR` override single locations. `make uninstall` removes the same files.
 
 `fsbpyr runtime list` shows the runtime embedded in the executable you run, if any, then the
-runtimes in the cache. Running fsbpyr from a checkout or a wheel (rather than as its own
-executable) always needs a runtime in the cache, and a new fsbpyr version may need a new one: the
-build then says `no runtime for Python 3.14; run fsbpyr runtime build --python 3.14`, or use the
-release binary, which carries its own.
+runtimes in the cache, each with the glibc its stub is linked for (`fsbpyr runtime build
+--glibc 2.28` links against an EL8 sysroot instead of the default Debian 12 one, 2.34). Running
+fsbpyr from a checkout or a wheel (rather than as its own executable) always needs a runtime in
+the cache, and a new fsbpyr version may need a new one: the build then says
+`no runtime for Python 3.14; run fsbpyr runtime build --python 3.14`, or use the release
+binary, which carries its own.
 
 ### Verifying a release
 

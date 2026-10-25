@@ -287,9 +287,13 @@ def runtime_group() -> None:
 @runtime_group.command("build", help="fetch CPython, link launcher, compile stdlib")
 @click.option("--python", metavar="X.Y", default=DEFAULT_PYTHON, show_default=True,
               help="the Python version, major.minor")  # fmt: skip
+@click.option("--glibc", "baseline", type=click.Choice(["2.34", "2.28"]), default="2.34",
+              show_default=True,
+              help="the glibc the stub is linked for: 2.34 (Debian 12's sysroot) or 2.28 "
+              "(Rocky Linux 8.10's, for EL8 hosts)")  # fmt: skip
 @click.option("--clang", type=click.Path(path_type=Path),
               help="clang to use (default: search PATH)")  # fmt: skip
-def runtime_build(*, python: str, clang: Path | None) -> int:
+def runtime_build(*, python: str, baseline: str, clang: Path | None) -> int:
     if _unsupported_python():
         return 1
     _collect_when_due()
@@ -303,7 +307,7 @@ def runtime_build(*, python: str, clang: Path | None) -> int:
     )
 
     try:
-        registry.build_runtime(python, clang=clang)
+        registry.build_runtime(python, clang=clang, baseline=baseline)
     except (
         LookupError,
         registry.RuntimeCacheError,
@@ -329,8 +333,8 @@ def runtime_list() -> int:
     except registry.RuntimeCacheError as exc:
         print(f"fsbpyr: error: {exc}", file=sys.stderr)
         return 1
-    for runtime_id, version in runtimes:
-        print(f"{runtime_id}  Python {version}")
+    for runtime_id, version, baseline in runtimes:
+        print(f"{runtime_id}  Python {version}  glibc {baseline}")
     return 0
 
 

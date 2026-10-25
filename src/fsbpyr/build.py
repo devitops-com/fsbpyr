@@ -165,7 +165,7 @@ def rebuild_on_baseline(  # noqa: PLR0913  the staging, what to rebuild, and off
         root = fetch_sysroot(baseline, cache)
     except (SysrootError, PbsError) as exc:
         return [f"{listed}: not rebuilt against the glibc {glibc} sysroot: {exc}"]
-    flags = build_flags(root, os.environ)
+    flags = build_flags(root, os.environ, baseline.layout)
     try:
         if canonicalize_name(parse_wheel_filename(wheel.name)[0]) in names:
             wheel = rebuild_wheel(plan, project_dir, flags, log=log, verbose=verbose)

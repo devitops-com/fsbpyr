@@ -10,6 +10,16 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Added
+- **`fsbpyr runtime build --glibc 2.28` links the stub against an EL8 sysroot.** The sysroot is
+  Rocky Linux 8.10's glibc 2.28, libgcc 8 and kernel 4.18 headers, read from the pinned RPMs by
+  a reader of fsbpyr's own (no `rpm` tool is needed). A runtime built this way has an id of its
+  own and never mixes with the default one (Debian 12's sysroot, glibc 2.34, which stays the
+  default); `fsbpyr runtime list` now shows each runtime's glibc. Nothing builds apps with it
+  yet: `fsbpyr build --glibc` follows. The launcher compiles its `_dl_find_object` wrapper only
+  where the headers have it (glibc 2.35); the default stub behaves as before, but its source
+  changed, so its runtime id does.
+
 ## [0.25.0] - 2026-10-25
 
 ### Changed

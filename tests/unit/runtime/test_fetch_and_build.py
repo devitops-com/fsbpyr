@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from fsbpyr import cli
 from fsbpyr.cli import main
 from fsbpyr.compat import tarfile
 from fsbpyr.payload.format import FileKind, ModuleFlag, ModuleKind
@@ -222,8 +223,9 @@ def test_runtime_ids_differ_by_version_and_name_it() -> None:
     assert all(i.startswith(f"cp{p.replace('.', '')}-") for p, i in ids.items())
 
 
+@pytest.mark.parametrize("baseline", pins.BASELINES)
 def test_build_runtime_orchestrates_and_caches(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, baseline: str
 ) -> None:
     fake = pbs.PbsDist(tmp_path / "python", {
         "python_version": "3.14.8", "python_tag": "cp314",
@@ -271,7 +273,8 @@ def test_build_runtime_orchestrates_and_caches(
     monkeypatch.setattr(notices, "files", lambda dist: (notice,))
     messages: list[str] = []
 
-    runtime = registry.build_runtime("3.14", cache=tmp_path, log=messages.append)
+    runtime = registry.build_runtime("3.14", cache=tmp_path, log=messages.append,
+                                     baseline=baseline)  # fmt: skip
 
     assert (runtime.stub, runtime.tag, runtime.modules) == (
         b"STUB",
@@ -279,24 +282,30 @@ def test_build_runtime_orchestrates_and_caches(
         (boot,),
     )
     assert runtime.files == (notice,)  # the licence notices travel with the runtime (REP-4)
-    assert registry.find_runtime("3.14", cache=tmp_path) == runtime
+    assert registry.find_runtime("3.14", cache=tmp_path, baseline=baseline) == runtime
     pin = pins.pin_for("3.14", registry.host_triple())
+    sysroot_pin = pins.sysroot_for(pin.triple, baseline)
+    assert runtime.baseline == baseline  # recorded in runtime.json, read back by load
+    assert runtime.runtime_id == registry.runtime_id(pin, baseline=baseline)
+    other = next(b for b in pins.BASELINES if b != baseline)  # never mixed with the other
+    with pytest.raises(registry.RuntimeCacheError, match=r"no runtime for Python 3\.14"):
+        registry.find_runtime("3.14", cache=tmp_path, baseline=other)
     assert runtime.components == components
     assert runtime.extension_suffixes == suffixes  # the interpreter's, not PYTHON.json's [".so"]
     assert runtime.inputs == {
         "pbs": {"release": pin.release, "name": pin.name, "sha256": pin.sha256},
-        "sysroot": pins.sysroot_for(pin.triple).identity,
+        "sysroot": sysroot_pin.identity,
         "layout": registry.LAYOUT_VERSION,
     }
     assert (tmp_path / "runtimes" / runtime.runtime_id / ".lock").is_file()  # held (D38)
-    assert registry.list_runtimes(tmp_path) == [(runtime.runtime_id, "3.14.8")]
-    assert linked_against == [tmp_path / "sysroots" / pins.sysroot_for(pin.triple).name]  # stubbed
+    assert registry.list_runtimes(tmp_path) == [(runtime.runtime_id, "3.14.8", baseline)]
+    assert linked_against == [tmp_path / "sysroots" / sysroot_pin.name]  # stubbed
     # every warning of the build is shown, not only its failures
     assert {"ld.lld-22: warning: from the link", "x.py: SyntaxWarning: from the stdlib"} <= set(
         messages
     )
 
-    again = registry.build_runtime("3.14", cache=tmp_path, log=messages.append)
+    again = registry.build_runtime("3.14", cache=tmp_path, log=messages.append, baseline=baseline)
     assert again == runtime and calls == ["fetch"]
     assert messages[-1].endswith("is already built")
 
@@ -338,13 +347,32 @@ def test_runtime_id_depends_on_the_pinned_packages(monkeypatch: pytest.MonkeyPat
 def test_runtime_build_reports_sysroot_failures(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def fail(python: str, clang: Path | None = None) -> None:
+    def fail(python: str, clang: Path | None = None, baseline: str = "2.34") -> None:
         raise sysroot.SysrootError("cannot download https://example.invalid/libc6.deb")
 
     monkeypatch.setattr(registry, "build_runtime", fail)
 
     assert main(["runtime", "build"]) == 1
     assert "fsbpyr: error: cannot download" in capsys.readouterr().err
+
+
+def test_runtime_build_passes_the_glibc_baseline(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    asked: list[tuple[str, str]] = []
+
+    def build(python: str, clang: Path | None = None, baseline: str = "2.34") -> None:
+        asked.append((python, baseline))
+
+    monkeypatch.setattr(registry, "build_runtime", build)
+
+    assert main(["runtime", "build", "--python", "3.14"]) == 0
+    assert main(["runtime", "build", "--python", "3.13", "--glibc", "2.28"]) == 0
+    assert main(["runtime", "build", "--glibc", "2.27"]) == 2
+    assert asked == [("3.14", "2.34"), ("3.13", "2.28")]
+    assert "'2.27' is not one of '2.34', '2.28'" in capsys.readouterr().err
+    option = next(p for p in cli.runtime_build.params if p.name == "baseline")
+    assert tuple(option.type.choices) == pins.BASELINES  # type: ignore[attr-defined]
 
 
 def test_the_sanitized_runtime_has_an_identity_of_its_own() -> None:

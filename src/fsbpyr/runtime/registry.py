@@ -105,9 +105,13 @@ def host_triple() -> str:
         raise RuntimeCacheError(str(exc)) from exc
 
 
-def runtime_id(pin: pins.PbsPin, *, sanitize: bool = False) -> str:
-    """``sanitize``: the ASan/UBSan test variant (D38), an identity of its own."""
-    sysroot_pin = pins.sysroot_for(pin.triple)
+def runtime_id(
+    pin: pins.PbsPin, *, sanitize: bool = False, baseline: str = pins.DEFAULT_BASELINE
+) -> str:
+    """``sanitize``: the ASan/UBSan test variant (D38), an identity of its own. ``baseline``:
+    the glibc the stub is linked for; the sysroot's identity is in the digest, so runtimes of
+    two baselines never share an id."""
+    sysroot_pin = pins.sysroot_for(pin.triple, baseline)
     identity = "\0".join((stub.launcher_digest(sanitize=sanitize), pin.name, pin.sha256,
                           sysroot_pin.identity, str(LAYOUT_VERSION)))  # fmt: skip
     digest = hashlib.sha256(identity.encode()).hexdigest()[:12]
@@ -115,11 +119,11 @@ def runtime_id(pin: pins.PbsPin, *, sanitize: bool = False) -> str:
     return f"cp{pin.python.replace('.', '')}-{pin.triple}-{digest}{suffix}"
 
 
-def runtime_inputs(pin: pins.PbsPin) -> dict[str, object]:
+def runtime_inputs(pin: pins.PbsPin, baseline: str = pins.DEFAULT_BASELINE) -> dict[str, object]:
     """What the runtime was made from, for build_info's ``runtime_inputs``."""
     return {
         "pbs": {"release": pin.release, "name": pin.name, "sha256": pin.sha256},
-        "sysroot": pins.sysroot_for(pin.triple).identity,
+        "sysroot": pins.sysroot_for(pin.triple, baseline).identity,
         "layout": LAYOUT_VERSION,
     }
 
@@ -138,6 +142,7 @@ class Runtime:
     toolchain: dict[str, str] = field(default_factory=dict)  # clang and lld versions, information
     inputs: dict[str, object] = field(default_factory=dict)  # build_info's runtime_inputs
     components: dict[str, str] = field(default_factory=dict)  # build_info's runtime_components
+    baseline: str = pins.DEFAULT_BASELINE  # the glibc its stub is linked for (2.34 or 2.28)
 
     def save(self, directory: Path) -> None:
         """Write atomically: a complete runtime directory appears, or nothing does.
@@ -196,6 +201,7 @@ class Runtime:
             "toolchain": dict(self.toolchain),  # information only: not in runtime_id (D3)
             "inputs": dict(self.inputs),  # recorded in every app (build_info)
             "components": dict(self.components),
+            "baseline": self.baseline,
         }
 
     @classmethod
@@ -224,6 +230,7 @@ class Runtime:
             toolchain=dict(meta.get("toolchain", {})),
             inputs=dict(meta.get("inputs", {})),
             components=dict(meta.get("components", {})),
+            baseline=meta.get("baseline", pins.DEFAULT_BASELINE),  # runtimes before --glibc
         )
 
     @classmethod
@@ -263,7 +270,17 @@ class Runtime:
             # what the building executable recorded: nothing here could find it out again
             inputs=dict(info.get("runtime_inputs", {})),
             components=dict(info.get("runtime_components", {})),
+            baseline=_baseline_of(info.get("runtime_inputs", {}).get("sysroot", "")),
         )  # fmt: skip
+
+
+def _baseline_of(sysroot_identity: str) -> str:
+    """The glibc baseline whose sysroot has this identity (build_info's runtime_inputs); the
+    default one for an identity no pin has any more."""
+    for baseline, table in ((pins.DEFAULT_BASELINE, pins.SYSROOTS), ("2.28", pins.EL8_SYSROOTS)):
+        if any(pin.identity == sysroot_identity for pin in table.values()):
+            return baseline
+    return pins.DEFAULT_BASELINE
 
 
 def running_executable() -> Path | None:
@@ -272,50 +289,62 @@ def running_executable() -> Path | None:
     return Path("/proc/self/exe") if "_fsbpyr" in sys.builtin_module_names else None
 
 
-def select_runtime(python: str, cache: Path | None = None) -> Runtime:
-    """Our own embedded runtime when it matches ``python`` (self-hosting), else the cache."""
+def select_runtime(
+    python: str, cache: Path | None = None, baseline: str = pins.DEFAULT_BASELINE
+) -> Runtime:
+    """Our own embedded runtime when it matches ``python`` and the glibc ``baseline``
+    (self-hosting), else the cache."""
     own = running_executable()
     if own is not None:
         runtime = Runtime.from_executable(own)
-        if runtime.python_version.startswith(python + "."):
+        if runtime.python_version.startswith(python + ".") and runtime.baseline == baseline:
             return runtime
-    return find_runtime(python, cache)
+    return find_runtime(python, cache, baseline=baseline)
 
 
-def find_runtime(python: str, cache: Path | None = None, *, sanitize: bool = False) -> Runtime:
+def find_runtime(
+    python: str,
+    cache: Path | None = None,
+    *,
+    sanitize: bool = False,
+    baseline: str = pins.DEFAULT_BASELINE,
+) -> Runtime:
     pin = pins.pin_for(python, host_triple())
-    directory = (
-        secure_directory(cache or cache_root()) / "runtimes" / runtime_id(pin, sanitize=sanitize)
-    )
+    name = runtime_id(pin, sanitize=sanitize, baseline=baseline)
+    directory = secure_directory(cache or cache_root()) / "runtimes" / name
     if not directory.exists() or not hold(directory):  # held: no collection removes it (D38)
         if sanitize:  # a test variant (D38): the test run builds it
             raise RuntimeCacheError(f"no sanitized runtime for Python {python}")
+        other = baseline != pins.DEFAULT_BASELINE
         raise RuntimeCacheError(
-            f"no runtime for Python {python}; run `fsbpyr runtime build --python {python}`, "
+            f"no runtime for Python {python}{f' and glibc {baseline}' if other else ''}; run "
+            f"`fsbpyr runtime build --python {python}{f' --glibc {baseline}' if other else ''}`, "
             "or use the release binary, which carries its own"
         )
     return Runtime.load(directory)
 
 
-def build_runtime(
+def build_runtime(  # noqa: PLR0913  # what to build, where, how to say so, which variant
     python: str,
     *,
     cache: Path | None = None,
     clang: Path | None = None,
     log: Callable[[str], None] = print,
     sanitize: bool = False,
+    baseline: str = pins.DEFAULT_BASELINE,
 ) -> Runtime:
-    """Fetch PBS, link the stub and compile the stdlib; cached under the runtime id."""
+    """Fetch PBS, link the stub (against the sysroot of the glibc ``baseline``) and compile the
+    stdlib; cached under the runtime id."""
     cache = secure_directory(cache or cache_root())
     pin = pins.pin_for(python, host_triple())
-    directory = cache / "runtimes" / runtime_id(pin, sanitize=sanitize)
+    sysroot_pin = pins.sysroot_for(pin.triple, baseline)  # before any download
+    directory = cache / "runtimes" / runtime_id(pin, sanitize=sanitize, baseline=baseline)
     if (directory / _META).exists() and hold(directory):
         log(f"runtime {directory.name} is already built")
         return Runtime.load(directory)
     log(f"fetching {pin.name}")
     dist = pbs.fetch(pin, cache)
     toolchain = find_toolchain(dist.llvm_major, explicit=clang)
-    sysroot_pin = pins.sysroot_for(pin.triple)
     log(f"fetching glibc {sysroot_pin.glibc} sysroot {sysroot_pin.name}")
     toolchain = dataclasses.replace(toolchain, sysroot=sysroot.fetch_sysroot(sysroot_pin, cache))
     how = "ASan and UBSan" if sanitize else "full LTO, this takes a minute or two"
@@ -339,8 +368,9 @@ def build_runtime(
         modules=modules,
         files=files,
         toolchain=describe(toolchain),
-        inputs=runtime_inputs(pin),
+        inputs=runtime_inputs(pin, baseline),
         components=pbs.component_versions(dist.interpreter),
+        baseline=baseline,
     )
     runtime.save(directory)
     hold(directory)
@@ -348,15 +378,16 @@ def build_runtime(
     return runtime
 
 
-def list_runtimes(cache: Path | None = None) -> list[tuple[str, str]]:
-    """(runtime id, Python version) of the runtime embedded in the running executable, if any,
-    then of every complete runtime in the cache."""
+def list_runtimes(cache: Path | None = None) -> list[tuple[str, str, str]]:
+    """(runtime id, Python version, glibc baseline) of the runtime embedded in the running
+    executable, if any, then of every complete runtime in the cache."""
     found = []
     own = running_executable()
     if own is not None:
         embedded = Runtime.from_executable(own)
-        found.append((embedded.runtime_id, embedded.python_version))
+        found.append((embedded.runtime_id, embedded.python_version, embedded.baseline))
     for meta in sorted(((cache or cache_root()) / "runtimes").glob(f"*/{_META}")):
         data = json.loads(meta.read_text())
-        found.append((data["runtime_id"], data["python_version"]))
+        found.append((data["runtime_id"], data["python_version"],
+                      data.get("baseline", pins.DEFAULT_BASELINE)))  # fmt: skip
     return found

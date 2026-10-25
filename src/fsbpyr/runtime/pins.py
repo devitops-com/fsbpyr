@@ -111,14 +111,25 @@ def pin_for(python: str, triple: str) -> PbsPin:
 _DEBIAN = "https://deb.debian.org/debian/pool/main"
 
 
+# Rocky Linux 8.10, the final EL8 minor release (supported to 2029-05-31, owner 2026-10-25):
+# its repository keeps every 8.10 build at a stable URL and publishes each one's SHA-256 in
+# repodata/primary.xml (signed: repomd.xml.asc); the NVRs are Red Hat's. Only the gcc package
+# has crtbeginS.o, libgcc.a and libgcc_eh.a.
+_ROCKY = "https://dl.rockylinux.org/pub/rocky/8.10"
+DEFAULT_BASELINE = "2.34"  # the baselines apps are built for, newest first: see sysroot_for
+BASELINES = (DEFAULT_BASELINE, "2.28")
+
+
 @dataclass(frozen=True, slots=True)
 class SysrootPin:
-    """Debian packages whose glibc the stub links against (plan Phase 6c, D25)."""
+    """Packages whose glibc the stub links against (plan Phase 6c, D25)."""
 
     name: str  # part of the runtime id
     glibc: str  # version of the headers and libraries
     manylinux: str  # the glibc the apps are built for: manylinux_2_X wheels, the stub's need
     packages: tuple[tuple[str, str], ...]  # (url, sha256)
+    packaging: str = "deb"  # "deb" or "rpm"
+    layout: str = "multiarch"  # Debian's usr/lib/<multiarch>, or "redhat": usr/lib64 and links
 
     @property
     def identity(self) -> str:
@@ -129,9 +140,10 @@ class SysrootPin:
 
     @property
     def baseline(self) -> tuple[int, int]:
-        """The glibc the apps are built for, below the sysroot's own: linked against glibc
-        2.36, the stub needs no symbol newer than 2.34 (pthread_create, dlopen and
-        __libc_start_main moved there), which RHEL 9 and Ubuntu 22.04 provide."""
+        """The glibc the apps are built for, below the sysroot's own where Debian's: linked
+        against glibc 2.36, the stub needs no symbol newer than 2.34 (pthread_create, dlopen and
+        __libc_start_main moved there), which RHEL 9 and Ubuntu 22.04 provide. EL8's own glibc
+        2.28 is the baseline of its sysroot."""
         major, minor = self.manylinux.split(".")
         return int(major), int(minor)
 
@@ -174,7 +186,58 @@ SYSROOTS = {
 }  # fmt: skip
 
 
-def sysroot_for(triple: str) -> SysrootPin:
-    if triple not in SYSROOTS:
+EL8_SYSROOTS = {
+    "x86_64-unknown-linux-gnu": SysrootPin(
+        name="rocky8-glibc2.28-x86_64",
+        glibc="2.28",
+        manylinux="2.28",
+        packaging="rpm",
+        layout="redhat",
+        packages=tuple((f"{_ROCKY}/{path}", sha256) for path, sha256 in (
+            ("BaseOS/x86_64/os/Packages/g/glibc-2.28-251.el8_10.48.x86_64.rpm",
+             "ac6b703086afead9a4cfeb5cf50d0974056e8c810f059d17dba0e050cf2ed477"),
+            ("BaseOS/x86_64/os/Packages/g/glibc-devel-2.28-251.el8_10.48.x86_64.rpm",
+             "ba67a4c21c184e5a5fd31bfe6cdd879196b98b8745d24e7d951d4f23281f3f31"),
+            ("BaseOS/x86_64/os/Packages/g/glibc-headers-2.28-251.el8_10.48.x86_64.rpm",
+             "8a2496f1385a372db6a66c48b7f71678f97b3815ce0553711e81118d5b9a990c"),
+            ("BaseOS/x86_64/os/Packages/k/kernel-headers-4.18.0-553.177.1.el8_10.x86_64.rpm",
+             "9ea6371b6f8526fcfb098ed2c1421f94b6ef164e66b8183cb6f778f279cdd5a8"),
+            ("BaseOS/x86_64/os/Packages/l/libgcc-8.5.0-29.el8_10.x86_64.rpm",
+             "f5f66f766f8d9e9ca3e31462a08cf5ff8c8824b5efa1ba06ef404c3e9763b3e2"),
+            ("AppStream/x86_64/os/Packages/g/gcc-8.5.0-29.el8_10.x86_64.rpm",
+             "04601bcd450d79df4f8aa250f240ec98b89b1eb36388f8b4ee6737b0b4fec3f6"),
+        )),
+    ),
+    "aarch64-unknown-linux-gnu": SysrootPin(
+        name="rocky8-glibc2.28-aarch64",
+        glibc="2.28",
+        manylinux="2.28",
+        packaging="rpm",
+        layout="redhat",
+        packages=tuple((f"{_ROCKY}/{path}", sha256) for path, sha256 in (
+            ("BaseOS/aarch64/os/Packages/g/glibc-2.28-251.el8_10.48.aarch64.rpm",
+             "ff7bff4fab47c038ae308c7f38080c9e56285451ff02c7d48d860abcf9994308"),
+            ("BaseOS/aarch64/os/Packages/g/glibc-devel-2.28-251.el8_10.48.aarch64.rpm",
+             "23f2fc103fb3323700869414ca63ee8477eb85f2bff749f469f9dbb57a6c402d"),
+            ("BaseOS/aarch64/os/Packages/g/glibc-headers-2.28-251.el8_10.48.aarch64.rpm",
+             "2c771d2314c88c38181001b38fdbd299e6cd45437d17516c933c5086c7729901"),
+            ("BaseOS/aarch64/os/Packages/k/kernel-headers-4.18.0-553.177.1.el8_10.aarch64.rpm",
+             "70d869a10c01a17b4fbe3888e6ccfe7ec5b5d3c6f30cb389085933fd60a5e742"),
+            ("BaseOS/aarch64/os/Packages/l/libgcc-8.5.0-29.el8_10.aarch64.rpm",
+             "c5c21f4698674c79de72ac90bcfdc0b12021df658f49287173af202f9a1f7632"),
+            ("AppStream/aarch64/os/Packages/g/gcc-8.5.0-29.el8_10.aarch64.rpm",
+             "03d0f8e3cef460958b79059d47a8ad292ee62eebe03b45da30274c2a0df323a0"),
+        )),
+    ),
+}  # fmt: skip
+
+
+def sysroot_for(triple: str, baseline: str = DEFAULT_BASELINE) -> SysrootPin:
+    """The sysroot for ``triple`` and the glibc baseline of the apps: Debian 12's (2.34, the
+    default) or EL8's (2.28)."""
+    tables = {DEFAULT_BASELINE: SYSROOTS, "2.28": EL8_SYSROOTS}
+    if baseline not in tables:
+        raise ValueError(f"no glibc {baseline} baseline; supported: {', '.join(BASELINES)}")
+    if triple not in tables[baseline]:
         raise ValueError(f"no glibc sysroot pinned for {triple}")
-    return SYSROOTS[triple]
+    return tables[baseline][triple]

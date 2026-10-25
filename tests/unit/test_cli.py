@@ -218,12 +218,14 @@ def test_runtime_list_shows_the_embedded_runtime_first(
     )
     monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(registry, "running_executable", lambda: tmp_path / "fsbpyr")
-    embedded = types.SimpleNamespace(runtime_id="cp314-embedded", python_version="3.14.8")
+    embedded = types.SimpleNamespace(runtime_id="cp314-embedded", python_version="3.14.8",
+                                     baseline="2.28")  # fmt: skip
     monkeypatch.setattr(registry.Runtime, "from_executable", lambda path: embedded)
 
     assert main(["runtime", "list"]) == 0
     assert capsys.readouterr().out == (
-        "cp314-embedded  Python 3.14.8\ncp314-cached  Python 3.14.7\n"
+        "cp314-embedded  Python 3.14.8  glibc 2.28\n"
+        "cp314-cached  Python 3.14.7  glibc 2.34\n"  # a runtime without a recorded baseline
     )
 
 
