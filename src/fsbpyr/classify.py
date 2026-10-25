@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 
 from .closure import InstalledDist
 from .compiler import Compiled, Compiler, Job, compiled, compressed
-from .elf import ElfError, glibc_requirement, is_elf, is_executable
+from .elf import ElfError, glibc_requirement, is_elf, is_executable, is_foreign
 from .natives import NativeError, SystemUse, closures, is_extension_module, opened
 from .payload.format import (
     NATIVE_KINDS,
@@ -307,10 +307,14 @@ class _Collector:
             return
         if rel.endswith(self.suffixes) or _SHARED_OBJECT.search(rel):
             with path.open("rb") as file:
-                if is_elf(file.read(4)):
-                    self._add_native(dist, rel, path)
-                    return
-            self.warnings.append(f"{dist.name}: {rel} kept as data (not an ELF shared object)")
+                head = file.read(64)
+            if is_elf(head) and not is_foreign(head):
+                self._add_native(dist, rel, path)
+                return
+            # debugpy's universal wheel, which aarch64 installs, has an x86-64 library
+            what = ("an ELF object for another machine" if is_elf(head)
+                    else "not an ELF shared object")  # fmt: skip
+            self.warnings.append(f"{dist.name}: {rel} kept as data ({what})")
         names = self._names(rel, module_name) if rel.endswith(".py") else []
         large = path.stat().st_size > _IN_MEMORY
         if names and large:  # compiling needs it whole (D38)

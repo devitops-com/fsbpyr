@@ -28,6 +28,7 @@ from fsbpyr.payload.format import (
 )
 from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob, Extent, stored_bytes
 from fsbpyr.payload.spill import Spill
+from fsbpyr.targets import EM_AARCH64, EM_X86_64, host_target
 
 from ...support.apps import library
 from ...support.elf import make_elf
@@ -475,6 +476,26 @@ def test_non_elf_shared_object_is_kept_as_data(site: Path) -> None:
     assert {f.path: f.kind for f in content.files}["odd/_stub.so"] is FileKind.RESOURCE
     assert all(m.name != "odd._stub" for m in content.modules)
     assert any("not an ELF" in w for w in content.warnings)
+
+
+FOREIGN_MACHINE = EM_AARCH64 if host_target().elf_machine == EM_X86_64 else EM_X86_64
+
+
+@pytest.mark.parametrize(
+    "data", [make_elf(machine=FOREIGN_MACHINE), b"\x7fELF\x01\x01\x01" + bytes(57)],
+    ids=["another machine", "32-bit"],
+)
+def test_an_elf_object_for_another_machine_is_kept_as_data(site: Path, data: bytes) -> None:
+    """debugpy's universal wheel, the one aarch64 installs, has its x86-64
+    attach_linux_amd64.so: no loader here can load it, in a venv neither. It stopped the build."""
+    _dist(site, "dbg", "1.0", {"dbg/__init__.py": b"", "dbg/attach_linux_amd64.so": data})
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["dbg"]], extension_suffixes=SUFFIXES, include_source=True)
+
+    assert {f.path: f.kind for f in content.files}["dbg/attach_linux_amd64.so"] is FileKind.RESOURCE
+    assert all(m.name != "dbg.attach_linux_amd64" for m in content.modules)
+    assert any("another machine" in w for w in content.warnings)
 
 
 def _record_extra(site: Path, dist: str, *lines: str) -> None:

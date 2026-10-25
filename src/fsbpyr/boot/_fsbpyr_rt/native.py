@@ -20,7 +20,7 @@ import _fsbpyr
 
 TYPE_CHECKING = False
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
     from types import ModuleType
 
 NATIVE_EXT = 3
@@ -162,18 +162,31 @@ class PayloadExtensionLoader(ExtensionFileLoader):
             ) from exc
 
 
+def _shipped_libraries(dists: "set[int]") -> "Iterator[int]":
+    """The shared libraries (not extensions) the distributions ``dists`` ship, wherever they
+    are in the payload."""
+    return (i for i in range(_fsbpyr.info()["files"])
+            if (record := _fsbpyr.file_at(i))[1] == NATIVE_LIB and record[5] in dists)  # fmt: skip
+
+
 def materialize_package(directory: str) -> str:
-    """Extract every file of the FS_REQUIRED package at payload ``directory``, and the libraries
+    """Extract every file of the FS_REQUIRED package at payload ``directory``; the libraries
     its extensions need from outside it (``torchvision.libs``, torch's ``libc10.so``): code that
     opens the extensions itself (torchvision's ``torch.ops.load_library``) does not import them,
-    which would extract their closures. Returns the prefix (with "/") that the package's modules
-    live under."""
+    which would extract their closures; and the other shared libraries its distribution ships,
+    which nothing links: plugins it opens from a directory (openmm's, in
+    ``OpenMM.libs/lib/plugins``). Returns the prefix (with "/") that the package's modules live
+    under."""
     cache = native_cache()
     try:
         files = _fsbpyr.files_below(directory)
-        needed = (_fsbpyr.closure(record[6]) for i in files
-                  if (record := _fsbpyr.file_at(i))[1] == NATIVE_EXT and record[6] != _fsbpyr.NONE)
-        cache.sync(tuple(dict.fromkeys((*files, *(i for closure in needed for i in closure)))))
+        records = [_fsbpyr.file_at(i) for i in files]
+        needed = (_fsbpyr.closure(record[6]) for record in records
+                  if record[1] == NATIVE_EXT and record[6] != _fsbpyr.NONE)  # fmt: skip
+        shipped = _shipped_libraries({record[5] for record in records} - {_fsbpyr.NONE})
+        cache.sync(tuple(dict.fromkeys(
+            (*files, *(i for closure in needed for i in closure), *shipped)
+        )))  # fmt: skip
     except OSError as exc:
         raise NativeCacheError(
             f"cannot extract {directory} into {cache.root}: {exc}; "

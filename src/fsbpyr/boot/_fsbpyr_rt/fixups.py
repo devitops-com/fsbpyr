@@ -121,11 +121,22 @@ def _parso_file_io(module: "ModuleType") -> None:
     module.FileIO.get_last_modified = payload_last_modified
 
 
+def _cv2_load_config(module: "ModuleType") -> None:
+    # cv2's loader (cv2/__init__.py) takes itself out of sys.modules, inserts its directory at
+    # sys.path[1] and imports "cv2" again, to load its binary cv2.abi3.so. A venv's
+    # site-packages comes after that position; a built app's sys.path[0] is the executable,
+    # which finds the cv2 package again ("recursion is detected"). OpenCV's switch inserts the
+    # directory at 0; the loader imports this module before it reads the switch, and restores
+    # sys.path afterwards.
+    sys.OpenCV_REPLACE_SYS_PATH_0 = True  # type: ignore[attr-defined]
+
+
 FIXUPS = {
     "ssl": _ssl,
     "multiprocessing.spawn": _multiprocessing_spawn,
     "ctypes": _ctypes,
     "parso.file_io": _parso_file_io,
+    "cv2.load_config_py3": _cv2_load_config,
 }
 
 

@@ -41,8 +41,10 @@ ROOT = INFO["executable"]
 _PREFIX = ROOT + "/"
 _INTERNAL = ("_fsbpyr_boot", "_fsbpyr_rt")  # boot code, hidden from module listings
 # Modules adjusted right after they load (_fsbpyr_rt.fixups): CA store fallback, multiprocessing
-# children started from this very binary, bundled libraries by bare name, parso's file times.
-_FIXUPS = frozenset({"ssl", "multiprocessing.spawn", "ctypes", "parso.file_io"})
+# children started from this very binary, bundled libraries by bare name, parso's file times,
+# cv2's loader.
+_FIXUPS = frozenset({"ssl", "multiprocessing.spawn", "ctypes", "parso.file_io",
+                     "cv2.load_config_py3"})  # fmt: skip
 # The native cache's site directory (with "/"), once an FS_REQUIRED package was extracted
 # there: modules of such packages live below it, and the path hook claims it too.
 _FS_PREFIXES: list[str] = []
