@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field
 from enum import Enum
@@ -13,6 +14,11 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 
 DEFAULT_REQUIREMENTS = "requirements.txt"
+# a commit-pinned VCS requirement: `name @ git+URL@<40 hex>` or `git+URL@<40 hex>#egg=name`
+_SHA_PINNED_VCS = re.compile(r"git\+\S+@[0-9a-fA-F]{40}(?:[#&\s]|$)")
+_HASHED_URL = re.compile(r"[#&]sha256=[0-9a-fA-F]{64}")
+_VCS = re.compile(r"\b(?:git|hg|svn|bzr)\+[a-z]+://|\b(?:git|hg|svn|bzr)\+file:")
+_EDITABLE = re.compile(r"(?:-e|--editable)(?:\s+|=)")
 
 
 class ProjectError(RuntimeError):
@@ -48,8 +54,11 @@ class Project:
                 data = tomllib.loads(pyproject.read_text())
             except tomllib.TOMLDecodeError as exc:
                 raise ProjectError(f"{pyproject}: {exc}") from exc
-        elif (directory / "setup.py").is_file() or (directory / "setup.cfg").is_file():
+        elif (directory / "setup.py").is_file():
             data = {}
+        elif (directory / "setup.cfg").is_file():
+            raise ProjectError(f"{directory} has a setup.cfg but no pyproject.toml or setup.py; "
+                               "setup.cfg alone does not say how to build it")  # fmt: skip
         else:
             raise ProjectError(f"{directory} has no pyproject.toml or setup.py")
         table = data.get("project", {})
@@ -139,18 +148,50 @@ class Project:
             )
 
 
-def unpinned_requirements(requirements: Path) -> list[str]:
-    """The requirements in a pip requirements file that lack ``==`` (options such as ``-r``
-    and ``--hash`` are not requirements; a ``\\`` continues a line)."""
-    unpinned = []
-    for line in requirements.read_text().replace("\\\n", " ").splitlines():
-        requirement = line.partition(" #")[0].strip()
-        if not requirement or requirement.startswith(("#", "-")):
+def _requirement_lines(requirements: Path) -> list[tuple[int, str]]:
+    """The (first line number, text) of each logical line of a requirements file; comments are
+    dropped, and so is a trailing ``--hash`` on a requirement. A ``\\`` continues a line."""
+    lines: list[tuple[int, str]] = []
+    pending, start = "", 0
+    for number, raw in enumerate(requirements.read_text().splitlines(), 1):
+        start = start or number
+        if raw.endswith("\\"):
+            pending += raw[:-1] + " "
             continue
-        requirement = requirement.partition(" --")[0].strip()
-        if "==" not in requirement.partition(";")[0]:
+        text = (pending + raw).partition(" #")[0].strip()
+        if text and not text.startswith("#"):
+            lines.append((start, text.partition(" --")[0].strip() if text[0] != "-" else text))
+        pending, start = "", 0
+    if pending.strip():  # the file ends on a `\\`
+        lines.append((start, pending.partition(" #")[0].strip()))
+    return lines
+
+
+def unpinned_requirements(requirements: Path) -> list[str]:
+    """The requirements in a pip requirements file that are not pinned: no ``==``, and no
+    commit SHA (``git+URL@<40 hex>``) or ``#sha256=`` on a URL. An ``-e`` path is listed too:
+    it installs whatever the tree holds. Other options (``-r``, ``--hash``) are not
+    requirements; a ``\\`` continues a line."""
+    unpinned = []
+    for _, text in _requirement_lines(requirements):
+        editable = _EDITABLE.match(text)
+        if text.startswith("-") and not editable:
+            continue
+        requirement = text[editable.end():].partition(" --")[0].strip() if editable else text
+        if "==" in requirement.partition(";")[0]:
+            continue
+        if editable and "://" not in requirement and not requirement.startswith("git+"):
+            unpinned.append(text)  # a local path: unversioned, whatever is in the tree
+        elif not (_SHA_PINNED_VCS.search(requirement) or _HASHED_URL.search(requirement)):
             unpinned.append(requirement)
     return unpinned
+
+
+def vcs_requirements(requirements: Path) -> list[str]:
+    """The ``file:line: text`` of each requirement taken from version control (``git+https://``
+    and the like): a commit SHA pins the source, but uv's --require-hashes wants a hash."""
+    return [f"{requirements.name}:{number}: {text}" for number, text in _requirement_lines(
+        requirements) if _VCS.search(text)]
 
 
 def _workspace_table(pyproject: Path) -> dict[str, Any] | None:

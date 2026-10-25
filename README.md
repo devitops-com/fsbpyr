@@ -259,6 +259,11 @@ A `requirements.txt` counts as locked even when it is not pinned. Without `--str
 line without `==` gets a warning. With it, uv also gets `--require-hashes`, so every line
 needs `==` and a `--hash`. uv checks the hashes in a `pylock.toml` on its own,
 `--strict` or not (a changed hash in a `pylock.toml` fails the build; verified with uv 0.13.1).
+A line pinned by a commit SHA (`name @ git+URL@<40 hex>`) or a `#sha256=` URL is pinned for
+the warning, but a SHA is not a hash: `--strict` refuses a requirements file with such lines
+before uv runs, naming them. An `-e ./libs/common` line installs as a regular package, with a
+warning that it is whatever the tree holds. With no `requirements.txt` but `requirements/*.txt`,
+the build says to pick one with `--requirements`.
 
 `--strict` does not check the glibc the executable needs. To fail unless it is 2.34 or
 older (`jq -e` exits 1 on `false`):

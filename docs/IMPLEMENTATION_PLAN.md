@@ -675,10 +675,12 @@ criteria are automated tests unless noted. Sizes are S, M or L.
       `pip wheel` from a clean copy (removed by D26). It is installed `--no-deps` after the dependencies from
       the lock, so neither a stale setuptools `build/` directory nor uv's build cache (keyed on
       `pyproject.toml`, found by the self-hosting test) can ship old code, and the project tree
-      is never written to. uv workspace members and path dependencies are rebuilt with
+      is never written to (setuptools' `*.egg-info` and `build/` that `uv build` leaves in the
+      tree are removed again). uv workspace members and path dependencies are rebuilt with
       `--reinstall-package`, using the names read from `uv.lock`
     - staging commands run in the project directory, so relative paths in requirements files
-      resolve as expected; editable dependencies are rejected
+      resolve as expected; editable (`-e`) requirements are installed as regular packages
+      (`--no-editable`), and `check_no_editable` rejects any editable install that remains
     - uv workspace members use the workspace's `uv.lock` (`--package`); `--no-default-groups`
       keeps uv's default groups out; an explicit `--requirements` file wins over every lock
     - distributions installed from the lock but not required by the project are packaged,

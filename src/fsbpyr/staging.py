@@ -21,7 +21,8 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -116,7 +117,8 @@ def _platform(options: StagingOptions) -> list[str]:
 
 def _uv_build(uv: Path, work: Path, project: Project, options: StagingOptions) -> list[str]:
     command = [str(uv), "build", "--out-dir", str(work / "wheel"), "--python", options.python]
-    return command + ["--offline"] * options.offline + ["--quiet", str(project.directory)]
+    # not --quiet: a failure's reason (setuptools' "Multiple top-level modules ...") is uv's output
+    return command + ["--offline"] * options.offline + [str(project.directory)]
 
 
 def _uv_sync_plan(project: Project, uv: Path, work: Path, options: StagingOptions) -> StagingPlan:
@@ -187,8 +189,30 @@ def _plan(
     else:
         lock = project.requirements_path(options.requirements)
         hashes = ["--require-hashes"] if options.strict or "--hash=" in lock.read_text() else []
-    install = [venv, [*base, *hashes, "-r", str(lock)], [*base, "--no-deps", WHEEL]]
+    # `-e ./libs/common` lines install as regular packages; check_no_editable stays the net
+    editable = ["--no-editable"] if source is LockSource.REQUIREMENTS else []
+    install = [venv, [*base, *hashes, *editable, "-r", str(lock)],
+               [*base, "--no-deps", WHEEL]]
     return StagingPlan(site, build, install, wheel_dir, env, [str(uv), "cache", "clean"])
+
+
+def _tree_leftovers(project_dir: Path) -> set[Path]:
+    """What a setuptools build leaves in the source tree: ``*.egg-info`` beside the project's
+    files or in a directory below (``src/``), and ``build/``."""
+    found = {*project_dir.glob("*.egg-info"), *project_dir.glob("*/*.egg-info")}
+    return {*found, *({project_dir / "build"} if (project_dir / "build").is_dir() else set())}
+
+
+@contextmanager
+def leave_tree_unchanged(project_dir: Path) -> Iterator[None]:
+    """Remove what the build in ``project_dir`` writes there (setuptools' egg_info runs in the
+    source tree under ``uv build``); what existed before the build is never touched."""
+    before = _tree_leftovers(project_dir)
+    try:
+        yield
+    finally:
+        for path in _tree_leftovers(project_dir) - before:
+            shutil.rmtree(path, ignore_errors=True)
 
 
 def _step(command: list[str], project_dir: Path) -> str:
@@ -216,7 +240,8 @@ def _run(
     verbose: bool,
 ) -> None:
     """Run one uv command after logging its step. ``verbose`` prints the command on stderr and
-    lets uv's stderr through; uv stays ``--quiet``, so that is its errors and hints in full."""
+    lets uv's stderr through (uv's installs are ``--quiet``: its errors and hints; its build is
+    not: setuptools' own output too). A failure carries the tail of that output."""
     step = _step(command, cwd)
     log(f"uv: {step}")
     if verbose:
@@ -245,7 +270,8 @@ def _build_wheel(  # noqa: PLR0913  the plan, where, and the progress keywords
     """The plan's build of the project wheel, into ``wheel_dir`` with ``env`` added."""
     wheel_dir.mkdir(parents=True, exist_ok=True)
     build = [str(wheel_dir) if part == str(plan.wheel_dir) else part for part in plan.build]
-    _run(build, project_dir, {**plan.env, **env}, log=log, verbose=verbose)
+    with leave_tree_unchanged(project_dir):
+        _run(build, project_dir, {**plan.env, **env}, log=log, verbose=verbose)
     wheels = sorted(wheel_dir.glob("*.whl"))
     if len(wheels) != 1:
         raise StagingError(f"expected one built wheel in {wheel_dir}, found {len(wheels)}")

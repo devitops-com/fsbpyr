@@ -21,6 +21,7 @@ from fsbpyr.build import (
     check_strict,
     glibc_report,
     helper_interpreter_hints,
+    lock_warnings,
     rebuild_on_baseline,
     smoke_run,
     smoke_test,
@@ -132,6 +133,20 @@ def test_an_error_carries_the_warnings_collected_before_it(
         build(tmp_path, BuildConfig())
 
     assert caught.value.__notes__ == ["unlocked build: dependencies resolved now, not reproducible"]
+
+
+def test_split_requirements_files_get_one_hint_naming_the_option(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "requirements").mkdir()
+    for name in ("base.txt", "prod.txt"):
+        (tmp_path / "requirements" / name).write_text("")
+
+    warnings = lock_warnings(Project.load(tmp_path), LockSource.UNLOCKED, None)
+
+    assert len(warnings) == 2
+    assert "--requirements requirements/<file>" in warnings[1]
+    assert "base.txt, prod.txt" in warnings[1]
+    assert isinstance(warnings[1], Uncounted)
 
 
 APP = {"app/__init__.py": "", "app/cli.py": "def main():\n    pass\n"}

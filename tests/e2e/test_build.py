@@ -423,20 +423,94 @@ def test_relative_requirement_paths_resolve_against_the_project(tmp_path: Path) 
     assert _run(out).stdout == "hi from greet\n"
 
 
-def test_editable_dependencies_are_rejected(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_editable_requirements_install_as_regular_packages(tmp_path: Path) -> None:
     project = _write(tmp_path / "app", {
         "pyproject.toml": _uv_project("app", '"greet"', '[project.scripts]\napp = "app:main"'),
-        "src/app/__init__.py": "def main():\n    pass\n",
+        "src/app/__init__.py": "import greet\ndef main():\n    print(greet.WORD)\n",
         "requirements.txt": "-e ./libs/greet\n",
         "libs/greet/pyproject.toml": _uv_project("greet"),
-        "libs/greet/src/greet/__init__.py": "",
+        "libs/greet/src/greet/__init__.py": "WORD = 'hi from greet'\n",
+    })  # fmt: skip
+    out = tmp_path / "out" / "app"
+
+    assert main(["build", str(project), "-o", str(out)]) == 0
+
+    assert _run(out).stdout == "hi from greet\n"
+
+
+def test_strict_refuses_vcs_requirements_before_uv_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_uv() -> Path:
+        raise AssertionError("uv was looked up")
+
+    monkeypatch.setattr("fsbpyr.build.find_uv", no_uv)
+    project = _fixture("clicky", tmp_path, drop=("uv.lock", "pylock.toml"))
+    sha = "a" * 40
+    (project / "requirements.txt").write_text(f"click==8.1.7\nlib @ git+https://h/r.git@{sha}\n")
+
+    assert main(["build", str(project), "--strict"]) == 1
+
+    err = capsys.readouterr().err
+    assert "not a hash" in err
+    assert "requirements.txt:2: lib @ git+https://h/r.git@" in err
+    assert "uv failed" not in err
+    assert not (project / "dist").exists()
+
+
+def test_a_failed_uv_build_shows_the_reason(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _write(tmp_path / "flat", {
+        "pyproject.toml": (
+            '[project]\nname = "flat"\nversion = "1.0"\n'
+            '[build-system]\nrequires = ["setuptools>=69"]\n'
+            'build-backend = "setuptools.build_meta"\n'
+        ),
+        "one.py": "",
+        "two.py": "",
     })  # fmt: skip
 
     assert main(["build", str(project)]) == 1
 
-    assert "greet is installed in editable mode" in capsys.readouterr().err
+    assert "Multiple top-level modules discovered" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("layout", ["flat", "src"])
+def test_building_a_setuptools_project_leaves_its_tree_unchanged(
+    tmp_path: Path, layout: str
+) -> None:
+    module = "src/st/__init__.py" if layout == "src" else "st/__init__.py"
+    project = _write(tmp_path / "st", {
+        "pyproject.toml": (
+            '[project]\nname = "st"\nversion = "1.0"\n[project.scripts]\nst = "st:main"\n'
+            '[build-system]\nrequires = ["setuptools>=69"]\n'
+            'build-backend = "setuptools.build_meta"\n'
+        ),
+        module: "def main():\n    print('ok')\n",
+    })  # fmt: skip
+    before = sorted(p.relative_to(project) for p in project.rglob("*"))
+
+    assert main(["build", str(project), "-o", str(tmp_path / "st-bin")]) == 0
+
+    assert sorted(p.relative_to(project) for p in project.rglob("*")) == before
+
+
+def test_a_failed_build_leaves_no_empty_output_directory(tmp_path: Path) -> None:
+    project = _fixture("hello", tmp_path, drop=("uv.lock",))
+
+    assert main(["build", str(project), "--strict"]) == 1  # unlocked: a counted warning
+
+    assert not (project / "dist").exists()
+
+
+def test_a_failed_build_removes_every_output_directory_it_created(tmp_path: Path) -> None:
+    project = _fixture("hello", tmp_path, drop=("uv.lock",))
+    out = tmp_path / "new" / "sub" / "hello"
+
+    assert main(["build", str(project), "-o", str(out), "--strict"]) == 1
+
+    assert not (tmp_path / "new").exists()
 
 
 def test_stale_setuptools_build_directories_never_leak(tmp_path: Path) -> None:

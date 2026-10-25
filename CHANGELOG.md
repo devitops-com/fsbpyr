@@ -19,6 +19,23 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   message names both versions.
 
 ### Fixed
+- **`-e ./libs/common` lines in a requirements file build.** They are installed as regular
+  packages (`uv pip install --no-editable`) instead of failing with "installed in editable
+  mode"; the build warns that such a line is whatever the tree holds. Lines pinned by a commit
+  SHA (`git+URL@<40 hex>`) or a `#sha256=` URL are no longer reported as unpinned. With no
+  `requirements.txt` but `requirements/*.txt`, the build prints a hint naming `--requirements`.
+- **`--strict` with VCS lines in a requirements file is refused early**, naming the lines and
+  saying that a commit SHA pins the source but is not a hash, rather than failing inside uv
+  with a generic hash message.
+- **A failed `uv build` shows why.** uv's build is no longer `--quiet`, so the error carries
+  the backend's own reason (such as setuptools' "Multiple top-level modules discovered in a
+  flat-layout"), and under `-v` "see its output above" is true.
+- **`fsbpyr build` no longer leaves `*.egg-info` or `build/` in a setuptools project's tree**
+  (in the project root and one directory below it, so `src/`). What the build created is
+  removed; what existed before is never touched.
+- **A directory with only `setup.cfg` is refused up front** with a clear message, not late
+  inside uv.
+- **A failed build no longer leaves an empty `dist/`** (or other output directory it created).
 - **The launcher's background cache collection (D38) now runs with `HOME` unset or empty.** The
   launcher needed an absolute `$HOME` while the boot code fell back to the passwd home, so such an
   app's cache was never collected (and with `HOME=''` the two disagreed about the cache root). An
