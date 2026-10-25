@@ -9,7 +9,9 @@ so each line reaches the journal as it is printed, unless it is unbuffered alrea
 PID 1: an app that is process 1 (a container without an init) never dies of SIGTERM, as the
 kernel drops a signal that process 1 has no handler for, and `python app.py` is the same. Here
 SIGTERM raises ``SystemExit(143)`` (128 + 15), when its disposition is still the default. The
-app may install its own handler afterwards, which replaces this one.
+app may install its own handler afterwards, which replaces this one. A forked child gets the
+default disposition back, as under `python app.py`: a handler that only runs between bytecodes
+would leave a worker in a long C call deaf to the signal.
 """
 
 import io
@@ -58,10 +60,16 @@ def _terminate(signum: int, frame: FrameType | None) -> None:
     raise SystemExit(EXIT_SIGTERM)
 
 
+def _default_in_child() -> None:
+    if signal.getsignal(signal.SIGTERM) is _terminate:
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+
 def terminate_on_sigterm() -> None:
     """Installs the SystemExit(143) handler when SIGTERM still has its default disposition."""
     if signal.getsignal(signal.SIGTERM) == signal.SIG_DFL:
         signal.signal(signal.SIGTERM, _terminate)
+        os.register_at_fork(after_in_child=_default_in_child)
 
 
 def start(journal: bytes | None, pid: int) -> None:

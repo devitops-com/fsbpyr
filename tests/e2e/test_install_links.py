@@ -98,6 +98,18 @@ def test_what_is_in_the_way_is_reported_and_kept_and_the_rest_is_linked(
         assert f"{target / name} exists and is not a link to {tools}" in result.stderr
 
 
+def test_the_background_collection_child_makes_no_links(tools: Path, tmp_path: Path) -> None:
+    target = tmp_path / "bin"
+    target.mkdir()
+    env = {**os.environ, "FSBPYR_CACHE_DIR": str(tmp_path / "cache"),
+           "FSBPYR_INSTALL_LINKS": str(target), "FSBPYR_GC": "background"}  # fmt: skip
+
+    result = contain.run([tools], env=env, timeout=120)
+
+    assert result.returncode == 0, result.stderr
+    assert list(target.iterdir()) == []
+
+
 def test_the_executable_in_its_own_directory_is_not_in_the_way(
     tools: Path, tmp_path: Path
 ) -> None:

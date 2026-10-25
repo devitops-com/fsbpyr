@@ -803,8 +803,11 @@ def _service_policies() -> None:
 
 def _install_links() -> None:
     """FSBPYR_INSTALL_LINKS=DIR links the commands into DIR and exits (D14). The common start
-    costs an environ lookup."""
-    if directory := posix.environ.get(b"FSBPYR_INSTALL_LINKS"):
+    costs an environ lookup. The detached collection child (D38) inherits the variable and does
+    not link."""
+    if (directory := posix.environ.get(b"FSBPYR_INSTALL_LINKS")) and (
+        posix.environ.get(b"FSBPYR_GC") != b"background"
+    ):
         from _fsbpyr_rt.links import install  # type: ignore[import-not-found]  # noqa: PLC0415
 
         sys.exit(install(directory, ROOT, INFO["entrypoint"], INFO["app_name"]))

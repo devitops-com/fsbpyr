@@ -37,8 +37,9 @@ def child_command(
 ) -> Command | None:
     """The module, code or (with ``prefix``, the executable's path and "/") script of the
     payload that ``argv`` asks for after interpreter flags, or None. ``overlay`` (the
-    executable's directory and "/", for apps of scripts) also names the scripts: a path there
-    counts only if a script of the payload is that file."""
+    executable's directory and "/", for apps of scripts) also names the scripts, by its form
+    alone: ``run_child`` asks whether a script of the payload is that file, once the app has
+    started this process (it imports the script's packages to tell)."""
     i = after_flags(argv)
     if i is None:
         return None
@@ -46,8 +47,7 @@ def child_command(
         return (argv[i], argv[i + 1], argv[i + 2 :]) if i + 1 < len(argv) else None
     if prefix is not None and argv[i].startswith(prefix) and argv[i].endswith(".py"):
         return _SCRIPT, argv[i], argv[i + 1 :]
-    named = overlay is not None and argv[i].startswith(overlay) and argv[i].endswith(".py")
-    if named and _script_module(argv[i], prefix or "", overlay) is not None:
+    if overlay is not None and argv[i].startswith(overlay) and argv[i].endswith(".py"):
         return _SCRIPT, argv[i], argv[i + 1 :]
     return None
 
@@ -158,6 +158,10 @@ def run_child(
     setting = json.loads(build_info).get("interpreter_reexec")
     if setting is False or not _parent_runs_this_executable():
         return False
+    option, path, _ = command
+    named_by_overlay = option == _SCRIPT and not path.startswith(prefix)
+    if named_by_overlay and _script_module(path, prefix, overlay) is None:
+        return False  # a file of the host, the app's own argument
     if setting is True or _own_command(command, prefix, targets, overlay):
         return _run(command, prefix, overlay)
     if not asks_for_python(command):

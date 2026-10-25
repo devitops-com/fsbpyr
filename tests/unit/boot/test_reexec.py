@@ -322,6 +322,24 @@ def test_a_script_is_named_by_the_path_it_says_it_lives_at(
     assert reexec._script_module(
         "/srv/bin/app/_fsbpyr_scripts/tools/probe.py", "/srv/bin/app/", "/srv/bin/"
     ) == "_fsbpyr_scripts.tools.probe"  # fmt: skip
-    # a file of the host that is no script of the payload is the app's own argument
-    assert reexec.child_command([EXE, "/srv/bin/other.py"], "/srv/bin/app/", "/srv/bin/") is None
     assert reexec.child_command(argv, "/srv/bin/app/") is None  # not an app of scripts
+
+
+def test_a_file_of_the_host_next_to_the_executable_is_the_apps_own_argument_and_imports_nothing(
+    reexec: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whether a path names a script is asked (it imports the script's packages) only after the
+    app started this process, and a file that is none runs the app."""
+    asked: list[str] = []
+    monkeypatch.setattr(reexec.importlib.util, "find_spec", asked.append)
+    argv = [EXE, "/srv/bin/other.py"]
+
+    command = reexec.child_command(argv, "/srv/bin/app/", "/srv/bin/")
+    monkeypatch.setattr(reexec, "_parent_runs_this_executable", lambda: False)
+    foreign = reexec.run_child(argv, UNSET, "/srv/bin/app/", (), "/srv/bin/")
+    monkeypatch.setattr(reexec, "_parent_runs_this_executable", lambda: True)
+    ours = reexec.run_child(argv, UNSET, "/srv/bin/app/", (), "/srv/bin/")
+
+    assert command == ("script", "/srv/bin/other.py", [])
+    assert foreign is False and ours is False
+    assert asked == ["_fsbpyr_scripts.other"]  # once, after the parent check

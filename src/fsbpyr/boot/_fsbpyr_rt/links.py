@@ -68,6 +68,10 @@ def install(directory: bytes, executable: str, entrypoint: str, app_name: str) -
         return FAILURE
     status = 0
     for name in names(entrypoint, app_name):
+        if os.path.basename(name) != name or name in (".", ".."):
+            sys.stderr.write(f"fsbpyr: error: {name!r} is no file name; no link is made\n")
+            status = FAILURE
+            continue
         path = os.path.join(folder, name)
         present = os.path.lexists(path) and _states(path, real)
         if (problem := _link(path, real)) is not None:

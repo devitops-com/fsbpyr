@@ -145,3 +145,18 @@ def test_only_process_1_gets_the_handler(
     service.start(None, pid)
 
     assert (signal.getsignal(signal.SIGTERM) != signal.SIG_DFL) is installed
+
+
+@pytest.mark.usefixtures("restored_sigterm")
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")  # fork in a threaded test run
+def test_a_forked_child_gets_the_default_sigterm_disposition_back(service: ModuleType) -> None:
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    service.terminate_on_sigterm()
+
+    pid = os.fork()
+    if pid == 0:  # the child: report the disposition it got through the exit status
+        os._exit(0 if signal.getsignal(signal.SIGTERM) == signal.SIG_DFL else 1)
+    _, status = os.waitpid(pid, 0)
+
+    assert os.waitstatus_to_exitcode(status) == 0
+    assert signal.getsignal(signal.SIGTERM) != signal.SIG_DFL  # the parent keeps its handler
