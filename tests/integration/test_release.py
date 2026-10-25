@@ -404,7 +404,7 @@ def _documented(repo: Path, env: dict[str, str], *changed: str) -> tuple[str, st
         with (repo / name).open("a") as file:
             file.write("# changed\n")
     git(repo, "add", ".", env=env)
-    git(repo, "commit", "-q", "-m", "docs [skip ci]", env=env)
+    git(repo, "commit", "-q", "-m", "docs: more of them", env=env)
     git(repo, "push", "-q", "hub", "main", env=env)
     return tested, git(repo, "rev-parse", "HEAD", env=env)
 
@@ -412,8 +412,8 @@ def _documented(repo: Path, env: dict[str, str], *changed: str) -> tuple[str, st
 def test_a_commit_that_changes_only_documentation_is_released_on_its_tested_ancestors_run(
     tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    """Merged with [skip ci] (CONTRIBUTING.md): no run of its own; the run of the newest commit
-    before it that has one stands for it."""
+    """full-suite.yml leaves a documentation-only push out (CONTRIBUTING.md): no run of its own;
+    the run of the newest commit before it that has one stands for it."""
     repo = make_release_repo(tmp_path, release_env)
     tested, head = _documented(repo, release_env, "README.md", "docs/guide.md", "docs/a/b.txt")
     env = release_env | {"FAKE_GH_FULL_RUN": "", "FAKE_GH_TESTED_SHA": tested,
@@ -444,6 +444,50 @@ def test_a_commit_that_changes_more_than_documentation_needs_its_own_run(
     assert changed in result.stderr
     assert f"main at {head[:7]} has no full-suite.yml run" in result.stderr
     assert git(repo, "tag", "--list", env=release_env) == ""
+
+
+@pytest.mark.parametrize("message", [
+    "Merge pull request #36: docs [skip ci]", "docs [ci skip]", "docs [no ci]",
+    "docs [skip actions]", "docs [actions skip]", "docs [Skip CI]",
+    "docs\n\nskip-checks: true",
+])  # fmt: skip
+def test_release_refuses_a_head_whose_message_skips_ci(
+    message: str, tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    """GitHub applies a commit's skip instruction to a tag pushed on it: release.yml would never
+    run (v0.25.0's first tag, 2026-10-25)."""
+    repo = make_release_repo(tmp_path, release_env)
+    git(repo, "commit", "-q", "--allow-empty", "-m", message, env=release_env)
+    git(repo, "push", "-q", "hub", "main", env=release_env)
+
+    result = run_release(repo, release_env)
+
+    assert result.returncode == 1
+    assert "HEAD's commit message has a CI skip instruction" in result.stderr
+    assert git(repo, "tag", "--list", env=release_env) == ""
+    assert not check_calls(tmp_path, "full-suite.yml")  # refused before the run is looked up
+
+
+def test_a_message_that_only_mentions_skipping_is_released(
+    tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    repo = make_release_repo(tmp_path, release_env)
+    message = "ci: say when skip ci applies"  # no brackets: not an instruction
+    git(repo, "commit", "-q", "--allow-empty", "-m", message, env=release_env)
+    git(repo, "push", "-q", "hub", "main", env=release_env)
+
+    result = run_release(repo, release_env)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_the_full_suite_leaves_out_the_pushes_a_release_may_stand_on_without_a_run() -> None:
+    """full-suite.yml's paths-ignore and green-run.sh's documentation are the same files."""
+    full_suite = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
+    on = full_suite.split("\non:\n", 1)[1].split("\n\n", 1)[0]
+
+    assert '    paths-ignore: ["**.md", "docs/**"]' in on
+    assert "*.md|docs/*) ;;" in GREEN_RUN_SH.read_text(encoding="utf-8")
 
 
 def test_a_documentation_commit_is_not_released_on_a_failed_ancestors_run(
@@ -1153,7 +1197,7 @@ def test_the_publish_job_checks_the_tagged_commits_full_suite_run_and_names_it()
 
     assert "actions: read" in publish
     assert 'tools/release/green-run.sh full-suite.yml "$GITHUB_SHA"' in publish
-    assert "fetch-depth: 0" in publish  # a [skip ci] commit is compared with its ancestor
+    assert "fetch-depth: 0" in publish  # a documentation-only commit is compared with its ancestor
     assert "green-run.sh release.yml" not in publish and "HEAD^" not in publish
     assert "Full suite: %s" in publish
 
