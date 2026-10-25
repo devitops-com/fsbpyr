@@ -535,8 +535,10 @@ whatever its requirements say: its scripts are the commands, and the tools' scri
   `ansible-core`, so `ansible==10.*` gives the commands of `ansible-core`. Its direct
   requirements, under the runtime's markers and the extras asked for, are the tools in its place,
   and so on down to a distribution with scripts (the build names the meta-package and the tools
-  taken through it). Two tools with one script name, a console and a gui script among them, fail
-  the build naming both distributions; no script at all fails it, saying what the file named. `--entry NAME` builds one of the commands alone. The smoke test
+  taken through it); a library with no script, listed beside tools, is passed through the same
+  way, so a script of its dependencies becomes a command. Two tools with one script name, a
+  console and a gui script among them, fail the build naming both distributions; no script at all
+  fails it, saying what the file named. `--entry NAME` builds one of the commands alone. The smoke test
   checks every command as for any several-command executable: it imports each target's module and
   looks its function up (library code, imported as for any console script).
 - **Build:** the lock is installed as for any pip project (a `requirements.txt` that is not pinned

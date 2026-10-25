@@ -229,20 +229,25 @@ def _through_metas(
 ) -> tuple[list[str], list[str]]:
     """The tools in place of ``tops`` (name -> extras asked for), and a note per meta-package
     taken through. A top with no script of its own is replaced by its direct requirements,
-    recursively; a cycle or ``_META_DEPTH`` levels stop it."""
+    recursively; a cycle or ``_META_DEPTH`` levels stop it. A library with no script is taken for
+    a meta-package too: its dependencies' scripts become commands."""
     notes: list[str] = []
+    taken_by: dict[tuple[str, frozenset[str]], list[str]] = {}  # each walked once, noted once
 
     def take(name: str, extras: frozenset[str], path: tuple[str, ...]) -> list[str]:
         if name in path or len(path) > _META_DEPTH or name not in index.dists:
             return []
         if _scripts_of(index.dists[name]):
             return [name]
+        if (name, extras) in taken_by:
+            return taken_by[name, extras]
         slot = len(notes)
         notes.append("")  # the meta-package's note goes before those of the ones below it
         taken: list[str] = []
         for dependency, asked in _dependencies(name, extras, index, environment).items():
             taken += [t for t in take(dependency, asked, (*path, name)) if t not in taken]
         notes[slot] = _meta_note(name, taken) if taken else ""
+        taken_by[name, extras] = taken
         return taken
 
     tools: list[str] = []

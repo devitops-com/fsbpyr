@@ -373,12 +373,45 @@ def test_meta_packages_with_nothing_beyond_them_are_no_commands() -> None:
 
 
 def test_the_meta_package_chain_stops_at_the_depth_limit() -> None:
-    chain = [_dist(f"m{i}", (f"m{i + 1}",)) for i in range(20)]
-    index = _index(*chain, _dist("m20", (), "end = m20:main"))
+    def chain(length: int) -> SiteIndex:
+        return _index(*[_dist(f"m{i}", (f"m{i + 1}",)) for i in range(length)],
+                      _dist(f"m{length}", (), "end = end:main"))  # fmt: skip
 
+    tools = tool_scripts(chain(8), _listed_by(["m0"]), project="p", source="r.txt",
+                         python_version=PYTHON)  # fmt: skip
+    assert tools.scripts == {"end": "end:main"}
     with pytest.raises(ClosureError, match="none has"):
-        tool_scripts(index, _listed_by(["m0"]), project="p", source="r.txt",
+        tool_scripts(chain(9), _listed_by(["m0"]), project="p", source="r.txt",
                      python_version=PYTHON)  # fmt: skip
+
+
+def test_a_library_with_no_script_is_taken_for_a_meta_package() -> None:
+    index = _index(
+        _dist("black", (), "black = black:main"),
+        _dist("requests", ("charset-normalizer",)),
+        _dist("charset-normalizer", (), "normalizer = cn:main"),
+    )
+
+    tools = tool_scripts(index, _listed_by(["black", "requests"]), project="p",
+                         source="r.txt", python_version=PYTHON)  # fmt: skip
+
+    assert sorted(tools.scripts) == ["black", "normalizer"]
+
+
+def test_a_meta_package_reached_by_two_ways_is_noted_once() -> None:
+    index = _index(
+        _dist("top", ("left", "right")),
+        _dist("left", ("shared",)),
+        _dist("right", ("shared",)),
+        _dist("shared", ("tool",)),
+        _dist("tool", (), "t = tool:main"),
+    )
+
+    tools = tool_scripts(index, _listed_by(["top"]), project="p", source="r.txt",
+                         python_version=PYTHON)  # fmt: skip
+
+    assert tools.scripts == {"t": "tool:main"}
+    assert sum(note.startswith("shared ") for note in tools.notes) == 1
 
 
 def test_a_missing_distribution_is_an_error_unless_a_marker_excludes_it() -> None:

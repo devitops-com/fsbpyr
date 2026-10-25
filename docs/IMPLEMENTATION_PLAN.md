@@ -2111,21 +2111,22 @@ Python file** and has a lock source (`requirements.txt`, `pylock.toml`, `--requi
 reads the names the file gives (`-r` followed, `-c` and options naming nothing), the build
 installs the lock as for any pip project with a metadata-only wheel in place of the project's
 (`Package.tool_binary`, named after the directory, `<name>-tools` when a requirement has that
-name), and the commands are the `console_scripts` of the tools, put through step 4's table, links
+name), and the commands are the console and gui scripts of the tools, put through step 4's table, links
 and step 6's deploy recipe (output `dist/<directory name>`, or `dist/<command>` for one). Rules
 fixed with it: **a dependency's scripts are not commands**; **a file that lists every
 installed distribution** (`pip freeze`, `pylock.toml`) **has as tools only the listed
 distributions no other listed distribution requires** (`Requires-Dist` under the runtime's
 markers and the extras asked for, read from the staged site), and the build says which it took
 and why; any other file has every listed distribution as a tool; two tools with one script name
-fail naming both distributions, and no console script at all fails naming what the file named.
+fail naming both distributions, and no console or gui script at all fails naming what the file named.
 Follow-up (owner decision 2026-10-25): **`gui_scripts` are commands** like console scripts (pip and
 uv install them as ordinary launchers on Linux; a console and a gui script of one name clash like
 two tools'), and **a tool with no console or gui script is a meta-package whose direct
 requirements** (runtime markers, extras asked for) **are the tools in its place**, recursively to
 a distribution with scripts (`ansible` requiring `ansible-core`; a cycle or depth 8 stops it; the
 build names the meta-package and the tools taken through it); a dependency of a tool that has
-scripts still never becomes a command.
+scripts still never becomes a command (a library with no script, listed beside tools, is taken
+for a meta-package: its dependencies' scripts become commands).
 A directory with a Python file stays a directory of scripts, whatever its requirements say. Tools
 that start helpers through `sys.executable` exit 70 (D44) unless built with
 `--interpreter-reexec`; the build prints the existing helper-interpreter note when it knows a
