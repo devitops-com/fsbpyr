@@ -74,6 +74,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false  # gh gets the token through GH_TOKEN
+          fetch-depth: 0  # green-run.sh compares a commit merged with [skip ci] with its tested ancestor
 
       # A release is made from a main commit whose full-suite.yml run passed:
       # tools/release/release.sh checks that before it tags, this checks it again for the tagged

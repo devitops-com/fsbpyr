@@ -71,7 +71,9 @@ REPO_URL = "https://github.com/devitops-com/fsbpyr"
 
 # A gh that is authenticated, logs every call and knows no release. `run list --branch main`
 # answers $FAKE_GH_FULL_RUN for full-suite.yml (HEAD's run on main, as "ID STATUS/CONCLUSION
-# URL"), nothing for another workflow or when it is empty; any other `run list` answers
+# URL"), $FAKE_GH_TESTED_RUN for the commit $FAKE_GH_TESTED_SHA and, without --commit, that
+# commit as the recent runs' commits; nothing for another workflow or when it is empty; any
+# other `run list` answers
 # $FAKE_GH_RUN_ID from its (FAKE_GH_RUN_AFTER + 1)th call on. `run view` of the full suite's
 # run (4000 too) shows it completed with FAKE_GH_CHECK_CONCLUSION, any other run with
 # FAKE_GH_TAG_CONCLUSION (both "success" by default), as follow-run.sh's --jq prints it.
@@ -89,7 +91,12 @@ case "$1 $2" in
   "run list")
     case "$*" in
       *"--branch main "*"--workflow full-suite.yml"*|*"--workflow full-suite.yml"*"--branch main "*)
-        echo "$FAKE_GH_FULL_RUN"; exit ;;
+        case "$*" in
+          *"--commit ${FAKE_GH_TESTED_SHA:-none} "*) echo "$FAKE_GH_TESTED_RUN" ;;
+          *"--commit "*) echo "$FAKE_GH_FULL_RUN" ;;
+          *) echo "${FAKE_GH_TESTED_SHA:-}" ;;
+        esac
+        exit ;;
       *"--branch main "*) exit ;;
     esac
     calls=$(cat "$FAKE_GH_LOG.runs" 2>/dev/null || echo 0)
@@ -381,10 +388,78 @@ def test_release_refuses_a_head_without_a_full_suite_run_on_main(
     assert result.returncode == 1
     assert f"main at {head[:7]} has no full-suite.yml run" in result.stderr
     assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
-    (check,) = check_calls(tmp_path, "full-suite.yml")
+    check, recent = check_calls(tmp_path, "full-suite.yml")  # HEAD's run, then an ancestor's
     for option in ("--branch main", "--event push", f"--commit {head}"):
         assert option in check
+    assert "--commit" not in recent
     assert not check_calls(tmp_path, "release.yml")
+
+
+def _documented(repo: Path, env: dict[str, str], *changed: str) -> tuple[str, str]:
+    """(the tested commit, HEAD): a commit on main, pushed, that changes ``changed`` after the
+    repository's first commit, the one full-suite.yml ran for."""
+    tested = git(repo, "rev-parse", "HEAD", env=env)
+    for name in changed:
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        with (repo / name).open("a") as file:
+            file.write("# changed\n")
+    git(repo, "add", ".", env=env)
+    git(repo, "commit", "-q", "-m", "docs [skip ci]", env=env)
+    git(repo, "push", "-q", "hub", "main", env=env)
+    return tested, git(repo, "rev-parse", "HEAD", env=env)
+
+
+def test_a_commit_that_changes_only_documentation_is_released_on_its_tested_ancestors_run(
+    tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    """Merged with [skip ci] (CONTRIBUTING.md): no run of its own; the run of the newest commit
+    before it that has one stands for it."""
+    repo = make_release_repo(tmp_path, release_env)
+    tested, head = _documented(repo, release_env, "README.md", "docs/guide.md", "docs/a/b.txt")
+    env = release_env | {"FAKE_GH_FULL_RUN": "", "FAKE_GH_TESTED_SHA": tested,
+                         "FAKE_GH_TESTED_RUN": f"4000 {DONE} {RUN_URL}/4000"}  # fmt: skip
+
+    result = run_release(repo, env)
+
+    assert result.returncode == 0, result.stderr
+    assert f"changes only documentation since {tested[:7]}" in result.stderr
+    origin = tmp_path / "origin.git"
+    assert git(origin, "rev-parse", f"{TAG}^{{commit}}", env=release_env) == head
+
+
+@pytest.mark.parametrize("changed", ["pyproject.toml", "src/fsbpyr/x.py", "tests/test_x.py",
+                                     ".github/workflows/x.yml", "Makefile"])  # fmt: skip
+def test_a_commit_that_changes_more_than_documentation_needs_its_own_run(
+    changed: str, tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    repo = make_release_repo(tmp_path, release_env)
+    tested, head = _documented(repo, release_env, "README.md", changed)
+    env = release_env | {"FAKE_GH_FULL_RUN": "", "FAKE_GH_TESTED_SHA": tested,
+                         "FAKE_GH_TESTED_RUN": f"4000 {DONE} {RUN_URL}/4000"}  # fmt: skip
+
+    result = run_release(repo, env)
+
+    assert result.returncode == 1
+    assert f"not only documentation changed since {tested[:7]}" in result.stderr
+    assert changed in result.stderr
+    assert f"main at {head[:7]} has no full-suite.yml run" in result.stderr
+    assert git(repo, "tag", "--list", env=release_env) == ""
+
+
+def test_a_documentation_commit_is_not_released_on_a_failed_ancestors_run(
+    tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    repo = make_release_repo(tmp_path, release_env)
+    tested, _ = _documented(repo, release_env, "README.md")
+    failed = f"4000 completed/failure {RUN_URL}/4000"
+    env = release_env | {"FAKE_GH_FULL_RUN": "", "FAKE_GH_TESTED_SHA": tested,
+                         "FAKE_GH_TESTED_RUN": failed}  # fmt: skip
+
+    result = run_release(repo, env)
+
+    assert result.returncode == 1
+    assert f"run for main at {tested[:7]} did not succeed" in result.stderr
+    assert git(repo, "tag", "--list", env=release_env) == ""
 
 
 @pytest.mark.parametrize("state", ["completed/failure", "completed/cancelled"])
@@ -1078,6 +1153,7 @@ def test_the_publish_job_checks_the_tagged_commits_full_suite_run_and_names_it()
 
     assert "actions: read" in publish
     assert 'tools/release/green-run.sh full-suite.yml "$GITHUB_SHA"' in publish
+    assert "fetch-depth: 0" in publish  # a [skip ci] commit is compared with its ancestor
     assert "green-run.sh release.yml" not in publish and "HEAD^" not in publish
     assert "Full suite: %s" in publish
 

@@ -56,3 +56,17 @@ The tiers, from fastest to most complete:
 - Portability (`tests/e2e/test_portability.py`, `podman run` on 13 distributions, 12 on aarch64
   where `archlinux:latest` has no image): needs podman on the host and is not part of `make
   test-container`. CI runs it per target and Python after the suite job.
+
+## Documentation-only changes
+
+A pull request that changes only documentation (`*.md` files and `docs/`) is merged with
+`[skip ci]` in its merge commit's subject (`gh pr merge --subject "... [skip ci]"`): GitHub then
+starts no workflow for that push to main, so neither the full suite nor its corpus runs. Before
+merging, run the tests that read documentation: `uv run pytest tests/unit/test_cli_docs.py`
+(the README's and `docs/compatibility.md`'s tables against the code), and `uv run pytest
+tests/e2e/test_build.py -k quickstart` when the README's quickstart changed. A release made
+from such a commit stands on the run of the newest commit before it that full-suite.yml ran
+for: `tools/release/green-run.sh`, which `make release` and the publish job use, accepts it
+only when nothing but documentation changed since, and names that run. A change to code,
+tests, configuration (`pyproject.toml`, `uv.lock`, the workflows, the Makefile) or the release
+tools is merged without `[skip ci]`.
