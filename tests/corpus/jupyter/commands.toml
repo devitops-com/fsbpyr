@@ -1,15 +1,6 @@
-# Fails today (found by this corpus), two differences:
-# - jedi completes `json.du` by parsing json's source, which it finds at <exe>/json/__init__.py
-#   (the standard library is inside the executable): os.path.getmtime raises
-#   NotADirectoryError. No setting puts the standard library on disk.
-# - cause not found yet: the kernel, started as `sys.executable -m ipykernel_launcher` and run
-#   as Python (interpreter-reexec), executes the cells as the venv's does, but its startup
-#   line "[IPKernelApp] WARNING | Kernel is running over TCP without encryption ..."
-#   (ipykernel/kernelapp.py init_sockets, logged when the kernel has no CurveZMQ key) is
-#   missing from stderr. Ruled out: jupyter_client's transport_encryption (disabled in both),
-#   the kernel's stdout and stderr (inherited in both), the kernelspec (both declare curve)
-#   and ipykernel's blackhole.
-known-failure = "jedi cannot read the standard library's sources; the re-executed kernel prints no startup warning"
+# jedi completes `json.du` by parsing json's source from the payload (fixups.py: parso's file
+# times); the kernel runs as the executable (interpreter-reexec) and prints ipykernel's
+# startup warning only because the app hides the host's kernelspecs (cli.py).
 
 expect = "jedi ['dump', 'dumps']"
 

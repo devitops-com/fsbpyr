@@ -11,3 +11,8 @@ corpus-black = "corpus_black.cli:main"
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.fsbpyr]
+# Without fs-packages the run fails: mypyc compiled blib2to3, whose pygram reads Grammar.txt next to
+# its __file__, a path in the native cache (where mypyc puts every compiled module of the package).
+fs-packages = ["blib2to3"]

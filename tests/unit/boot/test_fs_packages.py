@@ -104,6 +104,18 @@ def test_package_files_are_on_disk_before_its_code_runs(site: Path) -> None:
     assert not (site / "plain").exists()
 
 
+def test_the_cache_serves_the_payload_outside_an_extracted_package(
+    site: Path, boot: ModuleType
+) -> None:
+    importlib.import_module("tpl")  # tpl's files are there; a directory of another package is not
+
+    own = boot.path_hook(f"{site}/tpl").find_spec("tpl.sub")
+    other = boot.path_hook(str(site)).find_spec("plain")
+
+    assert own is not None and own.origin == f"{site}/tpl/sub.py"
+    assert other is not None and other.origin == f"{boot.ROOT}/plain/__init__.py"
+
+
 def test_submodules_keep_loading_from_the_payload(site: Path, boot: ModuleType) -> None:
     sub = importlib.import_module("tpl.sub")
 
@@ -225,3 +237,14 @@ def test_extracted_data_files_are_rechecked_on_import(site: Path) -> None:
     importlib.import_module("tpl")
 
     assert data.read_bytes() == b"A"
+
+
+def test_the_site_directory_is_a_path_entry_of_the_importer_cache(
+    site: Path, boot: ModuleType
+) -> None:
+    importlib.import_module("tpl")  # twisted.python.modules finds a module's entry in the cache
+
+    finder = sys.path_importer_cache[str(site)]
+
+    assert isinstance(finder, boot.PayloadPathFinder) and finder.location == f"{site}/"
+    assert sys.path[:2] == [str(BOOT_DIR), boot.ROOT]  # sys.path itself is left alone

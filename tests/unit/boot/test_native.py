@@ -22,8 +22,10 @@ EXT = f"fast/_speed{SUFFIX}"
 LIB = "fast.libs/libhelper.so"
 CY = f"cy/__init__{SUFFIX}"
 RCY = f"vendored/rcy/__init__{SUFFIX}"  # below a .pth root, named rcy
+DUPS = ("fast/libdup.so", "cy/libdup.so")  # one file name in two packages
 CONTENT = {EXT: b"\x7fELF speed" * 50, LIB: b"\x7fELF helper" * 50, CY: b"\x7fELF cy",
-           RCY: b"\x7fELF rcy"}  # fmt: skip
+           RCY: b"\x7fELF rcy", DUPS[0]: b"\x7fELF dup fast",
+           DUPS[1]: b"\x7fELF dup cy"}  # fmt: skip
 
 
 def _code(rel: str) -> Blob:
@@ -33,7 +35,7 @@ def _code(rel: str) -> Blob:
 @pytest.fixture(scope="module")
 def executable(tmp_path_factory: pytest.TempPathFactory) -> Path:
     natives = tuple(
-        File(rel, FileKind.NATIVE_LIB if rel == LIB else FileKind.NATIVE_EXT,
+        File(rel, FileKind.NATIVE_LIB if rel in (LIB, *DUPS) else FileKind.NATIVE_EXT,
              Blob.zstd(data, digest=True), mode=0o755, closure=(LIB,) if rel == EXT else ())
         for rel, data in CONTENT.items()
     )  # fmt: skip
@@ -106,6 +108,23 @@ def test_compiled_package_keeps_its_submodules_in_the_payload(boot: types.Module
     assert below_pth_root.submodule_search_locations == [boot.ROOT + "/rcy"]  # by name
 
 
+def test_a_compiled_package_whose_path_is_the_cache_finds_its_payload_modules(
+    boot: types.ModuleType, native: types.ModuleType
+) -> None:
+    """mypyc sets the ``__path__`` of a package it compiled to the directory its extension was
+    extracted to (``black``): the payload's plain modules are found there as in the payload."""
+    where = f"{native.native_cache().site}/cy"
+
+    finder = boot.path_hook(where)
+
+    helpers = finder.find_spec("cy.helpers")
+    assert helpers is not None and helpers.origin == f"{boot.ROOT}/cy/helpers.py"
+    assert helpers.loader is not None and helpers.loader.prefix == boot.ROOT + "/"
+    assert finder.find_spec("cy.missing") is None
+    with pytest.raises(ImportError):
+        boot.path_hook(f"{where}/../../x")
+
+
 def test_a_bundled_library_is_found_by_its_file_name(native: types.ModuleType) -> None:
     """``ctypes.CDLL("libhelper.so")`` falls back to it (fixups): extracted with the closure of
     an extension that links it."""
@@ -125,6 +144,38 @@ def test_an_extension_found_by_its_file_name_comes_with_its_closure(
     assert native.bundled_library(EXT.rpartition("/")[2]) == str(site / EXT)
 
     assert (site / EXT).read_bytes() == CONTENT[EXT] and (site / LIB).read_bytes() == CONTENT[LIB]
+
+
+def test_of_several_of_a_name_the_one_in_the_callers_package_is_found(
+    boot: types.ModuleType, native: types.ModuleType
+) -> None:
+    """PyTables loads libblosc2.so by bare name from tables/__init__.py: tables' copy, not
+    blosc2's, as its lookup next to its __file__ finds in a venv."""
+    site = Path(native.native_cache().site)
+
+    assert native.bundled_library("libdup.so") is None  # which one is not to be guessed
+    fast = f"{boot.ROOT}/fast/__init__.py"
+    assert native.bundled_library("libdup.so", fast) == str(site / DUPS[0])
+    assert native.bundled_library("libdup.so", f"{site}/cy/helpers.py") == str(site / DUPS[1])
+    assert native.bundled_library("libdup.so", f"{boot.ROOT}/other/mod.py") is None
+    assert native.bundled_library("libdup.so", f"{boot.ROOT}/top.py") is None  # at the root
+
+
+def test_payload_paths_are_claimed_where_no_cache_directory_can_be_told(
+    boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No HOME, no XDG_CACHE_HOME, no FSBPYR_CACHE_DIR: the cache cannot be located, and the
+    path hook, which asks it for the directories mypyc names, still claims the payload's."""
+
+    def nowhere() -> None:
+        raise native.NativeCacheError("cannot locate a cache directory")
+
+    monkeypatch.setattr(native, "native_cache", nowhere)
+
+    assert boot.path_hook(boot.ROOT).find_spec("fast") is not None  # pure-Python code imports
+    assert boot.path_hook(boot.ROOT + "/cy").find_spec("cy.helpers") is not None
+    with pytest.raises(ImportError, match="not an fsbpyr payload path"):
+        boot.path_hook("/elsewhere/fast")
 
 
 def test_a_name_the_payload_bundles_no_library_of_is_none(native: types.ModuleType) -> None:
@@ -379,3 +430,16 @@ def test_a_system_library_failure_carries_the_build_requirement(
     version = os.confstr("CS_GNU_LIBC_VERSION")
     assert version is not None and version in text
     assert caught.value.name == spec.name
+
+
+def test_an_fs_package_comes_with_the_libraries_its_extensions_need(
+    native: types.ModuleType,
+) -> None:
+    """Code that opens the package's extensions itself does not import them (torchvision)."""
+    site = Path(native.native_cache().site)
+
+    assert native.materialize_package("fast") == f"{site}/"
+
+    assert (site / EXT).read_bytes() == CONTENT[EXT]
+    assert (site / LIB).read_bytes() == CONTENT[LIB]  # outside the package's directory
+    assert not (site / CY).exists()
