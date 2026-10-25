@@ -29,7 +29,7 @@ import re
 import time
 import tomllib
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -61,6 +61,10 @@ _MINORS = range(41)  # Python 3.0 to 3.40 and a few patch levels: a range of ver
 _PATCHES = (0, 1, 2, 5, 10, 20, 99)  # when none of them is in it (requires-python of blocks)
 
 
+class NoPythonFiles(ProjectError):
+    """A directory without pyproject.toml (or with settings only) holds no Python file."""
+
+
 @dataclass(frozen=True, slots=True)
 class Package:
     """A project's files and commands, read once: what the build checks is what it writes."""
@@ -78,6 +82,8 @@ class Package:
     origins: dict[str, str] = field(default_factory=dict)
     requires_python: str | None = None
     dependencies: tuple[str, ...] = ()
+    # a tool binary (tools.py): no file and no command of its own, the requirements are the tools
+    tools: bool = False
 
     @classmethod
     def load(
@@ -118,7 +124,7 @@ class Package:
         if not sources:
             what = ("a pyproject.toml of settings only" if (directory / "pyproject.toml").is_file()
                     else "no pyproject.toml or setup.py")  # fmt: skip
-            raise ProjectError(f"{directory} has {what} and no Python files to package")
+            raise NoPythonFiles(f"{directory} has {what} and no Python files to package")
         commands, files = _directory_commands(name, sources, origins, warnings)
         dependencies, requires_python = _inline_requirements(files)
         warnings += _ignored_settings(files)
@@ -127,6 +133,18 @@ class Package:
             table["requires-python"] = requires_python
         return cls(directory, name, _version(table), _metadata(table), sources, commands,
                    tuple(warnings), origins, requires_python, tuple(dependencies))  # fmt: skip
+
+    @classmethod
+    def tool_binary(cls, directory: Path, taken: Collection[str]) -> Package:
+        """The empty project of a tool binary (research candidate 10): named after the directory,
+        or ``<name>-tools`` when a requirement has that name (installing the project would
+        replace that distribution). Its wheel holds metadata only; the tools' console scripts
+        are its commands, found after the install (tools.py)."""
+        name = directory_name(directory)
+        name = f"{name}-tools" if name in taken else name
+        table: dict[str, Any] = {"name": name}
+        return cls(directory, name, _version(table), _metadata(table), {}, {}, (),
+                   tools=True)  # fmt: skip
 
     @classmethod
     def _from_script(cls, directory: Path, script: Path, *, declared: bool) -> Package:

@@ -1,6 +1,6 @@
 # fsbpyr — Implementation Plan
 
-Status: v1.21, 2026-10-25 (fsbpyr 0.25.0 and the unreleased Phase 12). Phases 0–8, 6b, 6c and 10 are complete (Phase 7 reduced by D37; Phase 8 in six steps, 8a–8f). Phase 11 (the gaps the corpus of 65 apps found, owner decisions 2026-10-24) is done for the corpus: every app matches its venv; four smaller gaps found on the way stay open. No app can start itself without end (D44, D45). Phase 12 (owner decisions 2026-10-25, unreleased) builds with no questions asked: several console scripts, projects without a build system, directories of scripts and single scripts, plus EL8 hosts with `--glibc 2.28` (D46). Phase 9 (owner decision 2026-10-18) is done for self-update, one fsbpyr per Python version (3.12 to 3.15; 3.14 stays the default, D43), the installer and Linux aarch64 with glibc; musl and macOS on Apple Silicon are put aside (owner decision 2026-10-21; no Windows), and signed releases come later (not MVP, owner decision 2026-10-18). Apps and releases cover Linux x86-64 and aarch64 with a glibc 2.34 baseline (D42), or 2.28 for EL8 with `--glibc 2.28` (D46); uv is required (D26); the CLI runs on click, which also gives the completions and the man page (D40); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
+Status: v1.21, 2026-10-25 (fsbpyr 0.25.0 and the unreleased Phase 12). Phases 0–8, 6b, 6c and 10 are complete (Phase 7 reduced by D37; Phase 8 in six steps, 8a–8f). Phase 11 (the gaps the corpus of 65 apps found, owner decisions 2026-10-24) is done for the corpus: every app matches its venv; four smaller gaps found on the way stay open. No app can start itself without end (D44, D45). Phase 12 (owner decisions 2026-10-25, unreleased) builds with no questions asked: several console scripts, projects without a build system, directories of scripts, single scripts and tool binaries from a requirements file, plus EL8 hosts with `--glibc 2.28` (D46). Phase 9 (owner decision 2026-10-18) is done for self-update, one fsbpyr per Python version (3.12 to 3.15; 3.14 stays the default, D43), the installer and Linux aarch64 with glibc; musl and macOS on Apple Silicon are put aside (owner decision 2026-10-21; no Windows), and signed releases come later (not MVP, owner decision 2026-10-18). Apps and releases cover Linux x86-64 and aarch64 with a glibc 2.34 baseline (D42), or 2.28 for EL8 with `--glibc 2.28` (D46); uv is required (D26); the CLI runs on click, which also gives the completions and the man page (D40); resources reached as paths are extracted on demand (D27); versions come from `vX.Y.Z` git tags (D28); Phase 0 findings are in `docs/spikes.md`. Requirements come from `docs/python_cli_runtime_manifest.pdf`
 ("the manifest") plus the owner requirements R1–R3 below. Items marked **[verified]** were
 checked on the dev machine on 2026-10-06. Items marked **[assumption]** are not yet verified;
 each one is covered by a Phase 0 spike or a test.
@@ -481,7 +481,7 @@ make-install.sh,prepare.sh,release.sh}`, `tools/portability-apps.sh`, `tools/ups
 `tools/toolchain-watch.sh`, and the workflows `build.yml` (reusable), `full-suite.yml`,
 `upstream-watch.yml` and `attest-example.yml`; and, from Phase 12, `loose.py` (wheels of projects
 without a build system, directories and single scripts), `links.py`, `importcheck.py`, `syspath.py`,
-`entry.py`, `boot/_fsbpyr_rt/{commands,restart,selftest}.py`, `runtime/{rpm,stubs}.py`,
+`tools.py` (the tool binary), `entry.py`, `boot/_fsbpyr_rt/{commands,restart,selftest}.py`, `runtime/{rpm,stubs}.py`,
 `tools/vm-smoke.py` with `tools/vm-pins.toml`, `tools/release/el8-stub.py` and the workflow
 `el8.yml`; `docs/` also holds `compatibility.md`,
 `security.md`, `improvement-plan.md` and `eval.md`.
@@ -2098,6 +2098,28 @@ of scripts**, not a project for setuptools' flat-layout discovery, which fails o
 top-level modules. A `[tool.fsbpyr]` table inside a command file's PEP 723 block is ignored in
 a directory build, with a warning that names the file; a single script reads its own.
 
+**Owner decision 2026-10-25: the §4.3 deferred items that add most value are built, starting with
+the requirements-only tool binary** (research §3 "Deferred and dropped candidates", candidate 10).
+A directory of a loose project (no `pyproject.toml`, or one of settings only) that holds **no
+Python file** and has a lock source (`requirements.txt`, `pylock.toml`, `--requirements FILE`, or
+`requirements` in its settings) is an empty project whose requirements are the tools: `tools.py`
+reads the names the file gives (`-r` followed, `-c` and options naming nothing), the build
+installs the lock as for any pip project with a metadata-only wheel in place of the project's
+(`Package.tool_binary`, named after the directory, `<name>-tools` when a requirement has that
+name), and the commands are the `console_scripts` of the tools, put through step 4's table, links
+and step 6's deploy recipe (output `dist/<directory name>`, or `dist/<command>` for one). Rules
+fixed with it: **`gui_scripts` are not commands** (they open windows and need a display; the build
+says which it left out); **a dependency's scripts are not commands**; **a file that lists every
+installed distribution** (`pip freeze`, `pylock.toml`) **has as tools only the listed
+distributions no other listed distribution requires** (`Requires-Dist` under the runtime's
+markers and the extras asked for, read from the staged site), and the build says which it took
+and why; any other file has every listed distribution as a tool; two tools with one script name
+fail naming both distributions, and no console script at all fails naming what the file named.
+A directory with a Python file stays a directory of scripts, whatever its requirements say. Tools
+that start helpers through `sys.executable` exit 70 (D44) unless built with
+`--interpreter-reexec`; the build prints the existing helper-interpreter note when it knows a
+library, and the README and `docs/compatibility.md` say the rest.
+
 **Built, in the order of the research plan** (a step's row also lists the §7 fixes that were made with it; commit subjects on branch `use-cases`):
 
 | Step | What | Commit subject |
@@ -2115,6 +2137,7 @@ a directory build, with a warning that names the file; a single script reads its
 | EL8 3 | `.github/workflows/el8.yml`, decoupled from the release | `ci: EL8 stubs are linked, tested and attached to a release by a workflow of their own` |
 | VM | `tools/vm-smoke.py`: a smoke test of aarch64 apps in QEMU VMs with 16K- and 64K-page kernels (only a smoke test, owner decision 5; the `vm-smoke` job of `full-suite.yml` and the EL8 workflow) | `test: a QEMU VM smoke test of built apps on 16K- and 64K-page aarch64 kernels` |
 | Audit | Gaps the audit of the merged branch found: a settings-only `pyproject.toml` beside scripts; tracked files only in a work tree; a `.py` file below a directory that is no Python name reported in any project the build owns (§7 item 9); `[tool.fsbpyr]` in a command's block warned about; `self update` names the EL8 stubs placed beside the executable that now belong to the old release; EL8 builds of a directory, a single script and a multi-command project, hard-link starts and single-command builds tested | `fix: a directory of scripts takes its settings from a pyproject.toml of settings only, and packages tracked files only`; `fix: a .py file below a directory that is no Python name is reported when the project owns it`; `fix: self update names the EL8 stubs placed beside the executable that now belong to the old release`; `test: EL8 builds of a directory of scripts, a single script and a multi-command project; hard-link starts; single-command builds` |
+| Tool binary | A directory of nothing but a requirements file or `pylock.toml` builds the console scripts of the tools it names (`tools.py`, `Package.tool_binary`); a freeze has only the tools no other listed distribution requires | `feat: a directory of requirements builds the tools it names, one command per console script` |
 
 **§7 of the research report, closed** (item: how). 1: `staging.py` leaves the tree as it found
 it, and a project without a build system gets no `uv build` at all. 2: one cache-root rule
@@ -2134,8 +2157,7 @@ e2e test with a real hard link. 19: `selfupdate.check_glibc`.
 `__file__` overlay (decision 5.7(b)/(c)), normalizing `..` and accepting non-identifier
 directories, legacy `.data/scripts`, the D44 exception for `[sys.executable,
 <exe>/_fsbpyr_scripts/x.py]`, an on-target link install, D45 changes, `argv[0]` parity (5.3(iii)),
-foreign locks (`poetry.lock`, `pdm.lock`: the build says so), the requirements-only tool binary,
-per-subdirectory groups, `JOURNAL_STREAM` and a PID-1 SIGTERM handler. Dropped: the interpreter
+foreign locks (`poetry.lock`, `pdm.lock`: the build says so), per-subdirectory groups. Dropped: the interpreter
 command, `<binary> --install DIR`, the `argv[1]` path-basename form, the `-`/`_` equivalence and
 a secret deny list (packaging Python files only replaces it).
 

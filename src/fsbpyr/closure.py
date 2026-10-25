@@ -124,9 +124,7 @@ class SiteIndex:
 
     def walk(self, root: InstalledDist, *, extras: tuple[str, ...], python_version: str) -> Walk:
         """Requires-Dist closure under the runtime's marker environment (consistency check)."""
-        environment = {key: str(value) for key, value in default_environment().items()}
-        environment["python_full_version"] = python_version
-        environment["python_version"] = ".".join(python_version.split(".")[:2])
+        environment = marker_environment(python_version)
         seen: dict[str, set[str]] = {}
         warnings: list[str] = []
         pending = [(root, set(extras))]
@@ -136,7 +134,7 @@ class SiteIndex:
                 continue
             seen.setdefault(dist.name, set()).update(active)
             for line in dist.requires:
-                requirement = _requirement(line, dist)
+                requirement = requirement_of(line, dist)
                 if requirement.marker is not None and not any(
                     requirement.marker.evaluate({**environment, "extra": extra})
                     for extra in (active or {""})
@@ -157,7 +155,15 @@ class SiteIndex:
         return Walk(reachable, unreachable, tuple(warnings))
 
 
-def _requirement(line: str, dist: InstalledDist) -> Requirement:
+def marker_environment(python_version: str) -> dict[str, str]:
+    """The marker environment of the runtime: this host's, with the runtime's Python."""
+    environment = {key: str(value) for key, value in default_environment().items()}
+    environment["python_full_version"] = python_version
+    environment["python_version"] = ".".join(python_version.split(".")[:2])
+    return environment
+
+
+def requirement_of(line: str, dist: InstalledDist) -> Requirement:
     try:
         return Requirement(line)
     except InvalidRequirement as exc:
