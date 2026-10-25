@@ -5,7 +5,8 @@ executable that carries CPython (3.12 to 3.15), the project and its locked depen
 needs nothing on the target machine but Linux x86-64 or aarch64 with glibc 2.34 or newer (the
 baseline every build targets and the tests run on: RHEL 9, Amazon Linux 2023, Ubuntu 22.04,
 Debian 12 and newer, SLES 15 SP6 and newer; `fsbpyr inspect` shows the glibc an executable
-actually needs), plus the system libraries its native dependencies link
+actually needs; `--glibc 2.28` builds for RHEL 8 and its rebuilds, see [Older
+systems](#older-systems-el8-and-glibc-228)), plus the system libraries its native dependencies link
 (often libstdc++ and libgcc_s; `fsbpyr inspect` lists them): no Python, no virtual
 environment, no installation step.
 Modules are imported straight from the file, so startup stays close to plain CPython.
@@ -105,10 +106,12 @@ symptom and its remedy.
   `make build` and the installer take, and the one to build apps with until the packages they
   need publish 3.15 wheels ("Python 3.15"). Each release carries all four, for every platform
   below.
-- **Platform:** Linux x86-64 and Linux aarch64 (arm64), with glibc. Each fsbpyr builds apps
+- **Platform:** Linux x86-64 and Linux aarch64 (arm64), with glibc 2.34 or newer, or 2.28 or
+  newer for apps built with `--glibc 2.28` ("Older systems"). Each fsbpyr builds apps
   for the platform it runs on; there are no cross builds. The aarch64 builds and tests run on
-  GitHub's arm64 runners, which have 4K pages; kernels with 16K or 64K pages are untested. On
-  a musl system such as Alpine the glibc loader the executable names does not exist, and the
+  GitHub's arm64 runners, which have 4K pages; kernels with 16K pages (Raspberry Pi 5's) and
+  64K pages (EL8's) are smoke-tested in QEMU virtual machines (`make test-vm`), not on hardware.
+  On a musl system such as Alpine the glibc loader the executable names does not exist, and the
   shell reports the executable as "not found" although the file is there.
 - **Interpreter build:** CPython with the GIL only; the launcher refuses to build for a
   free-threaded CPython ([D35](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)).
@@ -129,7 +132,7 @@ time (uv fetches the Python it builds with and the locked dependencies; later bu
 with `--offline`). git is optional: with it, the executable records the commit it was built
 from. The output defaults to `dist/<console-script-name>`.
 
-uv picks wheels that run on glibc 2.34 (manylinux_2_34). A dependency without one is built
+uv picks wheels that run on glibc 2.34 (manylinux_2_34; manylinux_2_28 with `--glibc 2.28`). A dependency without one is built
 from its sdist with the build host's C compiler, against the host's glibc. When such a build
 needs a newer glibc than 2.34, fsbpyr builds it again against the Debian 12 sysroot (glibc 2.36)
 it links the launcher with (downloaded once); uv's cached build of it is replaced. What that
@@ -146,6 +149,7 @@ build-constraint-dependencies` (read by `uv sync`, for `uv.lock` projects) or fr
 | Option | |
 |---|---|
 | `--python X.Y` | the Python to build for, 3.12 to 3.15, inside `requires-python` (default: `python` in `[tool.fsbpyr]`, else `.python-version`, else `requires-python` decides) |
+| `--glibc X.Y` | the glibc the app is built for: 2.34 (default), or 2.28 for EL8 hosts, which needs the glibc 2.28 stub of the fsbpyr release (default: `glibc` in `[tool.fsbpyr]`, else 2.34) |
 | `--entry NAME` | console script name, `module` or `module:function` (default: the only script, else all of them as one multi-command executable, else the only `__main__` package or guarded module) |
 | `-o, --output PATH` | where to write the executable (default: `dist/` and the entry's name, or the project's name for several commands) |
 | `--requirements FILE` | pinned requirements file, for pip projects without `pylock.toml` |
@@ -179,6 +183,7 @@ one set in the project:
 ```toml
 [tool.fsbpyr]
 python = "3.13"              # same as --python
+glibc = "2.28"               # same as --glibc (EL8; see "Older systems")
 entry = "mytool"
 output = "dist/mytool"
 requirements = "requirements.txt"  # pip projects only; overrides uv.lock
@@ -460,6 +465,64 @@ every distribution that had no usable wheel. It is information, not a warning: `
 not fail on it. fsbpyr's own tests pass on 3.15 except what needs these packages, which they
 skip there (`tests/support/no-wheels.txt`).
 
+## Older systems: EL8 and glibc 2.28
+
+Apps built the usual way need glibc 2.34. `--glibc 2.28` (or `glibc = "2.28"` in
+`[tool.fsbpyr]`; the command line wins) builds for glibc 2.28 instead: RHEL 8 and its rebuilds
+(Rocky Linux 8, AlmaLinux 8), supported until 2029. `--glibc 2.34` is the default and builds
+as it always did. For 2.28 the build
+
+- puts a launcher into the app that is linked against Rocky Linux 8.10's glibc 2.28 (the
+  default one is linked against Debian 12's);
+- has uv pick wheels for `manylinux_2_28` (`x86_64-manylinux_2_28`, `aarch64-manylinux_2_28`),
+  builds a dependency without one from its sdist against the same sysroot, and warns about
+  libstdc++, libgcc_s or libz versions above what auditwheel's manylinux_2_28 policy allows
+  (RHEL 8's libstdc++ is GCC 8's);
+- records the baseline in the executable: `fsbpyr inspect` shows `baseline   glibc 2.28`
+  (`glibc_baseline` in `--json` and `build_info`), and the build summary says `glibc >= X.Y`
+  for what the app needs; the build warns about a native file that needs more than 2.28.
+
+Where the launcher for 2.28 comes from depends on how you run fsbpyr. The release fsbpyr
+executable carries the standard library and the default launcher only; the launcher for 2.28 is
+a separate asset of its release, one per Python and target,
+`fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz` (the stub, compressed; a file you place may
+be that or the unpacked stub), with the SHA-256 of each unpacked stub in
+`SHA256SUMS-glibc2.28`. **EL8 assets are published
+separately and not with every release.** A separate workflow (`.github/workflows/el8.yml`)
+builds, tests and attaches them to a release after it is published, and only when all of its
+jobs pass; the release itself never waits for it. **A release has EL8 stubs when its assets
+include `SHA256SUMS-glibc2.28`** (it is uploaded last, after the eight `.xz`): look for it on the
+[releases](https://github.com/devitops-com/fsbpyr/releases) page, or run `gh release view vX.Y.Z
+--json assets --jq '.assets[].name' | grep glibc2.28`. Each asset has a build provenance
+attestation: `gh attestation verify fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz --repo
+devitops-com/fsbpyr --signer-workflow devitops-com/fsbpyr/.github/workflows/el8.yml`. A release
+without them makes `--glibc 2.28` stop with `this release (vX.Y.Z) has no glibc 2.28 stubs`,
+naming the asset to place and linking the releases; use a release that has them. fsbpyr
+takes the launcher from, in this order:
+
+1. a file you placed in the directory of the fsbpyr executable, named exactly as the asset,
+   plain or `.xz`: the directory of the path you run (`~/.local/bin` for `fsbpyr`) and, if
+   different, of the executable's real path. This is how a machine without access to GitHub
+   builds for 2.28: download the asset on another machine and copy it there. For a project
+   of another Python, whose fsbpyr is that Python's variant, place it next to the variant
+   (in `~/.cache/fsbpyr/downloads/`);
+2. fsbpyr's cache, where an earlier download is kept (under the release's tag);
+3. a download from the release, checked against the SHA-256 in `SHA256SUMS-glibc2.28` and kept in the cache.
+
+Whatever the source, the launcher must be the one built for this fsbpyr's release, Python and
+target (every launcher records the runtime id it was linked as, and the build compares it with
+the id it computes from its own launcher sources and pins); one of another release or Python is
+refused, with the asset to use instead. That identity detects a stub of another release or
+Python, not a tampered one: only the download is verified against the published SHA-256, so
+check a file you place yourself against `SHA256SUMS-glibc2.28` first, and keep the directory of
+the fsbpyr executable and the cache writable by you alone. fsbpyr run from a checkout or a wheel has no release to
+fetch from: it uses the runtime that `fsbpyr runtime build --python X.Y --glibc 2.28` put in the
+cache, and says to run that command when there is none.
+
+Kernels with 64K pages (EL8's on aarch64) are smoke-tested in a QEMU virtual machine, not on
+hardware: `make test-vm` boots EL8's kernel, and the EL8 workflow runs an app built with
+`--glibc 2.28` on that kernel with the EL8 userland before it publishes the aarch64 stubs.
+
 ## Failing a build on warnings
 
 Without `--strict`, every warning leaves the exit status at 0. With it, `build` stops after
@@ -533,7 +596,7 @@ fsbpyr inspect BINARY --licenses
 ```
 
 Shows the app and its version, the fsbpyr that built it (`fsbpyr --version` prints the same form:
-`0.4.0-1a2b3c4d`), Python and glibc, the entry point, the system libraries the executable
+`0.4.0-1a2b3c4d`), Python and glibc (and the baseline of an app built with `--glibc 2.28`), the entry point, the system libraries the executable
 needs from the target with the newest symbol version it uses of each (libstdc++'s `GLIBCXX`
 and `CXXABI`, libgcc_s's `GCC`, libz's `ZLIB`), the uv that built it, how its content is
 compressed (the zstd level and, with native files, `xz -6` after `--best-compression`), the
@@ -568,16 +631,18 @@ executable as the asset `THIRD_PARTY_LICENSES-3.X-<target>.txt`, one per executa
 `THIRD_PARTY_LICENSES-3.14-x86_64-linux-gnu.txt`).
 
 A build warns when a native file needs a `GLIBCXX`, `CXXABI`, `GCC` or `ZLIB` version newer
-than the manylinux_2_34 policy allows, since such a library fails to import on a target with
-an older libstdc++ (RHEL 9, Ubuntu 22.04); the warning names the file and the version. The list
+than the manylinux_2_34 policy allows (manylinux_2_28's with `--glibc 2.28`), since such a
+library fails to import on a target with an older libstdc++ (RHEL 9, Ubuntu 22.04; RHEL 8);
+the warning names the file and the version. The list
 covers the native files an extension module loads, and the launcher.
 
 The glibc shown (`glibc >= X.Y`) is the newest glibc symbol version the launcher and the
-bundled native files use, so the oldest glibc this executable starts on. The launcher needs
+bundled native files use, so the oldest glibc this executable starts on, and never below the
+glibc the build is for (2.34, or 2.28 with `--glibc 2.28`). The launcher needs
 2.34 (glibc moved `pthread_create`, `dlopen` and `__libc_start_main` there), so an app without
 native files shows `glibc >= 2.34`, fsbpyr's own executable included. Native files from
 manylinux_2_34 wheels need at most 2.34; one built from source can need more, and the build
-warns about it. Only 2.34 and newer is tested.
+warns about it. Only 2.34 and newer is tested; with `--glibc 2.28`, 2.28 and newer.
 
 ## Shell completion and the man page
 
@@ -789,7 +854,8 @@ carrying that version's runtime only; the apps it builds run on that Python. Eac
 attested by GitHub Actions. An asset is named with its Python and its target, the platform it
 runs on: `fsbpyr-3.14-x86_64-linux-gnu`, `fsbpyr-3.12-aarch64-linux-gnu` and so on. fsbpyr
 releases for `x86_64-linux-gnu` and `aarch64-linux-gnu` (Linux with glibc on x86-64 and arm64)
-so far.
+so far. A release may also carry stub-only assets for `--glibc 2.28`, which are not executables
+("Older systems").
 
 You need one of them: whichever Python it runs on, an fsbpyr builds a project for any of the
 four, downloading the matching one of its own release when the project needs another Python
@@ -954,10 +1020,12 @@ the man page and shell completions it prints:
 `DESTDIR` override single locations. `make uninstall` removes the same files.
 
 `fsbpyr runtime list` shows the runtime embedded in the executable you run, if any, then the
-runtimes in the cache. Running fsbpyr from a checkout or a wheel (rather than as its own
-executable) always needs a runtime in the cache, and a new fsbpyr version may need a new one: the
-build then says `no runtime for Python 3.14; run fsbpyr runtime build --python 3.14`, or use the
-release binary, which carries its own.
+runtimes in the cache, each with the glibc its stub is linked for (`fsbpyr runtime build
+--glibc 2.28` links against an EL8 sysroot instead of the default Debian 12 one, 2.34). Running
+fsbpyr from a checkout or a wheel (rather than as its own executable) always needs a runtime in
+the cache, and a new fsbpyr version may need a new one: the build then says
+`no runtime for Python 3.14; run fsbpyr runtime build --python 3.14`, or use the release
+binary, which carries its own.
 
 ### Verifying a release
 

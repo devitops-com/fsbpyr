@@ -158,6 +158,59 @@ def test_the_aarch64_sysroot_is_the_x86_64_ones_packages_for_arm64() -> None:
     assert not {sha for _, sha in arm.packages} & {sha for _, sha in x86.packages}
 
 
+EL8_PACKAGES = ("glibc", "glibc-devel", "glibc-headers", "kernel-headers", "libgcc", "gcc")
+
+
+@pytest.mark.parametrize("target", PINNED, ids=lambda t: t.name)
+def test_the_el8_sysroot_is_rocky_linux_8_10s_packages(target: Target) -> None:
+    sysroot = pins.sysroot_for(target.triple, "2.28")
+
+    assert (sysroot.glibc, sysroot.baseline) == ("2.28", (2, 28))
+    assert (sysroot.packaging, sysroot.layout) == ("rpm", "redhat")
+    names = [url.rpartition("/")[2] for url, _ in sysroot.packages]
+    assert [re.match(r"(.+?)-\d", name)[1] for name in names] == list(EL8_PACKAGES)  # type: ignore[index]
+    assert all(name.endswith(f".{target.triple.partition('-')[0]}.rpm") for name in names)
+    arch = target.triple.partition("-")[0]
+    base = f"https://dl.rockylinux.org/pub/rocky/8.10/%s/{arch}/os/Packages/"
+    for url, sha256 in sysroot.packages:  # only gcc has crtbeginS.o and libgcc.a: AppStream
+        repo = "AppStream" if "/gcc-8" in url else "BaseOS"
+        assert url.startswith(base % repo) and re.fullmatch(r"[0-9a-f]{64}", sha256), url
+    assert sysroot.name == f"rocky8-glibc2.28-{arch}"
+    assert re.fullmatch(r"rocky8-glibc2\.28-\w+-[0-9a-f]{12}", sysroot.identity)
+
+
+def test_the_el8_sysroots_are_the_same_builds_for_both_targets() -> None:
+    def versions(pin: pins.SysrootPin) -> list[str]:
+        return [url.rpartition("/")[2].rsplit(".", 2)[0] for url, _ in pin.packages]
+
+    x86, arm = (pins.sysroot_for(t.triple, "2.28") for t in PINNED)
+    assert versions(x86) == versions(arm)
+    assert not {sha for _, sha in arm.packages} & {sha for _, sha in x86.packages}
+
+
+def test_the_default_sysroot_stays_debian_12s_and_other_baselines_are_refused() -> None:
+    for target in PINNED:
+        default = pins.sysroot_for(target.triple)
+        assert default is pins.sysroot_for(target.triple, "2.34")
+        assert (default.packaging, default.layout) == ("deb", "multiarch")
+        assert default.identity != pins.sysroot_for(target.triple, "2.28").identity
+    with pytest.raises(ValueError, match=r"no glibc 2\.27 baseline; supported: 2\.34, 2\.28"):
+        pins.sysroot_for("x86_64-unknown-linux-gnu", "2.27")
+    with pytest.raises(ValueError, match="no glibc sysroot pinned for"):
+        pins.sysroot_for("riscv64-unknown-linux-gnu", "2.28")
+    assert set(pins.EL8_SYSROOTS) == set(pins.SYSROOTS)
+
+
+def test_runtime_ids_differ_by_baseline_and_the_default_is_unchanged() -> None:
+    for pin in pins.PINS:
+        default = registry.runtime_id(pin)
+        el8 = registry.runtime_id(pin, baseline="2.28")
+        assert default == registry.runtime_id(pin, baseline="2.34") and default != el8
+        assert registry.runtime_id(pin, sanitize=True, baseline="2.28") not in (el8, default)
+    ids = {registry.runtime_id(p, baseline=b) for p in pins.PINS for b in pins.BASELINES}
+    assert len(ids) == 2 * len(pins.PINS)
+
+
 def test_the_pins_of_each_python_differ_per_target() -> None:
     for python in ("3.12", "3.13", "3.14"):
         first, second = (pins.pin_for(python, t.triple) for t in PINNED)
@@ -206,3 +259,31 @@ def test_sysroot_names_of_every_libc_are_ours_to_collect() -> None:
     assert names.fullmatch("debian10-glibc2.28-aarch64")  # a sysroot of an older fsbpyr
     assert names.fullmatch("alpine314-musl1.2.2-aarch64")
     assert not names.fullmatch("debian10-bionic2.28-x86_64")
+
+
+@pytest.mark.parametrize(("manylinux", "x86_64", "aarch64"), [
+    ("2.34", "x86_64-manylinux_2_34", "aarch64-manylinux_2_34"),
+    ("2.28", "x86_64-manylinux_2_28", "aarch64-manylinux_2_28"),
+])  # fmt: skip
+def test_uv_platform_follows_the_glibc_baseline(manylinux: str, x86_64: str, aarch64: str) -> None:
+    assert targets.target_named("x86_64-linux-gnu").platform_for(manylinux) == x86_64
+    assert targets.target_named("aarch64-linux-gnu").platform_for(manylinux) == aarch64
+
+
+def test_the_default_baselines_platform_is_the_targets_own() -> None:
+    for target in targets.TARGETS:
+        assert target.platform_for(pins.DEFAULT_BASELINE) == target.uv_platform
+
+
+@pytest.mark.parametrize("baseline", pins.BASELINES)
+def test_every_baselines_platform_names_the_sysroots_manylinux(baseline: str) -> None:
+    for triple in ("x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"):
+        sysroot = pins.sysroot_for(triple, baseline)
+        platform = targets.target_named(triple).platform_for(sysroot.manylinux)
+        assert platform.endswith("manylinux_" + baseline.replace(".", "_"))
+
+
+def test_musl_and_macos_have_no_manylinux_platform() -> None:
+    for name in ("x86_64-linux-musl", "aarch64-macos"):
+        target = targets.target_named(name)
+        assert target.platform_for("2.28") == target.uv_platform

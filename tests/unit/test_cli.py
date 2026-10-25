@@ -8,11 +8,12 @@ import tomllib
 import types
 from pathlib import Path
 
+import click
 import pytest
 
 import fsbpyr
-from fsbpyr.cli import main
-from fsbpyr.runtime import registry
+from fsbpyr.cli import cli, main
+from fsbpyr.runtime import pins, registry
 from fsbpyr.runtime.toolchain import ToolchainError
 from fsbpyr.vcs import git_state, version_string
 
@@ -128,6 +129,52 @@ def test_best_compression_is_opt_in_and_excludes_fast_compression(
     assert "exclude each other" in capsys.readouterr().err
 
 
+def test_glibc_is_the_projects_unless_the_command_line_says_otherwise(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "app"\nversion = "1"\n\n[tool.fsbpyr]\nglibc = "2.28"\n'
+    )
+    seen: list[str] = []
+
+    def build(project: Path, config: object, **kwargs: object) -> None:
+        seen.append(config.glibc)  # type: ignore[attr-defined]
+        raise OSError("stop here")
+
+    monkeypatch.setattr("fsbpyr.build.build", build)
+
+    main(["build", str(tmp_path)])
+    main(["build", str(tmp_path), "--glibc", "2.34"])
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    main(["build", str(tmp_path)])
+    main(["build", str(tmp_path), "--glibc", "2.28"])
+    capsys.readouterr()
+
+    assert seen == ["2.28", "2.34", "2.34", "2.28"]
+    assert main(["build", str(tmp_path), "--glibc", "2.17"]) == 2
+    assert "'2.17' is not one of '2.34', '2.28'" in capsys.readouterr().err
+
+
+def test_an_unknown_glibc_in_the_project_is_an_error_before_any_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "app"\nversion = "1"\n\n[tool.fsbpyr]\nglibc = "2.17"\n'
+    )
+    monkeypatch.setattr("fsbpyr.build.build", lambda *a, **k: pytest.fail("built"))
+
+    assert main(["build", str(tmp_path)]) == 1
+
+    assert "supported: 2.34, 2.28" in capsys.readouterr().err
+
+
+def test_the_glibc_choices_are_the_baselines() -> None:
+    option = next(p for p in cli.commands["build"].params if p.name == "glibc")
+
+    assert isinstance(option.type, click.Choice)
+    assert tuple(option.type.choices) == pins.BASELINES
+
+
 def test_fast_compression_is_opt_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
     seen: list[bool] = []
@@ -218,12 +265,14 @@ def test_runtime_list_shows_the_embedded_runtime_first(
     )
     monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(registry, "running_executable", lambda: tmp_path / "fsbpyr")
-    embedded = types.SimpleNamespace(runtime_id="cp314-embedded", python_version="3.14.8")
+    embedded = types.SimpleNamespace(runtime_id="cp314-embedded", python_version="3.14.8",
+                                     baseline="2.28")  # fmt: skip
     monkeypatch.setattr(registry.Runtime, "from_executable", lambda path: embedded)
 
     assert main(["runtime", "list"]) == 0
     assert capsys.readouterr().out == (
-        "cp314-embedded  Python 3.14.8\ncp314-cached  Python 3.14.7\n"
+        "cp314-embedded  Python 3.14.8  glibc 2.28\n"
+        "cp314-cached  Python 3.14.7  glibc 2.34\n"  # a runtime without a recorded baseline
     )
 
 

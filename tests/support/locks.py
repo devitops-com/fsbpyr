@@ -14,7 +14,10 @@ from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from fsbpyr.runtime.pins import PINS
 
-BASELINE = (2, 34)  # manylinux_2_34, as the targets' uv_platform (targets.py)
+from . import baseline
+
+# manylinux_2_34, as the targets' uv_platform (targets.py); manylinux_2_28 in the EL8 test mode
+BASELINE = baseline.as_tuple(baseline.BASELINE)
 MACHINES = ("x86_64", "aarch64")
 _MANYLINUX = re.compile(r"manylinux_(\d+)_(\d+)_(\w+)$")
 _LEGACY = {"manylinux1": (2, 5), "manylinux2010": (2, 12), "manylinux2014": (2, 17)}

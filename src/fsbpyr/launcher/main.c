@@ -22,6 +22,16 @@
 #error "define FSBPYR_BYTECODE_MAGIC: importlib.util.MAGIC_NUMBER as a little-endian u32"
 #endif
 
+#ifndef FSBPYR_RUNTIME_ID
+#define FSBPYR_RUNTIME_ID "none" /* test programs compiled from these sources */
+#endif
+
+/* The runtime id this stub was linked as (stub.py passes it). A build that is handed a stub it
+ * did not link, an EL8 one, reads this string out of the file (stub.stub_identity) to prove it
+ * is the stub of its own launcher sources, Python and target. Kept by `used` through LTO and
+ * stripping; nothing reads it at run time. */
+__attribute__((used)) static const char identity[] = "fsbpyr-stub-identity=" FSBPYR_RUNTIME_ID;
+
 #define EXIT_CORRUPT 70 /* EX_SOFTWARE */
 #define MAX_STARTUP_MODULES 4096u
 #define MAX_STARTUP_CODE (16u << 20)

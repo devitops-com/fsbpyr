@@ -9,7 +9,9 @@ name: Full suite
 #     fuzzer, the cache-directory and GC tests, the ownership checks, and the coverage gates;
 #   - corpus: the real-world apps of tests/corpus, built and compared with their venvs;
 #   - portability: the portability tests (tests/e2e/test_portability.py, which need `podman run`
-#     on the runner host).
+#     on the runner host);
+#   - vm-smoke: aarch64 apps run in QEMU system VMs whose kernels have 16 KiB and 64 KiB pages
+#     (tools/vm-smoke.py).
 # It runs on every push to main, which is a merge, that changes more than documentation (*.md
 # files and docs/): tools/release/release.sh tags only a main commit whose run passed, or one
 # that changes only documentation since such a commit (green-run.sh), and the publish job of
@@ -459,3 +461,72 @@ jobs:
           name: portability-${{ matrix.python }}-${{ matrix.target }}
           path: portability.xml
           if-no-files-found: warn
+
+  # The aarch64 apps in QEMU system VMs with 16 KiB pages (Raspberry Pi 5's kernel) and 64 KiB
+  # pages (EL8's), on a Debian trixie userland (tools/vm-smoke.py, pins in tools/vm-pins.toml):
+  # the runners' own kernels have 4 KiB pages. Under TCG, a few minutes. Only the default Python:
+  # the page size matters to the launcher and the payload, not to the interpreter. The apps are
+  # the aarch64 suite job's executable and two fixtures it builds, a pure-Python one and one with
+  # natives. Its conclusion is part of the run's, which the release gate
+  # (tools/release/green-run.sh) checks.
+  vm-smoke:
+    name: vm-smoke (aarch64-linux-gnu)
+    needs: suite
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Which Python
+        id: python
+        run: echo "version=$(cut -d. -f1,2 .python-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Download the executable
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: fsbpyr-${{ steps.python.outputs.version }}-aarch64-linux-gnu
+          path: dist
+
+      # The uv that tools/release/uv.version names; qemu-system-arm has qemu-system-aarch64.
+      - name: Install uv and QEMU
+        run: |
+          sh tools/release/install-uv.sh "$RUNNER_TEMP/bin" > /dev/null
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+            qemu-system-arm
+
+      - name: Build the apps
+        env:
+          APP_PYTHON: ${{ steps.python.outputs.version }}
+        run: |
+          chmod +x dist/fsbpyr
+          uv python install "$(cat .python-version)"
+          mkdir -p "$RUNNER_TEMP/apps"
+          for name in hello native; do
+            cp -a "tests/fixtures/projects/$name" "$RUNNER_TEMP/$name"
+            dist/fsbpyr build "$RUNNER_TEMP/$name" --python "$APP_PYTHON" \
+              -o "$RUNNER_TEMP/apps/$name"
+          done
+
+      # A command that exits non-zero, or whose output lacks the text after `=>`, fails the job.
+      # Exit 3: a pinned kernel or root file system is gone from its mirror; a warning, so a mirror
+      # cannot block a release, until the pin is renewed (CONTRIBUTING.md).
+      - name: Boot both kernels and run the apps
+        run: |
+          status=0
+          uv run --locked python tools/vm-smoke.py --kernel 16k --kernel 64k \
+            --app dist/fsbpyr --app "$RUNNER_TEMP/apps/hello" --app "$RUNNER_TEMP/apps/native" \
+            --run 'fsbpyr --version' \
+            --run 'fsbpyr inspect /apps/fsbpyr => glibc >= 2.34' \
+            --run "hello 'x y' => hello ['x y']" \
+            --run 'FSBPYR_SELFTEST=1 hello => selftest ok' \
+            --run 'native => orjson {"a":[1,2]}' \
+            --run 'FSBPYR_SELFTEST=natives native => all natives load (2 extensions)' || status=$?
+          if [ "$status" -eq 3 ]; then
+            echo "::warning::vm-smoke: a pinned input is unavailable; re-pin tools/vm-pins.toml"
+            exit 0
+          fi
+          exit "$status"

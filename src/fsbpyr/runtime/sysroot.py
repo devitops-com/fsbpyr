@@ -3,7 +3,8 @@
 Linking against the build host's glibc ties every app to it (spike S1 found GLIBC_2.38).
 The sysroot is extracted from pinned packages of Debian 12, the oldest Debian release in LTS
 (glibc 2.36; what links against it needs no glibc newer than 2.34, the manylinux_2_34
-baseline), so no container is needed and the same pins always give the same sysroot.
+baseline), so no container is needed and the same pins always give the same sysroot. The EL8
+option (``--glibc 2.28``) takes Rocky Linux 8.10's RPMs instead: glibc 2.28 is the baseline.
 """
 
 import hashlib
@@ -16,12 +17,16 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from .. import targets
-from . import ar
+from . import ar, rpm
 from .hold import hold
 from .pbs import PbsError, download
 from .pins import SysrootPin
 
 _DONE = ".fsbpyr-sysroot"  # written last: a sysroot without it is incomplete
+# What linking never reads, left out of an RPM's files (gcc's compiler proper alone is 70 MB):
+# programs, data, configuration, and the character-set converters of the run-time glibc.
+_RPM_SKIP = ("etc/", "var/", "usr/bin/", "usr/sbin/", "usr/libexec/", "usr/share/",
+             "usr/lib/.build-id/", "usr/lib64/gconv/")  # fmt: skip
 
 
 class SysrootError(RuntimeError):
@@ -50,6 +55,22 @@ def extract_deb(data: bytes, target: Path, name: str) -> None:
         raise SysrootError(f"cannot extract {name}: {exc}") from exc
 
 
+def _lean(member: tarfile.TarInfo, destination: str) -> tarfile.TarInfo | None:
+    """``_into_sysroot`` for an RPM's files, less what ``_RPM_SKIP`` names."""
+    if member.name.startswith(_RPM_SKIP):
+        return None
+    return _into_sysroot(member, destination)
+
+
+def extract_rpm(data: bytes, target: Path, name: str) -> None:
+    """Extract the files of the RPM package ``data`` into ``target``, the way a deb's are."""
+    try:
+        with tarfile.open(fileobj=io.BytesIO(rpm.payload_tar(data))) as tar:
+            tar.extractall(target, filter=_lean)  # noqa: S202  ends in data_filter
+    except (rpm.RpmError, tarfile.TarError, OSError, KeyError, ValueError) as exc:
+        raise SysrootError(f"cannot extract {name}: {exc}") from exc
+
+
 def _package(url: str, sha256: str, cache: Path) -> tuple[str, bytes]:
     """The package's bytes, read once: what is verified is what gets extracted."""
     deb = cache / "downloads" / url.rpartition("/")[2]
@@ -73,8 +94,12 @@ def fetch_sysroot(pin: SysrootPin, cache: Path) -> Path:
     dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(dir=dest.parent, prefix=".extract-"))
     try:
+        extract = extract_rpm if pin.packaging == "rpm" else extract_deb
         for name, data in packages:
-            extract_deb(data, staging, name)
+            extract(data, staging, name)
+        if pin.layout == "redhat":  # EL8's filesystem package; the linker scripts name
+            for name in ("lib", "lib64"):  # /lib64/libc.so.6 and, on aarch64, /lib/ld-linux...
+                (staging / name).symlink_to(f"usr/{name}")
         (staging / _DONE).write_text(pin.identity + "\n")
         try:
             staging.rename(dest)
@@ -87,19 +112,29 @@ def fetch_sysroot(pin: SysrootPin, cache: Path) -> Path:
     return dest
 
 
-def build_flags(root: Path, env: Mapping[str, str]) -> dict[str, str]:
+def build_flags(root: Path, env: Mapping[str, str], layout: str = "multiarch") -> dict[str, str]:
     """CFLAGS and LDFLAGS that point the build host's C compiler (gcc or clang) at the sysroot
-    ``root``, for extensions built from source; ``env``'s own flags follow. Not CC itself: build
-    probes run it as a bare command (posix_ipc's prober). Not C++: the sysroot has no
-    libstdc++, so a C++ extension fails, and the caller keeps the host's build."""
-    multiarch = targets.host_target().multiarch  # Debian's layout of the pinned packages
-    if multiarch is None:
-        raise SysrootError("this host has no sysroot")
-    lib = root / "usr" / "lib" / multiarch
-    gcc = sorted((root / "usr" / "lib" / "gcc" / multiarch).glob("*"))[-1:]  # crtbeginS.o, libgcc
-    cflags = [f"--sysroot={root}", "-isystem", f"{root / 'usr' / 'include' / multiarch}"]
-    ldflags = [f"--sysroot={root}", f"-B{lib}", *(f"-B{d}" for d in gcc), f"-L{lib}",
-               f"-L{root / 'lib' / multiarch}"]  # fmt: skip
+    ``root`` of the pin's ``layout``, for extensions built from source; ``env``'s own flags
+    follow. Not CC itself: build probes run it as a bare command (posix_ipc's prober). Not C++:
+    the sysroot has no libstdc++, so a C++ extension fails, and the caller keeps the host's
+    build."""
+    target = targets.host_target()
+    cflags, ldflags = [f"--sysroot={root}"], [f"--sysroot={root}"]
+    if layout == "redhat":  # Red Hat's: the headers are where --sysroot looks, the gcc directory
+        lib = root / "usr" / "lib64"  # is <triple>-redhat-linux/<version>
+        gcc = sorted((root / "usr" / "lib" / "gcc").glob("*/*"))[-1:]
+        # no -mno-outline-atomics for aarch64: Rocky's libgcc.a (gcc 8.5) has the __aarch64_*
+        # helpers, and gcc older than 10 rejects the flag
+        libs = [lib]
+    else:
+        if target.multiarch is None:
+            raise SysrootError("this host has no sysroot")
+        multiarch = target.multiarch  # Debian's layout of the pinned packages
+        lib = root / "usr" / "lib" / multiarch
+        gcc = sorted((root / "usr" / "lib" / "gcc" / multiarch).glob("*"))[-1:]
+        cflags += ["-isystem", f"{root / 'usr' / 'include' / multiarch}"]
+        libs = [lib, root / "lib" / multiarch]
+    ldflags += [f"-B{lib}", *(f"-B{d}" for d in gcc), *(f"-L{d}" for d in libs)]
     return {
         "CFLAGS": " ".join([*cflags, env.get("CFLAGS", "")]).strip(),
         "LDFLAGS": " ".join([*ldflags, env.get("LDFLAGS", "")]).strip(),

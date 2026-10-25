@@ -107,6 +107,9 @@ def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
         raise BuildError(f"entry point module {module!r} is a package without {main!r}")
 
 
+_DEFAULT_GLIBC = (2, 34)  # pins.DEFAULT_BASELINE as a version
+
+
 def _commands_to_link(entrypoint: str, output: Path) -> tuple[str, ...]:
     """The names of a multi-command executable's commands (none for a single command), checked
     against what the output's directory holds."""
@@ -125,13 +128,16 @@ def _version(value: tuple[int, int]) -> str:
 def glibc_report(
     stub: bytes, natives: tuple[tuple[int, int], str] | None, *, baseline: tuple[int, int]
 ) -> tuple[str | None, list[str]]:
-    """The app's glibc requirement (the stub's, raised by bundled native code) and a warning
-    when a native file needs more than the baseline its wheels were chosen for."""
+    """The app's glibc requirement (the stub's, raised by bundled native code, and for another
+    baseline than the default never below it: a launcher linked against glibc 2.28 headers may
+    use symbols older than that) and a warning when a native file needs more than the baseline
+    its wheels were chosen for."""
     try:
         own = glibc_requirement(stub)
     except ElfError:
         own = None
-    needs = [own] if own is not None else []
+    floor = baseline if baseline != _DEFAULT_GLIBC else (0, 0)  # the default's report is unchanged
+    needs = [max(own, floor)] if own is not None else []
     warnings = []
     if natives is not None:
         needs.append(natives[0])
@@ -141,6 +147,12 @@ def glibc_report(
                 f"{_version(baseline)} baseline; on older systems it fails when imported"
             )
     return (_version(max(needs)) if needs else None), warnings
+
+
+def baseline_record(glibc: str) -> tuple[tuple[str, object], ...]:
+    """build_info's ``glibc_baseline``, for an app built for another baseline than the default
+    (D46); the default's build_info is what it always was."""
+    return () if glibc == pins.DEFAULT_BASELINE else (("glibc_baseline", glibc),)
 
 
 def _glibc_needs(dist: InstalledDist) -> Iterable[tuple[int, int]]:
@@ -198,7 +210,7 @@ def rebuild_on_baseline(  # noqa: PLR0913  the staging, what to rebuild, and off
         root = fetch_sysroot(baseline, cache)
     except (SysrootError, PbsError) as exc:
         return [f"{listed}: not rebuilt against the glibc {glibc} sysroot: {exc}"]
-    flags = build_flags(root, os.environ)
+    flags = build_flags(root, os.environ, baseline.layout)
     try:
         if canonicalize_name(parse_wheel_filename(wheel.name)[0]) in names:
             wheel = rebuild_wheel(plan, project_dir, flags, log=log, verbose=verbose)
@@ -620,7 +632,7 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
     uv = find_uv()  # before anything slow: a build cannot go far without it (D26)
     uv_used = uv_version(uv)
     warnings += python_warnings(project, config)
-    runtime = select_runtime(TARGET_PYTHON)
+    runtime = select_runtime(TARGET_PYTHON, baseline=config.glibc)
     project.check_python(runtime.python_version)
     warnings += uv_mismatch(builder=builder_uv(), current=uv_used)
     source = project.lock_source(config.requirements)
@@ -630,9 +642,9 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
     # hold are streamed from them (D38)
     with tempfile.TemporaryDirectory(prefix="fsbpyr-stage-") as tmp:
         triple = runtime.tag.partition("-")[2]
-        baseline = pins.sysroot_for(triple)  # the stub's glibc (D25)
+        baseline = pins.sysroot_for(triple, config.glibc)  # the stub's glibc (D25, D46)
         options = StagingOptions(TARGET_PYTHON, config.extras, config.offline, config.requirements,
-                                 platform=target_named(triple).uv_platform,
+                                 platform=target_named(triple).platform_for(baseline.manylinux),
                                  strict=config.strict, package=package)  # fmt: skip
         plan = staging_plan(project, source, uv, Path(tmp), options)
         wheel = run_plan(plan, project.directory, log=log, verbose=verbose)
@@ -684,7 +696,7 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
                 *helper_interpreter_hints(content.modules, config.interpreter_reexec)]  # fmt: skip
             glibc, glibc_warnings = glibc_report(runtime.stub, content.glibc,
                                                  baseline=baseline.baseline)  # fmt: skip
-            libraries, system_warnings = system_report(runtime.stub, content.system)
+            libraries, system_warnings = system_report(runtime.stub, content.system, config.glibc)
             warnings += [*glibc_warnings, *system_warnings]
             app = App(
                 app_name,
@@ -706,6 +718,7 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
                     ("fsbpyr_version", own_version()),  # with the commit (fsbpyr inspect)
                     ("uv", uv_used),  # builds the wheel, installs everything
                     ("glibc", glibc),
+                    *baseline_record(config.glibc),
                     ("system", system_info(libraries, content.system)),  # target needs, guesses
                     ("zstd_level", level),  # of the app's content and of every block
                     (

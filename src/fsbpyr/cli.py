@@ -90,6 +90,10 @@ def cli(ctx: click.Context) -> None:
               help="the Python to build for, 3.12 to 3.15, inside `requires-python` "
                    "(default: `python` in `[tool.fsbpyr]`, else `.python-version`, else "
                    "`requires-python` decides)")  # fmt: skip
+@click.option("--glibc", metavar="X.Y", type=click.Choice(["2.34", "2.28"]),
+              help="the glibc the app is built for: 2.34 (default), or 2.28 for EL8 hosts, which "
+                   "needs the glibc 2.28 stub of the fsbpyr release (default: `glibc` in "
+                   "`[tool.fsbpyr]`, else 2.34)")  # fmt: skip
 @click.option("--entry", metavar="NAME", shell_complete=_complete_entry,
               help="console script name, `module` or `module:function` "
                    "(default: the only script, else all of them as one multi-command "
@@ -146,6 +150,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     *,
     project: Path,
     python: str | None,
+    glibc: str | None,
     entry: str | None,
     output: Path | None,
     requirements: str | None,
@@ -193,6 +198,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
         config = load_config(
             loaded,
             python=python,
+            glibc=glibc,
             entry=entry,
             output=output.resolve() if output else None,
             requirements=requirements,
@@ -303,9 +309,13 @@ def runtime_group() -> None:
 @runtime_group.command("build", help="fetch CPython, link launcher, compile stdlib")
 @click.option("--python", metavar="X.Y", default=DEFAULT_PYTHON, show_default=True,
               help="the Python version, major.minor")  # fmt: skip
+@click.option("--glibc", "baseline", type=click.Choice(["2.34", "2.28"]), default="2.34",
+              show_default=True,
+              help="the glibc the stub is linked for: 2.34 (Debian 12's sysroot) or 2.28 "
+              "(Rocky Linux 8.10's, for EL8 hosts)")  # fmt: skip
 @click.option("--clang", type=click.Path(path_type=Path),
               help="clang to use (default: search PATH)")  # fmt: skip
-def runtime_build(*, python: str, clang: Path | None) -> int:
+def runtime_build(*, python: str, baseline: str, clang: Path | None) -> int:
     if _unsupported_python():
         return 1
     _collect_when_due()
@@ -319,7 +329,7 @@ def runtime_build(*, python: str, clang: Path | None) -> int:
     )
 
     try:
-        registry.build_runtime(python, clang=clang)
+        registry.build_runtime(python, clang=clang, baseline=baseline)
     except (
         LookupError,
         registry.RuntimeCacheError,
@@ -345,8 +355,8 @@ def runtime_list() -> int:
     except registry.RuntimeCacheError as exc:
         print(f"fsbpyr: error: {exc}", file=sys.stderr)
         return 1
-    for runtime_id, version in runtimes:
-        print(f"{runtime_id}  Python {version}")
+    for runtime_id, version, baseline in runtimes:
+        print(f"{runtime_id}  Python {version}  glibc {baseline}")
     return 0
 
 
@@ -435,6 +445,10 @@ EXAMPLES = (
      "Build for Python 3.12, whatever `requires-python` and `.python-version` say. This fsbpyr "
      "hands the build to its 3.12 variant, which it fetches from its own release the first "
      "time."),
+    ("fsbpyr build --glibc 2.28",
+     "Build an app for EL8 hosts (glibc 2.28). It needs the glibc 2.28 stub of this fsbpyr's "
+     "release, which releases publish separately: fetched once, or placed beside the "
+     "fsbpyr executable."),
     ("fsbpyr build --entry mytool --extra fancy",
      "Pick one of the project's console scripts, and install the project's extra `fancy` "
      "with it."),
