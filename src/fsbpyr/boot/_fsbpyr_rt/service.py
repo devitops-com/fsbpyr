@@ -1,4 +1,5 @@
-"""Start-up policies for services and containers (plan D14, D41; owner decision 2026-10-25).
+"""Start-up policies for services and containers (plan D14, D41; decided while
+building it, 2026-10-25).
 
 ``JOURNAL_STREAM``: systemd sets ``<device>:<inode>`` (decimal) of the journal socket for a
 service whose stdout or stderr go to the journal. A stream that is that file is line-buffered,

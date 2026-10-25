@@ -1,5 +1,5 @@
-"""An app that is process 1 ends on SIGTERM with status 143 (plan D14, D41; owner decision
-2026-10-25). The kernel drops a signal that process 1 has no handler for, so `python app.py` as
+"""An app that is process 1 ends on SIGTERM with status 143 (plan D14, D41; decided while building
+it, 2026-10-25). The kernel drops a signal that process 1 has no handler for, so `python app.py` as
 PID 1 ignores `docker stop`; the boot installs a SystemExit(143) handler there, unless the
 app's SIGTERM disposition is not the default."""
 

@@ -11,7 +11,7 @@ with exit 70, since running the app in it would start the app again and again (D
 The one exception to the refusal is a script of the payload that is one of the app's own
 commands (``[sys.executable, <exe>/_fsbpyr_scripts/x.py, args]``, a script that starts its
 sibling as ``python x.py args`` would): it runs that command, which is no more than the app does
-when it is started under that command's name (owner decision 2026-10-25).
+when it is started under that command's name (decided while building it, 2026-10-25).
 """
 
 import ast

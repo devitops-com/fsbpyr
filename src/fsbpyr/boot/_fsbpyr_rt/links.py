@@ -1,4 +1,5 @@
-"""Links to the executable made on its target (plan, Phase 12, owner decision 2026-10-25).
+"""Links to the executable made on its target (plan, Phase 12; decided while
+building it, 2026-10-25).
 
 ``FSBPYR_INSTALL_LINKS=DIR app`` makes in DIR a symlink per command, naming the executable's
 real path (absolute, so DIR can be anywhere), prints what it did and exits without running the

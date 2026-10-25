@@ -1,4 +1,4 @@
-"""Legacy scripts of the project's wheel (research UC5 (d), owner decision 2026-10-25).
+"""Legacy scripts of the project's wheel (research UC5 (d); decided while building it, 2026-10-25).
 
 A wheel keeps the files of ``setup.py``'s ``scripts=`` under ``<dist>.data/scripts/``, and an
 installer rewrites the first line ``#!python`` of each to its interpreter, so only the wheel
