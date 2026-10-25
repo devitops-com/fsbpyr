@@ -1488,7 +1488,11 @@ tested locally; the branch ends with `make release-prep VERSION=X.Y.Z` (versions
 GitHub pull request, on which no CI runs; the merge starts `full-suite.yml` (build with checks,
 the suite, the portability images, for every Python and target); `make release`
 (`tools/release/release.sh`) tags main's HEAD once that run is green and pushes only the tag;
-`release.yml` builds from the tag (`build.yml` without its checks), attests and publishes. A
+`release.yml` builds from the tag (`build.yml` without its checks), attests and publishes;
+`make release-check` (`tools/release/check-release.sh`, 2026-10-25) then checks the published
+release as its users get it: the assets and their checksums, the attestations, each
+executable on this target and, under podman, on the other, the README's rebuild, the installer
+for every Python, dispatch to another Python and `self update` from the previous release. A
 version whose release workflow fails is burned. The rest of this section is the plan and its
 dated progress; where it names glibc 2.28, Debian 10, `release.yml`'s build, reproduce and
 compare jobs or the short asset names, later entries below and D42 apply.

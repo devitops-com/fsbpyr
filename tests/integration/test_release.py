@@ -1912,3 +1912,25 @@ def test_the_workflows_install_uv_with_the_script_and_not_the_x86_64_tarball() -
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
         assert "uv-x86_64-unknown-linux-gnu" not in workflow, name
         assert "sh tools/release/install-uv.sh" in workflow, name
+
+
+# ------------------------------------------------------------------------- check-release.sh
+
+CHECK_RELEASE_SH = ROOT / "tools" / "release" / "check-release.sh"
+
+
+@pytest.mark.parametrize(("args", "message"), [
+    (["1.2"], "'1.2' is not a version X.Y.Z"), (["v1.2.3"], "'v1.2.3' is not a version X.Y.Z"),
+    (["1.2.3", "4.5.6"], "usage: check-release.sh [X.Y.Z]"),
+])  # fmt: skip
+def test_the_release_check_refuses_what_is_no_version(
+    args: list[str], message: str, tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    """Before it fetches anything: the fake gh logs every call."""
+    write_program(tmp_path / "gh-bin" / "uv", "exit 0\n")  # present; nothing may run it
+
+    result = run_script(["bash", str(CHECK_RELEASE_SH), *args], release_env)
+
+    assert result.returncode == 2
+    assert message in result.stderr
+    assert gh_calls(tmp_path) == []
