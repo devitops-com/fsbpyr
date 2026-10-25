@@ -214,7 +214,7 @@ def _plan(
     base += [*_platform(options), *offline, "--quiet"]
     wheel_dir = work / "wheel"
     env = {"UV_VENV_SEED": "0"}  # a seeded venv would ship pip, depending on the environment
-    if source is LockSource.UNLOCKED:
+    if source in (LockSource.UNLOCKED, LockSource.INFERRED):
         extras = f"[{','.join(options.extras)}]" if options.extras else ""
         return StagingPlan(site, build, [venv, [*base, WHEEL + extras]], wheel_dir, env,
                            [str(uv), "cache", "clean"])  # fmt: skip

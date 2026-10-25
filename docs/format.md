@@ -318,7 +318,7 @@ project's directory: nothing in it names the builder's paths, time or host.
 | Key | Content |
 |-----|---------|
 | `schema` | `1`. Incremented when a key changes meaning, never for a new key |
-| `lock` | `{kind, path, sha256, hashed}`: `kind` is `uv.lock`, `script.lock` (uv's `<script>.lock` beside a single script), `pylock.toml`, `requirements`, `poetry.lock`, `pdm.lock` or `unlocked`; `path` is relative to the project directory (`../uv.lock` for a workspace member), null if unlocked; `sha256` is of the file; `hashed` says whether it pins artifact hashes |
+| `lock` | `{kind, path, sha256, hashed}`: `kind` is `uv.lock`, `script.lock` (uv's `<script>.lock` beside a single script), `pylock.toml`, `requirements`, `poetry.lock`, `pdm.lock`, `inferred` or `unlocked`; `path` is relative to the project directory (`../uv.lock` for a workspace member), null if unlocked; `sha256` is of the file; `hashed` says whether it pins artifact hashes. For `inferred` (a directory of scripts or a single script that declared nothing, whose versions were read from the venv it runs in), `path` is that venv, `sha256` is null, `hashed` is false and `pins` lists the `name==version` pins installed |
 | `dists` | `[{name, version, source, artifact_sha256}]`, sorted by name |
 | `runtime` | the runtime's id, `cp<python>-<triple>-<12 hex digits>` (a digest of the launcher, the PBS archive, the sysroot and the layout version); the stub records it too (`fsbpyr-stub-identity=<id>` in its `.rodata`), which is how a build proves a stub it was handed is the one of its own release (D46) |
 | `runtime_tag` | the PBS distribution's tag and the target triple (`<tag>-<triple>`); it seeds `generation_id` |

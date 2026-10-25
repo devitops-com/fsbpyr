@@ -32,6 +32,9 @@ class LockSource(Enum):
     SCRIPT_LOCK = "script.lock"  # uv's `<script>.lock` (uv lock --script), a uv.lock for one file
     POETRY_LOCK = "poetry.lock"  # converted to requirements at staging (foreign.py)
     PDM_LOCK = "pdm.lock"
+    # no declared source, the versions found in the scripts' venv (venvdeps.py); staged like
+    # an unlocked build, from pins in the project's wheel
+    INFERRED = "inferred"
     UNLOCKED = "unlocked"
 
 

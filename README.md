@@ -319,7 +319,7 @@ setuptools' legacy fallback. A uv workspace root (`[tool.uv.workspace]`) keeps i
   a lock, `[project.dependencies]` (and the `--extra`s) are resolved now, with the warning for an
   unlocked build. Poetry 1's `[tool.poetry.dependencies]` is not read without a lock, and a
   `package-mode = false` project needs a `[project]` table; a `.venv` is never read for
-  undeclared dependencies.
+  undeclared dependencies (a directory of scripts and a single script do read one, below).
 - **Commands:** `[project.scripts]` if present (`main:run` runs `_fsbpyr_scripts.main:run`),
   else the modules with an `if __name__ == "__main__":` guard (a `__main__.py` counts too). One
   is the command named like the project; several make a multi-command executable
@@ -411,16 +411,31 @@ bundled on any system.
   the command files, resolved at build time, so the build warns that it is unlocked. The
   `requires-python` entries of the blocks are intersected, and a conflict between them fails the
   build, naming the files. A requirements file or `pylock.toml` replaces the blocks'
-  dependencies. With none of them the scripts get no packages. A `.venv` is never read.
+  dependencies. With none of them, the venv the scripts run in supplies pins for the imports
+  nothing else provides ("The venv rung" below); without one the scripts get no packages.
 - **Imports are checked** for each command as in "Projects without a build system": an import
   that nothing in the directory, the dependencies or the standard library resolves skips the
   command with a warning that names `file:line`, and with a `.venv` in the directory, the
-  `uv pip freeze --python .venv/bin/python > requirements.txt` that records it. `--strict` fails
+  `uv pip freeze --python .venv/bin/python > requirements.txt` that records what it holds. `--strict` fails
   the build, and so does a build with no command left. An import under `try`/`except
   ImportError` gives no warning. A directory that a file adds to `sys.path` with a path built from
   its own `__file__` (`sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)),
   "pylib"))`) is searched; a `sys.path` change the check cannot follow makes the unresolved
   imports of the command optional.
+- **The venv rung.** When nothing declares a dependency (no requirements file, `pylock.toml`
+  or PEP 723 `dependencies`) and a command's import is unresolved, the build reads the venv the
+  scripts run in: `.venv`, `venv` or `env` in the directory (with a `pyvenv.cfg`), else
+  `$VIRTUAL_ENV`. It reads files only and never starts the venv's Python: each installed
+  distribution's `METADATA`, `top_level.txt` and `RECORD` say which one provides the import (a
+  PyPI name is never guessed from an import name). Those distributions, and the
+  distributions their `Requires-Dist` need as installed, are pinned `name==version` and
+  installed fresh by uv for the app's platform (`manylinux_2_34`, or 2.28 with `--glibc 2.28`);
+  nothing is copied from the venv. The build warns that the dependencies came from the venv and
+  prints the `uv pip freeze --python <venv>/bin/python > requirements.txt` that declares them;
+  `--strict` fails on that warning. A pin that has no wheel for the target fails in uv, with
+  uv's reason; an editable or path install that is needed is refused (it is your own tree); an
+  import the venv does not provide stays unresolved, as above. `fsbpyr inspect` shows the lock
+  as `inferred from <venv>` with the pins (`build_info.lock.kind` is `inferred`).
 - **At run time** a link runs its script as `python3 script.py` would: as `__main__`, `argv` as
   given, the script's directory first on `sys.path`. A sibling named like a standard library
   module (`calendar.py`) wins over the library, as it does for CPython. The `pylib` hack above
@@ -472,8 +487,8 @@ next to `__file__`.
   is unlocked), `requires-python` chooses the Python as a project's does, including the fetch of
   another Python's fsbpyr, and a `[tool.fsbpyr]` table (`# [tool.fsbpyr]`, `# strict = true`) is
   read as in `pyproject.toml`, with unknown keys rejected. Without a block the script has no
-  dependencies: the import check names an import nothing provides, with the freeze command when
-  a `.venv` is next to it. A `.venv` is never read.
+  dependencies unless a venv supplies pins (the "venv rung" below): the import check names an
+  import nothing provides, with the freeze command when a `.venv` is next to it.
 - **A script lock:** a `report.py.lock` beside the script (`uv lock --script report.py`) locks
   the build: the dependencies are installed from it, `--locked` fails the build when the block
   has outgrown it (run `uv lock --script` again), and `fsbpyr inspect` shows `script.lock`. fsbpyr

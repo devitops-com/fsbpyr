@@ -3,7 +3,10 @@ UC7): each command prints what ``python3 <script>`` prints with the same depende
 cached runtime; the dependencies are local directories, so no network."""
 
 import io
+import json
 import os
+import shutil
+import stat
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -24,6 +27,12 @@ LIBRARY = (
     '[project]\nname = "{name}"\nversion = "1.0"\nrequires-python = ">=3.12"\n'
     '[build-system]\nrequires = ["uv_build>=0.12.17,<0.13.0"]\nbuild-backend = "uv_build"\n'
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_active_venv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The venv rung reads $VIRTUAL_ENV too; the one these tests run in must not supply pins."""
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
 
 
 def _write(root: Path, files: Mapping[str, str]) -> Path:
@@ -266,6 +275,154 @@ def test_the_pep_723_blocks_of_the_commands_give_the_dependencies(
     assert "unlocked build" in capsys.readouterr().err
     assert _run(directory / "dist" / "a", tmp_path).stdout == "from greet\n"
     assert _run(directory / "dist" / "b", tmp_path).stdout == "from shout\n"
+
+
+# --- the venv rung ---------------------------------------------------------------------------
+
+UV = shutil.which("uv")
+SHOW = ("from markdown_it import MarkdownIt\n\nif __name__ == '__main__':\n"
+        "    print('show', MarkdownIt().render('*x*').strip())\n")
+
+
+def _venv(path: Path, *requirements: str) -> dict[str, str]:
+    """A venv at ``path`` with ``requirements`` installed from uv's cache; the version of each
+    installed distribution by canonical name."""
+    assert UV is not None
+    subprocess.run([UV, "venv", "--quiet", "--python", sys.executable, str(path)], check=True)
+    subprocess.run([UV, "pip", "install", "--offline", "--quiet", "--python",
+                    str(path / "bin" / "python"), *requirements], check=True)  # fmt: skip
+    listed = subprocess.run([UV, "pip", "list", "--format", "json", "--python",
+                             str(path / "bin" / "python")], check=True, capture_output=True,
+                            text=True).stdout  # fmt: skip
+    return {item["name"]: item["version"] for item in json.loads(listed)}
+
+
+def _inspect(executable: Path, capsys: pytest.CaptureFixture[str]) -> dict[str, object]:
+    capsys.readouterr()
+    assert main(["inspect", "--json", str(executable)]) == 0
+    report: dict[str, object] = json.loads(capsys.readouterr().out)
+    return report
+
+
+needs_uv = pytest.mark.skipif(UV is None, reason="needs uv")
+
+
+@needs_uv
+def test_a_venv_in_the_directory_pins_the_undeclared_imports_and_their_closure(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = _write(tmp_path / "ops", {"show.py": SHOW})
+    installed = _venv(directory / ".venv", "markdown-it-py")
+    pyvenv = (directory / ".venv" / "pyvenv.cfg").read_text()
+    before = sorted(p.relative_to(directory).as_posix() for p in directory.rglob("*"))
+
+    assert _build(directory, "--offline") == 0
+
+    err = capsys.readouterr().err
+    assert "no dependency is declared: the versions in .venv were read as files" in err
+    assert "uv pip freeze --python .venv/bin/python > requirements.txt` declares them" in err
+    assert "unlocked build" not in err
+    report = _inspect(directory / "dist" / "show", capsys)
+    pins = [f"markdown-it-py=={installed['markdown-it-py']}", f"mdurl=={installed['mdurl']}"]
+    assert report["build_info"]["lock"] == {  # type: ignore[index]
+        "kind": "inferred", "path": ".venv", "sha256": None, "hashed": False, "pins": pins}
+    names = {d["name"]: d["version"] for d in report["distributions"]}  # type: ignore[attr-defined]
+    assert names["markdown-it-py"] == installed["markdown-it-py"]
+    assert names["mdurl"] == installed["mdurl"]
+    assert "pip" not in names  # the venv's own tools are not copied
+    result = _run(directory / "dist" / "show", tmp_path)
+    assert result.stdout == "show <p><em>x</em></p>\n" and result.returncode == 0, result.stderr
+    assert (directory / ".venv" / "pyvenv.cfg").read_text() == pyvenv
+    after = sorted(p.relative_to(directory).as_posix() for p in directory.rglob("*")
+                   if "dist" not in p.relative_to(directory).parts)
+    assert after == before
+
+
+@needs_uv
+def test_the_venv_python_is_never_started_and_nothing_of_it_is_copied(
+    tmp_path: Path, runtime: Runtime
+) -> None:
+    marker = tmp_path / "marker"
+    directory = _write(tmp_path / "ops", {"show.py": SHOW})
+    _venv(directory / ".venv", "markdown-it-py")
+    shim = f"#!/bin/sh\ntouch {marker}\nexit 1\n"
+    for name in ("python", "python3", f"python{sys.version_info[0]}.{sys.version_info[1]}"):
+        (directory / ".venv" / "bin" / name).unlink(missing_ok=True)
+        (directory / ".venv" / "bin" / name).write_text(shim)
+        (directory / ".venv" / "bin" / name).chmod(stat.S_IRWXU)
+
+    assert _build(directory, "--offline") == 0
+
+    assert not marker.exists()
+    assert _run(directory / "dist" / "show", tmp_path).stdout == "show <p><em>x</em></p>\n"
+
+
+@needs_uv
+def test_an_import_the_venv_does_not_provide_stays_unresolved(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = _write(tmp_path / "ops", {
+        "show.py": SHOW,
+        "needs.py": "import yaml\nif __name__ == '__main__':\n    print(yaml)\n",
+    })  # fmt: skip
+    _venv(directory / ".venv", "markdown-it-py")
+
+    assert _build(directory, "--offline") == 0
+
+    err = capsys.readouterr().err
+    assert "command needs skipped: not in the executable: needs.py:1: import yaml" in err
+    assert "were read as files" in err and "mdurl==" in err  # show's import was found
+    assert sorted(p.name for p in (directory / "dist").iterdir()) == ["show"]
+
+
+@needs_uv
+def test_strict_fails_on_inferred_dependencies_and_writes_nothing(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = _write(tmp_path / "ops", {"show.py": SHOW})
+    _venv(directory / ".venv", "markdown-it-py")
+
+    assert _build(directory, "--offline", "--strict") == 1
+
+    assert "no dependency is declared: the versions in .venv were read" in capsys.readouterr().err
+    assert not (directory / "dist").exists()
+
+
+def test_a_pin_uv_cannot_install_fails_with_uvs_reason(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = _write(tmp_path / "ops", {
+        "tool.py": "import vanished\nif __name__ == '__main__':\n    print(vanished)\n",
+        ".venv/pyvenv.cfg": "",
+        ".venv/lib/python3.14/site-packages/vanished-9.9.dist-info/METADATA":
+            "Metadata-Version: 2.1\nName: vanished\nVersion: 9.9\n",
+        ".venv/lib/python3.14/site-packages/vanished-9.9.dist-info/RECORD":
+            "vanished/__init__.py,,\n",
+    })  # fmt: skip
+
+    assert _build(directory, "--offline") == 1
+
+    err = capsys.readouterr().err
+    assert "installing the project's wheel and its dependencies: uv failed" in err
+    assert "vanished==9.9" in err and not (directory / "dist").exists()
+
+
+@needs_uv
+def test_a_declared_source_leaves_the_venv_unread(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
+) -> None:
+    library = _library(tmp_path / "greetlib", "greet", "hello")
+    directory = _write(tmp_path / "ops", {
+        "show.py": "import greet\nimport markdown_it\nif __name__ == '__main__':\n    print(1)\n",
+        "ok.py": "import greet\nif __name__ == '__main__':\n    print(greet.WORD)\n",
+        "requirements.txt": f"{library}\n",
+    })  # fmt: skip
+    _venv(directory / ".venv", "markdown-it-py")
+
+    assert _build(directory, "--offline") == 0
+
+    err = capsys.readouterr().err
+    assert "were read as files" not in err and "command show skipped" in err
 
 
 # --- processes and files ---------------------------------------------------------------------

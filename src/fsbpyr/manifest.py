@@ -22,6 +22,7 @@ from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel
 from .closure import InstalledDist
 from .foreign import Entry, read_entries
 from .project import LockSource, has_hash_option
+from .venvdeps import Inferred
 
 SCHEMA = 1  # of build_info (docs/format.md)
 BUILT_FROM_SDIST = "built-from-sdist"
@@ -148,6 +149,16 @@ def lock_record(
         "hashed": _hashed(source, text, packages),
     }
     return record, packages
+
+
+def inferred_lock(directory: Path, inferred: Inferred) -> dict[str, object]:
+    """build_info's ``lock`` for dependencies read from a venv (venvdeps.py): the venv, relative
+    to ``directory`` (just its name when it lies outside, as ``$VIRTUAL_ENV`` may), and the
+    versions pinned; there is no file to hash."""
+    inside = inferred.venv.is_relative_to(directory)
+    path = inferred.venv.relative_to(directory) if inside else Path(inferred.venv.name)
+    return {"kind": LockSource.INFERRED.value, "path": path.as_posix(),
+            "sha256": None, "hashed": False, "pins": list(inferred.pins)}  # fmt: skip
 
 
 def _wheel_file(dist: InstalledDist) -> list[str]:

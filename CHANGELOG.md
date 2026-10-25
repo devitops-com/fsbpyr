@@ -58,7 +58,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
     under a module name in its directory (`check_disk.py`, `_10_backup.py`) and runs as
     `__main__`; its `__file__` is that path. The dependencies are `requirements.txt` or
     `pylock.toml`, else the union of the commands' PEP 723 blocks (`requires-python` intersected,
-    a conflict fails naming the files), else none; no venv is read. A `pyproject.toml` that holds
+    a conflict fails naming the files), else the venv the scripts run in (see the entry below), else
+    none. A `pyproject.toml` that holds
     only tool settings (no `[project]`, `[build-system]`, Poetry tables, `setup.py` or `setup.cfg`)
     is the directory's settings file: `[tool.fsbpyr]` (`glibc`, `python`, `strict`, ...) is read
     from it, where setuptools' flat-layout discovery used to fail on several modules; a
@@ -195,6 +196,22 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   entry. A lock whose content hash is not the pyproject's is a warning, and an error with
   `--strict`. They rank after `requirements.txt` as lock sources. `build_info.lock.kind` and
   `fsbpyr inspect` show `poetry.lock` or `pdm.lock`. `Pipfile.lock` is not read.
+- **The venv a script runs in gives the dependencies nothing declares.** A directory of scripts
+  or a single script with no requirements file, `pylock.toml`, lock or PEP 723 dependencies, and
+  an import nothing in the executable provides, used to skip the command with a hint. Now the
+  build reads the venv beside the scripts (`.venv`, `venv` or `env` with a `pyvenv.cfg`, else
+  `$VIRTUAL_ENV`) as files: its python is never started. The `*.dist-info` METADATA,
+  `top_level.txt` and RECORD say which installed distribution provides each unresolved import
+  (a PyPI name is never guessed from an import name), and those distributions and their
+  installed `Requires-Dist` closure are pinned `name==version` and installed fresh by uv for the
+  target (manylinux_2_34, or 2.28 with `--glibc 2.28`); nothing is copied from the venv. The
+  build warns that the dependencies came from the venv and gives the
+  `uv pip freeze --python <venv>/bin/python > requirements.txt` that declares them (for a single
+  script, the command without the redirection, for its block's dependencies); `--strict` fails
+  on it before anything is staged. A pin without a wheel for the target fails in uv, with uv's
+  reason; an editable or path install that is needed is refused. An import the venv does not
+  provide stays unresolved. `build_info.lock.kind` and `fsbpyr inspect` show `inferred`, with the
+  venv and the pins. The README's "a `.venv` is never read" is gone with this.
 - **Compile warnings of the project's own files are build warnings.** A `SyntaxWarning` or
   `DeprecationWarning` that compiling emits (`"\d"` in a normal string, say) used to show
   neither at build time nor at run time, while a venv run of the script prints it. The build now

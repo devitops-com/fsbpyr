@@ -272,6 +272,10 @@ def _lock(info: dict[str, object]) -> str:
     lock = info.get("lock")
     if not isinstance(lock, dict) or not isinstance(lock.get("path"), str):
         return ""
+    if lock.get("kind") == "inferred":  # the venv the versions were read from, no file hash
+        pins = lock.get("pins")
+        listed = ", ".join(_shown(pin) for pin in pins) if isinstance(pins, list) else ""
+        return f"inferred from {_shown(lock['path'])}: {listed}"
     digest = lock.get("sha256")
     return f"{_shown(lock['path'])} sha256:{_shown(digest)}" if isinstance(digest, str) else ""
 

@@ -740,3 +740,14 @@ def test_sizes_add_up_for_blocks_and_shared_blobs(tmp_path: Path) -> None:
     assert sizes.total == out.stat().st_size - TRAILER_SIZE
     assert sizes.unreferenced == 0
     assert sizes.distributions["aiagent"]["code"] > 0
+
+
+def test_inspect_shows_dependencies_inferred_from_a_venv(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lock = {"kind": "inferred", "path": ".venv", "sha256": None, "hashed": False,
+            "pins": ["markdown-it-py==4.2.0", "mdurl==0.1.2"]}  # fmt: skip
+
+    lines = _inspect(_executable(tmp_path, ("lock", lock)), capsys)
+
+    assert "lock       inferred from .venv: markdown-it-py==4.2.0, mdurl==0.1.2" in lines

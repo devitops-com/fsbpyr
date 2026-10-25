@@ -29,8 +29,8 @@ import re
 import time
 import tomllib
 import zipfile
-from collections.abc import Iterator
-from dataclasses import dataclass, field
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -153,6 +153,15 @@ class Package:
         return cls(directory, name, _version(table), _metadata(table), sources,
                    {command: _module(payload)}, (), origins, requires_python,
                    tuple(dependencies))  # fmt: skip
+
+    def with_dependencies(self, dependencies: Sequence[str]) -> Package:
+        """This package with ``dependencies`` (requirement lines) as its Requires-Dist: the pins
+        the venv rung found for a project that declares none."""
+        table: dict[str, Any] = {"name": self.name, "version": self.version,
+                                 "dependencies": list(dependencies)}  # fmt: skip
+        if self.requires_python is not None:
+            table["requires-python"] = self.requires_python
+        return replace(self, metadata=_metadata(table))
 
     def wheel_name(self) -> str:
         return f"{re.sub(r'[-_.]+', '_', self.name)}-{self.version}-py3-none-any.whl"

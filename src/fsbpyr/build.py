@@ -37,7 +37,7 @@ from .importcheck import REMOVED_IN, Unresolved, check_command, top_level_names
 from .legacy import attach as attach_legacy_scripts
 from .links import LinkError, check_links, make_links
 from .loose import Package
-from .manifest import SCHEMA, LockError, built_here, dist_records, lock_record
+from .manifest import SCHEMA, LockError, built_here, dist_records, inferred_lock, lock_record
 from .natives import opened
 from .payload.format import NATIVE_KINDS, ModuleKind
 from .payload.spec import XZ_PRESET, Dist, File, Module
@@ -69,6 +69,7 @@ from .staging import (
 from .system import system_info, system_report, target_needs
 from .targets import target_named
 from .vcs import git_state, own_version, release_asset_record
+from .venvdeps import Inferred, find_venv, infer
 
 TARGET_PYTHON = f"{sys.version_info[0]}.{sys.version_info[1]}"  # builder and apps run alike
 _SMOKE_TIMEOUT = 120
@@ -247,13 +248,16 @@ def _provenance(  # noqa: PLR0913  what the records are made of, and where to lo
     *,
     project_dist: str,
     log: Callable[[str], None],
+    inferred: Inferred | None = None,
 ) -> tuple[tuple[str, object], ...]:
     """build_info's schema, ``lock``, ``dists`` and ``settings``. Dists built here from their
     sdists are named in one line of the build's output: information, not a warning, so
     --strict does not fail on it."""
     try:
-        lock, locked = lock_record(project.directory, source,
-                                   project.lock_path(source, config.requirements))  # fmt: skip
+        lock, locked = (
+            (inferred_lock(project.directory, inferred), {}) if inferred is not None else
+            lock_record(project.directory, source, project.lock_path(source, config.requirements))
+        )  # fmt: skip
     except LockError as exc:
         raise BuildError(str(exc)) from exc
     dists = dist_records((index.dists[d.name] for d in packaged), locked, project=project_dist)
@@ -486,9 +490,50 @@ def _unresolved_warning(
                     if project.script is not None else
                     "writes what it holds, and the build reads requirements.txt")
             redirect = "" if project.script is not None else " > requirements.txt"
-            hints[-1:] = [f"a .venv is not read for undeclared dependencies; "
-                          f"`{command}{redirect}` {then}"]
+            why = ("a .venv supplies pins only when nothing declares a dependency and it holds "
+                   "a distribution that provides the import" if project.bare
+                   else "a .venv is not read for undeclared dependencies")  # fmt: skip
+            hints[-1:] = [f"{why}; `{command}{redirect}` {then}"]
     return f"{text}. {'. '.join(hints)}"
+
+
+def _checked_commands(package: Package, config: BuildConfig) -> dict[str, str]:
+    """The commands whose imports are followed: all of the table, or the one ``--entry`` names."""
+    if config.entry in package.commands:
+        return {config.entry: package.commands[config.entry]}
+    if config.entry is not None:  # a module: its own imports, not the table's
+        return {config.entry: config.entry}
+    return package.commands
+
+
+def infer_dependencies(
+    package: Package, project: Project, config: BuildConfig, runtime: Runtime, warnings: list[str]
+) -> tuple[Package, Inferred | None]:
+    """Rung 3 of the dependency ladder (venvdeps.py): a project without a build system whose
+    commands import what the runtime lacks, and that declares no dependency, gets the versions
+    its venv holds of the distributions that provide those imports, pinned in its wheel. The
+    pins are installed fresh, nothing is copied. A warning names the venv and the command that
+    declares the dependencies; --strict fails on it, before anything is staged."""
+    if (venv := find_venv(project.directory)) is None:
+        return package, None
+    known = {n.partition(".")[0] for n in runtime_module_names(runtime)}
+    modules = {problem.module for target in _checked_commands(package, config).values()
+               for problem in check_command(target, package.sources, known)
+               if problem.module and not problem.module.startswith(".")}  # fmt: skip
+    found = infer(venv, modules, marker_environment(runtime.python_version)) if modules else None
+    if found is None:
+        return package, None
+    shown = (venv.relative_to(project.directory) if venv.is_relative_to(project.directory)
+             else venv)  # fmt: skip
+    command = f"uv pip freeze --python {shown}/bin/python"
+    declare = (f"`{command}` lists them for the '# /// script' block's dependencies"
+               if project.script is not None else f"`{command} > requirements.txt` declares them")
+    listed = ", ".join(found.pins[:5]) + (" ..." if len(found.pins) > 5 else "")
+    warnings.append(f"no dependency is declared: the versions in {shown} were read as files "
+                    f"(nothing is copied) and are installed fresh: {listed}; {declare}")
+    if config.strict:
+        check_strict(warnings)
+    return package.with_dependencies(found.pins), found
 
 
 def check_script_imports(  # noqa: PLR0913  the package and what resolves its imports
@@ -506,11 +551,7 @@ def check_script_imports(  # noqa: PLR0913  the package and what resolves its im
     known = top_level_names(site) | {n.partition(".")[0] for n in runtime_module_names(runtime)}
     major, minor = (int(part) for part in runtime.python_version.split(".")[:2])
     python = (major, minor)
-    chosen = package.commands
-    if config.entry in package.commands:
-        chosen = {config.entry: package.commands[config.entry]}
-    elif config.entry is not None:  # a module: its own imports, not the table's
-        chosen = {config.entry: config.entry}
+    chosen = _checked_commands(package, config)
     skipped = set()
     for command, target in chosen.items():
         if problems := check_command(target, package.sources, known):
@@ -652,6 +693,11 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
     project.check_python(runtime.python_version)
     warnings += uv_mismatch(builder=builder_uv(), current=uv_used)
     source = project.lock_source(config.requirements)
+    inferred = None
+    if (package is not None and project.bare and source is LockSource.UNLOCKED
+            and not project.dependencies):
+        package, inferred = infer_dependencies(package, project, config, runtime, warnings)
+        source = LockSource.INFERRED if inferred is not None else source
     warnings += lock_warnings(project, source, config.requirements)
     log(f"staging {project.name or project.directory.name} from {source.value}")
     # the staged files and the spill live until the executable is written: files too large to
@@ -733,6 +779,7 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
                         index,
                         content.dists,
                         project_dist=dist.name,
+                        inferred=inferred,
                         log=log,
                     ),
                     ("project", {"name": dist.name, "version": dist.version}),
