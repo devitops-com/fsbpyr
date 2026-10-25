@@ -25,9 +25,11 @@ EL8_IMAGES = (
 NO_ARM64 = frozenset({"docker.io/library/archlinux:latest"})
 
 
-def images_for(machine: str) -> tuple[str, ...]:
+def images_for(machine: str, glibc: str = "2.34") -> tuple[str, ...]:
     """The images that run on a host whose ``platform.machine()`` is ``machine``: all of them
-    on x86-64, those with an arm64 variant on aarch64."""
+    on x86-64, those with an arm64 variant on aarch64. Apps built for glibc 2.28 (the EL8 test
+    mode, tests/support/baseline.py) run on the EL8 images too."""
+    images = IMAGES + EL8_IMAGES if glibc == "2.28" else IMAGES
     if machine in ("aarch64", "arm64"):
-        return tuple(image for image in IMAGES if image not in NO_ARM64)
-    return IMAGES
+        return tuple(image for image in images if image not in NO_ARM64)
+    return images

@@ -2,8 +2,8 @@
 the launcher's background runs would otherwise act on the caches tests use, or the user's.
 
 pytest passes a run however many tests skip. FSBPYR_TESTS_REQUIRE_ALL names one of the lists
-below (the full-suite workflow sets `full` and `portability`, `make test-container`
-`container`), and a skip that the list does not expect fails the run.
+below (the full-suite workflow sets `full` and `portability`, el8.yml `el8` and `portability`,
+`make test-container` `container`), and a skip that the list does not expect fails the run.
 
 At the end, the builds of local projects the run made leave uv's cache: the tests build their
 fixture projects (and fsbpyr) from new temporary copies every time, and uv keeps every build.
@@ -22,6 +22,7 @@ import pytest
 from hypothesis import settings
 
 from fsbpyr.project import Project
+from fsbpyr.runtime import pins
 
 # The skips each list's environment cannot avoid, each entry a nodeid or the start of a reason
 # (some reasons carry runtime text).
@@ -44,11 +45,18 @@ EXPECTED_SKIPS = {
     # the other versions' runtimes), except the one 3.12 skips by version and what needs a
     # package without a wheel for the Python (tests/support/no-wheels.txt)
     "full": ("3.12's takes one resource name", "no wheel for Python "),
+    # el8.yml's tests job: the suite job's container without podman, for the stub-dependent tests
+    "el8": ("3.12's takes one resource name", "no wheel for Python ", "needs podman"),
     # full-suite.yml's portability job: podman on the runner host, and every image pulled
     # (the release executable of that job has no glibc 2.28 stubs: the separate EL8 workflow
     # publishes them, and its apps join the prebuilt set then)
     "portability": ("no wheel for Python ", "no glibc 2.28 apps"),
 }
+# The glibc baseline the tests build for: the EL8 test mode when FSBPYR_TEST_GLIBC=2.28 (read
+# again by tests/support/baseline.py; not imported, since tests/unit/test_expected_skips.py runs
+# this file outside the package)
+TEST_GLIBC = os.environ.get("FSBPYR_TEST_GLIBC") or pins.DEFAULT_BASELINE
+EL8_MODE = TEST_GLIBC != pins.DEFAULT_BASELINE
 # The corpus projects (TST-3) carry test files of their own, which their built apps run
 collect_ignore_glob = ["corpus/*"]
 # Hypothesis in CI (GitHub sets CI): the same examples every run, so a failure there repeats
@@ -85,6 +93,27 @@ def _build_for_own_python() -> Iterator[None]:
         yield
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _build_for_baseline() -> Iterator[None]:
+    """In the EL8 test mode (FSBPYR_TEST_GLIBC=2.28, tests/support/baseline.py) a build in a
+    test is `--glibc 2.28` unless it says otherwise: the project's own setting and the default
+    give way, so that the tests that build and run executables run the glibc 2.28 stub."""
+    if not EL8_MODE:
+        yield
+        return
+    from fsbpyr import config  # noqa: PLC0415
+
+    load_config = config.load_config
+
+    @functools.wraps(load_config)
+    def for_the_baseline(project: Project, **given: object) -> config.BuildConfig:
+        return load_config(project, **{**given, "glibc": given.get("glibc") or TEST_GLIBC})
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(config, "load_config", for_the_baseline)
+        yield
+
+
 @pytest.fixture(autouse=True)
 def _version_rule(request: pytest.FixtureRequest) -> Iterator[None]:
     """A test marked `version_rule` runs the rule itself."""
@@ -100,6 +129,9 @@ def _version_rule(request: pytest.FixtureRequest) -> Iterator[None]:
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    if TEST_GLIBC not in pins.BASELINES:
+        raise pytest.UsageError(f"FSBPYR_TEST_GLIBC={TEST_GLIBC}: not a glibc baseline "
+                                f"({', '.join(pins.BASELINES)})")  # fmt: skip
     name = os.environ.get("FSBPYR_TESTS_REQUIRE_ALL")
     if name and name not in EXPECTED_SKIPS:
         raise pytest.UsageError(f"FSBPYR_TESTS_REQUIRE_ALL={name}: no such list "
@@ -112,7 +144,8 @@ def pytest_configure(config: pytest.Config) -> None:
 def _prepare_for_workers(kept: Path) -> None:
     """pytest-xdist: the runtime's downloads and both runtimes once, here, before the workers
     start, each of which would otherwise fetch and build them for its own cache (the glibc 2.34
-    release and sanitized runtimes, and the glibc 2.28 one of the EL8 tests)."""
+    release and sanitized runtimes, and the glibc 2.28 one of the EL8 tests; in the EL8 test mode
+    the glibc 2.28 one only: the tests run no other)."""
     from fsbpyr.build import TARGET_PYTHON  # noqa: PLC0415
     from fsbpyr.runtime.toolchain import ToolchainError  # noqa: PLC0415
 
@@ -120,8 +153,10 @@ def _prepare_for_workers(kept: Path) -> None:
 
     downloads.fill(TARGET_PYTHON, kept)
     try:
-        for sanitize, baseline in ((False, "2.34"), (True, "2.34"), (False, "2.28")):
-            downloads.build_kept_runtime(TARGET_PYTHON, kept, sanitize=sanitize, baseline=baseline)
+        runtimes = ((False, "2.28"),) if EL8_MODE else (
+            (False, "2.34"), (True, "2.34"), (False, "2.28"))  # fmt: skip
+        for sanitize, glibc in runtimes:
+            downloads.build_kept_runtime(TARGET_PYTHON, kept, sanitize=sanitize, baseline=glibc)
     except ToolchainError:  # no compiler here: the end-to-end tests skip in the workers
         pass
 

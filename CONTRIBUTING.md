@@ -80,6 +80,36 @@ The tiers, from fastest to most complete:
   two native extensions). It is not part of `make test`: the VM is no pytest test, and
   `tests/unit/test_vm_smoke.py` covers the pin table and the script's own code.
 
+- EL8 (glibc 2.28), outside the release gate: `make test-el8` runs the stub-dependent tests
+  with the EL8 stub (`make test-el8-stub`: the launcher, the `_fsbpyr` contract and native
+  wheels at manylinux_2_28, in the EL8 test mode `FSBPYR_TEST_GLIBC=2.28`, in which every
+  `fsbpyr build` of a test is `--glibc 2.28` and `tests/e2e/test_el8.py` runs besides, with both
+  runtimes) and the portability matrix with apps built for glibc 2.28, on the 12 images and
+  `rockylinux:8` and `almalinux:8` (`make test-el8-portability`, podman; EL8 images are in no
+  other run). `.github/workflows/el8.yml` runs them for a release, per target and Python,
+  with a native-heavy corpus subset (`FSBPYR_CORPUS_APPS`, the mode's `pandas-csv`, `lxml`,
+  `pillow` and `scipy`) and, on aarch64, the 64 KiB-page VM smoke test with the EL8 userland
+  (`tools/vm-smoke.py --kernel 64k --userland el8`; a pinned file gone from its mirror fails this job, since nothing else tests the 64 KiB pages: renew the pin and retry). Only what differs from a default build is
+  tested: the stub. The EL8 stub is linked twice from the tag's sources in independent caches
+  (`tools/release/el8-stub.py` checks it needs no GLIBC symbol above 2.28 and carries the
+  runtime id its release's fsbpyr expects) and the two must be byte for byte identical.
+  **The workflow is not part of the release and does not gate it**: `release.yml` and
+  `full-suite.yml` do not wait for it or know it, and a release may have EL8 stubs or not.
+  It starts when `release.yml` completes successfully for a version tag (`workflow_run`) and
+  only the `publish` job, after every other job passed, writes: it uploads the eight
+  `fsbpyr-stub-3.X-<target>-glibc2.28.xz` and then `SHA256SUMS-glibc2.28` to the tag's
+  release, attests them, and touches no other asset (a rerun that finds the same sums uploads
+  nothing). A release has EL8 stubs when it has `SHA256SUMS-glibc2.28`; `make release-check`
+  verifies them when it does (and prints `skip: no EL8 stubs` when not). To attach them to a
+  release that has none, or to retry a failed run, start the workflow by hand: `gh workflow
+  run el8.yml -f tag=vX.Y.Z` (or Actions, EL8, Run workflow, from the default branch: the plan job refuses another). Everything runs from the tag, so
+  the tag must have the EL8 support (`fsbpyr runtime build --glibc`, `tools/release/el8-stub.py`,
+  `tests/support/baseline.py`); an older one fails in the first job with a message. Like all
+  workflows, the file used is the default branch's. On a 24-core machine `make test-el8-stub`
+  takes about 3.5 minutes with 4 processes (the EL8 and default runtimes linked from cached
+  downloads) and `make test-el8` about 3 minutes once the runtimes and images are cached; how
+  long the jobs take on a runner is not yet measured (each is meant to stay near 20 minutes).
+
 ## Documentation-only changes
 
 A pull request that changes only documentation (`*.md` files and `docs/`) starts no full

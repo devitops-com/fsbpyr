@@ -17,7 +17,7 @@ from fsbpyr.payload.spec import Blob, File, Module
 from fsbpyr.runtime import pbs, pins, registry, stub
 from fsbpyr.runtime.toolchain import ToolchainError, find_toolchain
 
-from ..support import corpus, downloads
+from ..support import baseline, corpus, downloads
 
 type BuildApp = Callable[[dict[str, str], str], Path]
 
@@ -43,31 +43,43 @@ def _private_cache(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     """Tests marked ``sanitized`` run with both launchers: the release build and its ASan/UBSan
-    variant (D38), which turns any memory error or undefined behaviour into a failed run."""
+    variant (D38), which turns any memory error or undefined behaviour into a failed run. The
+    EL8 test mode (tests/support/baseline.py) has the release launcher only: the sanitized one
+    is the default sysroot's."""
     if "runtime" in metafunc.fixturenames and metafunc.definition.get_closest_marker("sanitized"):
-        metafunc.parametrize("runtime", ["release", "sanitized"], indirect=True, scope="session")
+        variants = ["release"] if baseline.EL8 else ["release", "sanitized"]
+        metafunc.parametrize("runtime", variants, indirect=True, scope="session")
 
 
-@pytest.fixture(scope="session")
-def runtime(request: pytest.FixtureRequest) -> registry.Runtime:
-    sanitize = getattr(request, "param", "release") == "sanitized"
+def _session_runtime(glibc: str, *, sanitize: bool) -> registry.Runtime:
+    """The runtime of the tests' Python linked for the glibc baseline ``glibc``: the cache's, else
+    built from the kept downloads (or fetched), once per session and variant."""
     try:
-        return registry.find_runtime(TARGET_PYTHON, sanitize=sanitize)
+        return registry.find_runtime(TARGET_PYTHON, sanitize=sanitize, baseline=glibc)
     except registry.RuntimeCacheError:
         pass
-    pinned = downloads.pinned(TARGET_PYTHON)
+    pinned = downloads.pinned(TARGET_PYTHON, glibc)
     kept = Path(os.environ[DOWNLOADS_VARIABLE]) if os.environ.get(DOWNLOADS_VARIABLE) else None
     seeded = downloads.seed(pinned, kept, registry.cache_root())
     for name, how in seeded.items():
         _download_status.setdefault(name, how)
     try:
         if kept is None:
-            return registry.build_runtime(TARGET_PYTHON, log=lambda _: None, sanitize=sanitize)
-        downloads.build_kept_runtime(TARGET_PYTHON, kept, sanitize=sanitize)  # built already?
+            return registry.build_runtime(TARGET_PYTHON, log=lambda _: None, sanitize=sanitize,
+                                          baseline=glibc)  # fmt: skip
+        downloads.build_kept_runtime(TARGET_PYTHON, kept, sanitize=sanitize, baseline=glibc)
     except ToolchainError as exc:  # pragma: no cover - depends on the host
         pytest.skip(f"cannot build a runtime here: {exc}")
-    downloads.seed_runtime(TARGET_PYTHON, kept, registry.cache_root(), sanitize=sanitize)
-    return registry.find_runtime(TARGET_PYTHON, sanitize=sanitize)
+    downloads.seed_runtime(TARGET_PYTHON, kept, registry.cache_root(), sanitize=sanitize,
+                           baseline=glibc)  # fmt: skip
+    return registry.find_runtime(TARGET_PYTHON, sanitize=sanitize, baseline=glibc)
+
+
+@pytest.fixture(scope="session")
+def runtime(request: pytest.FixtureRequest) -> registry.Runtime:
+    """The release runtime, or its ASan/UBSan variant; in the EL8 test mode the glibc 2.28 one."""
+    sanitize = getattr(request, "param", "release") == "sanitized"
+    return _session_runtime(baseline.BASELINE, sanitize=sanitize)
 
 
 @pytest.fixture(scope="session")
@@ -75,24 +87,7 @@ def el8_runtime() -> registry.Runtime:
     """The runtime of the tests' Python linked for glibc 2.28 (EL8, D46), built once like
     ``runtime`` is: its stub is what `fsbpyr build --glibc 2.28` puts into apps, and what a
     release publishes as its EL8 asset."""
-    baseline = "2.28"
-    try:
-        return registry.find_runtime(TARGET_PYTHON, baseline=baseline)
-    except registry.RuntimeCacheError:
-        pass
-    pinned = downloads.pinned(TARGET_PYTHON, baseline)
-    kept = Path(os.environ[DOWNLOADS_VARIABLE]) if os.environ.get(DOWNLOADS_VARIABLE) else None
-    for name, how in downloads.seed(pinned, kept, registry.cache_root()).items():
-        _download_status.setdefault(name, how)
-    try:
-        if kept is None:
-            return registry.build_runtime(TARGET_PYTHON, log=lambda _: None, baseline=baseline)
-        downloads.build_kept_runtime(TARGET_PYTHON, kept, sanitize=False, baseline=baseline)
-    except ToolchainError as exc:  # pragma: no cover - depends on the host
-        pytest.skip(f"cannot build a runtime here: {exc}")
-    downloads.seed_runtime(TARGET_PYTHON, kept, registry.cache_root(), sanitize=False,
-                           baseline=baseline)  # fmt: skip
-    return registry.find_runtime(TARGET_PYTHON, baseline=baseline)
+    return _session_runtime("2.28", sanitize=False)
 
 
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:

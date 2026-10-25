@@ -11,7 +11,8 @@ split between them.
 Runs in full-suite.yml's corpus job (`make test-corpus` here), not in ``make test-ci``: the
 corpus needs the network for its wheels, and several apps carry hundreds of megabytes of
 native code. An app's temporary files (venv, executable and cache: gigabytes for torch) are
-removed when it passes.
+removed when it passes. el8.yml runs a few of the apps (FSBPYR_CORPUS_APPS) with the glibc 2.28
+stub (FSBPYR_TEST_GLIBC=2.28).
 """
 
 import os
@@ -71,7 +72,7 @@ def _remove(tree: Path) -> None:
     shutil.rmtree(tree)
 
 
-@pytest.mark.parametrize("app", corpus.apps())
+@pytest.mark.parametrize("app", corpus.selected())
 def test_corpus_app_matches_its_venv(
     app: str, runtime: Runtime, tmp_path_factory: pytest.TempPathFactory,
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch,

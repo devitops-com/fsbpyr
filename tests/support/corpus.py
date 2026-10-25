@@ -8,6 +8,7 @@ conftest collects them, in pytest-xdist's controller as well, and the session pr
 success rate.
 """
 
+import os
 import platform
 import tomllib
 from dataclasses import asdict, dataclass, field
@@ -20,11 +21,22 @@ from . import locks, wheels
 
 CORPUS = Path(__file__).parents[1] / "corpus"
 _PROPERTY = "corpus-result"
+SELECTION = "FSBPYR_CORPUS_APPS"  # a comma-separated subset for the corpus test to run
 
 
 def apps() -> list[str]:
     """The corpus directories, by name."""
     return sorted(path.name for path in CORPUS.iterdir() if path.is_dir())
+
+
+def selected() -> list[str]:
+    """The apps the corpus test runs: ``apps()``, or the ones FSBPYR_CORPUS_APPS names (the EL8
+    workflow runs a few native-heavy ones, with the glibc 2.28 stub: FSBPYR_TEST_GLIBC)."""
+    chosen = [name.strip() for name in os.environ.get(SELECTION, "").split(",") if name.strip()]
+    unknown = sorted(set(chosen) - set(apps()))
+    if unknown:
+        raise ValueError(f"{SELECTION} names no corpus app: {', '.join(unknown)}")
+    return sorted(set(chosen)) or apps()
 
 
 def _commands_toml(app: str) -> dict[str, Any]:

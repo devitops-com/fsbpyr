@@ -42,10 +42,10 @@ else
 WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-container test-corpus test-portability test-vm check check-c release-prep release release-check clean
+.PHONY: help bootstrap build install uninstall test test-ci test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm check check-c release-prep release release-check clean
 
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
 
 # --- Setup ---
@@ -184,6 +184,36 @@ test-portability: ## Run the portability matrix on 12 distributions (podman, dis
 	tools/portability-apps.sh $(BIN) dist/portability-apps $(PYTHON_MINOR)
 	$(TESTENV) FSBPYR_PORTABILITY_APPS="$(CURDIR)/dist/portability-apps" FSBPYR_TESTS_REQUIRE_ALL=portability \
 		$(UVRUN) pytest tests/e2e/test_portability.py
+
+# The EL8 test mode (FSBPYR_TEST_GLIBC=2.28, tests/support/baseline.py): the tests that build and
+# run executables use the glibc 2.28 stub, built here from Rocky Linux 8.10's sysroot, and every
+# `fsbpyr build` of a test is a `--glibc 2.28` one. What differs between an EL8 build and a
+# default one is the stub, so these are the tests that run it: the launcher's (edges, due, slots,
+# gc, restore, find_object), the _fsbpyr contract (runtime_app, imports, stub_hardening, cache
+# root, streaming) and the build of apps with natives from manylinux_2_28 wheels (compat,
+# natives). tests/e2e/test_el8.py compares an EL8 build with a default one, so it runs with
+# both runtimes, not in the mode. full-suite.yml does not run any of it; el8.yml, which attaches
+# the EL8 stubs to a release, does.
+EL8_TESTS := tests/e2e/test_runtime_app.py tests/e2e/test_imports.py tests/e2e/test_stub_hardening.py \
+	tests/e2e/test_edges.py tests/e2e/test_cache_root.py tests/e2e/test_gc.py tests/e2e/test_slots.py \
+	tests/e2e/test_due.py tests/e2e/test_restore.py tests/e2e/test_find_object.py \
+	tests/e2e/test_streaming.py tests/e2e/test_stream_windows.py tests/e2e/test_unbuffered.py \
+	tests/e2e/test_digests.py tests/e2e/test_compat.py tests/e2e/test_natives.py \
+	tests/unit/test_test_modes.py
+
+test-el8-stub: ## Run the stub-dependent tests with the glibc 2.28 (EL8) stub, and tests/e2e/test_el8.py, in JOBS processes (PYTHON=3.X)
+	$(TESTENV) $(CONTAINED) env FSBPYR_TEST_GLIBC=2.28 $(UVRUN) pytest -n $(JOBS) --dist loadfile $(EL8_TESTS)
+	$(TESTENV) $(CONTAINED) $(UVRUN) pytest tests/e2e/test_el8.py
+
+# The portability matrix (podman) with apps built `--glibc 2.28`: the 12 images and, only in this
+# mode, rockylinux:8 and almalinux:8. The apps are built by the tests with the EL8 runtime (as
+# without FSBPYR_PORTABILITY_APPS); el8.yml builds them with tools/portability-apps.sh instead,
+# with the release's fsbpyr and the stub it has just linked.
+test-el8-portability: ## Run the portability matrix with apps built for glibc 2.28, on the 12 distributions and rockylinux:8, almalinux:8 (podman; PYTHON=3.X)
+	$(TESTENV) $(CONTAINED) env FSBPYR_TEST_GLIBC=2.28 FSBPYR_TESTS_REQUIRE_ALL=portability \
+		$(UVRUN) pytest tests/e2e/test_portability.py
+
+test-el8: test-el8-stub test-el8-portability ## Run the EL8 (glibc 2.28) test mode and its portability matrix: what el8.yml runs, without the corpus subset and the VM
 
 # aarch64 apps in a QEMU system VM (tools/vm-smoke.py) whose kernel has 16 KiB pages (Raspberry
 # Pi 5's) and 64 KiB pages (EL8's), under TCG: no KVM, about a minute per boot. fsbpyr builds for

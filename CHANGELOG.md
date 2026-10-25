@@ -40,9 +40,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   auditwheel's manylinux_2_28 limits, and `fsbpyr inspect` shows `baseline   glibc 2.28`
   (`glibc_baseline` in `--json` and in the build information; builds for the default record
   nothing new). The launcher for 2.28 is a separate release asset, one per Python and target
-  (`fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28`, plain or `.xz`, with its SHA-256 in
-  `SHA256SUMS-glibc2.28`): a release fsbpyr pairs its own standard library with the stub of its
-  own release, taken from a file placed in the directory of the fsbpyr executable (for machines
+  (`fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz`, with the SHA-256 of the stub in
+  `SHA256SUMS-glibc2.28`; a file placed by hand may be plain or `.xz`): a release fsbpyr pairs
+  its own standard library with the stub of its own release, taken from a file placed in the directory of the fsbpyr executable (for machines
   without GitHub access), else from its cache, else downloaded and verified. EL8 assets are
   published separately and not with every release: without them the build stops and says so,
   naming the asset to place. fsbpyr run from a checkout or a wheel uses the runtime that `fsbpyr runtime
@@ -59,6 +59,33 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   aarch64 executable and two fixture apps, one with native extensions, on both kernels. The
   README no longer calls 16K- and 64K-page kernels untested: they are smoke-tested in virtual
   machines, not on hardware.
+- **A separate workflow attaches EL8 stubs to a release.** `.github/workflows/el8.yml` starts
+  when `release.yml` completes successfully for a version tag, or by hand with a tag
+  (`gh workflow run el8.yml -f tag=vX.Y.Z`, for a release that has none or to retry), and is
+  outside the release: `release.yml`, `full-suite.yml` and the release gate neither wait for it
+  nor know it, and a release may have EL8 stubs or not. Per Python and target it links the EL8
+  stub from the tag's sources twice in independent caches and requires the two to be byte for
+  byte identical, with no GLIBC symbol above 2.28 and the runtime id its release's fsbpyr
+  expects (`tools/release/el8-stub.py`); runs the stub-dependent tests with the EL8 stub, the
+  portability matrix with apps the release's own fsbpyr built with `--glibc 2.28` (the stub
+  placed beside it) on the 12 images and `rockylinux:8` and `almalinux:8`, four native-heavy
+  corpus apps (`pandas-csv`, `lxml`, `pillow`, `scipy`) built the same way and compared with
+  their venvs, and, on aarch64, an app on EL8's 64 KiB-page kernel with the EL8 userland in a
+  QEMU VM. Only when every job passed does it write `SHA256SUMS-glibc2.28`, attest the stubs and
+  upload the eight `.xz` and then the sums to the release, touching no other asset; a release
+  has EL8 stubs when it has `SHA256SUMS-glibc2.28`.
+- **`make test-el8` runs the EL8 test mode and its portability matrix.** With
+  `FSBPYR_TEST_GLIBC=2.28` the tests that run the stub use the glibc 2.28 runtime and every
+  `fsbpyr build` of a test is a `--glibc 2.28` one (`make test-el8-stub`: the launcher, the
+  `_fsbpyr` contract and native wheels at manylinux_2_28); `make test-el8-portability` runs the
+  portability matrix on apps built for glibc 2.28, with `rockylinux:8` and `almalinux:8` added
+  (they are in no other run). `FSBPYR_CORPUS_APPS` runs a subset of the corpus, and
+  `tools/portability-apps.sh` takes the glibc as a fourth argument.
+- **`make release-check` checks a release's EL8 stubs.** With `SHA256SUMS-glibc2.28` among the
+  assets it verifies the sums, that each `.xz` unpacks to its listed digest, their attestations by
+  `el8.yml`, and that the release's fsbpyr builds a pure-Python fixture with `--glibc 2.28`,
+  fetching the stub as a user does, which runs in `rockylinux:8`; a release without reports
+  `skip  no EL8 stubs`, not a failure, and the EL8 assets are no longer reported as unexpected.
 
 ### Changed
 - **`PYTHONUNBUFFERED` is honoured** (D14). Set and non-empty, it makes an app's stdout and

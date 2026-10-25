@@ -272,11 +272,20 @@ as it always did. For 2.28 the build
 
 Where the launcher for 2.28 comes from depends on how you run fsbpyr. The release fsbpyr
 executable carries the standard library and the default launcher only; the launcher for 2.28 is
-a separate asset of its release, one per Python and target, `fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28`
-(and `.xz`), with the SHA-256 of each in `SHA256SUMS-glibc2.28`. **EL8 assets are published
-separately and not with every release.** A release without them makes `--glibc 2.28` stop with
-`this release (vX.Y.Z) has no glibc 2.28 stubs`, naming the asset to place and linking the
-[releases](https://github.com/devitops-com/fsbpyr/releases); use a release that has them. fsbpyr
+a separate asset of its release, one per Python and target,
+`fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz` (the stub, compressed; a file you place may
+be that or the unpacked stub), with the SHA-256 of each unpacked stub in
+`SHA256SUMS-glibc2.28`. **EL8 assets are published
+separately and not with every release.** A separate workflow (`.github/workflows/el8.yml`)
+builds, tests and attaches them to a release after it is published, and only when all of its
+jobs pass; the release itself never waits for it. **A release has EL8 stubs when its assets
+include `SHA256SUMS-glibc2.28`** (it is uploaded last, after the eight `.xz`): look for it on the
+[releases](https://github.com/devitops-com/fsbpyr/releases) page, or run `gh release view vX.Y.Z
+--json assets --jq '.assets[].name' | grep glibc2.28`. Each asset has a build provenance
+attestation: `gh attestation verify fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz --repo
+devitops-com/fsbpyr --signer-workflow devitops-com/fsbpyr/.github/workflows/el8.yml`. A release
+without them makes `--glibc 2.28` stop with `this release (vX.Y.Z) has no glibc 2.28 stubs`,
+naming the asset to place and linking the releases; use a release that has them. fsbpyr
 takes the launcher from, in this order:
 
 1. a file you placed in the directory of the fsbpyr executable, named exactly as the asset,
@@ -298,7 +307,9 @@ the fsbpyr executable and the cache writable by you alone. fsbpyr run from a che
 fetch from: it uses the runtime that `fsbpyr runtime build --python X.Y --glibc 2.28` put in the
 cache, and says to run that command when there is none.
 
-Kernels with 64K pages (EL8's on aarch64) are untested, as other page sizes are.
+Kernels with 64K pages (EL8's on aarch64) are smoke-tested in a QEMU virtual machine, not on
+hardware: `make test-vm` boots EL8's kernel, and the EL8 workflow runs an app built with
+`--glibc 2.28` on that kernel with the EL8 userland before it publishes the aarch64 stubs.
 
 ## Failing a build on warnings
 

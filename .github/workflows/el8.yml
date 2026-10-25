@@ -1,0 +1,624 @@
+name: EL8
+
+# The EL8 (glibc 2.28) stubs of a release, built, tested and attached to it after the fact. A
+# release's executables need glibc 2.34; `fsbpyr build --glibc 2.28` builds apps for RHEL 8 and
+# its rebuilds with the release's EL8 stub, a stub-only asset per (Python, target):
+# `fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz`, with the SHA-256 of each in
+# `SHA256SUMS-glibc2.28`. This workflow makes them, and it is OUTSIDE the release gate (owner,
+# 2026-10-25): release.yml, which full-suite.yml gates through tools/release/green-run.sh,
+# neither waits for it nor depends on it, and a release may have EL8 stubs or not. A release
+# without them is complete; `--glibc 2.28` says so plainly (README, "Older systems").
+# It runs
+#   - when release.yml completes successfully for a pushed version tag (workflow_run: the run
+#     that a tag push caused; a release that the publish job created with GITHUB_TOKEN triggers
+#     no `release: published` workflow, a workflow_run of the tag-triggered workflow does), and
+#   - on request, with the tag of an existing release: to attach the stubs to a release that
+#     has none, or to retry. The tag's sources must have the EL8 support (plan checks), since
+#     everything runs from the tag, not from the default branch's copy of the repository.
+# Per (target, Python) entry, as full-suite.yml's matrix (each target on a runner of its
+# architecture: x86_64-linux-gnu on ubuntu-24.04, aarch64-linux-gnu on ubuntu-24.04-arm), testing
+# only what differs from a default build: the stub (boot code, payload format, classification
+# and the build pipeline are the same bytes):
+#   - stub: the EL8 stub linked from the tag (`fsbpyr runtime build --python X --glibc 2.28`,
+#     tools/release/el8-stub.py) twice in independent caches, byte for byte identical; it needs
+#     no GLIBC_ symbol above 2.28 and carries the runtime id this tag's fsbpyr expects;
+#   - tests: the tests that run the stub, with the glibc 2.28 runtime (FSBPYR_TEST_GLIBC=2.28,
+#     `make test-el8-stub`: the launcher, the _fsbpyr contract, native wheels at manylinux_2_28);
+#   - portability: apps that the release's own fsbpyr builds with `--glibc 2.28`, pairing it with
+#     the stub just linked (placed beside the executable, as a user without GitHub does), run on
+#     the portability images and rockylinux:8 and almalinux:8;
+#   - corpus: a few native-heavy corpus apps built with `--glibc 2.28` and compared with their
+#     venvs;
+#   - vm-smoke (aarch64, the default Python): apps built so run on EL8's 64 KiB-page kernel with
+#     its userland, in a QEMU system VM (tools/vm-smoke.py).
+# publish needs every job of the run to pass: it writes SHA256SUMS-glibc2.28 over the stubs,
+# attests them and uploads them, and the sums last, to the tag's release, touching none of its
+# other assets; a run that finds the same sums there publishes nothing. The attestations are
+# this workflow's: a workflow_run runs on the default branch, so `gh attestation verify` takes
+# `--signer-workflow devitops-com/fsbpyr/.github/workflows/el8.yml` and no --source-ref.
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The tag of the release to attach the EL8 stubs to (vX.Y.Z)"
+        type: string
+        required: true
+
+# A tag is done once: a second run for the same tag waits instead of cancelling the first.
+concurrency:
+  group: el8-${{ github.event.workflow_run.head_branch || inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Which release this run is for, or none: every completed release.yml run starts this
+  # workflow, and only a successful one of a push needs anything.
+  plan:
+    name: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      # head_branch of a workflow_run caused by a tag push is the tag. The release must exist
+      # (publish uploads to it), and the tag's sources must have what the jobs below run.
+      - name: Which release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          GIVEN: ${{ inputs.tag }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_REF: ${{ github.event.workflow_run.head_branch }}
+          REF: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          xyz='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          if [ "$EVENT" = workflow_dispatch ]; then
+            # the attestations name the ref the workflow ran on: only the default branch's copy
+            [ "$REF" = "$DEFAULT_BRANCH" ] \
+              || { echo "::error::run this workflow from $DEFAULT_BRANCH, not '$REF'"; exit 1; }
+            tag="$GIVEN"
+            [[ "$tag" =~ $xyz ]] || { echo "::error::'$tag' is not a release tag vX.Y.Z"; exit 1; }
+          else
+            tag="$RUN_REF"
+            if [ "$RUN_CONCLUSION" != success ] || [ "$RUN_EVENT" != push ] || ! [[ "$tag" =~ $xyz ]]; then
+              echo "::notice::the Release run ($RUN_EVENT of '$RUN_REF': $RUN_CONCLUSION) made no release: nothing to attach"
+              echo "tag=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          gh release view "$tag" > /dev/null \
+            || { echo "::error::$tag has no GitHub release to attach the EL8 stubs to"; exit 1; }
+          for file in src/fsbpyr/runtime/stubs.py tests/support/baseline.py tools/release/el8-stub.py; do
+            gh api "repos/$GH_REPO/contents/$file?ref=$tag" --silent 2> /dev/null \
+              || { echo "::error::$tag has no $file: it predates the EL8 support, which the EL8 stubs of a release need"; exit 1; }
+          done
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  # The EL8 stub of every (target, Python) entry, linked twice. Debian trixie and the toolchain
+  # as build.yml sets them up (the image by digest, uv from tools/release/uv.version, clang/lld
+  # 23 from tools/release/llvm23); no cache is shared between the two links.
+  stub:
+    name: stub (${{ matrix.target }}, Python ${{ matrix.python }})
+    needs: plan
+    if: needs.plan.outputs.tag != ''
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14", "3.15"]  # one entry per Python version a release is built for
+        target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]  # what the assets are named with
+        include:
+          - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
+          - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
+    container: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+    timeout-minutes: 30
+    env:
+      TARGET: ${{ matrix.target }}
+      # The name this entry's stub is released under (vcs.release_stub_asset).
+      ASSET: fsbpyr-stub-${{ matrix.python }}-${{ matrix.target }}-glibc2.28
+      # As in build.yml: the runner's HOME is not root's, and fsbpyr refuses a cache whose way
+      # from / another user owns. uv's cache goes under root's own home too.
+      XDG_CACHE_HOME: /root/.cache
+    steps:
+      - name: Install git, xz, curl and zstd
+        run: |
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends ca-certificates git curl xz-utils zstd
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.plan.outputs.tag }}
+          persist-credentials: false  # no later step needs the token in .git/config
+
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install uv and Python
+        env:
+          MATRIX_PYTHON: ${{ matrix.python }}
+        run: |
+          echo "FSBPYR_UV_VERSION=$(sh tools/release/install-uv.sh /usr/local/bin)" >> "$GITHUB_ENV"
+          uv python install "$MATRIX_PYTHON"
+
+      - name: Record the toolchain
+        run: |
+          echo "tag:      ${{ needs.plan.outputs.tag }} ($(git rev-parse HEAD))"
+          echo "uv:       $(uv --version)"
+          echo "llvm:     $(cat tools/release/llvm23) (tools/release/llvm23, the runtime's clang/lld)"
+          dpkg-query -W xz-utils
+
+      # The clang/lld 23 that links the stub, first on PATH from here on.
+      - name: clang/lld 23 on PATH
+        run: |
+          clang="$(bash tools/bootstrap.sh --llvm23)"
+          echo "${clang%/*}" >> "$GITHUB_PATH"
+
+      # Each link in a fresh fsbpyr cache (its own PBS download, sysroot and runtime), in the
+      # environment of the entry's Python (an older Python cannot canonicalize a newer one's
+      # bytecode). el8-stub.py checks the stub and writes it under its asset name.
+      - name: Link the EL8 stub twice
+        env:
+          MATRIX_PYTHON: ${{ matrix.python }}
+        run: |
+          export UV_PROJECT_ENVIRONMENT=".venv-$MATRIX_PYTHON"
+          for n in 1 2; do
+            export FSBPYR_CACHE_DIR="/root/el8-cache-$n"
+            uv run --python "$MATRIX_PYTHON" --locked fsbpyr runtime build --python "$MATRIX_PYTHON" --glibc 2.28
+            uv run --python "$MATRIX_PYTHON" --locked python tools/release/el8-stub.py "$MATRIX_PYTHON" "stubs/$n"
+          done
+
+      - name: The two links are identical
+        run: |
+          if cmp "stubs/1/$ASSET" "stubs/2/$ASSET"; then
+            echo "identical: $(sha256sum < "stubs/1/$ASSET" | cut -d' ' -f1)"
+            exit 0
+          fi
+          echo "::error::two links of the EL8 stub in independent caches differ"
+          sha256sum "stubs/1/$ASSET" "stubs/2/$ASSET"
+          exit 1
+
+      # As build.yml compresses an executable: the BCJ filter of the architecture, one thread,
+      # so that the same stub gives the same .xz.
+      - name: Compress the stub
+        run: |
+          case "$TARGET" in
+            x86_64-*) filter=--x86 ;;
+            aarch64-*) filter=--arm64 ;;
+            *) echo "::error::no xz filter for $TARGET"; exit 1 ;;
+          esac
+          mkdir dist
+          cp "stubs/1/$ASSET" "dist/$ASSET"
+          xz $filter --lzma2=preset=9e --threads=1 --keep "dist/$ASSET"
+          xz --decompress --stdout "dist/$ASSET.xz" | cmp - "dist/$ASSET"
+
+      - name: Upload the stub
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: el8-stub-${{ matrix.python }}-${{ matrix.target }}
+          path: |
+            dist/${{ env.ASSET }}
+            dist/${{ env.ASSET }}.xz
+          if-no-files-found: error
+
+  # The stub-dependent tests (`make test-el8-stub`) in the suite job's setup of full-suite.yml
+  # (privileged container, the user `tester`, /var/tmp a tmpfs), minus podman and the coverage
+  # and fuzzing: the tests link the glibc 2.28 runtime themselves, with the same recipe as the
+  # stub job. FSBPYR_TESTS_REQUIRE_ALL=el8: no skip is expected but podman's (tests/conftest.py).
+  tests:
+    name: tests (${{ matrix.target }}, Python ${{ matrix.python }})
+    needs: plan
+    if: needs.plan.outputs.tag != ''
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14", "3.15"]  # as in the stub job
+        target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
+        include:
+          - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
+          - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
+    container:
+      image: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+      options: --privileged --pids-limit 8192 --memory 14g --memory-swap 14g  # as the suite job's
+    timeout-minutes: 40
+    steps:
+      - name: Install the build prerequisites
+        run: |
+          apt-get update -q
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+            ca-certificates curl git make clang-22 lld-22
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.plan.outputs.tag }}
+          persist-credentials: false
+          fetch-depth: 0  # the tags: the executables the tests build report them
+
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install uv
+        run: |
+          echo "FSBPYR_UV_VERSION=$(sh tools/release/install-uv.sh /usr/local/bin)" >> "$GITHUB_ENV"
+
+      - name: Set up the test environment
+        run: bash tools/test-setup.sh
+
+      # As in the suite job (no rootless podman here): the user's own copy of the checkout, a
+      # tmpfs for the tests' temporary files (a symlink target of 4,000 bytes fails on a
+      # container's overlay file system) and user namespaces open to unprivileged processes.
+      - name: An unprivileged user
+        run: |
+          cp -a "$GITHUB_WORKSPACE" /home/tester/src
+          chown -R tester: /home/tester
+          f=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [ -e "$f" ]; then echo 0 > "$f"; fi
+          mount -t tmpfs -o size=10g,mode=1777 tmpfs /var/tmp
+          cat > /usr/local/bin/as-tester <<'WRAPPER'
+          #!/bin/sh
+          cd /home/tester/src || exit 1
+          exec runuser -u tester -- env -i HOME=/home/tester USER=tester LANG=C.UTF-8 \
+            PATH=/home/tester/.local/bin:/usr/local/bin:/usr/bin:/bin "$@"
+          WRAPPER
+          chmod 755 /usr/local/bin/as-tester
+
+      # The default version runs in .venv, another in .venv-3.X (the Makefile's PYTHON=3.X).
+      - name: The Python of this entry
+        env:
+          MATRIX_PYTHON: ${{ matrix.python }}
+        run: |
+          if [ "$MATRIX_PYTHON" = "$(cut -d. -f1,2 .python-version)" ]; then
+            echo "MAKE_ARGS=" >> "$GITHUB_ENV"
+            as-tester uv python install "$(cat .python-version)"
+          else
+            echo "MAKE_ARGS=PYTHON=$MATRIX_PYTHON" >> "$GITHUB_ENV"
+            as-tester uv python install "$MATRIX_PYTHON"
+          fi
+
+      # make fetches clang/lld 23 and builds the runtimes itself. TESTTMP=/var/tmp: the tmpfs.
+      - name: make test-el8-stub
+        run: |
+          as-tester FSBPYR_UV_VERSION="$FSBPYR_UV_VERSION" FSBPYR_TESTS_REQUIRE_ALL=el8 JOBS=4 \
+            TESTTMP=/var/tmp PYTEST_ADDOPTS="--durations=30" make test-el8-stub $MAKE_ARGS
+
+  # The portability matrix with apps built for glibc 2.28. On the runner host, as full-suite.yml's
+  # portability job (nested podman in a container failed). The apps are built by the release's
+  # own fsbpyr of the entry, which finds the stub linked above beside it (only the .xz, the
+  # asset): the pairing of fsbpyr and stub that users get, runtime id check included.
+  portability:
+    name: portability (${{ matrix.target }}, Python ${{ matrix.python }})
+    needs: [plan, stub]
+    if: needs.plan.outputs.tag != ''
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14", "3.15"]  # as in the stub job
+        target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
+        include:
+          - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
+          - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
+    timeout-minutes: 45
+    env:
+      ASSET: fsbpyr-${{ matrix.python }}-${{ matrix.target }}
+      STUB: fsbpyr-stub-${{ matrix.python }}-${{ matrix.target }}-glibc2.28
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.plan.outputs.tag }}
+          persist-credentials: false
+
+      - name: Download the release's executable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          gh release download "$TAG" --pattern "$ASSET" --dir dist
+          chmod +x "dist/$ASSET"
+
+      - name: Download the stub
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: el8-stub-${{ matrix.python }}-${{ matrix.target }}
+          path: stub
+
+      # Beside the executable, compressed: what a user without GitHub places.
+      - name: Place the stub beside the executable
+        run: cp "stub/$STUB.xz" dist/
+
+      - name: Install uv and llvm
+        run: |
+          sh tools/release/install-uv.sh "$RUNNER_TEMP/bin" > /dev/null
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends llvm
+
+      - name: Log in to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::warning::no DOCKERHUB_TOKEN secret: pulling anonymously"
+          else
+            printf '%s' "$DOCKERHUB_TOKEN" | podman login docker.io -u "$DOCKERHUB_USERNAME" \
+              --password-stdin
+          fi
+
+      # The tests run on .python-version's Python; the apps are built for the entry's.
+      - name: Build the apps with --glibc 2.28
+        env:
+          MATRIX_PYTHON: ${{ matrix.python }}
+        run: |
+          uv python install "$(cat .python-version)" "$MATRIX_PYTHON"
+          tools/portability-apps.sh "dist/$ASSET" "$RUNNER_TEMP/apps" "$MATRIX_PYTHON" 2.28
+
+      # FSBPYR_TESTS_REQUIRE_ALL=portability: no skip is expected.
+      - name: The portability tests
+        run: |
+          FSBPYR_TEST_GLIBC=2.28 FSBPYR_PORTABILITY_APPS="$RUNNER_TEMP/apps" \
+            FSBPYR_TESTS_REQUIRE_ALL=portability \
+            uv run --locked pytest tests/e2e/test_portability.py -rf --tb=short \
+              --junitxml=portability.xml
+
+      - name: Upload the report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: el8-portability-${{ matrix.python }}-${{ matrix.target }}
+          path: portability.xml
+          if-no-files-found: warn
+
+  # A native-heavy part of the real-world corpus, built with the glibc 2.28 stub and compared with
+  # the apps' venvs (tests/e2e/test_corpus.py): their wheels exist at manylinux_2_28 for every
+  # Python and both machines (tests/support/locks.py reads the locks). The job and its limits
+  # are full-suite.yml's corpus job's.
+  corpus:
+    name: corpus (${{ matrix.target }}, Python ${{ matrix.python }})
+    needs: plan
+    if: needs.plan.outputs.tag != ''
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14", "3.15"]  # as in the stub job
+        target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
+        include:
+          - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
+          - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
+    container:
+      image: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+      options: --pids-limit 8192 --memory 14g --memory-swap 14g  # as the suite job's
+    timeout-minutes: 40
+    env:
+      CORPUS_APPS: pandas-csv,lxml,pillow,scipy
+    steps:
+      - name: Install the build prerequisites
+        run: |
+          apt-get update -q
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+            ca-certificates curl git make clang-22 lld-22 zstd
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.plan.outputs.tag }}
+          persist-credentials: false
+          fetch-depth: 0  # the tags: fsbpyr's --version reads them
+
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install uv
+        run: sh tools/release/install-uv.sh /usr/local/bin > /dev/null
+
+      - name: An unprivileged user
+        run: |
+          useradd --create-home --uid 1000 tester
+          cp -a "$GITHUB_WORKSPACE" /home/tester/src
+          chown -R tester: /home/tester
+          cat > /usr/local/bin/as-tester <<'WRAPPER'
+          #!/bin/sh
+          cd /home/tester/src || exit 1
+          exec runuser -u tester -- env -i HOME=/home/tester USER=tester LANG=C.UTF-8 \
+            PATH=/home/tester/.local/bin:/usr/local/bin:/usr/bin:/bin "$@"
+          WRAPPER
+          chmod 755 /usr/local/bin/as-tester
+
+      - name: The Python of this entry
+        env:
+          MATRIX_PYTHON: ${{ matrix.python }}
+        run: |
+          if [ "$MATRIX_PYTHON" = "$(cut -d. -f1,2 .python-version)" ]; then
+            echo "MAKE_ARGS=" >> "$GITHUB_ENV"
+            as-tester uv python install "$(cat .python-version)"
+          else
+            echo "MAKE_ARGS=PYTHON=$MATRIX_PYTHON" >> "$GITHUB_ENV"
+            as-tester uv python install "$MATRIX_PYTHON"
+          fi
+
+      # FSBPYR_TESTS_REQUIRE_ALL=full: an app may only be skipped for a package without a wheel
+      # on this Python and machine (at manylinux_2_28 in this mode).
+      - name: make test-corpus (glibc 2.28)
+        run: |
+          as-tester FSBPYR_TEST_GLIBC=2.28 FSBPYR_CORPUS_APPS="$CORPUS_APPS" \
+            FSBPYR_TESTS_REQUIRE_ALL=full JOBS=4 \
+            PYTEST_ADDOPTS="--durations=30 --junitxml=corpus.xml" make test-corpus $MAKE_ARGS
+
+      - name: Upload the report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: el8-corpus-${{ matrix.python }}-${{ matrix.target }}
+          path: /home/tester/src/corpus.xml
+          if-no-files-found: warn
+
+  # An app built with --glibc 2.28 on a 64 KiB-page kernel (EL8's aarch64) with the EL8 userland,
+  # glibc 2.28 (tools/vm-smoke.py --userland el8, pins in tools/vm-pins.toml), under TCG: the
+  # runners' own kernels have 4 KiB pages. Only the default Python: the page size matters to the
+  # launcher and the payload, not to the interpreter. The apps are two fixtures (a pure-Python
+  # one and one with natives) that the release's aarch64 fsbpyr builds with the stub linked on
+  # the aarch64 runner of the stub job.
+  vm-smoke:
+    name: vm-smoke (aarch64-linux-gnu)
+    needs: [plan, stub]
+    if: needs.plan.outputs.tag != ''
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.plan.outputs.tag }}
+          persist-credentials: false
+
+      - name: Which Python
+        id: python
+        run: echo "version=$(cut -d. -f1,2 .python-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Download the release's executable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          PYTHON_VERSION: ${{ steps.python.outputs.version }}
+        run: |
+          gh release download "$TAG" --pattern "fsbpyr-$PYTHON_VERSION-aarch64-linux-gnu" --dir dist
+          chmod +x dist/fsbpyr-*
+
+      - name: Download the stub
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: el8-stub-${{ steps.python.outputs.version }}-aarch64-linux-gnu
+          path: stub
+
+      - name: Place the stub beside the executable
+        run: cp stub/*.xz dist/
+
+      - name: Install uv and QEMU
+        run: |
+          sh tools/release/install-uv.sh "$RUNNER_TEMP/bin" > /dev/null
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+            qemu-system-arm
+
+      - name: Build the apps with --glibc 2.28
+        env:
+          APP_PYTHON: ${{ steps.python.outputs.version }}
+        run: |
+          uv python install "$(cat .python-version)"
+          mkdir -p "$RUNNER_TEMP/apps"
+          for name in hello native; do
+            cp -a "tests/fixtures/projects/$name" "$RUNNER_TEMP/$name"
+            dist/fsbpyr-$APP_PYTHON-aarch64-linux-gnu build "$RUNNER_TEMP/$name" \
+              --python "$APP_PYTHON" --glibc 2.28 -o "$RUNNER_TEMP/apps/$name"
+          done
+
+      # As full-suite.yml's vm-smoke job, with the EL8 kernel and userland only, and without the
+      # release's own fsbpyr (it needs glibc 2.34, which EL8 lacks). Unlike there, exit 3 (a
+      # pinned input is gone from its mirror) fails the job: it is the only 64 KiB-page test
+      # of these stubs, and an attach can be retried (workflow_dispatch) once the pin is
+      # renewed (CONTRIBUTING.md).
+      - name: Boot the 64K-page kernel with the EL8 userland and run the apps
+        run: |
+          uv run --locked python tools/vm-smoke.py --kernel 64k --userland el8 \
+            --app "$RUNNER_TEMP/apps/hello" --app "$RUNNER_TEMP/apps/native" \
+            --run "hello 'x y' => hello ['x y']" \
+            --run 'FSBPYR_SELFTEST=1 hello => selftest ok' \
+            --run 'native => orjson {"a":[1,2]}' \
+            --run 'FSBPYR_SELFTEST=natives native => all natives load'
+
+  # Only when every job above passed (the default of `needs`): the stubs go to the release, the
+  # sums last, so that a release that has SHA256SUMS-glibc2.28 has all of them. The only job
+  # that may write, and it runs nothing of the tag's.
+  publish:
+    name: attest + publish
+    needs: [plan, stub, tests, portability, corpus, vm-smoke]
+    if: needs.plan.outputs.tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write      # upload to the GitHub release
+      id-token: write      # sign the attestation (Sigstore, through the job's OIDC token)
+      attestations: write  # store it with the repository
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - name: Download the stubs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: el8-stub-*
+          merge-multiple: true
+          path: stubs
+
+      # Every entry's stub and its .xz, nothing else. The sums list the stubs themselves
+      # (stubs.py reads the format), and every .xz must unpack to the stub it is listed with.
+      - name: SHA256SUMS-glibc2.28
+        run: |
+          mkdir dist
+          expected=()
+          for python in 3.12 3.13 3.14 3.15; do
+            for target in x86_64-linux-gnu aarch64-linux-gnu; do
+              expected+=("fsbpyr-stub-$python-$target-glibc2.28")
+            done
+          done
+          found="$(cd stubs && ls | sort)"
+          [ "$found" = "$(for name in "${expected[@]}"; do echo "$name"; echo "$name.xz"; done | sort)" ] \
+            || { echo "::error::the stubs are not the 8 expected, each with its .xz:"; echo "$found"; exit 1; }
+          (cd stubs && sha256sum "${expected[@]}" > ../dist/SHA256SUMS-glibc2.28)
+          for name in "${expected[@]}"; do
+            xz --decompress --stdout "stubs/$name.xz" | cmp - "stubs/$name"
+            cp "stubs/$name.xz" dist/
+          done
+          cat dist/SHA256SUMS-glibc2.28
+
+      # A run that finds the very same sums and every stub on the release has nothing to publish
+      # (a retry, or a second request): the links are reproducible, so the same stubs give the
+      # same sums. A release with the sums but not a stub (removed by hand) is repaired.
+      - name: Is it published
+        id: published
+        run: |
+          assets="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          if grep -qx SHA256SUMS-glibc2.28 <<<"$assets"; then
+            gh release download "$TAG" --pattern SHA256SUMS-glibc2.28 --dir published
+            if cmp published/SHA256SUMS-glibc2.28 dist/SHA256SUMS-glibc2.28 \
+                && [ -z "$(comm -23 <(cd dist && ls fsbpyr-stub-*.xz | sort) <(echo "$assets" | sort))" ]; then
+              echo "::notice::$TAG already has these EL8 stubs: nothing to publish"
+              echo "new=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::warning::$TAG has other or fewer EL8 stubs: they are replaced"
+          fi
+          echo "new=true" >> "$GITHUB_OUTPUT"
+
+      # Verify with: gh attestation verify fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz \
+      #   --repo devitops-com/fsbpyr \
+      #   --signer-workflow devitops-com/fsbpyr/.github/workflows/el8.yml
+      # (or any other stub's .xz, or SHA256SUMS-glibc2.28)
+      - name: Attest build provenance
+        if: steps.published.outputs.new == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/fsbpyr-stub-*.xz
+            dist/SHA256SUMS-glibc2.28
+
+      # --clobber replaces an EL8 asset of an earlier, partial run; no other asset of the release
+      # is named here. The sums go last.
+      - name: Upload to the GitHub release
+        if: steps.published.outputs.new == 'true'
+        run: |
+          gh release upload "$TAG" dist/fsbpyr-stub-*.xz --clobber
+          gh release upload "$TAG" dist/SHA256SUMS-glibc2.28 --clobber

@@ -98,6 +98,10 @@ Apps built with `--glibc 2.28` (the pure-Python `hello` and an app with a manyli
 | `docker.io/library/rockylinux:8` | 2.28 |
 | `docker.io/library/almalinux:8` | 2.28 |
 
+The EL8 workflow (`.github/workflows/el8.yml`, which attaches the glibc 2.28 launchers to a
+release and is no part of the release gate) runs all four portability apps, built with `--glibc
+2.28` by the release's fsbpyr, on the twelve distributions above and on these two.
+
 The `compat` app runs one small check per library or behaviour in each build:
 
 | Check | Covers |

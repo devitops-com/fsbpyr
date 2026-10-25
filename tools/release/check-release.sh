@@ -11,10 +11,19 @@
 # a task and memory limit, as the tests run. Checks, each reported as ok, FAIL or skip:
 #
 #   assets        every (Python, target) of the tag's build.yml has its executable, .xz, SBOM
-#                 and licence notices; install.sh and SHA256SUMS; nothing else
+#                 and licence notices; install.sh and SHA256SUMS; nothing else but the EL8 stubs
+#                 (below), which el8.yml attaches after the release and which not every release
+#                 has
 #   checksums     SHA256SUMS lists every other asset, and every one matches
 #   attestations  each executable's provenance and SBOM attestations, by release.yml from the
 #                 tag (gh attestation verify)
+#   el8 stubs     a release with SHA256SUMS-glibc2.28 has every (Python, target)'s stub .xz;
+#                 each unpacks to the digest listed, with a provenance attestation by el8.yml
+#                 (no source ref: a workflow_run runs on the default branch); skip: no EL8 stubs
+#                 for a release without
+#   el8 build     with EL8 stubs: the default Python's executable builds the hello fixture with
+#                 --glibc 2.28, fetching the release's stub as a user's does, and the app runs
+#                 in rockylinux:8 (podman)
 #   executables   on this machine's target: --version is X.Y.Z-<the tag's commit>, inspect
 #                 --verify passes, the Python is the asset's
 #   rebuild       the README's: each of this target's executables rebuilds itself from the tag
@@ -31,11 +40,13 @@
 #   installed     the fsbpyr on PATH, or in ~/.local/bin: its version (information only)
 #
 # Exit 0 when nothing failed, 1 otherwise. Needs gh (authenticated), git, curl, uv, cmp and
-# sha256sum; podman for the other target.
+# sha256sum; podman for the other target and the EL8 app; xz for the EL8 stubs.
 set -uo pipefail
 
 REPO="devitops-com/fsbpyr"
 SIGNER="$REPO/.github/workflows/release.yml"
+EL8_SIGNER="$REPO/.github/workflows/el8.yml"
+EL8_SUMS="SHA256SUMS-glibc2.28"
 XYZ='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 
 failed=0 skipped=0
@@ -121,6 +132,27 @@ for py in "${PYTHONS[@]}"; do
     done
 done
 published="$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' | sort)"
+# The EL8 stubs (el8.yml) are published after the release, and the sums last: a release that has
+# them has them all.
+el8=()
+for py in "${PYTHONS[@]}"; do
+    for target in "${TARGETS[@]}"; do
+        el8+=("fsbpyr-stub-$py-$target-glibc2.28.xz")
+    done
+done
+has_el8=0
+if grep -qx "$EL8_SUMS" <<<"$published"; then
+    has_el8=1
+    expected+=("$EL8_SUMS" "${el8[@]}")
+fi
+# Stubs without the sums: el8.yml is between its uploads (or stopped); not the release's fault.
+if [ "$has_el8" -eq 0 ]; then
+    partial="$(printf '%s\n' "${el8[@]}" | sort | comm -12 - <(echo "$published"))"
+    if [ -n "$partial" ]; then
+        echo "  info  EL8 stubs without $EL8_SUMS (el8.yml unfinished?): $(echo $partial)"
+        published="$(comm -23 <(echo "$published") <(echo "$partial"))"
+    fi
+fi
 missing="$(comm -23 <(printf '%s\n' "${expected[@]}" | sort) <(echo "$published"))"
 extra="$(comm -13 <(printf '%s\n' "${expected[@]}" | sort) <(echo "$published"))"
 [ -z "$missing" ] && ok "all ${#expected[@]} expected assets" || fail "missing: $(echo $missing)"
@@ -129,7 +161,9 @@ extra="$(comm -13 <(printf '%s\n' "${expected[@]}" | sort) <(echo "$published"))
 step "checksums"
 if gh release download "$TAG" --repo "$REPO" --dir "$work/assets" >/dev/null 2>&1; then
     listed="$(awk '{ sub(/^\*/, "", $2); print $2 }' "$work/assets/SHA256SUMS" | sort)"
-    unlisted="$(comm -23 <(echo "$published" | grep -vx SHA256SUMS) <(echo "$listed"))"
+    # the EL8 assets are listed in SHA256SUMS-glibc2.28 (checked below), not in SHA256SUMS
+    unlisted="$(comm -23 <(echo "$published" | grep -vx SHA256SUMS | grep -vxF -f <(printf '%s\n' "$EL8_SUMS" "${el8[@]}")) \
+        <(echo "$listed"))"
     [ -z "$unlisted" ] && ok "SHA256SUMS lists every other asset" || fail "not in SHA256SUMS: $(echo $unlisted)"
     if (cd "$work/assets" && sha256sum --quiet -c SHA256SUMS >/dev/null 2>&1); then
         ok "$(echo "$listed" | wc -l) files match SHA256SUMS"
@@ -159,6 +193,37 @@ for py in "${PYTHONS[@]}"; do
         fi
     done
 done
+
+step "EL8 stubs ($EL8_SUMS)"
+if [ "$has_el8" -eq 0 ]; then
+    skip "no EL8 stubs"
+elif ! command -v xz >/dev/null; then
+    skip "xz is not installed"
+else
+    sums="$work/assets/$EL8_SUMS"
+    listed="$(awk '{ sub(/^\*/, "", $2); print $2 }' "$sums" | sort)"
+    wanted="$(printf '%s\n' "${el8[@]%.xz}" | sort)"
+    [ "$listed" = "$wanted" ] && ok "$EL8_SUMS lists the ${#el8[@]} stubs" \
+        || fail "$EL8_SUMS lists '$(echo $listed)', not the stubs of every Python and target"
+    for asset in "${el8[@]}"; do
+        stub="${asset%.xz}"
+        want="$(awk -v name="$stub" '{ file = $2; sub(/^\*/, "", file) } file == name { print $1 }' "$sums")"
+        got="$(xz --decompress --stdout "$work/assets/$asset" 2>/dev/null | sha256sum | cut -d' ' -f1)"
+        [ -n "$want" ] && [ "$got" = "$want" ] && ok "$asset unpacks to the digest listed" \
+            || fail "$asset does not unpack to the digest $EL8_SUMS lists"
+        if gh attestation verify "$work/assets/$asset" --repo "$REPO" --signer-workflow "$EL8_SIGNER" \
+            >/dev/null 2>&1; then
+            ok "$asset: provenance"
+        else
+            fail "$asset: no provenance attestation by el8.yml"
+        fi
+    done
+    if gh attestation verify "$sums" --repo "$REPO" --signer-workflow "$EL8_SIGNER" >/dev/null 2>&1; then
+        ok "$EL8_SUMS: provenance"
+    else
+        fail "$EL8_SUMS: no provenance attestation by el8.yml"
+    fi
+fi
 
 # --- This target's executables ----------------------------------------------------------------
 step "executables ($HOST)"
@@ -315,6 +380,53 @@ else
     done
     [ -z "$pulled_image" ] || podman rmi "$pulled_image" >/dev/null 2>&1 || true
     pulled_image=""
+fi
+
+step "el8 build (--glibc 2.28)"
+# The release's own fsbpyr, as a user runs it: its stub comes from the release, over the network.
+el8_image="docker.io/library/rockylinux:8"
+if [ "$has_el8" -eq 0 ]; then
+    skip "no EL8 stubs"
+elif ! command -v xz >/dev/null; then
+    skip "xz is not installed"
+elif ! managed "$DEFAULT"; then
+    skip "Python $DEFAULT is not installed with uv"
+else
+    # a copy alone in its directory: the EL8 assets downloaded beside the release's executable
+    # would be found there as placed files, and the stub would not be fetched
+    mkdir -p "$work/el8/apps" "$work/el8/bin"
+    exe="$work/el8/bin/fsbpyr-$DEFAULT-$HOST"
+    cp "$work/assets/fsbpyr-$DEFAULT-$HOST" "$exe"
+    cp -a "$work/src/tests/fixtures/projects/hello" "$work/el8/hello"
+    if (cd "$work/el8/hello" && building "$exe" build . --python "$DEFAULT" --glibc 2.28 \
+            -o "$work/el8/apps/hello") >"$work/el8.log" 2>&1; then
+        ok "$DEFAULT: builds hello with --glibc 2.28"
+        stub="fsbpyr-stub-$DEFAULT-$HOST-glibc2.28"
+        xz --decompress --stdout "$work/assets/$stub.xz" \
+            | cmp -s - "$work/cache/downloads/$stub-$TAG" \
+            && ok "the stub it fetched is the release's $stub" \
+            || fail "the stub it fetched is not the release's $stub"
+        if ! command -v podman >/dev/null; then
+            skip "podman is not installed: the app is not run in rockylinux:8"
+        else
+            ready=1
+            if ! podman image exists "$el8_image" 2>/dev/null; then
+                pulled_image="$el8_image"
+                podman pull --quiet "$el8_image" >/dev/null 2>&1 || { fail "cannot pull $el8_image"; ready=0; }
+            fi
+            if [ "$ready" -eq 1 ]; then
+                out="$(podman run --rm --pids-limit 256 --memory 4g -v "$work/el8/apps:/apps:ro,Z" \
+                    -e FSBPYR_CACHE_DIR=/tmp/cache -e FSBPYR_GC=0 "$el8_image" \
+                    sh -c '/apps/hello 5 x; echo "rc=$?"' 2>"$work/el8-podman.err")"
+                [ "$out" = "hello ['5', 'x']"$'\n'"rc=5" ] && ok "the app runs in rockylinux:8" \
+                    || fail "the app in rockylinux:8 printed '$out': $(tail -1 "$work/el8-podman.err")"
+            fi
+            [ -z "$pulled_image" ] || podman rmi "$pulled_image" >/dev/null 2>&1 || true
+            pulled_image=""
+        fi
+    else
+        fail "the --glibc 2.28 build failed: $(tail -1 "$work/el8.log")"
+    fi
 fi
 
 step "installed"
