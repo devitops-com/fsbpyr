@@ -42,7 +42,7 @@ else
 WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-container test-corpus test-portability check check-c release-prep release clean
+.PHONY: help bootstrap build install uninstall test test-ci test-container test-corpus test-portability check check-c release-prep release release-check clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -121,13 +121,14 @@ uninstall: ## Remove what `make install` installed
 TESTTMP ?= $(HOME)/tmp
 TEST_TASKS ?= 8192
 TEST_MEMORY ?= $(shell awk '/^MemTotal:/ { printf "%d", $$2 * 1024 * 0.7 }' /proc/meminfo)
-TESTENV := $(WITH_LLVM23) mkdir -p "$(TESTTMP)" && tmp=$$(mktemp -d "$(TESTTMP)/fsbpyr-test.XXXXXX") \
+SCRATCHENV := mkdir -p "$(TESTTMP)" && tmp=$$(mktemp -d "$(TESTTMP)/fsbpyr-test.XXXXXX") \
 	&& unit="fsbpyr-test-$$$$" contain= && if systemd-run --user --scope --quiet true 2>/dev/null; then \
 		contain="systemd-run --user --scope --quiet --collect --unit=$$unit -p TasksMax=$(TEST_TASKS) \
 			-p MemoryMax=$(TEST_MEMORY) -p MemorySwapMax=0 -p OOMPolicy=continue --"; fi \
 	&& trap 'systemctl --user kill --signal=SIGKILL "$$unit.scope" 2>/dev/null; \
 		rm -rf "$${tmp:?}" 2>/dev/null || { sleep 2; rm -rf "$${tmp:?}"; }' EXIT && TMPDIR="$$tmp" \
 	FSBPYR_TEST_DOWNLOADS="$${FSBPYR_TEST_DOWNLOADS:-$(TESTTMP)/fsbpyr-test-downloads}"
+TESTENV := $(WITH_LLVM23) $(SCRATCHENV)
 CONTAINED := $$contain
 # `make test` runs the tests in JOBS processes (pytest-xdist), each test file in one of them;
 # the real-world corpus is left to `make test-corpus`.
@@ -207,6 +208,12 @@ release-prep: ## End this branch with the release commit: set the version (VERSI
 
 release: ## Tag main's tested HEAD and push the tag; CI builds, attests and publishes the release
 	@bash tools/release/release.sh$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
+
+# After `make release`, once the release is published: checks it as its users get it
+# (tools/release/check-release.sh says what), in a directory under TESTTMP and in the tests'
+# cgroup; it changes nothing outside them but uv's cache.
+release-check: ## Check the published release (VERSION=X.Y.Z, default the latest): assets, attestations, rebuild, installer, update
+	@$(SCRATCHENV) $(CONTAINED) bash tools/release/check-release.sh$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
 
 clean: ## Remove dist/
 	rm -rf dist
