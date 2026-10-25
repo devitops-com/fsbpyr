@@ -345,6 +345,8 @@ class _Collector:
             if names[0][0][1]:  # CPython cannot import this package either: no namespace stand-in
                 self.broken.add(rel.rpartition("/")[0])
             return False
+        if dist.name == self.project:  # the app's own files; a dependency's stay silent
+            self.warnings += [f"{rel}:{line}: {text}" for line, text in result.warnings]
         if hints:
             self.reads += [(dist.name, rel, line) for line in result.reads]
             for library in result.libraries:

@@ -414,14 +414,51 @@ def _excepthook(
     # 3.12's C printer reads the source files from disk, the traceback module asks the loaders.
     # Not for Ctrl-C: importing it runs eval(), which on 3.12 forgets the unhandled
     # KeyboardInterrupt, and the process must still end by SIGINT.
-    if sys.version_info < (3, 13) and not isinstance(exc, KeyboardInterrupt):
-        import traceback  # noqa: PLC0415  only for a crash
+    missing = _missing_module(exc) if sys.version_info >= (3, 15) else None
+    flags = sys.flags
+    if missing is not None:
+        sys.flags = _FlagsWithSite(flags)  # type: ignore[assignment]
+    try:
+        if sys.version_info < (3, 13) and not isinstance(exc, KeyboardInterrupt):
+            import traceback  # noqa: PLC0415  only for a crash
 
-        traceback.print_exception(exc_type, exc, head or tb)
-    else:
-        sys.__excepthook__(exc_type, exc, head or tb)
+            traceback.print_exception(exc_type, exc, head or tb)
+        else:
+            sys.__excepthook__(exc_type, exc, head or tb)
+    finally:
+        sys.flags = flags
+    if missing is not None:
+        sys.stderr.write(
+            f"fsbpyr: {missing} is not in the executable: add it to the project's dependencies "
+            "and rebuild\n"
+        )
     if (note := _inside_executable_note(exc)) is not None:
         sys.stderr.write(note)
+
+
+class _FlagsWithSite:
+    """``sys.flags`` with ``no_site`` clear while a traceback prints: built apps never import
+    site (D14), and 3.15's ModuleNotFoundError hint for ``no_site`` ("did you forget to enable
+    your virtual environment?") misleads here."""
+
+    def __init__(self, flags: object) -> None:
+        self._flags = flags
+
+    def __getattr__(self, name: str) -> object:
+        return 0 if name == "no_site" else getattr(self._flags, name)
+
+
+def _missing_module(exc: BaseException | None) -> str | None:
+    """The name of a ModuleNotFoundError in the chain of ``exc`` that is not a standard library
+    module (3.15 words those itself), or None. Costs nothing until an exception goes uncaught."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        name = exc.name if isinstance(exc, ModuleNotFoundError) else None
+        if name is not None and name.partition(".")[0] not in sys.stdlib_module_names:
+            return name
+        exc = exc.__cause__ or exc.__context__
+    return None
 
 
 def _inside_executable_note(exc: BaseException | None) -> str | None:
@@ -538,6 +575,20 @@ def _multiprocessing_child() -> bool:
     return handled
 
 
+def _restart() -> None:
+    """``[sys.executable, <flags>, sys.argv[0], *args]``, the restart idiom of gunicorn and
+    Django, runs the app with ``sys.argv == [sys.argv[0], *args]``, as in a venv. The common
+    start costs a scan of argv: only a path or the executable's name may be the restart."""
+    argv = sys.argv
+    names = (argv[0].rpartition("/")[2], sys.executable.rpartition("/")[2])
+    if not any("/" in arg or arg in names for arg in argv[1:]):
+        return
+    from _fsbpyr_rt.restart import restart_argv  # type: ignore[import-not-found]  # noqa: PLC0415
+
+    if (rewritten := restart_argv(argv)) is not None:
+        argv[:] = rewritten
+
+
 def _interpreter_child() -> bool:
     """The app re-executed through ``sys.executable`` with ``-m MODULE``, ``-c CODE`` or a
     script of the payload runs that instead with interpreter-reexec (D23), and is refused
@@ -573,6 +624,7 @@ def run() -> None:
         from _fsbpyr_rt.trace import report  # type: ignore[import-not-found]  # noqa: PLC0415
 
         atexit.register(report)
+    _restart()
     if _multiprocessing_child() or _interpreter_child():
         return
     collection = posix.environ.get(b"FSBPYR_GC")  # D38: any other value runs the app

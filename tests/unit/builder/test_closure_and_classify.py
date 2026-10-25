@@ -1047,3 +1047,17 @@ def test_libraries_code_opens_by_name_are_listed_under_hints(site: Path) -> None
     }  # fmt: skip
     assert plain.system.may_load == {}  # type: ignore[attr-defined]
     assert not any("libmagic" in w for w in hinted.warnings)  # type: ignore[attr-defined]
+
+
+def test_compile_warnings_of_the_projects_own_files_are_build_warnings(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    escape = b"PATTERN = '\\d+'\n"
+    _dist(site, "app", "1.0", {"app/__init__.py": b"", "app/rx.py": b"X = 1\n" + escape})
+    _dist(site, "dep", "1.0", {"dep/__init__.py": escape})
+    dists = list(SiteIndex.scan(site).dists.values())
+
+    content = classify(dists, extension_suffixes=(".so",), include_source=False, project="app")
+
+    warned = [w for w in content.warnings if "invalid escape sequence" in w]
+    assert len(warned) == 1 and warned[0].startswith("app/rx.py:2: ")  # not dep/__init__.py
+    assert classify(dists, extension_suffixes=(".so",), include_source=False).warnings == ()

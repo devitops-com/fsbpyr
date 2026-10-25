@@ -210,6 +210,46 @@ def test_the_app_ran_like_the_original_when_it_calls_exit_in_a_child(
     assert result.stdout.split()[-1] == "4"
 
 
+def test_a_script_started_through_sys_executable_finds_its_sibling_modules(
+    mp_tmp: Path, mp_venv: Path, tmp_path: Path
+) -> None:
+    """A script's directory is sys.path[0], as with `python /path/pkg/a.py` (D23)."""
+    executable = _build("mp", mp_tmp, "--interpreter-reexec")
+    env = {"FSBPYR_CACHE_DIR": str(tmp_path / "cache")}
+
+    result = assert_same(mp_venv, executable, ["sibling"], env=env, script="mp")
+
+    assert result.stdout.strip() == "0 a sibling"
+
+
+def test_the_restart_idiom_gives_the_child_the_argv_of_the_parent(
+    mp_tmp: Path, mp_venv: Path, tmp_path: Path
+) -> None:
+    """`os.execv(sys.executable, [sys.executable] + sys.argv)`, as gunicorn and Django restart
+    themselves: the child must not get the executable's path as an extra argument."""
+    executable = _build("mp", mp_tmp)
+    env = {"FSBPYR_CACHE_DIR": str(tmp_path / "cache")}
+
+    result = assert_same(mp_venv, executable, ["restart", "x", "--y"], env=env, script="mp")
+
+    assert result.stdout.splitlines() == ["argv ['restart', 'x', '--y']"] * 2
+
+
+def test_a_missing_module_is_not_blamed_on_site_initialization(
+    mp_tmp: Path, tmp_path: Path, runtime: Runtime
+) -> None:
+    """CPython 3.15 words its hint after `-S`, which built apps always are (D14)."""
+    executable = _build("mp", mp_tmp)
+
+    result = _run(executable, tmp_path / "cache", "missing")
+
+    assert result.returncode == 1
+    assert "No module named 'mp_surely_not_installed'" in result.stderr
+    assert "Site initialization is disabled" not in result.stderr
+    assert ("is not in the executable" in result.stderr) is (
+        runtime.python_version.startswith("3.15"))  # fmt: skip
+
+
 def test_an_app_starting_itself_without_end_stops_at_its_limit(
     mp_tmp: Path, tmp_path: Path
 ) -> None:
