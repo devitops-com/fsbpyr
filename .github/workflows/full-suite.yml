@@ -10,8 +10,11 @@ name: Full suite
 #   - corpus: the real-world apps of tests/corpus, built and compared with their venvs;
 #   - portability: the portability tests (tests/e2e/test_portability.py, which need `podman run`
 #     on the runner host).
-# It runs on every push to main, which is a merge: tools/release/release.sh tags only a main
-# commit whose run passed, and the publish job of release.yml checks that run again. Also
+# It runs on every push to main, which is a merge, that changes more than documentation (*.md
+# files and docs/): tools/release/release.sh tags only a main commit whose run passed, or one
+# that changes only documentation since such a commit (green-run.sh), and the publish job of
+# release.yml checks that again. A merge never carries a CI skip instruction in its message:
+# GitHub applies it to a tag pushed on that commit too, and release.yml would not run. Also
 # weekly, with a longer fuzzing run (below), and on request; no nightly run: main changes by
 # merges only, so one would test the same commit night after night (owner, 2026-10-21). Pull
 # requests start nothing: a branch is tested locally before its pull request. The fuzz corpus
@@ -27,6 +30,7 @@ name: Full suite
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", "docs/**"]  # the documentation green-run.sh lets a release stand on
   schedule:
     # Weekly. Keep the string equal to WEEKLY in "Choose the fuzzing time".
     - cron: "43 3 * * 0"

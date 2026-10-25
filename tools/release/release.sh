@@ -100,8 +100,19 @@ REMOTE_HEAD="$(git rev-parse FETCH_HEAD)"
 [ "$LOCAL_HEAD" = "$REMOTE_HEAD" ] \
     || { echo "ERROR: local $BRANCH differs from hub/$BRANCH; push or pull first" >&2; exit 1; }
 
-# full-suite.yml runs on every push to $BRANCH, the release build and its checks included: tag
-# only a commit whose run passed. A run in progress is waited for.
+# GitHub starts no workflow for a push whose commit's message has a skip instruction, and that
+# includes the tag's push: release.yml would never run for $TAG.
+SKIP_INSTRUCTION='\[(skip ci|ci skip|no ci|skip actions|actions skip)\]|^skip-checks: ?true'
+if git log -1 --format=%B HEAD | grep -qiE "$SKIP_INSTRUCTION"; then
+    echo "ERROR: HEAD's commit message has a CI skip instruction: GitHub would start no" \
+         "release.yml run for $TAG on it. Merge without it; full-suite.yml leaves out" \
+         "documentation-only pushes by itself" >&2
+    exit 1
+fi
+
+# full-suite.yml runs on every push to $BRANCH that changes more than documentation, the
+# release build and its checks included: tag only a commit whose run passed, or one with only
+# documentation changed since such a commit (green-run.sh). A run in progress is waited for.
 bash tools/release/green-run.sh "$SUITE_WORKFLOW" "$LOCAL_HEAD" >/dev/null
 
 # --- 2. Confirm --------------------------------------------------------------

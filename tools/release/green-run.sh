@@ -9,9 +9,10 @@
 # suite) of the commit it is made from. release.sh checks HEAD before it tags it; the publish
 # job checks the tagged commit. A run still in
 # progress is followed with follow-run.sh, as release.sh follows the tag's run.
-# A commit merged with [skip ci] has no run: the newest earlier commit of main that has one
-# stands for it when nothing but documentation (*.md files, docs/) changed since (CONTRIBUTING.md,
-# "Documentation-only changes"); its run's URL is printed. Needs the history (git).
+# A commit that changes only documentation has no run (full-suite.yml leaves such pushes out):
+# the newest earlier commit of main that has one stands for it when nothing but documentation
+# (*.md files, docs/) changed since (CONTRIBUTING.md, "Documentation-only changes"); its run's
+# URL is printed. Needs the history (git).
 # Exit 1: no run for that commit, a failed one, or one that fails while watched. The reason
 # goes to stderr, the URL to stdout. Needs gh, authenticated (GH_TOKEN in CI).
 set -euo pipefail
