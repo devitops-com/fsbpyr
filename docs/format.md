@@ -96,13 +96,21 @@ equal), for two things:
 | 20 | 4 | bytecode magic (`importlib.util.MAGIC_NUMBER`) of the target CPython (3.12 to 3.15) |
 | 24 | 32 | `generation_id` (native cache generation, §7 of the plan) |
 | 56 | 8 | `app_name` — Str |
-| 64 | 8 | `entrypoint` — Str (`module:attr` or `module`) |
+| 64 | 8 | `entrypoint` — Str (`module:attr` or `module`; for several commands, newline-separated `name=target` lines, see below) |
 | 72 | 8 | `build_info` — Str (JSON for `inspect`; the runtime reads its `resources` key, D27) |
 | 80 | 8 × 16 | section table: `(u64 offset, u64 count)` for each section below, in this order |
 
 **Str** is `(u32 offset, u32 length)` into the string table. Every string is stored as UTF-8
 followed by one NUL byte, which the length does not count, so C code can use `strtab + offset`
 directly as a C string.
+
+**Several commands.** A build of a project with several console scripts stores them in
+`entrypoint` as lines `name=target`, a target being `module:attr` or `module`, sorted by name;
+a single command stays the plain target. The launcher treats the entrypoint as an opaque string
+(`format_version` stays 7: the boot code stored in the same file reads the table). A name matches
+`[A-Za-z0-9][A-Za-z0-9_.+-]*`, so no name contains `=` or a newline; the writer rejects only NUL.
+At start the boot code picks the command from `argv[0]`'s basename (also without `.py`), else
+from `argv[1]` as an exact name, which it removes from `sys.argv`.
 
 All offsets inside the payload are relative to the payload start. The value `0xFFFFFFFF`
 (`NONE`) means "no reference" in every u32 index field.

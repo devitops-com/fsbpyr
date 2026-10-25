@@ -1,8 +1,10 @@
 """``fsbpyr build``: project -> staging install -> classify -> executable (plan §3.6)."""
 
 import contextlib
+import dataclasses
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -15,11 +17,13 @@ from packaging.utils import canonicalize_name, parse_wheel_filename
 
 from . import pyversion
 from .assemble import App, build_temporary, runtime_module_names
+from .boot._fsbpyr_rt.commands import parse
 from .classify import BUILTIN_FS_PACKAGES, Uncounted, _record_path, classify
 from .closure import (
     ClosureError,
     InstalledDist,
     SiteIndex,
+    command_table,
     resolve_entry,
     several_scripts_error,
     unknown_extras_error,
@@ -27,6 +31,7 @@ from .closure import (
 from .config import BuildConfig
 from .elf import ElfError, glibc_requirement, is_elf
 from .entry import source_has_candidate
+from .links import LinkError, check_links, make_links
 from .manifest import SCHEMA, LockError, built_here, dist_records, lock_record
 from .natives import opened
 from .payload.format import NATIVE_KINDS, ModuleKind
@@ -81,9 +86,15 @@ class BuildResult:
     warnings: tuple[str, ...]
     glibc: str | None = None  # the oldest glibc the app runs on, "2.25"
     target_needs: str | None = None  # "glibc >= 2.34; libstdc++.so.6 (...)"
+    commands: tuple[str, ...] = ()  # the names of a multi-command executable, else empty
+    links: tuple[Path, ...] = ()  # beside the output, one per command not named like it
 
 
 def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
+    if "\n" in entrypoint:  # a table of commands: every target is checked
+        for target in parse(entrypoint).values():
+            _check_entry_module(target, app, runtime)
+        return
     module, colon, _ = entrypoint.partition(":")
     kinds = {m.name: m.kind for m in (*app.modules, *runtime.modules)}
     if module not in kinds:
@@ -91,6 +102,17 @@ def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
     main = f"{module}.__main__"  # what running a package runs, as `python -m` does
     if not colon and kinds[module] in _PACKAGES and main not in kinds:
         raise BuildError(f"entry point module {module!r} is a package without {main!r}")
+
+
+def _commands_to_link(entrypoint: str, output: Path) -> tuple[str, ...]:
+    """The names of a multi-command executable's commands (none for a single command), checked
+    against what the output's directory holds."""
+    commands = tuple(parse(entrypoint)) if "\n" in entrypoint else ()
+    try:
+        check_links(output, commands)
+    except LinkError as exc:
+        raise BuildError(str(exc)) from exc
+    return commands
 
 
 def _version(value: tuple[int, int]) -> str:
@@ -305,13 +327,25 @@ def lock_warnings(project: Project, source: LockSource, requirements: str | None
     return []
 
 
-def check_strict_requirements(project: Project, requirements: str | None) -> None:
-    """Refuse --strict for a requirements file with VCS lines, before uv says so with a generic
-    hash message: a commit SHA pins the source, but is not a hash (uv --require-hashes)."""
+def _has_hash(path: Path) -> bool:
+    """Whether a non-comment line of the requirements file has a ``--hash`` option."""
+    return any(re.search(r"(?:^|\s)--hash[=\s]", raw.partition(" #")[0])
+               for raw in path.read_text().splitlines() if not raw.lstrip().startswith("#"))
+
+
+def check_hashed_requirements(project: Project, config: BuildConfig) -> None:
+    """Refuse VCS lines in a requirements file that uv reads in --require-hashes mode (--strict,
+    or a ``--hash=`` anywhere in the file), before uv says so with a generic hash message: a
+    commit SHA pins the source, but is not a hash."""
+    requirements = config.requirements
     if project.lock_source(requirements) is not LockSource.REQUIREMENTS:
         return
-    if lines := vcs_requirements(project.requirements_path(requirements)):
-        raise ProjectError("--strict needs every requirement to carry a hash (--require-hashes), "
+    path = project.requirements_path(requirements)
+    if not (config.strict or _has_hash(path)):
+        return
+    why = "--strict needs" if config.strict else f"{path.name} has --hash lines, so uv needs"
+    if lines := vcs_requirements(path):
+        raise ProjectError(f"{why} every requirement to carry a hash (--require-hashes), "
                            "and a requirement from version control cannot: a commit SHA pins "
                            "the source, but is not a hash:\n  " + "\n  ".join(lines))
 
@@ -351,15 +385,14 @@ def check_before_staging(project: Project, config: BuildConfig) -> None:
     scripts and extras (and setup.py projects) are decided after staging."""
     name = project.name or project.directory.name
     if config.entry is None and project.static_scripts and len(project.scripts) > 1:
-        raise several_scripts_error(name, project.scripts)
+        command_table(project.scripts)  # raises for a name that is no command
     if (config.entry is None and project.static_scripts and project.static_entry_points
             and not project.scripts and not source_has_candidate(project.directory)):
         # no script, no __main__.py, no guarded module: staging cannot find an entry either
         raise several_scripts_error(name, project.scripts)
     if config.output is not None:
         check_output(config.output)
-    if config.strict:
-        check_strict_requirements(project, config.requirements)
+    check_hashed_requirements(project, config)
     if project.static_extras and (
         message := unknown_extras_error(name, config.extras, project.extras)
     ):
@@ -433,6 +466,12 @@ def build(
                 smoke_run(written[0], result.output, config.smoke_args)
         commit(written[0], result.output)
         written.clear()
+        if result.commands:
+            try:
+                links = tuple(make_links(result.output, result.commands))
+            except LinkError as exc:
+                raise BuildError(str(exc)) from exc
+            result = dataclasses.replace(result, links=links)
         return result
     except Exception as exc:
         if not isinstance(exc, StrictError):  # its message lists them
@@ -512,6 +551,7 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
         app_name, entrypoint = resolve_entry(dist, config.entry, log)
         output = (config.output or project.directory / "dist" / app_name).resolve()
         check_output(output)
+        commands = _commands_to_link(entrypoint, output)
         _make_output_dir(output.parent, made)
         log(f"collecting {len(index.dists)} distributions")
         level = config.zstd_level
@@ -583,7 +623,7 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                 check_strict(warnings)
             log(f"writing {output}")
             written.append(build_temporary(runtime, app, output))
-    size = written[0].stat().st_size
     return BuildResult(
-        output, app_name, entrypoint, size, tuple(warnings), glibc, target_needs(libraries, glibc)
-    )
+        output, app_name, entrypoint, written[0].stat().st_size, tuple(warnings), glibc,
+        target_needs(libraries, glibc), commands,
+    )  # fmt: skip

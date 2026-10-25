@@ -26,13 +26,19 @@ TWO_SCRIPTS = (
 DYNAMIC = '[project]\nname = "app"\nversion = "1"\ndynamic = ["optional-dependencies", "scripts"]\n'
 
 
-def test_two_static_scripts_without_entry_fail_before_uv_is_looked_for(
+def test_two_static_scripts_without_entry_build_a_command_table(tmp_path: Path) -> None:
+    project = _project(tmp_path, TWO_SCRIPTS)
+
+    check_before_staging(project, BuildConfig())
+
+
+def test_a_script_name_that_is_no_command_fails_before_uv_is_looked_for(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (tmp_path / "pyproject.toml").write_text(TWO_SCRIPTS)
+    (tmp_path / "pyproject.toml").write_text(TWO_SCRIPTS.replace("a = ", "-a = "))
     monkeypatch.setattr("fsbpyr.build.find_uv", lambda: pytest.fail("uv"))
 
-    with pytest.raises(ClosureError, match="has console scripts: a, b; choose one with --entry"):
+    with pytest.raises(ClosureError, match="console script name '-a' is not valid"):
         build(tmp_path, BuildConfig())
 
 

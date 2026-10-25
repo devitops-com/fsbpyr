@@ -22,6 +22,7 @@ from pathlib import Path
 
 from packaging.utils import canonicalize_name
 
+from .boot._fsbpyr_rt.commands import parse
 from .elf import ElfError, section
 from .natives import init_symbol
 from .payload.format import NATIVE_KINDS, NONE, FileKind, PayloadError
@@ -320,6 +321,7 @@ def as_json(report: Report, *, all_modules: bool = False) -> str:
         "glibc": report.info.get("glibc"),
         "toolchain": list(report.toolchain),
         "entry": report.entrypoint,
+        **({"commands": parse(report.entrypoint)} if "\n" in report.entrypoint else {}),
         "digest": report.digest,
         "digest_covers": "file" if report.covers_file else "payload",
         "sha256": report.sha256 or None,
@@ -454,7 +456,12 @@ def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
     lines += _setting_lines(report.info)
     libraries = _system_libraries(report)
     needs = target_needs(libraries, glibc if isinstance(glibc, str) else None)
-    lines += [f"entry      {_shown(report.entrypoint)}"]
+    if "\n" in report.entrypoint:
+        shown = [f"{_shown(name)} = {_shown(target)}"
+                 for name, target in parse(report.entrypoint).items()]
+        lines += [f"commands   {shown[0]}", *(f"           {line}" for line in shown[1:])]
+    else:
+        lines += [f"entry      {_shown(report.entrypoint)}"]
     lines += [f"needs      {_shown(needs)}"] if needs else []
     lines += [
         f"system libraries: {len(libraries)}",

@@ -488,6 +488,19 @@ def _resolve(entrypoint: str) -> object:
     return target
 
 
+def _check_entrypoint(entrypoint: str) -> None:
+    """The selftest of one target: import the module and look the attribute up, without calling."""
+    _resolve(entrypoint)
+    if ":" not in entrypoint and hasattr(sys.modules[entrypoint], "__path__"):
+        from importlib.util import find_spec  # noqa: PLC0415
+
+        if find_spec(f"{entrypoint}.__main__") is None:  # runpy would run it: found, not run
+            raise ModuleNotFoundError(
+                f"No module named {entrypoint}.__main__; {entrypoint!r} is a package and "
+                "cannot be directly executed"
+            )
+
+
 def _frozen_source(fullname: str) -> str | None:
     record = _fsbpyr.find_module(fullname)
     if record is None or record[4] == NONE:
@@ -589,14 +602,21 @@ def _restart() -> None:
         argv[:] = rewritten
 
 
-def _interpreter_child() -> bool:
+def _interpreter_child(commands: "dict[str, str] | None" = None) -> bool:
     """The app re-executed through ``sys.executable`` with ``-m MODULE``, ``-c CODE`` or a
     script of the payload runs that instead with interpreter-reexec (D23), and is refused
-    without the setting (D44)."""
+    without the setting (D44). A start named for one of the ``commands`` of a multi-command
+    executable, under another name than the executable's, is that command's own (owner
+    decision 2026-10-25)."""
     argv = sys.argv
     flagged = "-m" in argv[1:-1] or "-c" in argv[1:-1]
     if not flagged and not any(arg.startswith(_PREFIX) for arg in argv[1:]):
         return False  # the common case costs three scans of argv
+    if commands is not None:
+        from _fsbpyr_rt.commands import is_sibling  # type: ignore[import-not-found]  # noqa: PLC0415
+
+        if is_sibling(commands, argv[0], sys.executable):
+            return False
     from _fsbpyr_rt.reexec import run_child  # type: ignore[import-not-found]  # noqa: PLC0415
 
     handled: bool = run_child(argv, INFO["build_info"], _PREFIX)
@@ -625,7 +645,13 @@ def run() -> None:
 
         atexit.register(report)
     _restart()
-    if _multiprocessing_child() or _interpreter_child():
+    entrypoint = INFO["entrypoint"]
+    commands = None
+    if "\n" in entrypoint:  # a table of commands: the only cost of the common single command
+        from _fsbpyr_rt.commands import parse  # noqa: PLC0415
+
+        commands = parse(entrypoint)
+    if _multiprocessing_child() or _interpreter_child(commands):
         return
     collection = posix.environ.get(b"FSBPYR_GC")  # D38: any other value runs the app
     if collection in (b"1", b"background"):
@@ -638,19 +664,15 @@ def run() -> None:
 
         natives()
         return
-    entrypoint = INFO["entrypoint"]
-    if posix.environ.get(b"FSBPYR_SELFTEST"):
-        _resolve(entrypoint)  # import the module and look the attribute up, without calling
-        if ":" not in entrypoint and hasattr(sys.modules[entrypoint], "__path__"):
-            from importlib.util import find_spec  # noqa: PLC0415
-
-            if find_spec(f"{entrypoint}.__main__") is None:  # runpy would run it: found, not run
-                raise ModuleNotFoundError(
-                    f"No module named {entrypoint}.__main__; {entrypoint!r} is a package and "
-                    "cannot be directly executed"
-                )
+    if posix.environ.get(b"FSBPYR_SELFTEST"):  # every command's target, whatever argv[0] is
+        for target in commands.values() if commands is not None else (entrypoint,):
+            _check_entrypoint(target)
         print(f"fsbpyr selftest ok: {INFO['app_name']}")
         return
+    if commands is not None:
+        from _fsbpyr_rt.commands import choose  # noqa: PLC0415
+
+        entrypoint = choose(commands, sys.argv)
     if ":" not in entrypoint:
         import runpy  # noqa: PLC0415
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import configparser
 import json
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from email.parser import HeaderParser
 from pathlib import Path
@@ -18,6 +18,7 @@ from packaging.utils import canonicalize_name
 from .entry import installed_candidates
 
 _EXTRAS_SUFFIX = re.compile(r"\s*\[[^\]]*\]\s*$")
+_COMMAND_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]*")
 
 
 class ClosureError(RuntimeError):
@@ -160,14 +161,26 @@ def _requirement(line: str, dist: InstalledDist) -> Requirement:
 def several_scripts_error(
     name: str, scripts: Iterable[str], candidates: str = ""
 ) -> ClosureError:
-    """No --entry, and the project's console scripts are not exactly one; ``candidates``
-    describes the packages and modules that entry inference found but could not choose from."""
+    """No --entry and no console script; ``candidates`` describes the packages and modules
+    that entry inference found but could not choose from."""
     choices = ", ".join(sorted(scripts)) or "none"
     found = f"; found: {candidates}" if candidates else ""
     return ClosureError(
         f"{name} has console scripts: {choices}; choose one with --entry "
         f"(a script name, 'module' or 'module:function'){found}"
     )
+
+
+def command_table(scripts: Mapping[str, str]) -> str:
+    """The entry point of a build with several console scripts (§11, 2026-10-25):
+    ``name=target`` lines, sorted. A name is a file name the build links and a command line
+    word: the build fails naming one that is not plain."""
+    for name in scripts:
+        if not _COMMAND_NAME.fullmatch(name):
+            raise ClosureError(f"console script name {name!r} is not valid for a command of a "
+                               "multi-command executable: letters, digits and _.+- only, "
+                               "starting with a letter or digit")  # fmt: skip
+    return "\n".join(f"{name}={target}" for name, target in sorted(scripts.items()))
 
 
 def unknown_extras_error(name: str, wanted: Iterable[str], known: Iterable[str]) -> str | None:
@@ -200,14 +213,15 @@ def infer_entry(dist: InstalledDist) -> tuple[str, str, str]:
 def resolve_entry(
     dist: InstalledDist, entry: str | None, log: Callable[[str], None] = lambda _: None
 ) -> tuple[str, str]:
-    """(application name, entry point) from --entry or the project's console scripts, else the
-    inferred package or module (``log`` says which and why)."""
+    """(application name, entry point) from --entry or the project's console scripts (several:
+    the project's name and a command table), else the inferred package or module (``log`` says
+    which and why)."""
     scripts = dist.console_scripts()
     if entry is None:
         if len(scripts) == 1:
             return next(iter(scripts.items()))
         if scripts:
-            raise several_scripts_error(dist.name, scripts)
+            return dist.name, command_table(scripts)
         name, entrypoint, why = infer_entry(dist)
         log(f"{dist.name} has no console scripts: {why}")
         return name, entrypoint

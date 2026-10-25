@@ -11,6 +11,21 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Added
+- **Several console scripts build one executable with all of them.** With no `--entry` and two
+  or more console scripts, the build no longer asks for a choice: it writes `dist/<project>`
+  (or the `-o` path), whose entry point is a table of `name=target` lines (format version
+  unchanged), and a relative symlink `dist/<command>` beside it per command, each made as a
+  temporary link renamed into place. A regular file or directory in the way of a link fails the
+  build before anything is written; an existing symlink is replaced. A start runs the command its
+  `argv[0]` names (`.py` stripped), else the one `argv[1]` names, which is removed from
+  `sys.argv`; with neither the executable lists its commands on stderr and exits 2. A start under
+  a command's link is never a helper interpreter (D44): command A starting `B -m word` runs
+  command B; `sys.executable -m ...` is still refused, and so are hard-link starts. The selftest
+  checks every command, a forkserver preloads the parent's command, `fsbpyr inspect` (and its
+  JSON, as `commands`) and the build summary list the commands, and `--smoke-args` starts with
+  the command's name. Command names must match `[A-Za-z0-9][A-Za-z0-9_.+-]*`. All links share
+  one instance budget (D45). A one-command build is unchanged except that it carries the new
+  `_fsbpyr_rt.commands` module, which only a table loads.
 - **A project with no console scripts builds from its `__main__` package or guarded module.**
   With no `--entry`, the build picks the project's only top-level package with a `__main__.py`
   (run as `python -m pkg`), else its only top-level module with an `if __name__ == "__main__":`
@@ -26,6 +41,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   README and `docs/compatibility.md` list SLES 15 SP6 and newer.
 
 ### Changed
+- **`--strict`'s early refusal of VCS requirement lines also applies to a requirements file with
+  `--hash=` lines.** uv reads such a file in `--require-hashes` mode too, and its VCS lines then
+  failed inside uv with its generic message; the build now refuses them first, naming the file
+  and line, with or without `--strict`.
 - **`PYTHONUNBUFFERED` is honoured** (D14). Set and non-empty, it makes an app's stdout and
   stderr unbuffered as CPython does, so a service's log lines reach a pipe as they are printed
   and survive a SIGTERM. It is the only `PYTHON*` variable the apps read.
