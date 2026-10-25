@@ -1988,6 +1988,47 @@ the fixes below, every one: 65 of 65 on 3.12 and 3.13, 64 of 64 on 3.14 and 42 o
 | A compiled module's own `OSError` is reported as an extraction failure (2026-10-24) | `black` without `fs-packages` | mypyc runs a compiled package's body inside `create_module`, where `PayloadExtensionLoader` wraps every `OSError` as "cannot extract native code for ... into <cache>"; blib2to3's read of `Grammar.txt` looked like a cache problem | wrap only the errors of the extraction itself |
 | `FileFinder` over a payload directory finds nothing (2026-10-24) | `torchvision` without `fs-packages` | torchvision finds its ops library with `importlib.machinery.FileFinder(os.path.dirname(__file__))`, which lists a directory; inside the executable it finds nothing and the ops never register (a silent failure) | serve a `FileFinder` on a payload directory, or recognise it in the hints |
 | Kernels of the host (2026-10-24) | apps that start Jupyter kernels | the build packages no `share/` files, so jupyter_client finds the host's kernelspecs first and may run a notebook in the system's Python | package a distribution's `share/jupyter/kernels`, or document it with the isolation the corpus app uses (`XDG_DATA_DIRS`) |
+
+**Next: settings without guesswork (owner decision 2026-10-25).** The settings an app needs
+are the most likely thing to stop a new user: `[tool.fsbpyr]` has to name the packages that read
+files next to their `__file__` (`fs-packages`), the libraries the target provides
+(`allow-system-libs`) and helper interpreters (`interpreter-reexec`), and today a user finds
+them by trying. The goal is either to detect all of them, or to give users a clear procedure,
+with tooling, to find them for a package the corpus has not tested. The investigation of
+2026-10-24 (corpus at 457aecb, before the fixes above):
+
+- `allow-system-libs`: count a native file as an extension module only if it has its
+  `PyInit_` symbol, not by its file name (removes casadi's and boosting's setting, checked with
+  the closure code on their wheels), and allow, with a warning naming them, the libraries of
+  extension modules that every importer imports under `try/except ImportError` (numba; a scan
+  only). A list of libraries "present everywhere" does not work: libgomp is missing on Debian,
+  Ubuntu and openSUSE images.
+- `interpreter-reexec`: a narrow mode that runs only the known helper command lines of the
+  libraries the build finds (joblib's loky worker and resource tracker, `ipykernel_launcher`,
+  py-cpuinfo's script). Enabling it whenever such a library is in the lock is right for 3 of
+  the 11 corpus apps that have one, and `true` for every app widens what a child can run.
+- `fs-packages`: static analysis has no good operating point (today's `--hints`: precision
+  0.25, recall 0.64; improved rules: recall 0.86 but precision 0.15 on apps not used to design
+  them). Extracting every package that ships data files found 30 of the 33 packages,
+  extracting everything 33 of 33 with the same output in all 15 apps compared (first run up to
+  0.2 s slower on this host, a cache 20 to 100 MB larger). A trace loop (`--suggest-settings`:
+  build without settings, run the app's commands under a tracer in the boot, rebuild until
+  nothing new turns up, then prune by rebuilding without each suggestion) got about 55 of 58
+  apps exactly; it misses reads from C code (casadi), failures that are not file reads (grpc:
+  the `resolve()` gap above) and numba's `cache=True`, and sees only what the commands
+  exercise. PyInstaller's and Nuitka's package tables are GPL and AGPL and answer another
+  question (which files to include), so there is nothing to reuse.
+
+Agreed on 2026-10-24 and not done (paused for the corpus fixes): the `PyInit_` and
+guarded-import rules, the narrow reexec mode, `--suggest-settings` and quieter, ranked hints.
+They remove `allow-system-libs` and `interpreter-reexec` from the corpus, but every app that
+sets them except hdf5 also needs `fs-packages`. Open: whether `fs-packages` becomes automatic
+(extract the packages that ship data files, or every imported package), which would leave most
+apps with no settings at all, and the procedure for a package nobody has tested (the README's
+"Does my app need settings?" is its first version). The six apps fixed since the investigation
+(black, twisted, torchvision, jupyter, openmm, vision) have not been measured against these
+approaches.
+
 ---
 
 ## 7. Test strategy

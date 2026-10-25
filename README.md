@@ -9,6 +9,8 @@ system libraries its native dependencies link
 (often libstdc++ and libgcc_s; `fsbpyr inspect` lists them): no Python, no virtual
 environment, no installation step.
 Modules are imported straight from the file, so startup stays close to plain CPython.
+Some packages need a setting or two; [Does my app need settings?](#does-my-app-need-settings)
+says which, for the 65 applications fsbpyr is tested on and for packages it has not seen.
 
 ## Quickstart
 
@@ -44,6 +46,33 @@ dist/hello
 These lines call fsbpyr by its path: a new `~/.local/bin` is on `PATH` only from the next
 login (Debian's and Ubuntu's `~/.profile` add it when it exists). The compressed download, the
 attestation check and building fsbpyr from source are in [Getting fsbpyr](#getting-fsbpyr).
+
+## Does my app need settings?
+
+Many apps build and run with no settings. Some packages need a line in `[tool.fsbpyr]`: they
+read their own files at paths built from `__file__` (`fs-packages`), link libraries that no
+wheel bundles (`allow-system-libs`), or start helper Python processes (`interpreter-reexec`).
+**Look your packages up in [docs/compatibility.md](docs/compatibility.md#tested-on-real-applications)
+first:** it lists the 65 real applications fsbpyr is tested on, from AI research and science to
+web services, what each one covers and the exact settings it needs. On Python 3.14, 35 of the
+64 that run there need none; most of the others name one or two packages in `fs-packages`.
+
+For a package that is not listed, build the app, run its main commands, and follow what fsbpyr
+says:
+
+- An uncaught file error on a path inside the executable (usually `NotADirectoryError`) ends
+  with `fsbpyr: <path> is inside the executable; <package> reads files next to its __file__:
+  rebuild with --fs-package <package>`. The note is missing when the app catches the error or
+  installs its own `sys.excepthook` (typer and rich do), and a package that only checks whether
+  its files exist sees `False` and may fail later in another way. `fsbpyr build --hints` lists
+  packages that may read files next to `__file__` (guesses).
+- A build that stops on `native files need libraries that are neither bundled nor standard
+  system libraries` prints the `allow-system-libs` line that lets the target provide them.
+- A child process that exits 70 with `fsbpyr: refusing to run ... as Python` asks for
+  `interpreter-reexec` ([Helper interpreters](#helper-interpreters)).
+
+The table in [docs/compatibility.md](docs/compatibility.md#differs-from-a-venv) explains each
+symptom and its remedy.
 
 ## Requirements
 
