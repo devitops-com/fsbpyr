@@ -290,3 +290,10 @@ def _workspace_table(pyproject: Path) -> dict[str, Any] | None:
         return None
     workspace = data.get("tool", {}).get("uv", {}).get("workspace")
     return workspace if isinstance(workspace, dict) else None
+
+
+def has_hash_option(text: str) -> bool:
+    """Whether a non-comment line of requirements ``text`` has a ``--hash`` option (the test
+    for uv's --require-hashes mode)."""
+    return any(re.search(r"(?:^|\s)--hash[=\s]", raw.partition(" #")[0])
+               for raw in text.splitlines() if not raw.lstrip().startswith("#"))

@@ -117,7 +117,7 @@ def _download(directory: Path, base: str, tag: str, baseline: str, asset: str) -
     os.close(handle)
     new = Path(name)
     try:
-        unpack(f"{base}/{tag}/{asset}.xz", new)
+        unpack(f"{base}/{tag}/{asset}.xz", new, _MAX_STUB)
         if new.stat().st_size > _MAX_STUB:
             raise StubError(f"the {asset} of release {tag} is larger than {_MAX_STUB >> 20} MB")
         data = new.read_bytes()
@@ -144,8 +144,8 @@ def _keep(data: bytes, final: Path) -> None:
 
 
 def stub_for(python: str, baseline: str, tag: str, cache: Path | None = None) -> bytes:
-    """The stub of release ``tag`` for ``python`` and ``baseline``, proven to be this fsbpyr's:
-    placed beside the executable, else kept in the cache, else downloaded (and kept)."""
+    """The stub of release ``tag`` for ``python`` and ``baseline``, with this fsbpyr's runtime
+    id: placed beside the executable, else kept in the cache, else downloaded (and kept)."""
     pin = pins.pin_for(python, registry.host_triple())
     expected = registry.runtime_id(pin, baseline=baseline)
     asset = release_stub_asset(python, host_target().name, baseline)

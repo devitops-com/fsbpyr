@@ -224,6 +224,21 @@ def test_a_pinned_download_that_fails_exits_with_the_pin_status(
     assert "re-pin it in tools/vm-pins.toml" in capsys.readouterr().err
 
 
+def test_a_pinned_download_with_the_wrong_hash_is_a_failure_not_an_unavailable_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("FSBPYR_TEST_DOWNLOADS", str(tmp_path))
+    monkeypatch.setattr(vm.shutil, "which", lambda _name: "/usr/bin/qemu")
+
+    def tampered(url: str, _sha: str, _target: Path) -> None:
+        raise vm.pbs.PbsError(f"SHA-256 mismatch for {url}")
+
+    monkeypatch.setattr(vm.pbs, "download", tampered)
+
+    assert vm.main(["--kernel", "16k"]) == 2
+    assert "SHA-256 mismatch" in capsys.readouterr().err
+
+
 # --- The console ---
 
 CONSOLE = """[    0.1] kernel noise

@@ -17,9 +17,6 @@ class Candidates:
     packages: tuple[str, ...] = ()  # top-level packages with a __main__.py
     modules: tuple[str, ...] = ()  # top-level modules with a main guard
 
-    def __bool__(self) -> bool:
-        return bool(self.packages or self.modules)
-
     def described(self) -> str:
         return ", ".join(
             [f"{name} (package with __main__.py)" for name in self.packages]

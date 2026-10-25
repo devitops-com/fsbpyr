@@ -29,7 +29,7 @@ from pathlib import Path
 from packaging.utils import canonicalize_name
 
 from .loose import Package
-from .project import LockSource, Project
+from .project import LockSource, Project, has_hash_option
 from .vcs import commit_time
 
 WHEEL = "{wheel}"  # placeholder in install commands, replaced by the built wheel's path
@@ -218,7 +218,7 @@ def _plan(
         lock, hashes = project.directory / LockSource.PYLOCK.value, []
     else:
         lock = project.requirements_path(options.requirements)
-        hashes = ["--require-hashes"] if options.strict or "--hash=" in lock.read_text() else []
+        hashes = ["--require-hashes"] if options.strict or has_hash_option(lock.read_text()) else []
     # `-e ./libs/common` lines install as regular packages; check_no_editable stays the net
     editable = ["--no-editable"] if source is LockSource.REQUIREMENTS else []
     install = [venv, [*base, *hashes, *editable, "-r", str(lock)],

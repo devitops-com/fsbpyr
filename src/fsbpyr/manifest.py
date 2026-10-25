@@ -20,7 +20,7 @@ from packaging.tags import Tag, parse_tag
 from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
 
 from .closure import InstalledDist
-from .project import LockSource
+from .project import LockSource, has_hash_option
 
 SCHEMA = 1  # of build_info (docs/format.md)
 BUILT_FROM_SDIST = "built-from-sdist"
@@ -98,7 +98,7 @@ def _hashed(source: LockSource, text: str, packages: Mapping[str, list[LockedPac
     if source in (LockSource.UV_LOCK, LockSource.SCRIPT_LOCK):
         return True
     if source is LockSource.REQUIREMENTS:
-        return "--hash=" in text
+        return has_hash_option(text)
     return any(p.wheels or p.sdist for entries in packages.values() for p in entries)
 
 

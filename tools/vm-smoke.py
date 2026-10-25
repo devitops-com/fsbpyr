@@ -120,7 +120,9 @@ def fetch(url: str, sha256: str, name: str) -> Path:
         print(f"vm-smoke: fetching {url}", file=sys.stderr)
         try:
             pbs.download(url, sha256, target)
-        except (pbs.PbsError, OSError) as exc:
+        except pbs.PbsError as exc:  # a hash mismatch or a refused URL: a failure, not a gone pin
+            raise VmSmokeError(f"the pinned {name} is not what the pin says: {exc}") from exc
+        except OSError as exc:  # gone or unreachable
             raise PinUnavailableError(
                 f"cannot fetch the pinned {name} ({exc}); re-pin it in tools/vm-pins.toml"
             ) from exc

@@ -202,6 +202,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   the target's, and a rebuild leaves a hard link on the old build.
 
 ### Fixed
+- **A `--hash=` in a comment of a requirements file no longer makes the build expect hashes.**
+  One test now decides it for the early VCS-line check, the install and the manifest.
+- **An EL8 stub download stops at 256 MB unpacked** instead of filling the disk before the
+  size check.
 - **A static project with no console scripts, no `--entry` and no `__main__.py` or guarded
   module fails before uv stages anything**, with the same message, instead of after the full
   build and install.

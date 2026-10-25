@@ -12,6 +12,7 @@ from fsbpyr.project import (
     LockSource,
     Project,
     ProjectError,
+    has_hash_option,
     unpinned_requirements,
     vcs_requirements,
 )
@@ -757,3 +758,8 @@ def test_the_source_date_reaches_the_staging_and_the_rebuild(tmp_path: Path) -> 
 
     assert seen.read_text().splitlines() == [f"{step} {EPOCH_FLOOR}" for step in
                                              ("build", "install", "install", "build")]  # fmt: skip
+
+
+def test_a_hash_in_a_comment_is_no_hash_option() -> None:
+    assert not has_hash_option("# pin with --hash=sha256:00 later\nfoo==1\n")
+    assert has_hash_option("foo==1 \\\n    --hash=sha256:00\n")

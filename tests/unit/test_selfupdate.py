@@ -464,3 +464,11 @@ def test_the_guard_is_skipped_where_the_host_has_no_glibc(
     monkeypatch.setattr(os, "confstr", musl)
 
     selfupdate.check_glibc("9.99")
+
+
+def test_unpack_stops_at_its_limit(tmp_path: Path) -> None:
+    packed = tmp_path / "big.xz"
+    packed.write_bytes(lzma.compress(b"\0" * 1_000_000))
+
+    with pytest.raises(selfupdate.UpdateError, match="unpacks to more than 1000 bytes"):
+        selfupdate.unpack(packed.as_uri(), tmp_path / "out", 1000)

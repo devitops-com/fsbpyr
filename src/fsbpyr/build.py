@@ -4,7 +4,6 @@ import contextlib
 import dataclasses
 import json
 import os
-import re
 import shlex
 import subprocess
 import sys
@@ -44,6 +43,7 @@ from .project import (
     LockSource,
     Project,
     ProjectError,
+    has_hash_option,
     unpinned_requirements,
     vcs_requirements,
 )
@@ -351,21 +351,15 @@ def lock_warnings(project: Project, source: LockSource, requirements: str | None
     return []
 
 
-def _has_hash(path: Path) -> bool:
-    """Whether a non-comment line of the requirements file has a ``--hash`` option."""
-    return any(re.search(r"(?:^|\s)--hash[=\s]", raw.partition(" #")[0])
-               for raw in path.read_text().splitlines() if not raw.lstrip().startswith("#"))
-
-
 def check_hashed_requirements(project: Project, config: BuildConfig) -> None:
     """Refuse VCS lines in a requirements file that uv reads in --require-hashes mode (--strict,
-    or a ``--hash=`` anywhere in the file), before uv says so with a generic hash message: a
+    or a ``--hash`` option in the file), before uv says so with a generic hash message: a
     commit SHA pins the source, but is not a hash."""
     requirements = config.requirements
     if project.lock_source(requirements) is not LockSource.REQUIREMENTS:
         return
     path = project.requirements_path(requirements)
-    if not (config.strict or _has_hash(path)):
+    if not (config.strict or has_hash_option(path.read_text())):
         return
     why = "--strict needs" if config.strict else f"{path.name} has --hash lines, so uv needs"
     if lines := vcs_requirements(path):

@@ -146,8 +146,9 @@ def _failed(url: str, exc: Exception) -> UpdateError:
     return (NotFound if missing else UpdateError)(f"downloading {url} failed: {exc}")
 
 
-def unpack(url: str, target: Path) -> None:
-    """``url`` (an xz file), unpacked as it arrives into ``target``."""
+def unpack(url: str, target: Path, limit: int | None = None) -> None:
+    """``url`` (an xz file), unpacked as it arrives into ``target``; UpdateError when the
+    unpacked file would exceed ``limit`` bytes."""
     decoder = lzma.LZMADecompressor(format=lzma.FORMAT_XZ)
     try:
         request = urllib.request.Request(url, headers=_ACCEPT)  # noqa: S310  the release's URL
@@ -155,6 +156,8 @@ def unpack(url: str, target: Path) -> None:
                 target.open("wb") as out:  # noqa: S310
             while chunk := response.read(_CHUNK):
                 out.write(decoder.decompress(chunk))
+                if limit is not None and out.tell() > limit:
+                    raise UpdateError(f"{url} unpacks to more than {limit} bytes")
     except (OSError, lzma.LZMAError, EOFError) as exc:
         raise _failed(url, exc) from exc
     if not decoder.eof:
