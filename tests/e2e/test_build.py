@@ -29,6 +29,7 @@ from fsbpyr.runtime.registry import Runtime, cache_home, cache_root
 from fsbpyr.staging import StagingPlan
 from fsbpyr.vcs import git_state, own_version, version_string
 
+from ..support import contain
 from ..support.readme import quickstart
 from ..support.sbom import load as load_sbom
 
@@ -799,6 +800,103 @@ def test_a_setuptools_scripts_file_is_reported_as_not_packaged(
     err = capsys.readouterr().err
     assert "legacy: legacy script old-tool is not packaged" in err
     assert "legacy: legacy script legacy " not in err
+
+
+_LEGACY_TOOL = (
+    "#!/usr/bin/env python\nimport sys\nimport lg\n"
+    "print(__name__, lg.VALUE, sys.argv[1:], sys.path[0].endswith('_fsbpyr_scripts'), "
+    "'_fsbpyr_scripts/' in __file__)\n"
+)
+
+
+def _contained(command: list[Path | str]) -> subprocess.CompletedProcess[str]:
+    return contain.run(command, env=os.environ, timeout=60)
+
+
+def _legacy_project(root: Path, scripts: dict[str, str], *, console: bool = False) -> Path:
+    """A setuptools project ``lg`` whose setup.py installs ``scripts`` (bin/ files) as legacy
+    scripts, and with ``console`` a console script ``lg-cli`` as well."""
+    entry = '\n[project.scripts]\nlg-cli = "lg:main"\n' if console else ""
+    listed = [f"bin/{name}" for name in scripts]
+    return _write(root, {
+        "pyproject.toml": '[project]\nname = "lg"\nversion = "1.0"\n' + entry + _SETUPTOOLS,
+        "setup.py": f"from setuptools import setup\nsetup(scripts={listed})\n",
+        "lg/__init__.py": "VALUE = 7\n\ndef main():\n    print('console')\n",
+        **{f"bin/{name}": text for name, text in scripts.items()},
+    })  # fmt: skip
+
+
+def test_a_legacy_python_script_is_the_only_command_and_runs_as_python_runs_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _legacy_project(tmp_path / "lg", {"tool": _LEGACY_TOOL})
+
+    assert main(["build", str(project)]) == 0
+
+    result = _contained([project / "dist" / "tool", "a", "-b"])
+    assert (result.returncode, result.stdout) == (0, "__main__ 7 ['a', '-b'] True True\n")
+    assert "legacy script" not in capsys.readouterr().err
+    assert [p.name for p in (project / "dist").iterdir()] == ["tool"]
+
+
+def test_legacy_scripts_and_console_scripts_are_commands_of_one_executable(
+    tmp_path: Path,
+) -> None:
+    project = _legacy_project(
+        tmp_path / "lg", {"tool": _LEGACY_TOOL, "other-tool": _LEGACY_TOOL}, console=True
+    )
+
+    assert main(["build", str(project), "-o", str(tmp_path / "out" / "lg")]) == 0
+
+    out = tmp_path / "out"
+    assert sorted(p.name for p in out.iterdir()) == ["lg", "lg-cli", "other-tool", "tool"]
+    assert [os.readlink(out / name) for name in ("lg-cli", "other-tool", "tool")] == ["lg"] * 3
+    assert _contained([out / "lg-cli"]).stdout == "console\n"
+    for name in ("tool", "other-tool"):
+        result = _contained([out / name, "x"])
+        assert result.stdout == "__main__ 7 ['x'] True True\n"
+    assert _contained([out / "lg", "tool", "y"]).stdout.startswith("__main__ 7 ['y']")
+
+
+def test_a_legacy_shell_script_still_warns_and_the_python_one_is_packaged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _legacy_project(
+        tmp_path / "lg", {"tool": _LEGACY_TOOL, "old-tool": "#!/bin/sh\necho old\n"}
+    )
+
+    assert main(["build", str(project)]) == 0
+
+    err = capsys.readouterr().err
+    assert "lg: legacy script old-tool is not packaged" in err
+    assert "legacy script tool " not in err
+    assert [p.name for p in (project / "dist").iterdir()] == ["tool"]
+
+
+def test_a_legacy_python_2_script_is_skipped_with_a_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _legacy_project(
+        tmp_path / "lg", {"old": "#!/usr/bin/env python\nprint 'hi'\n"}, console=True
+    )
+
+    assert main(["build", str(project)]) == 0
+
+    err = capsys.readouterr().err
+    assert "lg: legacy script old is not packaged: it does not compile" in err
+    assert [p.name for p in (project / "dist").iterdir()] == ["lg-cli"]
+
+
+def test_a_legacy_script_named_like_a_console_script_fails_naming_both(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _legacy_project(tmp_path / "lg", {"lg-cli": _LEGACY_TOOL}, console=True)
+
+    assert main(["build", str(project)]) == 1
+
+    err = capsys.readouterr().err
+    assert "'lg-cli' is both a console script (lg:main) and a legacy script (.data/scripts/" in err
+    assert not (project / "dist").exists()
 
 
 def test_compile_warnings_of_the_projects_own_files_are_build_warnings(

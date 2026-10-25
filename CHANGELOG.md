@@ -168,7 +168,19 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   README and `docs/compatibility.md` list SLES 15 SP6 and newer.
 - **A build warns about dropped legacy scripts.** Files a project's `setup.py` installs with
   `scripts=` were dropped without a word; the warning now names each and says that legacy
-  scripts are not packaged (use `[project.scripts]` or `--entry`).
+  scripts are not packaged (use `[project.scripts]` or `--entry`). Those that start with
+  `#!python` in the wheel are packaged as commands (see the next entry).
+- **Legacy `scripts=` files that are Python are commands.** The files of the project's wheel
+  under `<dist>.data/scripts/` that start with `#!python` (setuptools writes that for
+  `scripts=['bin/tool']` and `script-files` from any python shebang; the build reads the wheel,
+  since staging rewrites the line) join the console scripts as commands named after the file,
+  hyphens kept: one makes the executable, several make the links of a multi-command
+  executable, and a name that is also a console script fails the build, naming both. A project
+  whose only commands they are builds without `--entry`. A script runs as `python script` runs
+  it (`__main__`, `sys.argv` untouched, its directory first on `sys.path`); its source is stored
+  below `_fsbpyr_scripts/` under a module name (`check-disk` as `check_disk.py`, `tool` as
+  `_x_tool.py`), which is its `__file__`. A legacy script that is not Python (a shell script)
+  is still not packaged, and the build warns.
 - **Compile warnings of the project's own files are build warnings.** A `SyntaxWarning` or
   `DeprecationWarning` that compiling emits (`"\d"` in a normal string, say) used to show
   neither at build time nor at run time, while a venv run of the script prints it. The build now

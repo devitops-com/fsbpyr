@@ -346,6 +346,14 @@ def _module_stem(stem: str) -> str:
     return mangled if mangled.isidentifier() else f"_{mangled}"
 
 
+def script_stem(leaf: str, *, python: bool) -> str:
+    """The module name a script file is stored under: ``check-disk`` -> ``check_disk``, and
+    ``_x_tool`` for an extensionless ``tool`` (python3 never imports an extensionless file, so
+    no import may reach it, nor may it shadow a module of that name)."""
+    stem = _module_stem(leaf.removesuffix(".py"))
+    return stem if python or not leaf.isidentifier() else f"_x_{stem}"
+
+
 def discover_directory(directory: Path) -> tuple[dict[str, bytes], dict[str, str], list[str]]:
     """The Python files of a directory without pyproject.toml: payload path -> content (sorted),
     payload path -> project file, and warnings. A file whose name is no Python name is stored as
@@ -364,10 +372,7 @@ def discover_directory(directory: Path) -> tuple[dict[str, bytes], dict[str, str
             warnings.append(f"{rel} is not packaged: a directory name is not a valid Python "
                             "name, so no import reaches it")  # fmt: skip
             continue
-        stem = _module_stem(leaf.removesuffix(".py"))
-        if not python and leaf.isidentifier():  # python3 never imports an extensionless file
-            stem = f"_x_{stem}"
-        payload = "/".join([*folders, stem + ".py"])
+        payload = "/".join([*folders, script_stem(leaf, python=python) + ".py"])
         if payload in origins:
             raise ProjectError(f"{origins[payload]} and {rel} are both {payload} in the "
                                "executable (a name that is no Python name is stored with '_' "

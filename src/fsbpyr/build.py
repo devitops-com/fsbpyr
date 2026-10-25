@@ -32,6 +32,7 @@ from .config import BuildConfig
 from .elf import ElfError, glibc_requirement, is_elf
 from .entry import source_has_candidate
 from .importcheck import REMOVED_IN, Unresolved, check_command, top_level_names
+from .legacy import attach as attach_legacy_scripts
 from .links import LinkError, check_links, make_links
 from .loose import Package
 from .manifest import SCHEMA, LockError, built_here, dist_records, lock_record
@@ -406,7 +407,7 @@ def check_before_staging(project: Project, config: BuildConfig) -> None:
     if config.entry is None and project.static_scripts and len(project.scripts) > 1:
         command_table(project.scripts)  # raises for a name that is no command
     if (config.entry is None and project.static_scripts and project.static_entry_points
-            and not project.scripts and not project.loose
+            and not project.scripts and not project.loose and not project.may_have_legacy_scripts
             and not source_has_candidate(project.directory)):
         # no script, no __main__.py, no guarded module: staging cannot find an entry either
         raise several_scripts_error(name, project.scripts)
@@ -669,7 +670,9 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
             warnings += failed
             if not failed:
                 index = SiteIndex.scan(plan.site)
-        dist = _installed_project(index, wheel, project, config)
+        dist = attach_legacy_scripts(
+            _installed_project(index, wheel, project, config), wheel, warnings)
+        index.dists[dist.name] = dist
         walk = index.walk(dist, extras=config.extras, python_version=runtime.python_version)
         app_name, entrypoint = resolve_entry(dist, config.entry, log, omit=(
             check_script_imports(package, project, config, index.site, runtime, warnings=warnings)

@@ -46,6 +46,9 @@ class Project:
     static_scripts: bool = False
     static_extras: bool = False
     static_entry_points: bool = False
+    # setup.py or setuptools' script-files may install legacy scripts, which are commands too
+    # (legacy.py); only the wheel tells which
+    may_have_legacy_scripts: bool = False
     # no build system to run: fsbpyr writes the wheel of the project's Python files (loose.py)
     loose: bool = False
     # a directory with no pyproject.toml, setup.py or setup.cfg: loose, named after the directory,
@@ -89,6 +92,8 @@ class Project:
             static_scripts=declared and "scripts" not in dynamic,
             static_extras=declared and "optional-dependencies" not in dynamic,
             static_entry_points=declared and "entry-points" not in dynamic,
+            may_have_legacy_scripts=(directory / "setup.py").is_file() or bool(
+                data.get("tool", {}).get("setuptools", {}).get("script-files")),
             loose=_without_build_system(data),
         )
 

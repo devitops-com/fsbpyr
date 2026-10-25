@@ -91,7 +91,8 @@ symptom and its remedy.
   executable with all of them (see "Several commands in one executable"). A project with a
   `[project]` table and no `[build-system]` builds from its Python files (see "Projects without a
   build system"), and so does a directory of scripts with no project file at all ("A directory of
-  scripts"); `fsbpyr build FILE` builds one script ("A single script"). Legacy `setup.py` `scripts=` files are not packaged (the build warns). And a
+  scripts"); `fsbpyr build FILE` builds one script ("A single script"). Legacy `scripts=` files that start with `#!python` in the project's
+  wheel are commands too ("Legacy scripts"); other legacy scripts are not packaged (the build warns). And a
   `requires-python`, if it sets one, that admits one of 3.12 to 3.15 (see "Which Python").
 - **Lock sources,** the first one found: a requirements file that `--requirements` or
   `requirements` names, `uv.lock` (the project's or its uv workspace's), `pylock.toml`,
@@ -242,6 +243,22 @@ Things to know:
   arguments are that command's.
 - All links of an executable share one instance limit (`FSBPYR_MAX_INSTANCES`, "At run time").
 - `fsbpyr inspect` shows the commands and what each runs.
+
+### Legacy scripts
+
+The files that a project's `setup.py` installs with `scripts=` (or setuptools' `script-files`)
+are Python scripts when the wheel holds them with the first line `#!python`: setuptools writes
+that for a file that starts with `#!/usr/bin/env python`, and an installer rewrites it to its
+interpreter, so the build reads the wheel. Each is a command named after the file (hyphens
+kept) beside the console scripts: with only legacy scripts the build makes the executable from
+them, with several commands it makes the links of "Several commands in one executable", and a
+name that is also a console script fails the build, naming both. A script runs as `python
+script` runs it: as `__main__`, `sys.argv` untouched, with its own directory first on `sys.path`,
+and the project's package imports. The directory is `_fsbpyr_scripts/` in the executable, where
+the source is stored under a module name (`check-disk` as `check_disk.py`, a name without `.py`
+that is an identifier, `tool`, as `_x_tool.py`), so `__file__` is that path and the files next to
+the script are not there. A legacy script that does not start with `#!python` (a shell script)
+is not packaged; the build warns, naming it.
 
 ### Projects without a build system
 

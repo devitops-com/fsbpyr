@@ -388,7 +388,9 @@ import native_mod → modules lookup (EXTENSION) → closure (bundled libs only)
 4. **Entry point.** Read `[console_scripts]` from the project's installed `entry_points.txt`.
    If there is one, use it. If there are several and no `--entry`, build one executable with all
    of them (§11, "Multi-command executables"). With none, `--entry`, else the project's only
-   `__main__` package or guarded top-level module, else an error that lists the candidates; a
+   `__main__` package or guarded top-level module, else an error that lists the candidates; the
+   project's wheel files under `.data/scripts/` that start with `#!python` are commands too
+   (§11, "Legacy scripts"); a
    project without a build system takes its commands from `[project.scripts]` or its modules
    with a main guard. `module`
    and `module:func` are also accepted; a `module` that is a package needs `<pkg>.__main__`
@@ -2114,6 +2116,7 @@ a directory build, with a warning that names the file; a single script reads its
 | EL8 2 | `fsbpyr build --glibc 2.28` and `glibc = "2.28"` in `[tool.fsbpyr]`; the release's EL8 stub, fetched or placed beside the fsbpyr executable | `feat: fsbpyr build --glibc 2.28 builds apps for EL8 with its release's EL8 stub, fetched or placed next to fsbpyr` |
 | EL8 3 | `.github/workflows/el8.yml`, decoupled from the release | `ci: EL8 stubs are linked, tested and attached to a release by a workflow of their own` |
 | VM | `tools/vm-smoke.py`: a smoke test of aarch64 apps in QEMU VMs with 16K- and 64K-page kernels (only a smoke test, owner decision 5; the `vm-smoke` job of `full-suite.yml` and the EL8 workflow) | `test: a QEMU VM smoke test of built apps on 16K- and 64K-page aarch64 kernels` |
+| UC5 (d) | Legacy scripts: the files of the project's wheel under `<dist>.data/scripts/` that start with `#!python` are script commands beside the console scripts (`legacy.py`); a clash names both; a project whose only commands they are builds them | `feat: legacy #!python scripts of the project's wheel are commands` |
 | Audit | Gaps the audit of the merged branch found: a settings-only `pyproject.toml` beside scripts; tracked files only in a work tree; a `.py` file below a directory that is no Python name reported in any project the build owns (§7 item 9); `[tool.fsbpyr]` in a command's block warned about; `self update` names the EL8 stubs placed beside the executable that now belong to the old release; EL8 builds of a directory, a single script and a multi-command project, hard-link starts and single-command builds tested | `fix: a directory of scripts takes its settings from a pyproject.toml of settings only, and packages tracked files only`; `fix: a .py file below a directory that is no Python name is reported when the project owns it`; `fix: self update names the EL8 stubs placed beside the executable that now belong to the old release`; `test: EL8 builds of a directory of scripts, a single script and a multi-command project; hard-link starts; single-command builds` |
 
 **§7 of the research report, closed** (item: how). 1: `staging.py` leaves the tree as it found
@@ -2122,7 +2125,8 @@ it, and a project without a build system gets no `uv build` at all. 2: one cache
 the others, and the README says that a `--entry module` build runs the module's top-level code.
 5: `uv build` is not `--quiet`. 6: `build.check_before_staging`. 7: the project's own compile
 warnings are build warnings (`--strict` counts them); they are still not shown at run time.
-8: one warning for each `bin/` file that is not a console script. 9: the scripts root drops and
+8: one warning for each `bin/` file that is neither a console script nor a legacy script that
+starts with `#!python`. 9: the scripts root drops and
 reports a `.py` file below a directory that is no Python name, and `classify` warns for the
 project's own distribution (dependencies stay silent). 10: D24 (amended). 11: a `setup.cfg`
 alone is refused before uv runs. 12: `-e` paths, VCS pins, `--no-editable`, early `--strict`
@@ -2130,9 +2134,12 @@ refusal. 13: `reexec`. 14: `restart.py` (D14). 15: SLES 15 SP6 and SP7. 16: the 
 17: the 3.15 hint and the empty `dist/`. 18: documented in `docs/compatibility.md`, pinned by an
 e2e test with a real hard link. 19: `selfupdate.check_glibc`.
 
+**Built after all** (owner decision 2026-10-25, later the same day: all features built, no
+deferrals; reverses the research's deferral, §4.3): legacy `.data/scripts` (see the row of §11).
+
 **What stays deferred** (docs/use-case-research.md §4.3, unchanged): the venv metadata rung, the
 `__file__` overlay (decision 5.7(b)/(c)), normalizing `..` and accepting non-identifier
-directories, legacy `.data/scripts`, the D44 exception for `[sys.executable,
+directories, the D44 exception for `[sys.executable,
 <exe>/_fsbpyr_scripts/x.py]`, an on-target link install, D45 changes, `argv[0]` parity (5.3(iii)),
 foreign locks (`poetry.lock`, `pdm.lock`: the build says so), the requirements-only tool binary,
 per-subdirectory groups, `JOURNAL_STREAM` and a PID-1 SIGTERM handler. Dropped: the interpreter
@@ -2294,6 +2301,7 @@ import timings; this was accepted in the Phase 2 review, since that party could 
 | Platforms after the MVP (2026-10-18) | Linux x86-64 and aarch64, each with glibc and musl; macOS on Apple Silicon only; no Windows | Phase 9, third (2026-10-21: aarch64 with glibc done in 0.21.0; musl and macOS put aside) |
 | Multi-command executables (2026-10-18; answer reversed 2026-10-25) | Several console scripts build **one** executable with a command table: newline-separated `name=target` lines in the entrypoint Str, no format bump, no launcher change. The boot runs the command `basename(argv[0])` names (also without `.py`), else the one `argv[1]` names exactly (`sys.argv` shifted), else lists the commands on stderr and exits 2. The build writes `dist/<project>` and a relative symlink per command. The first answer (the app's `main` dispatches on `sys.argv[0]`) is gone | Done in step 4 of docs/use-case-research.md (owner decisions 5.2(a), 5.3(i), 5.4(a), 5.5(a)). The launcher passes `argv` unchanged (`main.c`, `parse_argv = 0`), so a link's name reaches `sys.argv[0]`; `sys.executable` stays the real file for a symlink, but for a hard link it and `__file__` are the link's own path, and a rebuild leaves the link on the old build (2026-10-25, see docs/compatibility.md). A start named for a command, and not for the executable, skips D44's helper-interpreter check; all links share D45's budget |
 | Script commands and the smoke test (2026-10-25, decisions 5.8 and 5.9) | A script command's target is only found by the smoke test, never imported; a `--entry module` or `module:attr` build still runs the module's top-level code on the build host, which the README says. A command with a required import that nothing in the project, its dependencies or the standard library resolves is skipped with a warning naming `file:line`; `--strict` fails the build, and so does no command left. An import under `try/except ImportError` (or a bare `except`, `except Exception`), `if TYPE_CHECKING:` or a test on `sys.platform`, `os.name` or `sys.version_info` is optional | §3.6 step 11; `importcheck.py`. A venv is never read (5.6(ii)): the warning gives the `uv pip freeze` command |
+| Legacy scripts (2026-10-25, research UC5 (d); deferred in the research, built by the later "no deferrals" decision) | A file of `<dist>.data/scripts/` in the project's own wheel that starts with `#!python` (setuptools' `scripts=` and `script-files` write it from any python shebang; an installer rewrites it, so only the wheel tells) is a command named after the file, hyphens kept, beside the console scripts and in the same table (a name that is both fails the build, naming both). Its source is stored as `_fsbpyr_scripts/<module>.py`, named by `loose.script_stem` (`check-disk` -> `check_disk`, an extensionless identifier `tool` -> `_x_tool`), and runs through the scripts root's mode (`__main__`, argv untouched, that directory first on `sys.path`, `__file__` its payload path). A project whose only commands they are builds them. Every other file under `bin/` (a shell script) is not packaged and the build warns | `legacy.py`, `closure.InstalledDist.legacy`; no boot or format change. The static import check of step 5 is not run for them |
 | Wheel of a project without a build system, VCS requirement lines (2026-10-25, decisions 5.10 and 5.11) | A pyproject without `[build-system]` always gets fsbpyr's own wheel, never setuptools' legacy fallback; the cost is that a single-module project that built through setuptools changes its payload layout (`_fsbpyr_scripts.mod`), which a project whose `[project.scripts]` point into `src/` must follow (`_fsbpyr_scripts.src.pkg.mod:main`). `--strict`, or any `--hash=` line in a requirements file, refuses VCS lines early with fsbpyr's own message, naming file and line | D5; `loose.py`, `build.check_hashed_requirements` |
 
 Still open: nothing.

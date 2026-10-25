@@ -6,7 +6,7 @@ import configparser
 import json
 import re
 from collections.abc import Callable, Collection, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email.parser import HeaderParser
 from pathlib import Path
 from typing import Any
@@ -37,14 +37,15 @@ class InstalledDist:
     entry_points: str
     direct_url: dict[str, Any] | None
     provides_extra: tuple[str, ...] = ()  # canonical names
+    legacy: Mapping[str, str] = field(default_factory=dict)  # legacy scripts: name -> module
 
     def console_scripts(self) -> dict[str, str]:
         return self._entries("console_scripts")
 
     def commands(self) -> dict[str, str]:
-        """The console scripts, and the modules a project without a build system runs
-        (loose.py)."""
-        return {**self._entries("console_scripts"), **self._entries(MODULE_GROUP)}
+        """The console scripts, the modules a project without a build system runs (loose.py)
+        and the legacy scripts of its wheel (legacy.py)."""
+        return {**self._entries("console_scripts"), **self._entries(MODULE_GROUP), **self.legacy}
 
     def gui_scripts(self) -> dict[str, str]:
         return self._entries("gui_scripts")
@@ -183,7 +184,7 @@ def command_table(scripts: Mapping[str, str]) -> str:
     word: the build fails naming one that is not plain."""
     for name in scripts:
         if not COMMAND_NAME.fullmatch(name):
-            raise ClosureError(f"console script name {name!r} is not valid for a command of a "
+            raise ClosureError(f"command name {name!r} is not valid for a command of a "
                                "multi-command executable: letters, digits and _.+- only, "
                                "starting with a letter or digit")  # fmt: skip
     return "\n".join(f"{name}={target}" for name, target in sorted(scripts.items()))

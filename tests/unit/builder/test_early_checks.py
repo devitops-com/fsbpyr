@@ -38,7 +38,7 @@ def test_a_script_name_that_is_no_command_fails_before_uv_is_looked_for(
     (tmp_path / "pyproject.toml").write_text(TWO_SCRIPTS.replace("a = ", "-a = "))
     monkeypatch.setattr("fsbpyr.build.find_uv", lambda: pytest.fail("uv"))
 
-    with pytest.raises(ClosureError, match="console script name '-a' is not valid"):
+    with pytest.raises(ClosureError, match="command name '-a' is not valid"):
         build(tmp_path, BuildConfig())
 
 
