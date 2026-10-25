@@ -512,8 +512,13 @@ def test_an_entry_checks_only_the_command_it_names(
     ("module", "version", "hint"),
     [
         ("cgi", "3.14.9", "cgi was removed in Python 3.13; build with --python 3.12"),
-        ("imp", "3.13.1", "imp was removed in Python 3.12; build with --python 3.11"),
-        ("distutils.core", "3.12.4", "distutils was removed in Python 3.12; build with --python 3.11"),  # noqa: E501
+        ("imp", "3.13.1", "imp was removed in Python 3.12; no Python fsbpyr builds for has it, "
+                          "so the script needs porting (use importlib)"),
+        ("distutils.core", "3.12.4", "distutils was removed in Python 3.12; no Python fsbpyr "
+                                     "builds for has it, so the script needs porting "
+                                     "(use setuptools or packaging)"),
+        ("smtpd", "3.14.0", "smtpd was removed in Python 3.12; no Python fsbpyr builds for has "
+                            "it, so the script needs porting (use aiosmtpd)"),
     ],
 )  # fmt: skip
 def test_a_removed_standard_library_module_names_the_version_that_dropped_it(

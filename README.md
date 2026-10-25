@@ -310,7 +310,8 @@ Debian 12 and newer, SLES 15 SP6 and newer and SLES 16, and EL8 (RHEL 8, Rocky L
 AlmaLinux 8) with `--glibc 2.28` ("Older systems: EL8 and glibc 2.28"). CentOS 7, Amazon Linux 2
 and every musl system are out of reach, and Ubuntu 20.04, Debian 10 and 11 and SLES 15 SP4 and SP5
 are not tested. Scripts for Python 2, scripts that import what Python removed (`cgi`, `imp`,
-`telnetlib`; the build names the `--python` that still has the module) and scripts that import
+`telnetlib`; the build names the newest supported `--python` that still has the module, or says
+the script needs porting when none does) and scripts that import
 the system's `dnf`, `rpm`, `selinux` or `apt` bindings, which no executable carries, cannot be
 bundled on any system.
 

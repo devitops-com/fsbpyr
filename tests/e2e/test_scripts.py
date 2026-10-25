@@ -197,13 +197,19 @@ def test_strict_fails_on_a_skipped_command_and_a_build_with_no_command_left_fail
 def test_a_removed_standard_library_module_suggests_an_older_python(
     tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    project = _project(tmp_path, main_py="import cgi\n" + GUARDED.format(who="x"))
+    on_312 = runtime.python_version.startswith("3.12.")
+    module, hint = (
+        ("imp", "imp was removed in Python 3.12; no Python fsbpyr builds for has it")
+        if on_312 else
+        ("cgi", "cgi was removed in Python 3.13; build with --python 3.12")
+    )  # fmt: skip
+    project = _project(tmp_path, main_py=f"import {module}\n" + GUARDED.format(who="x"))
 
     assert _build(project) == 1
 
     err = capsys.readouterr().err
-    assert "main.py:1: import cgi" in err
-    assert "cgi was removed in Python 3.13; build with --python 3.12" in err
+    assert f"main.py:1: import {module}" in err
+    assert hint in err
 
 
 def test_a_file_below_a_directory_that_is_no_python_name_is_reported(

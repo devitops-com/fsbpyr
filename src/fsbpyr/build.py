@@ -17,6 +17,7 @@ from packaging.utils import canonicalize_name, parse_wheel_filename
 from . import pyversion
 from .assemble import App, build_temporary, runtime_module_names
 from .boot._fsbpyr_rt.commands import parse
+from .bytecode import SUPPORTED_PYTHON
 from .classify import BUILTIN_FS_PACKAGES, Uncounted, _record_path, classify
 from .closure import (
     ClosureError,
@@ -438,6 +439,24 @@ def load_package(project: Project, config: BuildConfig, warnings: list[str]) -> 
     return package
 
 
+_REMOVED_REPLACEMENT = {
+    "imp": "importlib", "distutils": "setuptools or packaging", "asyncore": "asyncio",
+    "asynchat": "asyncio", "smtpd": "aiosmtpd",
+}  # fmt: skip
+
+
+def _removed_hint(name: str) -> str:
+    """Where a removed standard library module is still to be had: the newest Python fsbpyr
+    builds for that has it, else a word that the script needs porting."""
+    removed = REMOVED_IN[name]
+    text = f"{name} was removed in Python {removed[0]}.{removed[1]}"
+    older = max((v for v in SUPPORTED_PYTHON if v < removed), default=None)
+    if older is not None:
+        return f"{text}; build with --python {older[0]}.{older[1]}"
+    port = f" (use {_REMOVED_REPLACEMENT[name]})" if name in _REMOVED_REPLACEMENT else ""
+    return f"{text}; no Python fsbpyr builds for has it, so the script needs porting{port}"
+
+
 def _unresolved_warning(
     command: str, problems: list[Unresolved], project: Project, python: tuple[int, int]
 ) -> str:
@@ -448,9 +467,7 @@ def _unresolved_warning(
     more = f" (and {len(problems) - 3} more)" if len(problems) > 3 else ""
     text = f"command {command} skipped: not in the executable: {shown}{more}"
     removed = {problem.module.partition(".")[0] for problem in problems} & REMOVED_IN.keys()
-    hints = [f"{name} was removed in Python {REMOVED_IN[name][0]}.{REMOVED_IN[name][1]}; build "
-             f"with --python {REMOVED_IN[name][0]}.{REMOVED_IN[name][1] - 1}"
-             for name in sorted(removed) if REMOVED_IN[name] <= python]  # fmt: skip
+    hints = [_removed_hint(name) for name in sorted(removed) if REMOVED_IN[name] <= python]
     if {problem.module.partition(".")[0] for problem in problems} - set(removed):
         where = ("requirements.txt, or in a '# /// script' block of the script" if project.bare
                  else "[project] dependencies")  # fmt: skip
