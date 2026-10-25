@@ -26,7 +26,7 @@ TWO_SCRIPTS = (
 DYNAMIC = '[project]\nname = "app"\nversion = "1"\ndynamic = ["optional-dependencies", "scripts"]\n'
 
 
-def test_two_static_scripts_without_entry_build_a_command_table(tmp_path: Path) -> None:
+def test_two_static_scripts_without_entry_pass_the_check(tmp_path: Path) -> None:
     project = _project(tmp_path, TWO_SCRIPTS)
 
     check_before_staging(project, BuildConfig())
@@ -42,7 +42,7 @@ def test_a_script_name_that_is_no_command_fails_before_uv_is_looked_for(
         build(tmp_path, BuildConfig())
 
 
-def test_an_entry_lets_two_scripts_through(tmp_path: Path) -> None:
+def test_an_entry_lets_two_scripts_pass_the_check(tmp_path: Path) -> None:
     project = _project(tmp_path, TWO_SCRIPTS)
 
     check_before_staging(project, BuildConfig(entry="a"))
@@ -99,7 +99,7 @@ def test_a_static_project_with_no_script_and_no_candidate_fails_early(tmp_path: 
         (STATIC_NO_SCRIPTS, {"app.py": "﻿" + GUARDED}),
     ],
 )
-def test_a_possible_candidate_lets_a_scriptless_project_through(
+def test_a_possible_candidate_lets_a_scriptless_project_pass_the_check(
     tmp_path: Path, pyproject: str, files: dict[str, str]
 ) -> None:
     project = _project(tmp_path, pyproject)

@@ -140,3 +140,9 @@ def test_a_commented_hash_does_not_count_and_a_spaced_one_does(tmp_path: Path) -
     check_before_staging(_project(tmp_path, f"# --hash=x\na==1  # --hash=y\n{vcs}"), BuildConfig())
     with pytest.raises(ProjectError, match="has --hash lines"):
         check_before_staging(_project(tmp_path, f"a==1 --hash sha256:ab\n{vcs}"), BuildConfig())
+
+
+@pytest.mark.parametrize("entry", [None, "../../x"])
+def test_a_single_script_name_that_escapes_the_output_directory_fails(entry: str | None) -> None:
+    with pytest.raises(ClosureError, match="not valid for a command"):
+        resolve_entry(_dist("../../x = m:main\n"), entry)

@@ -12,7 +12,7 @@ requires; a Pipfile beside its lock names the tools in ``[packages]``. A depende
 scripts are never commands. A tool with no console or gui script of its own that is a
 meta-package (no importable code of its own: ``jupyter``) has its direct requirements as the
 tools in its place; with code of its own it falls through only to a requirement named after it
-(``ansible`` requires ``ansible-core``). Any other such distribution is a library, not a tool.
+(a made-up ``acme`` requires ``acme-cli``). Any other such distribution is a library, not a tool.
 ``gui_scripts`` are commands as ``console_scripts`` are: pip and uv install them as ordinary
 launchers on Linux.
 """
@@ -164,9 +164,13 @@ def _url_name(text: str, where: str) -> str:
         ) from None
 
 
-def _holds(marker: Marker | None, environment: dict[str, str]) -> bool:
+def _holds(marker: Marker | None, environment: dict[str, str], extras: frozenset[str]) -> bool:
+    """Whether the marker holds, the extras that listed items ask for counting as active: a
+    Pipfile.lock marks what an extra needs ``extra == 'x'``."""
     try:
-        return marker is None or marker.evaluate({**environment, "extra": ""})
+        return marker is None or any(
+            marker.evaluate({**environment, "extra": extra}) for extra in ("", *extras)
+        )
     except (UndefinedComparison, UndefinedEnvironmentName):
         return True
 
@@ -177,9 +181,10 @@ def _named(
     """The listed distributions that are installed, with the extras asked for. One whose marker
     is false is not installed; one that is missing without a marker is an error."""
     named: dict[str, frozenset[str]] = {}
+    asked = frozenset().union(*(item.extras for item in listed))
     for item in listed:
         if item.name in index.dists:
-            if _holds(item.marker, environment):
+            if _holds(item.marker, environment, asked):
                 named[item.name] = named.get(item.name, frozenset()) | item.extras
         elif item.marker is None:
             raise ClosureError(f"{source} names {item.name}, which is not installed in the "

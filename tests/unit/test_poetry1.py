@@ -61,3 +61,14 @@ def test_only_package_mode_false_without_a_project_table_is_unpackaged() -> None
     assert _without_build_system(_data(""))
     assert not is_unpackaged({"tool": {"poetry": {"name": "x"}}})
     assert not is_unpackaged({**_data(""), "project": {"name": "x"}})
+
+
+def test_markers_with_an_or_are_kept_apart_from_the_python_constraint() -> None:
+    data = _data(
+        'name = "app"\nversion = "1.0"\n[tool.poetry.dependencies]\npython = "^3.12"\n'
+        'x = {version = "^1.0", python = ">=3.9", '
+        'markers = "sys_platform == \'win32\' or sys_platform == \'darwin\'"}\n')
+
+    [line] = project_table(data)["dependencies"]
+
+    assert "(sys_platform == 'win32' or sys_platform == 'darwin') and python_full_version" in line

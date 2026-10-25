@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from email.parser import HeaderParser
@@ -105,10 +106,13 @@ def _local(info: Path, paths: Iterable[str]) -> str | None:
     return "editable" if any(p.startswith("__editable__") for p in paths) else None
 
 
+_NAME = re.compile(r"[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?")  # PEP 508: the pin is a requirement
+
+
 def _dist(info: Path) -> VenvDist | None:
     headers = HeaderParser().parsestr(_read(info / "METADATA"), headersonly=True)
     name, version = headers.get("Name"), headers.get("Version")
-    if not name or not version:
+    if not name or not version or not _NAME.fullmatch(name):
         return None
     try:  # the pin goes into the wheel and the warning: an invalid version is skipped
         Version(version)

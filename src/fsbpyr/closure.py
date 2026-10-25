@@ -185,15 +185,20 @@ def several_scripts_error(
     )
 
 
+def check_command_names(names: Iterable[str]) -> None:
+    """A command name is a file name the build writes and links and a command line word: the
+    build fails naming one that is not plain."""
+    for name in names:
+        if not COMMAND_NAME.fullmatch(name):
+            raise ClosureError(f"command name {name!r} is not valid for a command of an "
+                               "executable: letters, digits and _.+- only, "
+                               "starting with a letter or digit")  # fmt: skip
+
+
 def command_table(scripts: Mapping[str, str]) -> str:
     """The entry point of a build with several console scripts (§11, 2026-10-25):
-    ``name=target`` lines, sorted. A name is a file name the build links and a command line
-    word: the build fails naming one that is not plain."""
-    for name in scripts:
-        if not COMMAND_NAME.fullmatch(name):
-            raise ClosureError(f"command name {name!r} is not valid for a command of a "
-                               "multi-command executable: letters, digits and _.+- only, "
-                               "starting with a letter or digit")  # fmt: skip
+    ``name=target`` lines, sorted."""
+    check_command_names(scripts)
     return "\n".join(f"{name}={target}" for name, target in sorted(scripts.items()))
 
 
@@ -236,6 +241,7 @@ def resolve_entry(
     scripts = {name: target for name, target in dist.commands().items() if name not in omit}
     if entry is None:
         if len(scripts) == 1:
+            check_command_names(scripts)
             return next(iter(scripts.items()))
         if scripts:
             return dist.name, command_table(scripts)
@@ -243,6 +249,7 @@ def resolve_entry(
         log(f"{dist.name} has no console scripts: {why}")
         return name, entrypoint
     if entry in scripts:
+        check_command_names([entry])
         return entry, scripts[entry]
     module, _, attribute = entry.partition(":")
     if not all(part.isidentifier() for part in module.split(".")) or (

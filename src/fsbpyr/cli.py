@@ -102,7 +102,9 @@ def cli(ctx: click.Context) -> None:
               help="where to write the executable (default: `dist/` and the entry's "
                    "name, or the project's name for several commands)")  # fmt: skip
 @click.option("--requirements", metavar="FILE", type=click.Path(),
-              help="pinned requirements file, for pip projects without `pylock.toml`")  # fmt: skip
+              help="pinned requirements file, for pip projects without `pylock.toml`; in a "
+                   "directory with no Python file it names the tools to build "
+                   "(a tool binary)")  # fmt: skip
 @click.option("--extra", "extras", metavar="NAME", multiple=True, shell_complete=_complete_extra,
               help="install a project extra (repeat); requirements and pylock files must "
                    "already contain its dependencies")  # fmt: skip

@@ -322,3 +322,10 @@ def test_the_lock_record_names_only_a_venv_outside_the_directory(tmp_path: Path)
 
     assert record["path"] == ".venv"
     assert inferred_lock(directory, Inferred(directory / ".venv", ("a==1",)))["path"] == ".venv"
+
+
+def test_a_name_that_is_no_distribution_name_is_not_read_into_a_pin(tmp_path: Path) -> None:
+    venv = _venv(tmp_path)
+    _dist(venv, "evil @ git+file:", files=["foo/__init__.py"], top_level="foo")
+
+    assert infer(venv, ["foo"], ENVIRONMENT) is None

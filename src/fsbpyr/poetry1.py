@@ -67,7 +67,9 @@ def _requirements(name: str, spec: object) -> list[tuple[str, bool]]:
             text += f"[{','.join(str(extra) for extra in extras)}]"
         text += _constraint(str(fields.get("version") or "*"), name)
         markers = [str(fields["markers"])] if fields.get("markers") else []
-        if python := fields.get("python"):
+        if (python := fields.get("python")) and markers:
+            markers = [f"({markers[0]})"]  # an `or` in it must not take the python constraint
+        if python:
             markers += [f'python_full_version {s.operator} "{s.version}"'
                         for s in SpecifierSet(_constraint(str(python), name))]
         if markers:

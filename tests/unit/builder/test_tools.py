@@ -497,3 +497,19 @@ def test_one_tool_with_one_script_is_a_plain_entry_named_after_the_script() -> N
     view = with_commands(index.dists["tools"], tools)
 
     assert resolve_entry(view, None) == ("pyflakes", "pyflakes.api:main")
+
+
+def test_a_dependency_marked_with_an_extra_that_is_asked_elsewhere_is_still_installed() -> None:
+    """A Pipfile.lock marks what an extra needs ``extra == 'x'``: it stays named."""
+    index = _index(
+        _dist("req", ("idna", "ssl; extra == 'security'"), "req = req:main"),
+        _dist("idna"),
+        _dist("ssl"),
+    )
+    listed = [Listed("req", frozenset({"security"})), Listed("idna"),
+              Listed("ssl", marker=Marker("extra == 'security'"))]  # fmt: skip
+
+    tools = tool_scripts(index, listed, project="p", source="Pipfile.lock",
+                         python_version=PYTHON)  # fmt: skip
+
+    assert sorted(tools.scripts) == ["req"]
