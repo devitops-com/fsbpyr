@@ -24,6 +24,7 @@ from .closure import (
     InstalledDist,
     SiteIndex,
     command_table,
+    marker_environment,
     resolve_entry,
     several_scripts_error,
     unknown_extras_error,
@@ -31,6 +32,7 @@ from .closure import (
 from .config import BuildConfig
 from .elf import ElfError, glibc_requirement, is_elf
 from .entry import source_has_candidate
+from .foreign import stale as foreign_stale
 from .importcheck import REMOVED_IN, Unresolved, check_command, top_level_names
 from .legacy import attach as attach_legacy_scripts
 from .links import LinkError, check_links, make_links
@@ -339,10 +341,10 @@ def lock_warnings(project: Project, source: LockSource, requirements: str | None
         warnings = ["unlocked build: dependencies resolved now, not reproducible"]
         if project.script is not None:  # `uv lock --script FILE` writes the lock this reads
             return warnings
-        for foreign in ("poetry.lock", "pdm.lock"):
+        for foreign in ("poetry.lock", "pdm.lock"):  # only a directory of scripts gets here
             if (project.directory / foreign).is_file():
-                warnings.append(f"{foreign} is not read: the dependencies in [project] are "
-                                "resolved now (uv.lock or requirements.txt would lock them)")
+                warnings.append(f"{foreign} is not read: the dependencies the scripts declare "
+                                "are resolved now (uv.lock or requirements.txt would lock them)")
         if split := sorted((project.directory / "requirements").glob("*.txt")):
             names = ", ".join(path.name for path in split)
             warnings.append(Uncounted(f"no requirements.txt, but requirements/ holds {names}; "
@@ -350,6 +352,8 @@ def lock_warnings(project: Project, source: LockSource, requirements: str | None
         return warnings
     if source is LockSource.REQUIREMENTS:
         return unpinned_warning(unpinned_requirements(project.requirements_path(requirements)))
+    if source in (LockSource.POETRY_LOCK, LockSource.PDM_LOCK):
+        return [message] if (message := foreign_stale(source, project.directory)) else []
     return []
 
 
@@ -655,9 +659,12 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
     with tempfile.TemporaryDirectory(prefix="fsbpyr-stage-") as tmp:
         triple = runtime.tag.partition("-")[2]
         baseline = pins.sysroot_for(triple, config.glibc)  # the stub's glibc (D25, D46)
-        options = StagingOptions(TARGET_PYTHON, config.extras, config.offline, config.requirements,
-                                 platform=target_named(triple).platform_for(baseline.manylinux),
-                                 strict=config.strict, package=package)  # fmt: skip
+        options = StagingOptions(
+            TARGET_PYTHON, config.extras, config.offline, config.requirements,
+            platform=target_named(triple).platform_for(baseline.manylinux),
+            strict=config.strict, package=package,
+            environment=marker_environment(runtime.python_version),
+        )  # fmt: skip
         plan = staging_plan(project, source, uv, Path(tmp), options)
         wheel = run_plan(plan, project.directory, log=log, verbose=verbose)
         index = SiteIndex.scan(plan.site)

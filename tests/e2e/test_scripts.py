@@ -2,6 +2,8 @@
 fsbpyr writes the wheel of the project's Python files, and the app runs them as ``uv run
 main.py`` does. Needs the cached runtime."""
 
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -17,6 +19,7 @@ from ..support import contain
 pytestmark = pytest.mark.slow
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "projects" / "scripts"
+FOREIGN = Path(__file__).parents[1] / "fixtures" / "projects" / "foreign"
 PYPROJECT = '[project]\nname = "{name}"\nversion = "1.0"\nrequires-python = ">=3.12"\n{extra}'
 GUARDED = 'import sys\n\nif __name__ == "__main__":\n    print("{who}", sys.argv)\n'
 
@@ -236,3 +239,87 @@ def test_reading_a_file_next_to_a_script_does_not_advise_fs_package(
     assert result.returncode == 1 and "NotADirectoryError" in result.stderr
     assert "holds the project's Python files only" in result.stderr
     assert "--fs-package" not in result.stderr
+
+
+# --- Poetry and PDM locks (research UC3) -----------------------------------------------------
+
+LOCKED = [("poetry2", "poetry.lock"), ("pdm", "pdm.lock")]
+WHEEL_HASHES = {  # the wheels of the fixtures' locks
+    "click": "255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360",
+    "rich": "33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb",
+}
+
+
+@pytest.mark.parametrize(("fixture", "lock"), LOCKED)
+def test_a_poetry_or_pdm_lock_locks_the_build(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str], fixture: str, lock: str
+) -> None:
+    project = tmp_path / fixture
+    shutil.copytree(FOREIGN / fixture, project)
+    before = _listing(project)
+
+    assert _build(project) == 0
+
+    err = capsys.readouterr().err
+    assert "unlocked" not in err and "out of date" not in err
+    assert _listing(project) == before  # the converted file lives in the staging directory
+    shown = _run(tmp_path / "out" / "app", tmp_path).stdout.splitlines()
+    assert shown == ["click 8.5.0", "rich 15.0.0", "markdown-it-py 4.2.0", "mdurl 0.1.2",
+                     "pygments 2.21.0", "colorama absent", "packaging absent",
+                     "iniconfig absent"]  # fmt: skip
+
+    assert main(["inspect", "--json", str(tmp_path / "out" / "app")]) == 0
+    info = json.loads(capsys.readouterr().out)["build_info"]
+    digest = hashlib.sha256((project / lock).read_bytes()).hexdigest()
+    assert info["lock"] == {"kind": lock, "path": lock, "hashed": True, "sha256": digest}
+    pins = {d["name"]: d for d in info["dists"]}
+    assert {name: pins[name]["artifact_sha256"] for name in WHEEL_HASHES} == WHEEL_HASHES
+    assert "colorama" not in pins and "iniconfig" not in pins
+    assert main(["inspect", str(tmp_path / "out" / "app")]) == 0
+    assert f"lock       {lock} sha256:{digest[:8]}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(("fixture", "lock"), LOCKED)
+def test_an_extra_installs_what_the_lock_lists_for_it(
+    tmp_path: Path, runtime: Runtime, fixture: str, lock: str
+) -> None:
+    project = tmp_path / fixture
+    shutil.copytree(FOREIGN / fixture, project)
+
+    assert _build(project, "--extra", "fancy") == 0
+
+    assert "packaging 26.3" in _run(tmp_path / "out" / "app", tmp_path).stdout.splitlines()
+
+
+@pytest.mark.parametrize(("fixture", "lock"), LOCKED)
+def test_a_lock_older_than_the_dependencies_is_a_warning_and_an_error_with_strict(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str], fixture: str, lock: str
+) -> None:
+    project = tmp_path / fixture
+    shutil.copytree(FOREIGN / fixture, project)
+    pyproject = project / "pyproject.toml"
+    pyproject.write_text(pyproject.read_text().replace('"click>=8.1"', '"click>=8.2"'))
+
+    assert _build(project) == 0
+    assert f"{lock} is out of date" in capsys.readouterr().err
+
+    assert _build(project, "--strict") == 1
+    assert "--strict: the build has 1 warning" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("fixture", "lock"), LOCKED)
+def test_a_changed_hash_in_the_lock_fails_the_build(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str], fixture: str, lock: str
+) -> None:
+    """The converted file demands the lock's hashes (uv --require-hashes)."""
+    project = tmp_path / fixture
+    shutil.copytree(FOREIGN / fixture, project)
+    path = project / lock
+    path.write_text(path.read_text().replace(WHEEL_HASHES["click"], "0" * 64))
+    path.write_text(path.read_text().replace("ba0d2089de75ea0310e2dde03160e6ca10009947fb95a182f9b54"
+                                             "021bb272e34", "1" * 64))  # fmt: skip
+
+    assert _build(project) == 1
+
+    assert "Hash mismatch" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()

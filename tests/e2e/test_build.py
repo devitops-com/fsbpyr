@@ -689,6 +689,27 @@ def test_strict_refuses_requirements_without_hashes(
     assert not out.exists()
 
 
+def test_a_packaged_poetry_1_project_is_locked_by_its_poetry_lock(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """lock-version 2.0 names no group: the main packages are those the pyproject reaches."""
+    project = tmp_path / "poetry1"
+    shutil.copytree(FIXTURES / "foreign" / "poetry1", project)
+    out = tmp_path / "bin" / "foreign-poetry1"
+
+    assert main(["build", str(project), "-o", str(out)]) == 0
+
+    err = capsys.readouterr().err
+    assert "unlocked" not in err and "out of date" not in err
+    shown = _run(out).stdout.splitlines()
+    assert shown == ["click 8.5.0", "rich 15.0.0", "markdown-it-py 4.2.0", "mdurl 0.1.2",
+                     "pygments 2.21.0", "colorama absent", "packaging absent",
+                     "iniconfig absent"]  # fmt: skip
+    assert main(["inspect", "--json", str(out)]) == 0
+    lock = json.loads(capsys.readouterr().out)["build_info"]["lock"]
+    assert (lock["kind"], lock["hashed"]) == ("poetry.lock", True)
+
+
 def test_a_changed_hash_in_pylock_toml_fails_the_build(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

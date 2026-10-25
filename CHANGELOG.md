@@ -40,8 +40,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
     untracked Python file that is not ignored, which it leaves out) or a pruned walk without git;
     links out of the tree are refused, and a `.py` file below a directory that is no Python name
     is reported and left out. The dependencies come from `uv.lock` as before, else
-    `[project.dependencies]` unlocked; `poetry.lock` and `pdm.lock` are not read (the build says
-    so). The commands are `[project.scripts]`, else the modules with a main guard (one: the
+    `[project.dependencies]` unlocked, or from `poetry.lock` / `pdm.lock` (see the entry below).
+    The commands are `[project.scripts]`, else the modules with a main guard (one: the
     project's command; several: a multi-command executable, named after the files, `main.py` after
     the project, a collision fails naming both). A script runs as `__main__` with its directory
     first on `sys.path`, so `import utils` works; `__file__` is below `<exe>/_fsbpyr_scripts/`.
@@ -181,6 +181,20 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   below `_fsbpyr_scripts/` under a module name (`check-disk` as `check_disk.py`, `tool` as
   `_x_tool.py`), which is its `__file__`. A legacy script that is not Python (a shell script)
   is still not packaged, and the build warns.
+- **`poetry.lock` and `pdm.lock` lock a build.** They used to be left unread, with a warning
+  and an unlocked build. fsbpyr converts the lock in its staging directory (nothing is written
+  into the project) into a requirements file for uv: the main (Poetry) or default (PDM) group
+  and the `--extra`s the lock lists, markers evaluated for the app's Python and platform, every
+  hash of a package, and `--require-hashes` when every package has one. Poetry locks of any
+  lock-version are read (1.0's `category` and `[metadata.files]`; 1.5 to 1.8 record no group, so
+  the packages are those the pyproject's dependencies reach through the lock; 2.x `groups` and
+  `markers`), and PDM locks of lock_version 4 with a group per package (`inherit_metadata`) or
+  the default group only. A path dependency installs as a regular package, a VCS entry keeps its
+  commit and a URL entry its hash; a package from another index, a VCS entry without a commit, a
+  missing path and a package locked at two versions that both apply are refused, naming the
+  entry. A lock whose content hash is not the pyproject's is a warning, and an error with
+  `--strict`. They rank after `requirements.txt` as lock sources. `build_info.lock.kind` and
+  `fsbpyr inspect` show `poetry.lock` or `pdm.lock`. `Pipfile.lock` is not read.
 - **Compile warnings of the project's own files are build warnings.** A `SyntaxWarning` or
   `DeprecationWarning` that compiling emits (`"\d"` in a normal string, say) used to show
   neither at build time nor at run time, while a venv run of the script prints it. The build now

@@ -20,6 +20,7 @@ from packaging.tags import Tag, parse_tag
 from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
 
 from .closure import InstalledDist
+from .foreign import Entry, read_entries
 from .project import LockSource, has_hash_option
 
 SCHEMA = 1  # of build_info (docs/format.md)
@@ -76,8 +77,33 @@ def _pylock_package(package: Mapping[str, Any]) -> LockedPackage:
                          sdist)  # fmt: skip
 
 
+_FOREIGN_SOURCES = {"registry": "registry", "index": "registry", "git": "git", "url": "url",
+                    "path": "path", "local": LOCAL}  # fmt: skip
+
+
+def _foreign_package(entry: Entry) -> LockedPackage:
+    """A Poetry or PDM entry: its wheels by file name, and the sdist's hash."""
+    wheels = {name: digest for name, digest in entry.files.items() if name.endswith(".whl")}
+    sdists = [digest for name, digest in entry.files.items() if not name.endswith(".whl")]
+    return LockedPackage(_FOREIGN_SOURCES[entry.kind], entry.version, wheels,
+                         sdists[-1] if sdists else None)  # fmt: skip
+
+
+def _foreign_packages(source: LockSource, text: str) -> dict[str, list[LockedPackage]]:
+    try:
+        entries = read_entries(source, tomllib.loads(text))
+    except tomllib.TOMLDecodeError as exc:
+        raise LockError(f"cannot read {source.value}: {exc}") from exc
+    packages: dict[str, list[LockedPackage]] = {}
+    for entry in entries:
+        packages.setdefault(entry.name, []).append(_foreign_package(entry))
+    return packages
+
+
 def read_lock(source: LockSource, text: str) -> dict[str, list[LockedPackage]]:
-    """The packages of a uv.lock or pylock.toml, by canonical name; empty for other sources."""
+    """The packages of a lock, by canonical name; empty for requirements and unlocked."""
+    if source in (LockSource.POETRY_LOCK, LockSource.PDM_LOCK):
+        return _foreign_packages(source, text)
     if source not in (LockSource.UV_LOCK, LockSource.SCRIPT_LOCK, LockSource.PYLOCK):
         return {}
     try:

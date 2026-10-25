@@ -125,9 +125,7 @@ class SiteIndex:
 
     def walk(self, root: InstalledDist, *, extras: tuple[str, ...], python_version: str) -> Walk:
         """Requires-Dist closure under the runtime's marker environment (consistency check)."""
-        environment = {key: str(value) for key, value in default_environment().items()}
-        environment["python_full_version"] = python_version
-        environment["python_version"] = ".".join(python_version.split(".")[:2])
+        environment = marker_environment(python_version)
         seen: dict[str, set[str]] = {}
         warnings: list[str] = []
         pending = [(root, set(extras))]
@@ -156,6 +154,15 @@ class SiteIndex:
         reachable = tuple(sorted(seen))
         unreachable = tuple(sorted(set(self.dists) - set(seen)))
         return Walk(reachable, unreachable, tuple(warnings))
+
+
+def marker_environment(python_version: str) -> dict[str, str]:
+    """The marker environment of the app: this host's (a build is for the platform it runs
+    on) with the runtime's Python, "3.14.1"."""
+    environment = {key: str(value) for key, value in default_environment().items()}
+    environment["python_full_version"] = python_version
+    environment["python_version"] = ".".join(python_version.split(".")[:2])
+    return environment
 
 
 def _requirement(line: str, dist: InstalledDist) -> Requirement:

@@ -30,6 +30,8 @@ class LockSource(Enum):
     PYLOCK = "pylock.toml"
     REQUIREMENTS = "requirements"
     SCRIPT_LOCK = "script.lock"  # uv's `<script>.lock` (uv lock --script), a uv.lock for one file
+    POETRY_LOCK = "poetry.lock"  # converted to requirements at staging (foreign.py)
+    PDM_LOCK = "pdm.lock"
     UNLOCKED = "unlocked"
 
 
@@ -164,7 +166,7 @@ class Project:
 
     def lock_source(self, requirements: str | None = None) -> LockSource:
         """An explicit requirements file, else uv.lock (own or workspace), pylock.toml,
-        requirements.txt, else unlocked (plan §3.6 3)."""
+        requirements.txt, poetry.lock, pdm.lock, else unlocked (plan §3.6 3)."""
         if requirements is not None:
             if not self.requirements_path(requirements).is_file():
                 raise ProjectError(
@@ -179,7 +181,15 @@ class Project:
             return LockSource.PYLOCK
         if self.requirements_path(None).is_file():
             return LockSource.REQUIREMENTS
-        return LockSource.UNLOCKED
+        return self._foreign_lock() or LockSource.UNLOCKED
+
+    def _foreign_lock(self) -> LockSource | None:
+        """The Poetry or PDM lock beside the pyproject.toml of a project (not of a directory of
+        scripts, whose dependencies are the scripts')."""
+        for source in (LockSource.POETRY_LOCK, LockSource.PDM_LOCK):
+            if not self.bare and (self.directory / source.value).is_file():
+                return source
+        return None
 
     def lock_path(self, source: LockSource, requirements: str | None = None) -> Path | None:
         """The file ``source`` reads; None when unlocked."""
@@ -187,8 +197,8 @@ class Project:
             return self.uv_root / LockSource.UV_LOCK.value
         if source is LockSource.SCRIPT_LOCK:
             return self.script_lock
-        if source is LockSource.PYLOCK:
-            return self.directory / LockSource.PYLOCK.value
+        if source in (LockSource.PYLOCK, LockSource.POETRY_LOCK, LockSource.PDM_LOCK):
+            return self.directory / str(source.value)
         if source is LockSource.REQUIREMENTS:
             return self.requirements_path(requirements)
         return None

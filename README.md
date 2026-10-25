@@ -96,8 +96,9 @@ symptom and its remedy.
   `requires-python`, if it sets one, that admits one of 3.12 to 3.15 (see "Which Python").
 - **Lock sources,** the first one found: a requirements file that `--requirements` or
   `requirements` names, `uv.lock` (the project's or its uv workspace's), `pylock.toml`,
-  `requirements.txt`. With none, the build resolves the dependencies itself and warns that it
-  is not reproducible. From `uv.lock`, dependency groups (`dev` among them) are not packaged.
+  `requirements.txt`, `poetry.lock`, `pdm.lock`. With none, the build resolves the dependencies
+  itself and warns that it is not reproducible. From `uv.lock`, dependency groups (`dev` among
+  them) are not packaged. See "Poetry and PDM locks".
 
 ## Supported targets
 
@@ -260,6 +261,39 @@ that is an identifier, `tool`, as `_x_tool.py`), so `__file__` is that path and 
 the script are not there. A legacy script that does not start with `#!python` (a shell script)
 is not packaged; the build warns, naming it.
 
+### Poetry and PDM locks
+
+A project with a `poetry.lock` (any lock-version) or a `pdm.lock` (lock_version 4) is a locked
+build. fsbpyr reads the lock, never writes into the project, and gives uv a requirements
+file made in its staging directory: the main (Poetry) or default (PDM) group, markers evaluated
+for the Python and platform the app is built for, and every hash the lock lists for a package,
+with `--require-hashes` when every package has one. Dev groups are not packaged. `--extra NAME`
+adds the packages of the lock's extra (Poetry's `[extras]`, PDM's group of that name); an extra
+the lock lacks is an error. They rank after `requirements.txt`: a requirements file beside
+the lock, or `--requirements`, wins, and so does a `uv.lock`.
+
+- **Poetry 1.5 to 1.8** (lock-version 2.0) record no group per package. fsbpyr starts from the
+  pyproject's `[tool.poetry.dependencies]` (or `[project.dependencies]`) and follows the
+  dependencies the lock records, so dev-only packages stay out. A `python =` constraint on a
+  dependency must be a PEP 440 specifier (`<3.12`), not `^3.12`: the build says which dependency.
+- **PDM** (lock_version 4) needs the group of each package: a lock made with the
+  `inherit_metadata` strategy, or a lock that holds the default group only. Otherwise the build
+  stops and says to lock again or to pass a requirements file.
+- **Path, VCS and URL entries.** A path dependency is installed as a regular package, as for a
+  requirements file, from the path the lock names (relative to the project). A VCS entry keeps
+  its commit (`resolved_reference` or `revision`). A URL entry keeps its hash. These have no hash
+  to require, so uv checks the hashes of the other packages and does not demand one of these.
+- **Refused, naming the entry:** a package from another package index (the credentials are not
+  in the lock; pass a requirements file with `--requirements`), a VCS entry that pins no commit, a
+  path that does not exist, and a package locked at two versions that both apply to the target.
+- **A lock older than the dependencies** (Poetry's `content-hash`, PDM's `content_hash` differ
+  from the pyproject's) is a warning, and an error with `--strict`; the build still installs the
+  lock as it is.
+
+`fsbpyr inspect` shows the lock as `poetry.lock sha256:...` or `pdm.lock sha256:...`, and the JSON
+`build_info` records the kind and, for each distribution, the hash of the locked wheel. `Pipfile.lock`
+is not read.
+
 ### Projects without a build system
 
 A project with a `[project]` table and no `[build-system]` is what `uv init --no-package` writes
@@ -281,10 +315,11 @@ setuptools' legacy fallback. A uv workspace root (`[tool.uv.workspace]`) keeps i
 - **How it is built:** fsbpyr writes the project's wheel itself (the Python files under a
   reserved top-level directory `_fsbpyr_scripts/`), runs no project code and writes nothing into
   the source tree. Two builds of one tree are the same bytes. The dependencies come from
-  `uv.lock` as for any project; without one, `[project.dependencies]` (and the `--extra`s) are
-  resolved now, with the warning for an unlocked build. `poetry.lock` and `pdm.lock` are not
-  read, nor is Poetry 1's `[tool.poetry.dependencies]`; a `.venv` is never read for undeclared
-  dependencies.
+  `uv.lock` as for any project, or `poetry.lock` / `pdm.lock` ("Poetry and PDM locks"); without
+  a lock, `[project.dependencies]` (and the `--extra`s) are resolved now, with the warning for an
+  unlocked build. Poetry 1's `[tool.poetry.dependencies]` is not read without a lock, and a
+  `package-mode = false` project needs a `[project]` table; a `.venv` is never read for
+  undeclared dependencies.
 - **Commands:** `[project.scripts]` if present (`main:run` runs `_fsbpyr_scripts.main:run`),
   else the modules with an `if __name__ == "__main__":` guard (a `__main__.py` counts too). One
   is the command named like the project; several make a multi-command executable

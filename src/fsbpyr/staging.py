@@ -21,13 +21,15 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from packaging.utils import canonicalize_name
 
+from .closure import marker_environment
+from .foreign import export
 from .loose import Package
 from .project import LockSource, Project, has_hash_option
 from .vcs import commit_time
@@ -60,6 +62,8 @@ class StagingOptions:
     platform: str | None = None
     strict: bool = False  # requirements files must pin and hash every line (uv --require-hashes)
     package: Package | None = None  # the files the build checked: the wheel of a loose project
+    # the markers of the target, for the locks that are converted (poetry.lock, pdm.lock)
+    environment: Mapping[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,16 +218,31 @@ def _plan(
         extras = f"[{','.join(options.extras)}]" if options.extras else ""
         return StagingPlan(site, build, [venv, [*base, WHEEL + extras]], wheel_dir, env,
                            [str(uv), "cache", "clean"])  # fmt: skip
+    hashes: list[str] = []
     if source is LockSource.PYLOCK:
-        lock, hashes = project.directory / LockSource.PYLOCK.value, []
+        lock = project.directory / LockSource.PYLOCK.value
+    elif source in (LockSource.POETRY_LOCK, LockSource.PDM_LOCK):
+        lock, hashes = _foreign_requirements(project, source, work, options)
     else:
         lock = project.requirements_path(options.requirements)
         hashes = ["--require-hashes"] if options.strict or has_hash_option(lock.read_text()) else []
     # `-e ./libs/common` lines install as regular packages; check_no_editable stays the net
-    editable = ["--no-editable"] if source is LockSource.REQUIREMENTS else []
+    editable = ["--no-editable"] if source is not LockSource.PYLOCK else []
     install = [venv, [*base, *hashes, *editable, "-r", str(lock)],
                [*base, "--no-deps", WHEEL]]
     return StagingPlan(site, build, install, wheel_dir, env, [str(uv), "cache", "clean"])
+
+
+def _foreign_requirements(
+    project: Project, source: LockSource, work: Path, options: StagingOptions
+) -> tuple[Path, list[str]]:
+    """The requirements file of a Poetry or PDM lock, written in the work directory, and uv's
+    hash option for it: --require-hashes when every line carries a hash."""
+    exported = export(source, project.directory, extras=options.extras, environment=(
+        options.environment or marker_environment(f"{options.python}.0")))  # fmt: skip
+    path = work / f"{source.value}.requirements.txt"
+    path.write_text(exported.text)
+    return path, ["--require-hashes"] * exported.hashed
 
 
 def _tree_leftovers(project_dir: Path) -> set[Path]:
