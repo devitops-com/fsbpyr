@@ -73,7 +73,11 @@ def cli(ctx: click.Context) -> None:
     help="build a single-file executable from a project\n\nPROJECT is the project's directory "
     "(default: the current one); a directory of Python files with no `pyproject.toml` or "
     "`setup.py` is built from them, one command per file with a main guard or a python "
-    "shebang. Options given here win over `[tool.fsbpyr]` in its `pyproject.toml`.\n\n"
+    "shebang. A single Python file (`*.py`, or a python or `uv run --script` shebang) builds "
+    "with the files it imports from its directory, and nothing else of it; its PEP 723 "
+    "block gives the dependencies, `requires-python` and `[tool.fsbpyr]`, and a "
+    "`<file>.lock` from `uv lock --script` locks them. Options given here win over "
+    "`[tool.fsbpyr]` in its `pyproject.toml`.\n\n"
     "The app runs on the Python that `--python`, `python` in `[tool.fsbpyr]`, a supported "
     "`.python-version` pin or `requires-python` choose, in that order (the lowest supported "
     "version `requires-python` allows, the highest below an upper-only bound). Each Python "
@@ -81,8 +85,7 @@ def cli(ctx: click.Context) -> None:
     "fetched into the cache once and run with the same arguments. A developer build never "
     "fetches one; it says how to build it.",
 )
-@click.argument("project", required=False, default=".",
-                type=click.Path(file_okay=False, path_type=Path))  # fmt: skip
+@click.argument("project", required=False, default=".", type=click.Path(path_type=Path))
 @click.option("--python", metavar="X.Y",
               help="the Python to build for, 3.12 to 3.15, inside `requires-python` "
                    "(default: `python` in `[tool.fsbpyr]`, else `.python-version`, else "

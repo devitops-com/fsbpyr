@@ -78,13 +78,13 @@ def _pylock_package(package: Mapping[str, Any]) -> LockedPackage:
 
 def read_lock(source: LockSource, text: str) -> dict[str, list[LockedPackage]]:
     """The packages of a uv.lock or pylock.toml, by canonical name; empty for other sources."""
-    if source not in (LockSource.UV_LOCK, LockSource.PYLOCK):
+    if source not in (LockSource.UV_LOCK, LockSource.SCRIPT_LOCK, LockSource.PYLOCK):
         return {}
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         raise LockError(f"cannot read {source.value}: {exc}") from exc
-    uv = source is LockSource.UV_LOCK
+    uv = source is not LockSource.PYLOCK
     packages: dict[str, list[LockedPackage]] = {}
     for package in data.get("package" if uv else "packages", []):
         parsed = _uv_package(package) if uv else _pylock_package(package)
@@ -95,7 +95,7 @@ def read_lock(source: LockSource, text: str) -> dict[str, list[LockedPackage]]:
 def _hashed(source: LockSource, text: str, packages: Mapping[str, list[LockedPackage]]) -> bool:
     """Whether the lock pins artifact hashes: uv.lock always does; the others when they list
     some."""
-    if source is LockSource.UV_LOCK:
+    if source in (LockSource.UV_LOCK, LockSource.SCRIPT_LOCK):
         return True
     if source is LockSource.REQUIREMENTS:
         return "--hash=" in text

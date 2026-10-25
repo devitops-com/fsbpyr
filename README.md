@@ -361,6 +361,34 @@ Python 2, scripts that import what Python removed (`cgi`, `imp`, `telnetlib`; th
   `python3 /opt/tools/check-disk.py` must become `/opt/tools/check-disk`: the link is an
   executable, not a Python file.
 
+### A single script
+
+`fsbpyr build report.py` builds one script: a `*.py` file, or an extensionless file whose first
+line is a python or `uv run --script` shebang (anything else is refused). The app is named after
+the file's stem, hyphens kept (`check-disk.py` gives `check-disk`), and written to `dist/<name>`
+in the script's directory, or to `-o`. It runs where "A directory of scripts" does, with the same
+checks, run-time behaviour (as `__main__`, `argv` untouched, the script's directory first on
+`sys.path`, a name that is no Python name stored under a module name) and notes on files read
+next to `__file__`.
+
+- **What is packaged:** the file and its static local-import closure: the sibling modules and
+  packages it imports from its own directory, transitively, and a directory it adds to `sys.path`
+  from its `__file__`. The rest of the directory is never read, so a script among 200 unrelated
+  ones holds its own few modules. A `pyproject.toml`, `requirements.txt`, `pylock.toml` or
+  `uv.lock` beside the script is not read; `--requirements FILE` is.
+- **Dependencies, `requires-python` and settings** come from the script's PEP 723 block
+  (`# /// script` ... `# ///`): `dependencies` are resolved at build time (the build warns that it
+  is unlocked), `requires-python` chooses the Python as a project's does, including the fetch of
+  another Python's fsbpyr, and a `[tool.fsbpyr]` table (`# [tool.fsbpyr]`, `# strict = true`) is
+  read as in `pyproject.toml`, with unknown keys rejected. Without a block the script has no
+  dependencies: the import check names an import nothing provides, with the freeze command when
+  a `.venv` is next to it. A `.venv` is never read.
+- **A script lock:** a `report.py.lock` beside the script (`uv lock --script report.py`) locks
+  the build: the dependencies are installed from it, `--locked` fails the build when the block
+  has outgrown it (run `uv lock --script` again), and `fsbpyr inspect` shows `script.lock`. fsbpyr
+  itself never writes beside the script: it makes no lock, so a script with dependencies and no
+  lock builds unlocked.
+
 #### Monitoring plugins and cron fleets
 
 Nagios, Icinga, NRPE and Checkmk checks and cron jobs call a script by the name a command

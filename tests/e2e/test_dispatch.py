@@ -129,3 +129,18 @@ def test_a_project_excluding_the_running_python_builds_through_the_variant(
 
     assert releases.requests == [PATH]
     assert _runs_on(second) == OTHER
+
+
+def test_a_script_whose_block_excludes_the_running_python_builds_through_the_variant(
+    releases: FakeReleases, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    script = tmp_path / "ops" / "which.py"
+    script.parent.mkdir()
+    script.write_text(f'# /// script\n# requires-python = "=={OTHER}.*"\n# ///\n'
+                      "import sys\nprint('{}.{}'.format(*sys.version_info[:2]))\n")
+    out = tmp_path / "out"
+
+    assert main(["build", str(script), "-o", str(out)]) == 0
+
+    assert f"the project builds with Python {OTHER}" in capsys.readouterr().out
+    assert _runs_on(out) == OTHER

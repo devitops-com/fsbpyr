@@ -29,6 +29,7 @@ class LockSource(Enum):
     UV_LOCK = "uv.lock"
     PYLOCK = "pylock.toml"
     REQUIREMENTS = "requirements"
+    SCRIPT_LOCK = "script.lock"  # uv's `<script>.lock` (uv lock --script), a uv.lock for one file
     UNLOCKED = "unlocked"
 
 
@@ -51,10 +52,14 @@ class Project:
     # with the dependencies its commands' PEP 723 blocks declare
     bare: bool = False
     dependencies: tuple[str, ...] = ()
+    # one script (research UC8): `directory` is its directory, which nothing else of is read
+    script: Path | None = None
 
     @classmethod
     def load(cls, directory: Path) -> Project:
         directory = directory.resolve()
+        if directory.is_file():
+            return cls._script(directory)
         pyproject = directory / "pyproject.toml"
         if pyproject.is_file():
             try:
@@ -96,6 +101,37 @@ class Project:
                    scripts=dict(package.commands), loose=True, bare=True,
                    dependencies=package.dependencies)  # fmt: skip
 
+    @classmethod
+    def _script(cls, script: Path) -> Project:
+        """One script, ``*.py`` or extensionless with a python or `uv run` shebang: its
+        directory's pyproject.toml is not read. Its PEP 723 block gives the dependencies,
+        requires-python and ``[tool.fsbpyr]``."""
+        from .loose import Package, inline_metadata, python_shebang  # noqa: PLC0415  see _bare
+
+        data = script.read_bytes()
+        if script.suffix != ".py" and (script.suffix or not python_shebang(data)):
+            raise ProjectError(f"{script} is a file, but not a Python script: fsbpyr builds a "
+                               "`*.py` file, an extensionless file whose first line is a python "
+                               "or `uv run --script` shebang, or a project directory")  # fmt: skip
+        tools = inline_metadata(data, script.name).get("tool", {})
+        tool = tools.get("fsbpyr", {}) if isinstance(tools, dict) else None
+        if not isinstance(tool, dict):
+            raise ProjectError(f"{script.name}: [tool.fsbpyr] in the '# /// script' block "
+                               "must be a table")  # fmt: skip
+        package = Package.load(script.parent, script=script)
+        return cls(directory=script.parent, name=package.name,
+                   requires_python=package.requires_python, scripts=dict(package.commands),
+                   tool=dict(tool), loose=True, bare=True, dependencies=package.dependencies,
+                   script=script)  # fmt: skip
+
+    @property
+    def script_lock(self) -> Path | None:
+        """uv's lock of the script, ``<script>.lock`` beside it, if it exists."""
+        if self.script is None:
+            return None
+        lock = self.script.with_name(self.script.name + ".lock")
+        return lock if lock.is_file() else None
+
     @property
     def uv_root(self) -> Path | None:
         """Directory whose uv.lock governs this project: itself, or its uv workspace root."""
@@ -127,6 +163,8 @@ class Project:
                     f"requirements file {requirements} not found in {self.directory}"
                 )
             return LockSource.REQUIREMENTS
+        if self.script is not None:  # a lock beside it, else nothing: the directory's files
+            return LockSource.SCRIPT_LOCK if self.script_lock else LockSource.UNLOCKED
         if self.uv_root is not None:
             return LockSource.UV_LOCK
         if (self.directory / "pylock.toml").is_file():
@@ -139,6 +177,8 @@ class Project:
         """The file ``source`` reads; None when unlocked."""
         if source is LockSource.UV_LOCK and self.uv_root is not None:
             return self.uv_root / LockSource.UV_LOCK.value
+        if source is LockSource.SCRIPT_LOCK:
+            return self.script_lock
         if source is LockSource.PYLOCK:
             return self.directory / LockSource.PYLOCK.value
         if source is LockSource.REQUIREMENTS:

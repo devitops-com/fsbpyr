@@ -17,11 +17,13 @@ optional: the check cannot tell what the path holds.
 from __future__ import annotations
 
 import ast
+import os
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from .loose import ROOT
+from .loose import ROOT, _pruned
+from .project import ProjectError
 from .syspath import path_entries
 
 # Standard library modules removed in a Python version (PEP 594 dead batteries, PEP 632
@@ -244,3 +246,79 @@ def check_command(
         problems += [Unresolved(path, node.lineno, name) for path, node in waiting
                      for name in search.unresolved(node, path)]  # fmt: skip
     return problems
+
+
+class _Disk:
+    """The files next to a script, looked up on disk as ``_Project`` looks them up in a dict:
+    only what an import names is touched, so a script in a home directory walks nothing. A
+    module that is a link to a file outside the directory is an error, as in a project."""
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+        self.root = Path(os.path.realpath(directory))
+        self.venvs: dict[str, bool] = {}
+
+    def _folders_pruned(self, parts: list[str]) -> bool:
+        return _pruned(self.directory, parts, self.venvs)
+
+    def is_file(self, rel: str) -> bool:
+        path = self.directory / rel
+        if not path.is_file() or self._folders_pruned(rel.split("/")[:-1]):
+            return False
+        real = Path(os.path.realpath(path))
+        if not real.is_relative_to(self.root):
+            raise ProjectError(f"{rel} is a link to {real}, outside the script's directory; "
+                               "fsbpyr packages the script's own files only")  # fmt: skip
+        return True
+
+    def is_directory(self, rel: str) -> bool:
+        return (self.directory / rel).is_dir() and not self._folders_pruned(rel.split("/"))
+
+    def find(self, base: str, parts: list[str]) -> list[str] | None:
+        """As ``_Project.find``."""
+        found: list[str] = []
+        path = PurePosixPath(base)
+        for index, part in enumerate(parts):
+            path /= part
+            if index == len(parts) - 1 and self.is_file(module := f"{path}.py"):
+                return [*found, module]
+            if not self.is_directory(str(path)):
+                return None
+            if self.is_file(init := f"{path}/__init__.py"):
+                found.append(init)
+        return found
+
+
+def local_closure(directory: Path, payload: str, source: bytes, origin: str) -> dict[str, bytes]:
+    """The files of ``directory`` a script reaches by static imports, transitively (research
+    UC8): ``source`` stored as ``payload``, and the sibling modules and packages that the import
+    check would resolve from the script's directory, read from disk. Nothing else of the
+    directory is packaged. ``origin`` is the script's own name: a sibling that would be stored
+    under ``payload`` is an error."""
+    disk = _Disk(directory)
+    search = _Search(disk, "", frozenset())  # type: ignore[arg-type]  # find() is all it uses
+    sources = {payload: source}
+    imports: list[tuple[str, ast.Import | ast.ImportFrom]] = []
+    pending = [payload]
+    while True:
+        while pending:
+            path = pending.pop()
+            try:
+                tree = ast.parse(sources[path], filename=path)
+            except (SyntaxError, ValueError):
+                continue  # the import check reports it
+            search.extra += [d for d in path_entries(tree, path)[0] if d not in search.extra]
+            found: list[tuple[ast.Import | ast.ImportFrom, bool]] = []
+            _visit(tree, False, found)
+            imports += [(path, node) for node, _ in found]
+        reached = dict.fromkeys(file for path, node in imports
+                                for _, files in search.resolve(node, path) for file in files or [])
+        if payload in reached and payload != origin:  # the script, stored under another name
+            raise ProjectError(f"{origin} is stored as {payload}, which is also a file of its "
+                               "directory that it imports; rename one of them")
+        new = [file for file in reached if file not in sources]
+        if not new:
+            return dict(sorted(sources.items()))
+        for file in new:
+            sources[file] = (directory / file).read_bytes()
+            pending.append(file)

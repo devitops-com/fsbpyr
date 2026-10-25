@@ -79,11 +79,16 @@ class Package:
     dependencies: tuple[str, ...] = ()
 
     @classmethod
-    def load(cls, directory: Path, *, declared: bool = False) -> Package:
+    def load(
+        cls, directory: Path, *, declared: bool = False, script: Path | None = None
+    ) -> Package:
         """The package of ``directory``. Without a pyproject.toml the dependencies are those of
         the commands' PEP 723 blocks, unless ``declared``: a requirements file or a lock
-        declares them (the blocks' requires-python still counts)."""
+        declares them (the blocks' requires-python still counts). With ``script``, a file of
+        ``directory``: that file and what it imports from there, and its own block."""
         directory = directory.resolve()
+        if script is not None:
+            return cls._from_script(directory, script, declared=declared)
         if directory in (Path("/"), Path.home().resolve()):
             raise ProjectError(f"{directory} is not a project directory: fsbpyr packages the "
                                "Python files below it, and that is all of them")  # fmt: skip
@@ -117,6 +122,32 @@ class Package:
             table["requires-python"] = requires_python
         return cls(directory, name, _version(table), _metadata(table), sources, commands,
                    tuple(warnings), origins, requires_python, tuple(dependencies))  # fmt: skip
+
+    @classmethod
+    def _from_script(cls, directory: Path, script: Path, *, declared: bool) -> Package:
+        """One script (research UC8): named and commanded after the file's stem, holding the
+        script and its static local-import closure, with the dependencies and requires-python
+        of its PEP 723 block. The rest of the directory is not read."""
+        from .importcheck import local_closure  # noqa: PLC0415  importcheck imports this module
+
+        data = script.read_bytes()
+        command = script.stem
+        if not COMMAND_NAME.fullmatch(command):
+            raise ProjectError(f"{script.name}: {command!r} is not a command name (letters, "
+                               "digits and _.+-, starting with a letter or digit)")  # fmt: skip
+        payload = _module_stem(command) + ".py"
+        if script.suffix != ".py" and command.isidentifier():  # python3 never imports it
+            payload = f"_x_{payload}"
+        sources = local_closure(directory, payload, data, script.name)
+        origins = {path: script.name if path == payload else path for path in sources}
+        dependencies, requires_python = _inline_requirements({script.name: data})
+        name = clean_name(command)
+        table: dict[str, Any] = {"name": name, "dependencies": [] if declared else dependencies}
+        if requires_python is not None:
+            table["requires-python"] = requires_python
+        return cls(directory, name, _version(table), _metadata(table), sources,
+                   {command: _module(payload)}, (), origins, requires_python,
+                   tuple(dependencies))  # fmt: skip
 
     def wheel_name(self) -> str:
         return f"{re.sub(r'[-_.]+', '_', self.name)}-{self.version}-py3-none-any.whl"
@@ -264,7 +295,12 @@ def python_shebang(data: bytes) -> bool:
 def directory_name(directory: Path) -> str:
     """The project name of a directory without pyproject.toml: its name, canonical, with what a
     project name cannot hold replaced."""
-    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", directory.name).strip("-._")
+    return clean_name(directory.name)
+
+
+def clean_name(text: str) -> str:
+    """``text`` as a project name: canonical, with what a project name cannot hold replaced."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-._")
     return canonicalize_name(cleaned or "scripts")
 
 

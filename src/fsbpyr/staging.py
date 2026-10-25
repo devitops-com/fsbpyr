@@ -151,6 +151,29 @@ def _uv_sync_plan(project: Project, uv: Path, work: Path, options: StagingOption
     )
 
 
+def _script_lock_plan(
+    project: Project, uv: Path, work: Path, options: StagingOptions
+) -> StagingPlan:
+    """The locked install of a script: ``uv sync --script`` into the staging environment, which
+    ``--active`` and VIRTUAL_ENV name. ``--locked`` fails a lock the block has outgrown, and
+    uv writes neither the lock nor anything else beside the script."""
+    assert project.script is not None  # noqa: S101  the lock source says so
+    stage = work / "stage"
+    sync = [str(uv), "sync", "--script", str(project.script), "--active", "--locked",
+            "--python", options.python, *_platform(options)]  # fmt: skip
+    sync += ["--offline"] * options.offline + ["--quiet"]
+    wheel = [str(uv), "pip", "install", "--python", str(stage / "bin" / "python"), "--no-deps"]
+    wheel += _platform(options) + ["--offline"] * options.offline + ["--quiet", WHEEL]
+    return StagingPlan(
+        site=stage / "lib" / f"python{options.python}" / "site-packages",
+        build=[],
+        install=[sync, wheel],
+        wheel_dir=work / "wheel",
+        env={"VIRTUAL_ENV": str(stage)},
+        forget=[str(uv), "cache", "clean"],
+    )
+
+
 def staging_plan(
     project: Project,
     source: LockSource,
@@ -174,6 +197,8 @@ def _plan(
     work: Path,
     options: StagingOptions,
 ) -> StagingPlan:
+    if source is LockSource.SCRIPT_LOCK:
+        return _script_lock_plan(project, uv, work, options)
     if source is LockSource.UV_LOCK:
         return _uv_sync_plan(project, uv, work, options)
     stage = work / "stage"

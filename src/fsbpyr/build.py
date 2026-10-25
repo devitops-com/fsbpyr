@@ -323,6 +323,8 @@ def lock_warnings(project: Project, source: LockSource, requirements: str | None
         if project.bare and not project.dependencies:
             return []
         warnings = ["unlocked build: dependencies resolved now, not reproducible"]
+        if project.script is not None:  # `uv lock --script FILE` writes the lock this reads
+            return warnings
         for foreign in ("poetry.lock", "pdm.lock"):
             if (project.directory / foreign).is_file():
                 warnings.append(f"{foreign} is not read: the dependencies in [project] are "
@@ -416,7 +418,7 @@ def load_package(project: Project, config: BuildConfig, warnings: list[str]) -> 
     if not project.loose:
         return None
     declared = project.lock_source(config.requirements) is not LockSource.UNLOCKED
-    package = Package.load(project.directory, declared=declared)
+    package = Package.load(project.directory, declared=declared, script=project.script)
     warnings += package.warnings
     if config.entry is None and not package.commands and project.bare:
         raise ProjectError(f"{project.directory} has no Python file with an if __name__ == "
@@ -446,12 +448,18 @@ def _unresolved_warning(
     if {problem.module.partition(".")[0] for problem in problems} - set(removed):
         where = ("requirements.txt, or in a '# /// script' block of the script" if project.bare
                  else "[project] dependencies")  # fmt: skip
+        if project.script is not None:
+            where = "the dependencies of the script's '# /// script' block"
         hints += [f"declare it in {where} (a project's own file is found next to the script "
                   "that imports it)"]
         if (project.directory / ".venv").is_dir():
-            hints[-1:] = ["a .venv is not read for undeclared dependencies; `uv pip freeze "
-                          "--python .venv/bin/python > requirements.txt` writes what it holds, "
-                          "and the build reads requirements.txt"]  # fmt: skip
+            command = "uv pip freeze --python .venv/bin/python"
+            then = ("lists what it holds; put what the script needs in its block's dependencies"
+                    if project.script is not None else
+                    "writes what it holds, and the build reads requirements.txt")
+            redirect = "" if project.script is not None else " > requirements.txt"
+            hints[-1:] = [f"a .venv is not read for undeclared dependencies; "
+                          f"`{command}{redirect}` {then}"]
     return f"{text}. {'. '.join(hints)}"
 
 

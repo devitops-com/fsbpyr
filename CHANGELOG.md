@@ -47,6 +47,23 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   and names a standard library module removed in the build's Python (`cgi`, `imp`, ...) with
   the older `--python` that has it. The uncaught-error note for a file read next to a script no
   longer advises `--fs-package`.
+- **One script builds as an executable: `fsbpyr build report.py`.** The argument may be a
+  `*.py` file or an extensionless file whose first line is a python or `uv run --script`
+  shebang; it was refused with "Directory 'report.py' is a file". The app is named after the
+  file's stem (hyphens kept) and written to `dist/<name>` in the script's directory, or to `-o`.
+  Only the file and its static local-import closure are packaged (the siblings and packages it
+  imports from its directory, transitively, as the import check resolves them, including a
+  directory it adds to `sys.path` from its `__file__`): never the rest of the directory, so a
+  script among 200 unrelated ones holds its own few modules, and the directory's `pyproject.toml`,
+  `requirements.txt` and `uv.lock` are not read. It runs as in a directory of scripts: as
+  `__main__`, `argv` untouched, its directory first on `sys.path`, a name that is no Python name
+  stored under a module name. The PEP 723 block gives the dependencies (unlocked), the
+  `requires-python` (which selects the Python and dispatches to another Python's fsbpyr as a
+  project's does) and `[tool.fsbpyr]`, read as in `pyproject.toml`, unknown keys rejected. A
+  `<script>.lock` that `uv lock --script` wrote beside the script locks the build: the staging
+  environment is filled by `uv sync --script --active --locked`, so a lock the block has
+  outgrown fails the build; the build records it as `script.lock`. fsbpyr never writes beside
+  the script: no lock, no environment, no cache.
 - **A directory of scripts builds as one executable with a command per link.** `fsbpyr build`
   in a directory with no `pyproject.toml`, `setup.py` or `setup.cfg` (a `setup.cfg` alone is
   still refused) packages its Python files: `*.py` and extensionless files whose first line is a
