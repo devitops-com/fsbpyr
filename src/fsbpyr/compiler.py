@@ -28,20 +28,29 @@ _AHEAD_BYTES = 64 << 20  # and at most this much of their sources (one at least)
 
 def compile_module(source: bytes, rel: str) -> bytes:
     """Canonical bytecode, independent of the build interpreter's -O / PYTHONOPTIMIZE (D15)."""
+    return compile_warned(source, rel)[0]
+
+
+def compile_warned(source: bytes, rel: str) -> tuple[bytes, tuple[tuple[int, str], ...]]:
+    """``compile_module``'s bytecode and the SyntaxWarnings and DeprecationWarnings compiling
+    emitted, each as (line, "Category: message"); the warnings never change the bytecode."""
     # A copy: 3.12's pathlib interns the parts of a path, and marshal writes an interned filename
     # differently from the fresh string a worker process gets by pickle.
     filename = rel.encode().decode()
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         code = compile(source, filename, "exec", dont_inherit=True, optimize=0)
-    return bytecode.dumps(code)
+    emitted = tuple((w.lineno, f"{w.category.__name__}: {w.message}") for w in caught
+                    if issubclass(w.category, (SyntaxWarning, DeprecationWarning)))  # fmt: skip
+    return bytecode.dumps(code), emitted
 
 
 @dataclass(frozen=True, slots=True)
 class Compiled:
     """A module's code and source blobs and their contents' digests (``tree_digest``), the
     lines that read next to ``__file__``, the system libraries it opens by name
-    (``loaded_libraries``); or why it does not compile (a SyntaxError's message and line)."""
+    (``loaded_libraries``), the warnings compiling emitted (``compile_warned``); or why it does
+    not compile (a SyntaxError's message and line)."""
 
     code: Blob | None
     code_digest: bytes = b""
@@ -49,19 +58,21 @@ class Compiled:
     source_digest: bytes = b""
     reads: tuple[int, ...] = ()
     libraries: tuple[str, ...] = ()
+    warnings: tuple[tuple[int, str], ...] = ()
     error: tuple[str, int | None] | None = None
 
 
 def compiled(data: bytes, rel: str, level: int, include_source: bool, hints: bool) -> Compiled:
     try:
-        code = compile_module(data, rel)
+        code, emitted = compile_warned(data, rel)
     except SyntaxError as exc:
         return Compiled(None, error=(exc.msg, exc.lineno))
     source = Blob.zstd(data, level=level) if include_source else None
     reads = tuple(file_relative_reads(data, rel)) if hints else ()
     libraries = tuple(loaded_libraries(data, rel)) if hints else ()
     return Compiled(Blob.code(code, level=level), tree_digest(code), source,
-                    tree_digest(data) if include_source else b"", reads, libraries)  # fmt: skip
+                    tree_digest(data) if include_source else b"", reads, libraries,
+                    emitted)  # fmt: skip
 
 
 def worker_pool() -> ProcessPoolExecutor:

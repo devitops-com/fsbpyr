@@ -493,3 +493,19 @@ def test_runtimes_cached_before_inputs_were_recorded_load_without_them(tmp_path:
 
     assert (Runtime.load(tmp_path / "rt").inputs, Runtime.load(tmp_path / "rt").components) == (
         {}, {})  # fmt: skip
+
+
+@pytest.mark.parametrize("home", [None, "", "relative"])
+def test_an_unusable_home_without_a_passwd_entry_is_a_clear_error(
+    monkeypatch: pytest.MonkeyPatch, home: str | None
+) -> None:
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.delenv("HOME", raising=False) if home is None else monkeypatch.setenv("HOME", home)
+
+    def no_entry(uid: int) -> None:
+        raise KeyError(uid)
+
+    monkeypatch.setattr("pwd.getpwuid", no_entry)
+
+    with pytest.raises(RuntimeError, match="set HOME, XDG_CACHE_HOME or FSBPYR_CACHE_DIR"):
+        registry.cache_home()

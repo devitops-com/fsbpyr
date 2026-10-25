@@ -1,5 +1,6 @@
 """``fsbpyr build``: project -> staging install -> classify -> executable (plan §3.6)."""
 
+import contextlib
 import json
 import os
 import shlex
@@ -25,13 +26,20 @@ from .closure import (
 )
 from .config import BuildConfig
 from .elf import ElfError, glibc_requirement, is_elf
+from .entry import source_has_candidate
 from .manifest import SCHEMA, LockError, built_here, dist_records, lock_record
 from .natives import opened
 from .payload.format import NATIVE_KINDS, ModuleKind
 from .payload.spec import XZ_PRESET, Dist, File, Module
 from .payload.spill import Spill
 from .payload.writer import commit
-from .project import LockSource, Project, ProjectError, unpinned_requirements
+from .project import (
+    LockSource,
+    Project,
+    ProjectError,
+    unpinned_requirements,
+    vcs_requirements,
+)
 from .runtime import pins
 from .runtime.pbs import PbsError
 from .runtime.registry import Runtime, cache_root, select_runtime
@@ -273,21 +281,39 @@ def helper_interpreter_hints(modules: Iterable[Module], reexec: bool | None) -> 
 
 
 def unpinned_warning(unpinned: list[str]) -> list[str]:
-    """A warning for requirements without ``==``: uv resolves them now, so the build is not
-    reproducible, whatever the file is called."""
+    """A warning for requirements not pinned (no ``==``, commit SHA or URL hash; an ``-e`` path
+    is whatever the tree holds): uv resolves them now, so the build is not reproducible,
+    whatever the file is called."""
     if not unpinned:
         return []
     shown = ", ".join(unpinned[:3]) + (" ..." if len(unpinned) > 3 else "")
-    return [f"requirements not pinned with ==, so resolved now and not reproducible: {shown}"]
+    return [f"requirements not pinned with ==, a commit SHA or a hash, so resolved now and "
+            f"not reproducible: {shown}"]  # fmt: skip
 
 
 def lock_warnings(project: Project, source: LockSource, requirements: str | None) -> list[str]:
     """What is not reproducible about the lock source: no lock at all, or unpinned lines."""
     if source is LockSource.UNLOCKED:
-        return ["unlocked build: dependencies resolved now, not reproducible"]
+        warnings = ["unlocked build: dependencies resolved now, not reproducible"]
+        if split := sorted((project.directory / "requirements").glob("*.txt")):
+            names = ", ".join(path.name for path in split)
+            warnings.append(Uncounted(f"no requirements.txt, but requirements/ holds {names}; "
+                                      f"--requirements requirements/<file> locks the build to one"))
+        return warnings
     if source is LockSource.REQUIREMENTS:
         return unpinned_warning(unpinned_requirements(project.requirements_path(requirements)))
     return []
+
+
+def check_strict_requirements(project: Project, requirements: str | None) -> None:
+    """Refuse --strict for a requirements file with VCS lines, before uv says so with a generic
+    hash message: a commit SHA pins the source, but is not a hash (uv --require-hashes)."""
+    if project.lock_source(requirements) is not LockSource.REQUIREMENTS:
+        return
+    if lines := vcs_requirements(project.requirements_path(requirements)):
+        raise ProjectError("--strict needs every requirement to carry a hash (--require-hashes), "
+                           "and a requirement from version control cannot: a commit SHA pins "
+                           "the source, but is not a hash:\n  " + "\n  ".join(lines))
 
 
 def check_strict(warnings: Iterable[str]) -> None:
@@ -326,8 +352,14 @@ def check_before_staging(project: Project, config: BuildConfig) -> None:
     name = project.name or project.directory.name
     if config.entry is None and project.static_scripts and len(project.scripts) > 1:
         raise several_scripts_error(name, project.scripts)
+    if (config.entry is None and project.static_scripts and project.static_entry_points
+            and not project.scripts and not source_has_candidate(project.directory)):
+        # no script, no __main__.py, no guarded module: staging cannot find an entry either
+        raise several_scripts_error(name, project.scripts)
     if config.output is not None:
         check_output(config.output)
+    if config.strict:
+        check_strict_requirements(project, config.requirements)
     if project.static_extras and (
         message := unknown_extras_error(name, config.extras, project.extras)
     ):
@@ -390,8 +422,9 @@ def build(
     notes, which cli.py prints. ``verbose`` shows uv's commands and lets its errors through."""
     warnings: list[str] = []
     written: list[Path] = []  # the new executable beside the output, until it is committed
+    made: list[Path] = []  # the output directory, when this build created it
     try:
-        result = _build(directory, config, log, warnings, written, verbose=verbose)
+        result = _build(directory, config, log, warnings, written, made=made, verbose=verbose)
         if config.smoke:
             log(f"smoke-testing {written[0]}")
             smoke_test(written[0], result.app_name, result.output)
@@ -409,6 +442,9 @@ def build(
     finally:
         for path in written:  # the build failed or was interrupted
             path.unlink(missing_ok=True)
+        for path in made:  # rmdir takes only an empty directory: not the one holding the output
+            with contextlib.suppress(OSError):
+                path.rmdir()
 
 
 def python_warnings(project: Project, config: BuildConfig) -> tuple[str, ...]:
@@ -422,6 +458,12 @@ def python_warnings(project: Project, config: BuildConfig) -> tuple[str, ...]:
     return chosen.warnings
 
 
+def _make_output_dir(directory: Path, made: list[Path]) -> None:
+    """Create the output directory; ``made`` records each level that did not exist, leaf first."""
+    made.extend(path for path in (directory, *directory.parents) if not path.exists())
+    directory.mkdir(parents=True, exist_ok=True)
+
+
 def _build(  # noqa: PLR0913  the build's state and the progress keyword
     directory: Path,
     config: BuildConfig,
@@ -429,10 +471,11 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
     warnings: list[str],
     written: list[Path],
     *,
+    made: list[Path],
     verbose: bool,
 ) -> BuildResult:
     """Everything up to the new executable, written beside the output: ``written`` holds it as
-    soon as it exists."""
+    soon as it exists, ``made`` the output directory if this build created it."""
     project = Project.load(directory)
     check_before_staging(project, config)
     uv = find_uv()  # before anything slow: a build cannot go far without it (D26)
@@ -466,10 +509,10 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                 index = SiteIndex.scan(plan.site)
         dist = _installed_project(index, wheel, project, config)
         walk = index.walk(dist, extras=config.extras, python_version=runtime.python_version)
-        app_name, entrypoint = resolve_entry(dist, config.entry)
+        app_name, entrypoint = resolve_entry(dist, config.entry, log)
         output = (config.output or project.directory / "dist" / app_name).resolve()
         check_output(output)
-        output.parent.mkdir(parents=True, exist_ok=True)
+        _make_output_dir(output.parent, made)
         log(f"collecting {len(index.dists)} distributions")
         level = config.zstd_level
         with Spill(output.parent) as spill:

@@ -384,3 +384,69 @@ def test_render_runs_the_new_executable_with_the_command(tmp_path: Path) -> None
     script.chmod(0o755)
 
     assert selfupdate._render(script, ("completion", "zsh")) == b"completion zsh\n"
+
+
+def _host_glibc(monkeypatch: pytest.MonkeyPatch, version: str) -> None:
+    monkeypatch.setattr(os, "confstr", lambda name: f"glibc {version}")
+
+
+def _binary_needing(tmp_path: Path, glibc: str) -> bytes:
+    out = tmp_path / "needs"
+    build_executable(FAKE_RUNTIME, App("fsbpyr", "fsbpyr.cli:main", dists=(),
+                                       build_info=(("glibc", glibc),)), out)  # fmt: skip
+    return out.read_bytes()
+
+
+def test_an_asset_needing_a_newer_glibc_than_the_hosts_is_never_installed(
+    github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    _host_glibc(monkeypatch, "2.28")
+    github.assets[f"{OWN}.xz"] = lzma.compress(_binary_needing(tmp_path, "2.34"))
+
+    assert main(["self", "update"]) == 1
+
+    err = capsys.readouterr().err
+    assert "needs glibc 2.34" in err and "glibc 2.28" in err and "Keep the current" in err
+    assert installed.read_bytes() == b"old"
+    assert sorted(p.name for p in installed.parent.iterdir()) == ["fsbpyr"]
+
+
+@pytest.mark.parametrize("host", ["2.34", "2.36", "2.100"])
+def test_an_asset_needing_the_hosts_glibc_or_less_is_installed(
+    github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    host: str
+) -> None:
+    _host_glibc(monkeypatch, host)
+    binary = _binary_needing(tmp_path, "2.34")
+    github.assets[f"{OWN}.xz"] = lzma.compress(binary)
+
+    assert main(["self", "update"]) == 0
+
+    assert installed.read_bytes() == binary
+
+
+@pytest.mark.parametrize(("baseline", "host", "refused"), [
+    ("2.34", "glibc 2.33", True), ("2.34", "glibc 2.34", False), ("2.9", "glibc 2.10", False),
+    ("2.10", "glibc 2.9", True), (None, "glibc 2.1", False), ("junk", "glibc 2.1", False),
+    ("2.34", "musl", False), ("2.34", "", False),
+])  # fmt: skip
+def test_the_glibc_guard_compares_numerically(
+    baseline: object, host: str, refused: bool
+) -> None:
+    if refused:
+        with pytest.raises(selfupdate.UpdateError, match="needs glibc"):
+            selfupdate.check_glibc(baseline, host)
+    else:
+        selfupdate.check_glibc(baseline, host)
+
+
+def test_the_guard_is_skipped_where_the_host_has_no_glibc(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def musl(name: str) -> str:
+        raise ValueError(name)
+
+    monkeypatch.setattr(os, "confstr", musl)
+
+    selfupdate.check_glibc("9.99")

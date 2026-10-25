@@ -4,8 +4,8 @@ Fast single-binary Python CLI runtime: `fsbpyr build` turns a Python project (uv
 executable that carries CPython (3.12 to 3.15), the project and its locked dependencies. The executable
 needs nothing on the target machine but Linux x86-64 or aarch64 with glibc 2.34 or newer (the
 baseline every build targets and the tests run on: RHEL 9, Amazon Linux 2023, Ubuntu 22.04,
-Debian 12 and newer; `fsbpyr inspect` shows the glibc an executable actually needs), plus the
-system libraries its native dependencies link
+Debian 12 and newer, SLES 15 SP6 and newer; `fsbpyr inspect` shows the glibc an executable
+actually needs), plus the system libraries its native dependencies link
 (often libstdc++ and libgcc_s; `fsbpyr inspect` lists them): no Python, no virtual
 environment, no installation step.
 Modules are imported straight from the file, so startup stays close to plain CPython.
@@ -81,8 +81,11 @@ symptom and its remedy.
   projects too.
 - **Project:** a console script (`[project.scripts]`, or the build backend's own table such as
   setuptools' `entry_points`), or `--entry` with a script's name, a module or
-  `module:function`; and a `requires-python`, if it sets one, that admits one of 3.12 to 3.15
-  (see "Which Python").
+  `module:function`. With no console script and no `--entry`, the build runs the project's only
+  package with a `__main__.py` (as `python -m`), else its only top-level module with an
+  `if __name__ == "__main__":` guard, and says which; with several candidates it lists them and
+  asks for `--entry`. Legacy `setup.py` `scripts=` files are not packaged (the build warns). And a
+  `requires-python`, if it sets one, that admits one of 3.12 to 3.15 (see "Which Python").
 - **Lock sources,** the first one found: a requirements file that `--requirements` or
   `requirements` names, `uv.lock` (the project's or its uv workspace's), `pylock.toml`,
   `requirements.txt`. With none, the build resolves the dependencies itself and warns that it
@@ -138,8 +141,8 @@ build-constraint-dependencies` (read by `uv sync`, for `uv.lock` projects) or fr
 | Option | |
 |---|---|
 | `--python X.Y` | the Python to build for, 3.12 to 3.15, inside `requires-python` (default: `python` in `[tool.fsbpyr]`, else `.python-version`, else `requires-python` decides) |
-| `--entry NAME` | console script name, `module` or `module:function` (default: the only script) |
-| `-o, --output PATH` | where to write the executable (default: `dist/` and the console script's name) |
+| `--entry NAME` | console script name, `module` or `module:function` (default: the only script, else the only `__main__` package or guarded module) |
+| `-o, --output PATH` | where to write the executable (default: `dist/` and the entry's name) |
 | `--requirements FILE` | pinned requirements file, for pip projects without `pylock.toml` |
 | `--extra NAME` | install a project extra (repeat); requirements and pylock files must already contain its dependencies |
 | `--fs-package PACKAGE` | a package whose files must exist on disk (repeat) |
@@ -259,6 +262,11 @@ A `requirements.txt` counts as locked even when it is not pinned. Without `--str
 line without `==` gets a warning. With it, uv also gets `--require-hashes`, so every line
 needs `==` and a `--hash`. uv checks the hashes in a `pylock.toml` on its own,
 `--strict` or not (a changed hash in a `pylock.toml` fails the build; verified with uv 0.13.1).
+A line pinned by a commit SHA (`name @ git+URL@<40 hex>`) or a `#sha256=` URL is pinned for
+the warning, but a SHA is not a hash: `--strict` refuses a requirements file with such lines
+before uv runs, naming them. An `-e ./libs/common` line installs as a regular package, with a
+warning that it is whatever the tree holds. With no `requirements.txt` but `requirements/*.txt`,
+the build says to pick one with `--requirements`.
 
 `--strict` does not check the glibc the executable needs. To fail unless it is 2.34 or
 older (`jq -e` exits 1 on `false`):

@@ -151,6 +151,28 @@ def unpack(url: str, target: Path) -> None:
         raise UpdateError(f"{url} ended before the end of its xz stream")
 
 
+def _glibc_version(text: object) -> tuple[int, ...] | None:
+    match = re.search(r"(\d+)\.(\d+)", text) if isinstance(text, str) else None
+    return None if match is None else (int(match[1]), int(match[2]))
+
+
+def check_glibc(baseline: object, host: str | None = None) -> None:
+    """Refuse a new executable whose glibc ``baseline`` (the ``glibc`` its build_info records)
+    is newer than the host's; musl and other hosts, and builds that record none, pass."""
+    if host is None:
+        try:
+            host = os.confstr("CS_GNU_LIBC_VERSION")
+        except (ValueError, OSError):  # not glibc
+            return
+    needed, have = _glibc_version(baseline), _glibc_version(host)
+    if needed is None or have is None or needed <= have:
+        return
+    raise UpdateError(
+        f"the new fsbpyr needs glibc {baseline}, this host has {host}; nothing was changed. "
+        "Keep the current version, or install a build for this host's glibc"
+    )
+
+
 def _render(new: Path, command: tuple[str, ...]) -> bytes:
     """What the new, verified executable prints for ``command``."""
     try:
@@ -222,10 +244,11 @@ def update(
         unpack(release.asset_url, new)
         new.chmod(stat.S_IMODE(executable.stat().st_mode))
         try:
-            read(new, verify=True)
+            report = read(new, verify=True)
         except InspectError as exc:
             raise UpdateError(f"the download failed verification, nothing was changed: {exc}"
                               ) from exc
+        check_glibc(report.info.get("glibc"))
         staged = _stage_extras(executable, new, warn)
         new.rename(executable)
     except BaseException:

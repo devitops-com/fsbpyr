@@ -17,32 +17,19 @@ import runpy
 import sys
 
 from _fsbpyr_rt.mp import _parent_runs_this_executable  # type: ignore[import-not-found]
+from _fsbpyr_rt.restart import after_flags  # type: ignore[import-not-found]
 
 REFUSED = 70  # the launcher's "refused to start" (D41)
-_TAKES_VALUE = ("-X", "-W")  # "-X dev" is two arguments, "-Xdev" one
 _SCRIPT = "script"
 
 # ("-m", module, arguments), ("-c", code, arguments) or ("script", path, arguments)
 type Command = tuple[str, str, list[str]]
 
 
-def _after_flags(argv: list[str]) -> int | None:
-    """The index of the first argument after interpreter flags, or None if ``-`` or nothing
-    follows them."""
-    i = 1
-    while i < len(argv):
-        if argv[i] in ("-m", "-c") or not argv[i].startswith("-"):
-            return i
-        if argv[i] == "-":
-            return None
-        i += 2 if argv[i] in _TAKES_VALUE else 1
-    return None
-
-
 def child_command(argv: list[str], prefix: str | None = None) -> Command | None:
     """The module, code or (with ``prefix``, the executable's path and "/") script of the
     payload that ``argv`` asks for after interpreter flags, or None."""
-    i = _after_flags(argv)
+    i = after_flags(argv)
     if i is None:
         return None
     if argv[i] in ("-m", "-c"):
@@ -112,6 +99,7 @@ def _run(command: Command, prefix: str) -> bool:
         if name is None:
             return False
         sys.argv[:] = [target, *arguments]  # runpy sets sys.argv[0] to the module's file
+        sys.path.insert(0, target.rpartition("/")[0])  # the script's directory, as CPython does
         runpy._run_module_as_main(name, alter_argv=True)  # type: ignore[attr-defined]
         return True
     sys.argv[:] = [option, *arguments]  # as CPython leaves it; runpy puts the module's path first

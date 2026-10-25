@@ -2,6 +2,7 @@
 fetched from a fake release server on localhost (nothing reaches GitHub)."""
 
 import lzma
+import os
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -190,6 +191,22 @@ def test_a_download_that_fails_verification_is_not_kept_or_run(
 ) -> None:
     binary = _release(tmp_path)
     releases.files[PATH] = lzma.compress(binary[:-1000])  # truncated before it was compressed
+
+    assert main(["build", str(project)]) == 1
+
+    assert "could not be fetched" in capsys.readouterr().err
+    assert ran.commands == [] and _cached(tmp_path) == []
+
+
+def test_a_variant_needing_a_newer_glibc_than_the_host_is_not_kept_or_run(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "variant"
+    build_executable(FAKE_RUNTIME, App("fsbpyr", "fsbpyr.cli:main", dists=(),
+                                       build_info=(("glibc", "2.34"),)), out)  # fmt: skip
+    releases.files[PATH] = lzma.compress(out.read_bytes())
+    monkeypatch.setattr(os, "confstr", lambda name: "glibc 2.28")
 
     assert main(["build", str(project)]) == 1
 

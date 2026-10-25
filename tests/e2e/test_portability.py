@@ -36,7 +36,7 @@ OBJDUMP = shutil.which("llvm-objdump-22") or shutil.which("llvm-objdump")
 pytestmark = [pytest.mark.slow, pytest.mark.skipif(PODMAN is None, reason="needs podman")]
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "projects"
-IMAGES = images_for(platform.machine())  # x86-64: all 11; aarch64: those with an arm64 variant
+IMAGES = images_for(platform.machine())  # x86-64: all 12; aarch64: those with an arm64 variant
 
 
 def _apps_python() -> str:

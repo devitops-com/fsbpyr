@@ -209,6 +209,24 @@ def test_a_payload_script_runs_as_its_module_with_its_path_first(
     assert child.seen == ("__main__", [str(package / "tool.py"), "a"])
 
 
+def test_a_payload_script_has_its_directory_first_on_the_path(
+    reexec: ModuleType, child: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """As CPython puts the script's directory at sys.path[0]: ``import common`` finds the
+    sibling."""
+    package = tmp_path / "sibling_pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "common.py").write_text("WORD = 'sibling'\n")
+    (package / "tool.py").write_text("import sys, common\nseen = (sys.path[0], common.WORD)\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(sys, "path", list(sys.path))  # the child's insert is undone
+    monkeypatch.setattr(sys, "argv", [EXE, str(package / "tool.py")])
+
+    assert reexec.run_child(sys.argv, ON, f"{tmp_path}/") is True
+    assert child.seen == (str(package), "sibling")
+
+
 def test_a_packages_main_script_runs_the_package(
     reexec: ModuleType, child: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -11,6 +11,19 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Added
+- **A project with no console scripts builds from its `__main__` package or guarded module.**
+  With no `--entry`, the build picks the project's only top-level package with a `__main__.py`
+  (run as `python -m pkg`), else its only top-level module with an `if __name__ == "__main__":`
+  guard (found with `ast`, never by importing it), and prints which one and why. Several
+  candidates, or a package and a module, keep the "choose one with --entry" error and list them.
+- **A build warns about dropped legacy scripts.** Files a project's `setup.py` installs with
+  `scripts=` were dropped without a word; the warning now names each and says that legacy
+  scripts are not packaged (use `[project.scripts]` or `--entry`).
+- **SLES 15 SP6 and SP7 are supported and tested.** Their glibc is 2.38 and fsbpyr apps run on
+  them; the 0.24.0 entry's statement that SLES/openSUSE Leap 15 are no longer supported holds for
+  SLES 15 SP4 and SP5 (glibc 2.31) and openSUSE Leap 15 only. The portability matrix gains
+  `registry.suse.com/bci/bci-base:15.7` (SLES 15 SP7, 12 images now, 11 on aarch64), and the
+  README and `docs/compatibility.md` list SLES 15 SP6 and newer.
 - **`fsbpyr runtime build --glibc 2.28` links the stub against an EL8 sysroot.** The sysroot is
   Rocky Linux 8.10's glibc 2.28, libgcc 8 and kernel 4.18 headers, read from the pinned RPMs by
   a reader of fsbpyr's own (no `rpm` tool is needed). A runtime built this way has an id of its
@@ -19,6 +32,68 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   yet: `fsbpyr build --glibc` follows. The launcher compiles its `_dl_find_object` wrapper only
   where the headers have it (glibc 2.35); the default stub behaves as before, but its source
   changed, so its runtime id does.
+
+### Changed
+- **`PYTHONUNBUFFERED` is honoured** (D14). Set and non-empty, it makes an app's stdout and
+  stderr unbuffered as CPython does, so a service's log lines reach a pipe as they are printed
+  and survive a SIGTERM. It is the only `PYTHON*` variable the apps read.
+- **`fsbpyr self update` refuses an executable that needs a newer glibc than the host has.** The
+  glibc its build_info records is compared with the host's before anything is replaced; the
+  message names both versions.
+- **`docs/compatibility.md` says what a hard link to an app does.** `sys.executable`, `__file__`
+  and `sys.path[0]` of a start through a hard link are below the link's own path, a symlink gives
+  the target's, and a rebuild leaves a hard link on the old build.
+- **Compile warnings of the project's own files are build warnings.** A `SyntaxWarning` or
+  `DeprecationWarning` that compiling emits (`"\d"` in a normal string, say) used to show
+  neither at build time nor at run time, while a venv run of the script prints it. The build now
+  prints it with its file and line (`fsbpyr: warning: pkg/mod.py:12: SyntaxWarning: ...`) for the
+  project's own modules; dependencies and the standard library stay silent, and `--strict`
+  counts it like the other warnings. The bytecode is unchanged.
+
+### Fixed
+- **A static project with no console scripts, no `--entry` and no `__main__.py` or guarded
+  module fails before uv stages anything**, with the same message, instead of after the full
+  build and install.
+- **`-e ./libs/common` lines in a requirements file build.** They are installed as regular
+  packages (`uv pip install --no-editable`) instead of failing with "installed in editable
+  mode"; the build warns that such a line is whatever the tree holds. Lines pinned by a commit
+  SHA (`git+URL@<40 hex>`) or a `#sha256=` URL are no longer reported as unpinned. With no
+  `requirements.txt` but `requirements/*.txt`, the build prints a hint naming `--requirements`.
+- **`--strict` with VCS lines in a requirements file is refused early**, naming the lines and
+  saying that a commit SHA pins the source but is not a hash, rather than failing inside uv
+  with a generic hash message.
+- **A failed `uv build` shows why.** uv's build is no longer `--quiet`, so the error carries
+  the backend's own reason (such as setuptools' "Multiple top-level modules discovered in a
+  flat-layout"), and under `-v` "see its output above" is true.
+- **`fsbpyr build` no longer leaves `*.egg-info` or `build/` in a setuptools project's tree**
+  (in the project root and one directory below it, so `src/`). What the build created is
+  removed; what existed before is never touched.
+- **A directory with only `setup.cfg` is refused up front** with a clear message, not late
+  inside uv.
+- **A failed build no longer leaves an empty `dist/`** (or other output directory it created).
+- **The launcher's background cache collection (D38) now runs with `HOME` unset or empty.** The
+  launcher needed an absolute `$HOME` while the boot code fell back to the passwd home, so such an
+  app's cache was never collected (and with `HOME=''` the two disagreed about the cache root). An
+  unset, empty or relative `HOME` now means the passwd home in the launcher, the boot code and
+  the runtime registry alike.
+- **A script started through `sys.executable` finds the modules next to it** with
+  `--interpreter-reexec`: `[sys.executable, <exe>/pkg/a.py]` now has `<exe>/pkg` first on
+  `sys.path`, as `python /path/pkg/a.py` does, so `import common` of a sibling `pkg/common.py`
+  works.
+- **The restart idiom `os.execv(sys.executable, [sys.executable] + sys.argv)` gives the child
+  the argv of the parent.** gunicorn's USR2 re-exec and Django's autoreloader start
+  `[sys.executable, <interpreter flags>, sys.argv[0], *args]`; in a venv that is
+  `python /venv/bin/app args`, but a built app ran with its own path as an extra first argument.
+  A start whose first argument after the interpreter flags is this very executable (the same
+  file, a link to it included) now drops the flags and that argument, keeping it as
+  `sys.argv[0]`. Only interpreter flags (`-u`, `-v`, `-X x`, `-W x`, ...) may precede it; any
+  other option means the app's own arguments, and nothing is touched.
+- **CPython 3.15's misleading hint for a missing module is replaced.** It read "Site
+  initialization is disabled, did you forget to add the site-packages directory to sys.path or
+  to enable your virtual environment?", which is not what an fsbpyr user can do; an uncaught
+  `ModuleNotFoundError` now ends with "fsbpyr: X is not in the executable: add it to the
+  project's dependencies and rebuild". Only uncaught exceptions are changed, not those a program
+  formats itself with `traceback` or `logging`.
 
 ## [0.25.0] - 2026-10-25
 
