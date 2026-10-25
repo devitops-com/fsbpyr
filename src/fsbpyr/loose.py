@@ -43,7 +43,8 @@ from packaging.version import InvalidVersion, Version
 
 from .entry import _SKIPPED_DIRECTORIES, has_main_guard
 from .links import COMMAND_NAME
-from .project import ProjectError, settings_only
+from .poetry1 import project_table
+from .project import ProjectError, is_unpackaged, settings_only
 from .vcs import work_tree_files
 
 ROOT = "_fsbpyr_scripts"  # the wheel's top-level directory; a module is ``_fsbpyr_scripts.<path>``
@@ -108,7 +109,9 @@ class Package:
             raise ProjectError(f"{directory / 'pyproject.toml'}: {exc}") from exc
         if settings_only(directory, data):
             return cls._from_directory(directory, declared=declared)
-        table = data["project"]
+        table = project_table(data) if is_unpackaged(data) else data["project"]
+        if is_unpackaged(data) and "name" not in table:
+            table["name"] = directory_name(directory)
         if not isinstance(table.get("name"), str):
             raise ProjectError(f"{directory / 'pyproject.toml'}: [project] needs a name")
         name = canonicalize_name(table["name"])

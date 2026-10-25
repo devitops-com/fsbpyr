@@ -105,7 +105,13 @@ class Project:
                                "setup.cfg alone does not say how to build it")  # fmt: skip
         else:
             return cls._bare(directory, requirements=requirements)
-        table = data.get("project", {})
+        unpackaged = is_unpackaged(data)
+        if unpackaged:
+            from .poetry1 import project_table  # noqa: PLC0415  poetry1 imports this module
+
+        table = project_table(data) if unpackaged else data.get("project", {})
+        if unpackaged and "name" not in table:
+            table = {**table, "name": directory.name}
         dynamic = table.get("dynamic", [])
         declared = "project" in data and isinstance(dynamic, list)
         name = table.get("name")
@@ -327,11 +333,21 @@ def settings_only(directory: Path, data: dict[str, Any]) -> bool:
             and not (directory / "setup.cfg").is_file())  # fmt: skip
 
 
+def is_unpackaged(data: dict[str, Any]) -> bool:
+    """A Poetry 1 pyproject.toml with ``package-mode = false`` and no [project] table (poetry1.py):
+    nothing to package, so it is a project without a build system."""
+    poetry = data.get("tool", {}).get("poetry")
+    return ("project" not in data and isinstance(poetry, dict)
+            and poetry.get("package-mode") is False)  # fmt: skip
+
+
 def _without_build_system(data: dict[str, Any]) -> bool:
     """A [project] that no build system packages (D5, owner decision 2026-10-25): no
     [build-system] table (never setuptools' legacy fallback), or Poetry ``package-mode = false``
     / PDM ``distribution = false``. A uv workspace root keeps its build."""
     tool = data.get("tool", {})
+    if is_unpackaged(data):
+        return True
     if "project" not in data or "workspace" in tool.get("uv", {}):
         return False
     return ("build-system" not in data

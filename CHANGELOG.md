@@ -31,7 +31,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
     `_fsbpyr_rt.commands` module, which only a table loads.
   - **A project with a `[project]` table and no `[build-system]` builds as `uv run main.py` runs
     it.** That is `uv init --no-package`, and Poetry `package-mode = false` and PDM
-    `distribution = false` projects; a uv workspace root keeps its build. These used to fall back
+    `distribution = false` projects (a Poetry 1 project without a `[project]` table too: its name,
+    version, scripts and `[tool.poetry.dependencies]`, with `^` and `~` converted, are read from
+    `[tool.poetry]`; its `poetry.lock` locks the build); a uv workspace root keeps its build. These used to fall back
     to setuptools: two modules failed with "Multiple top-level modules", a `utils/` package was
     dropped, and `<name>.egg-info` was left in the tree. fsbpyr now writes the project's wheel
     itself with the standard library (no build backend, no project code, nothing written into the

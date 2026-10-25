@@ -341,7 +341,8 @@ names, so the JSON `build_info` has no `artifact_sha256` for its distributions.
 A project with a `[project]` table and no `[build-system]` is what `uv init --no-package` writes
 (and plain `uv init` did from uv 0.4 to 0.11): `main.py` and its helpers, `pyproject.toml`,
 `uv.lock`. It also covers Poetry's `package-mode = false` and PDM's `distribution = false` with a
-`[project]` table. `fsbpyr build` builds it as `uv run main.py` runs it, and never uses
+`[project]` table; so does a Poetry 1 project with `package-mode = false` and no `[project]` table
+(name, version, scripts and dependencies are read from `[tool.poetry]`). `fsbpyr build` builds it as `uv run main.py` runs it, and never uses
 setuptools' legacy fallback. A uv workspace root (`[tool.uv.workspace]`) keeps its build.
 
 - **What is packaged:** the project's Python files, and only those: `main.py`, `utils.py`, a
@@ -359,8 +360,11 @@ setuptools' legacy fallback. A uv workspace root (`[tool.uv.workspace]`) keeps i
   the source tree. Two builds of one tree are the same bytes. The dependencies come from
   `uv.lock` as for any project, or `poetry.lock` / `pdm.lock` / `Pipfile.lock` ("Poetry and PDM
   locks", "Pipfile.lock"); without a lock, `[project.dependencies]` (and the `--extra`s) are resolved now, with the warning for an
-  unlocked build. Poetry 1's `[tool.poetry.dependencies]` is not read without a lock, and a
-  `package-mode = false` project needs a `[project]` table; a `.venv` is never read for
+  unlocked build. Without `[project]`, a Poetry 1 project with `package-mode = false` reads
+  `[tool.poetry.dependencies]` (the main group; `optional` ones go to the `[tool.poetry.extras]`
+  that list them), with `^`, `~` and bare versions converted to PEP 440 specifiers; `||`
+  alternatives and git, path and URL dependencies are refused, and its `poetry.lock` locks the
+  build as for any project; a `.venv` is never read for
   undeclared dependencies (a directory of scripts and a single script do read one, below).
 - **Commands:** `[project.scripts]` if present (`main:run` runs `_fsbpyr_scripts.main:run`),
   else the modules with an `if __name__ == "__main__":` guard (a `__main__.py` counts too). One
