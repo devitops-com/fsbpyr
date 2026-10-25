@@ -148,6 +148,8 @@ test-ci: ## Run the core of the test suite
 		tests/e2e/test_runtime_app.py tests/e2e/test_imports.py \
 		tests/e2e/test_stub_hardening.py tests/e2e/test_multicall.py tests/e2e/test_scripts.py \
 		tests/e2e/test_loose_directory.py tests/e2e/test_single_script.py \
+		tests/e2e/test_install_links.py tests/e2e/test_pid1.py tests/e2e/test_unbuffered.py \
+		tests/e2e/test_file_overlay.py tests/e2e/test_pipfile_lock.py \
 		-k "not (sanitized and not release)" --cov --cov-report=term --cov-report=xml
 
 # Everything but the portability tests (`podman run` inside podman) and the corpus, in the

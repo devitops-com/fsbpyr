@@ -320,6 +320,27 @@ def test_two_tools_with_one_script_name_are_an_error_naming_both(
     assert not (directory / "dist").exists()
 
 
+def test_a_venv_in_a_tool_directory_is_never_read_for_the_dependencies(
+    tmp_path: Path, runtime: Runtime
+) -> None:
+    tool = _tool(tmp_path / "libs" / "app", "app-tool", console="app-run")
+    site = ".venv/lib/python3.14/site-packages"
+    directory = _write(tmp_path / "ops", {
+        "requirements.txt": f"{tool}\n",
+        ".venv/pyvenv.cfg": "",
+        f"{site}/vanished-9.9.dist-info/METADATA": "Metadata-Version: 2.1\nName: vanished\n"
+        "Version: 9.9\n",
+        f"{site}/vanished-9.9.dist-info/RECORD": "vanished/__init__.py,,\n",
+    })  # fmt: skip
+
+    code, out, err = _build(directory)
+
+    assert code == 0, err
+    assert "were read as files" not in err and "vanished" not in err + out
+    assert "commands: app-run (app-tool 1.0)" in out
+    assert _run(directory / "dist" / "app-run", tmp_path).stdout == "app-run app-tool\n"
+
+
 def test_a_directory_with_a_script_keeps_the_scripts_as_its_commands(
     tmp_path: Path, runtime: Runtime
 ) -> None:

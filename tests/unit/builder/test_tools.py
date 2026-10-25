@@ -17,12 +17,13 @@ PYTHON = "3.14.0"
 
 
 def _dist(
-    name: str, requires: tuple[str, ...] = (), scripts: str = "", gui: str = ""
+    name: str, requires: tuple[str, ...] = (), scripts: str = "", gui: str = "", *, code: bool = False
 ) -> InstalledDist:
     entry_points = (f"[console_scripts]\n{scripts}\n" if scripts else "") + (
         f"[gui_scripts]\n{gui}\n" if gui else "")
     return InstalledDist(name=name, version="1.0", dist_info=f"{name}-1.0.dist-info",
-                         site=Path("/site"), requires=requires, record=(),
+                         site=Path("/site"), requires=requires,
+                         record=(f"{name}/__init__.py,,",) if code else (),
                          entry_points=entry_points, direct_url=None)  # fmt: skip
 
 
@@ -92,6 +93,33 @@ def test_a_python_file_keeps_the_directory_of_scripts(tmp_path: Path) -> None:
     project = Project.load(tmp_path)
 
     assert not project.tools and project.scripts == {"run": "_fsbpyr_scripts.run"}
+
+
+def test_a_project_table_with_a_lock_and_no_python_file_is_not_a_tool_binary(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "poetry.lock").write_text("")
+
+    project = Project.load(tmp_path)
+
+    assert not project.tools
+    assert project.lock_source() is LockSource.POETRY_LOCK
+    with pytest.raises(ProjectError, match="has no Python files to package"):
+        Package.load(tmp_path)
+
+
+def test_a_venv_beside_the_requirements_of_a_tool_binary_changes_nothing(tmp_path: Path) -> None:
+    (tmp_path / "requirements.txt").write_text("pyflakes==3.2.0\n")
+    info = tmp_path / ".venv" / "lib" / "python3.14" / "site-packages" / "other-1.0.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text("Metadata-Version: 2.1\nName: other\nVersion: 1.0\n")
+    (tmp_path / ".venv" / "pyvenv.cfg").write_text("")
+
+    project = Project.load(tmp_path)
+
+    assert project.tools and project.lock_source() is LockSource.REQUIREMENTS
+    assert _names(listed_distributions(project, LockSource.REQUIREMENTS, None)) == ["pyflakes"]
 
 
 def test_the_empty_project_is_named_after_the_directory_unless_a_tool_has_that_name(
@@ -385,17 +413,33 @@ def test_the_meta_package_chain_stops_at_the_depth_limit() -> None:
                      python_version=PYTHON)  # fmt: skip
 
 
-def test_a_library_with_no_script_is_taken_for_a_meta_package() -> None:
+def test_a_distribution_with_code_falls_through_only_to_a_requirement_named_after_it() -> None:
     index = _index(
-        _dist("black", (), "black = black:main"),
-        _dist("requests", ("charset-normalizer",)),
-        _dist("charset-normalizer", (), "normalizer = cn:main"),
+        _dist("ansible", ("ansible-core>=2", "jinja2"), code=True),
+        _dist("ansible-core", ("jinja2",), "ansible = ansible.cli:main"),
+        _dist("jinja2", (), "jinja = jinja2.cli:main"),
+    )
+
+    tools = tool_scripts(index, _listed_by(["ansible"]), project="p", source="requirements.txt",
+                         python_version=PYTHON)  # fmt: skip
+
+    assert sorted(tools.scripts) == ["ansible"]
+    assert tools.notes[1] == ("ansible has no console script of its own; the tools taken "
+                              "through it: ansible-core")  # fmt: skip
+
+
+def test_a_library_with_no_script_is_not_a_tool_and_gives_none_of_its_dependencys() -> None:
+    index = _index(
+        _dist("black", (), "black = black:main", code=True),
+        _dist("requests", ("charset-normalizer",), code=True),
+        _dist("charset-normalizer", (), "normalizer = cn:main", code=True),
     )
 
     tools = tool_scripts(index, _listed_by(["black", "requests"]), project="p",
                          source="r.txt", python_version=PYTHON)  # fmt: skip
 
-    assert sorted(tools.scripts) == ["black", "normalizer"]
+    assert sorted(tools.scripts) == ["black"]
+    assert "requests has no console script and is a library, not a tool" in tools.notes
 
 
 def test_a_meta_package_reached_by_two_ways_is_noted_once() -> None:
