@@ -23,7 +23,11 @@ skip can fail on coverage alone.
 
 The tiers, from fastest to most complete:
 
-- `make test-ci`: unit and integration tests and the core end-to-end tests.
+- `make test-ci`: `tests/unit`, `tests/integration` and the core end-to-end tests
+  (`test_build`, `test_runtime_app`, `test_imports`, `test_stub_hardening`, `test_multicall`,
+  `test_scripts`, `test_loose_directory` and `test_single_script`: real builds of projects,
+  several commands, projects without a build system, directories of scripts and single scripts),
+  with the coverage check.
 - The full suite in CI (`.github/workflows/full-suite.yml`): every test and check there is, so
   that a release (`.github/workflows/release.yml`) only builds and publishes. The release build
   (`.github/workflows/build.yml`) with its smoke test and an independent rebuild compared byte
@@ -90,7 +94,9 @@ The tiers, from fastest to most complete:
   with a native-heavy corpus subset (`FSBPYR_CORPUS_APPS`, the mode's `pandas-csv`, `lxml`,
   `pillow` and `scipy`) and, on aarch64, the 64 KiB-page VM smoke test with the EL8 userland
   (`tools/vm-smoke.py --kernel 64k --userland el8`; a pinned file gone from its mirror fails this job, since nothing else tests the 64 KiB pages: renew the pin and retry). Only what differs from a default build is
-  tested: the stub. The EL8 stub is linked twice from the tag's sources in independent caches
+  tested: the stub. (`tests/e2e/test_el8_use_cases.py`, EL8 builds of a directory of scripts, a
+  single script and a project of several commands run on the host, builds the EL8 runtime
+  itself and is in none of these lists: `make test` and the full suite run it.) The EL8 stub is linked twice from the tag's sources in independent caches
   (`tools/release/el8-stub.py` checks it needs no GLIBC symbol above 2.28 and carries the
   runtime id its release's fsbpyr expects) and the two must be byte for byte identical.
   **The workflow is not part of the release and does not gate it**: `release.yml` and

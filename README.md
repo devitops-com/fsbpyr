@@ -90,7 +90,8 @@ symptom and its remedy.
   asks for `--entry`. With several console scripts and no `--entry`, the build makes one
   executable with all of them (see "Several commands in one executable"). A project with a
   `[project]` table and no `[build-system]` builds from its Python files (see "Projects without a
-  build system"). Legacy `setup.py` `scripts=` files are not packaged (the build warns). And a
+  build system"), and so does a directory of scripts with no project file at all ("A directory of
+  scripts"); `fsbpyr build FILE` builds one script ("A single script"). Legacy `setup.py` `scripts=` files are not packaged (the build warns). And a
   `requires-python`, if it sets one, that admits one of 3.12 to 3.15 (see "Which Python").
 - **Lock sources,** the first one found: a requirements file that `--requirements` or
   `requirements` names, `uv.lock` (the project's or its uv workspace's), `pylock.toml`,
@@ -124,13 +125,16 @@ packages are tested, and what to do when an app fails: [docs/compatibility.md](d
 ## Building an app
 
 ```
-fsbpyr build [PROJECT_DIR] [-o OUT] [options]
+fsbpyr build [PROJECT_DIR | FILE] [-o OUT] [options]
 ```
 
 The build host needs [uv](https://docs.astral.sh/uv/) on `PATH`, and network access the first
 time (uv fetches the Python it builds with and the locked dependencies; later builds work from its cache, or
 with `--offline`). git is optional: with it, the executable records the commit it was built
-from. The output defaults to `dist/<console-script-name>`.
+from. The output defaults to `dist/<console-script-name>` (`dist/<project name>` for several
+commands, `dist/<directory name>` for a directory of scripts, `dist/<file stem>` beside a single
+script). A directory of scripts or a single script is built with no project file at all; the sections
+"Projects without a build system", "A directory of scripts" and "A single script" below say how.
 
 uv picks wheels that run on glibc 2.34 (manylinux_2_34; manylinux_2_28 with `--glibc 2.28`). A dependency without one is built
 from its sdist with the build host's C compiler, against the host's glibc. When such a build
@@ -249,8 +253,9 @@ setuptools' legacy fallback. A uv workspace root (`[tool.uv.workspace]`) keeps i
 
 - **What is packaged:** the project's Python files, and only those: `main.py`, `utils.py`, a
   `utils/` package, `src/` too (paths are kept, so a `src/` layout is not a package layout
-  here). In a git work tree the files are the tracked and the untracked but not ignored ones,
-  elsewhere the files found by a walk that skips hidden directories, virtual environments,
+  here). In a git work tree the files are the tracked ones, and the build warns for each
+  untracked Python file that is not ignored, which it leaves out (`git add` it, or ignore it);
+  elsewhere the files are those found by a walk that skips hidden directories, virtual environments,
   `__pycache__`, `build`, `dist`, `node_modules` and `site-packages`. A `.env`, a key, a data file
   or a template is never packaged, whatever git says. A link to a file outside the project
   directory fails the build; links to directories are not followed. A `.py` file below a directory
@@ -271,7 +276,8 @@ setuptools' legacy fallback. A uv workspace root (`[tool.uv.workspace]`) keeps i
   are not commands. Two files with one command name fail the build, naming both. A
   `[project.scripts]` target in `src/` reads `_fsbpyr_scripts.src.pkg.mod:main`. Without
   either the build asks for `--entry` (a command name or `_fsbpyr_scripts.module[:attr]`). A file
-  with a name like `deploy-prod.py` is not packaged.
+  with a name like `deploy-prod.py` is not packaged, and the build warns (a directory of scripts
+  stores such a file under a module name instead).
 - **At run time** a script runs as `__main__` with its directory first on `sys.path` and
   `sys.argv` as given, so `import utils` finds a sibling `utils.py` or `utils/`, as under
   `uv run`. `__file__` is a path below `<exe>/_fsbpyr_scripts/`, inside the executable: a script
@@ -293,27 +299,32 @@ setuptools' legacy fallback. A uv workspace root (`[tool.uv.workspace]`) keeps i
 
 ### A directory of scripts
 
-`cd ops-scripts && fsbpyr build` also builds a directory with no `pyproject.toml`, `setup.py` or
-`setup.cfg` (a `setup.cfg` alone is refused): a git repository of `.py` files and executable
+`cd ops-scripts && fsbpyr build` also builds a directory with no project file: no `setup.py` or
+`setup.cfg` (a `setup.cfg` alone is refused) and no `pyproject.toml`, or one that holds only tool
+settings (see "Settings" below): a git repository of `.py` files and executable
 scripts that Ansible copies to hosts with the wrong Python or none, a set of monitoring plugins,
 a cron fleet. The result is one executable and a link per command, built as in "Projects
 without a build system", named after the directory. It runs where "Supported targets" says:
 RHEL, Oracle Linux, AlmaLinux and Rocky 9 and 10, Amazon Linux 2023, Ubuntu 22.04 and newer,
-Debian 12 and newer, SLES 15 SP6 and newer and SLES 16. EL8 (glibc 2.28), CentOS 7, Amazon
-Linux 2, Ubuntu 20.04, Debian 11 and every musl system are out of reach. So are scripts for
-Python 2, scripts that import what Python removed (`cgi`, `imp`, `telnetlib`; the build names the
-`--python` that still has the module) and scripts that import the system's `dnf`, `rpm`,
-`selinux` or `apt` bindings, which no executable carries.
+Debian 12 and newer, SLES 15 SP6 and newer and SLES 16, and EL8 (RHEL 8, Rocky Linux 8,
+AlmaLinux 8) with `--glibc 2.28` ("Older systems: EL8 and glibc 2.28"). CentOS 7, Amazon Linux 2
+and every musl system are out of reach, and Ubuntu 20.04, Debian 10 and 11 and SLES 15 SP4 and SP5
+are not tested. Scripts for Python 2, scripts that import what Python removed (`cgi`, `imp`,
+`telnetlib`; the build names the `--python` that still has the module) and scripts that import
+the system's `dnf`, `rpm`, `selinux` or `apt` bindings, which no executable carries, cannot be
+bundled on any system.
 
 - **What is packaged:** the Python files: `*.py`, and extensionless files whose first line is a
   python shebang (`#!/usr/bin/env python3`, `#!/usr/bin/python3`, `#!/usr/bin/env python`,
   `#!/usr/bin/env -S uv run --script`). A file with another shebang, a binary file, `.env`, a key,
   a template or a data file is never packaged: nothing but Python is taken, so no deny list is
-  needed. The files are `git ls-files` (tracked, and untracked but not ignored) in a work tree,
-  else those of a walk that skips hidden directories, virtual environments, `__pycache__`,
-  `build`, `dist`, `node_modules` and `site-packages`. A `secrets.py` that is untracked and not
-  in `.gitignore` **is** packaged, as `uv run` would import it: ignore it, or keep it out of the
-  directory (an ignored one is never packaged). A link to a `.py` file outside the directory fails
+  needed. In a git work tree the files are the tracked ones (`git ls-files`): an untracked
+  Python file, such as a `secrets.py` nobody put in `.gitignore`, is **not** packaged, and the
+  build warns for each, naming it, so that you `git add` it or ignore it; a work tree with
+  nothing tracked has no files to package. Without git the files are those of a walk that skips
+  hidden directories, virtual environments, `__pycache__`, `build`, `dist`, `node_modules` and
+  `site-packages`, and then a file only a `.gitignore` would exclude is packaged: keep it out
+  of the directory. A link to a `.py` file outside the directory fails
   the build and a link to any other file outside it is passed over; links to directories are
   not followed. The home directory and `/` are no project directories. Only directories with
   Python names become import paths: a `.py` file or a script below `sub-dir/` is not packaged,
@@ -336,6 +347,12 @@ Python 2, scripts that import what Python removed (`cgi`, `imp`, `telnetlib`; th
   standard library for its siblings. It runs as `__main__`, and its `__file__` is that path inside
   the executable. Files with Python names keep them, so `import util` finds the `util.py` next to
   the script.
+- **Settings:** there is no project to hold them, so a `pyproject.toml` that holds tool settings
+  and nothing else (no `[project]`, no `[build-system]`, no Poetry tables) beside the scripts is
+  their settings file: `[tool.fsbpyr]` (`glibc = "2.28"`, `python`, `strict`, ...) is read as in any
+  project, and the options of the command line win. It is not a project, so setuptools never
+  sees it. A `[tool.fsbpyr]` table in a command's `# /// script` block is ignored in a directory
+  build, with a warning that names the file: pass the option or use that `pyproject.toml`.
 - **Dependencies:** only what the directory declares. `requirements.txt` (or `--requirements`) or
   `pylock.toml`, as for any pip project; else the union of the `# /// script` blocks (PEP 723) of
   the command files, resolved at build time, so the build warns that it is unlocked. The
@@ -366,13 +383,29 @@ Python 2, scripts that import what Python removed (`cgi`, `imp`, `telnetlib`; th
   `python3 /opt/tools/check-disk.py` must become `/opt/tools/check-disk`: the link is an
   executable, not a Python file.
 
+#### Monitoring plugins and cron fleets
+
+Nagios, Icinga, NRPE and Checkmk checks and cron jobs call a script by the name a command
+definition holds, many times an hour. Give each link the name the definition uses: name the file
+so, or link the command under that name. Keep the binary outside directories that an agent runs
+file by file (`cron.daily`, a monitoring agent's directory of local checks): it would run the
+binary itself as well. Put it in a directory of its own and link the commands where the agent
+looks, with an absolute target (`ln -sf /opt/tools/ops-scripts /etc/cron.daily/check_disk`).
+
+- All the links share **one instance budget** (D45), because it counts copies by the executable's
+  file. The limit is 4 per CPU, at least 64 and at most 1024; a start beyond it exits 70, which
+  Nagios shows as CRITICAL. `FSBPYR_MAX_INSTANCES` raises it (at most 4096), for a host that
+  starts many checks at once.
+- Every start checks the whole executable (D31, "Integrity"); the cost grows with the file's size,
+  and one executable serves every command.
+
 ### A single script
 
 `fsbpyr build report.py` builds one script: a `*.py` file, or an extensionless file whose first
 line is a python or `uv run --script` shebang (anything else is refused). The app is named after
 the file's stem, hyphens kept (`check-disk.py` gives `check-disk`), and written to `dist/<name>`
-in the script's directory, or to `-o`. It runs where "A directory of scripts" does, with the same
-checks, run-time behaviour (as `__main__`, `argv` untouched, the script's directory first on
+in the script's directory, or to `-o`. It runs where "A directory of scripts" does (EL8 with `--glibc 2.28`, or
+`glibc = "2.28"` in its block), with the same checks, run-time behaviour (as `__main__`, `argv` untouched, the script's directory first on
 `sys.path`, a name that is no Python name stored under a module name) and notes on files read
 next to `__file__`.
 
@@ -393,22 +426,6 @@ next to `__file__`.
   has outgrown it (run `uv lock --script` again), and `fsbpyr inspect` shows `script.lock`. fsbpyr
   itself never writes beside the script: it makes no lock, so a script with dependencies and no
   lock builds unlocked.
-
-#### Monitoring plugins and cron fleets
-
-Nagios, Icinga, NRPE and Checkmk checks and cron jobs call a script by the name a command
-definition holds, many times an hour. Give each link the name the definition uses: name the file
-so, or link the command under that name. Keep the binary outside directories that an agent runs
-file by file (`cron.daily`, a monitoring agent's directory of local checks): it would run the
-binary itself as well. Put it in a directory of its own and link the commands where the agent
-looks, with an absolute target (`ln -sf /opt/tools/ops-scripts /etc/cron.daily/check_disk`).
-
-- All the links share **one instance budget** (D45), because it counts copies by the executable's
-  file. The limit is 4 per CPU, at least 64 and at most 1024; a start beyond it exits 70, which
-  Nagios shows as CRITICAL. `FSBPYR_MAX_INSTANCES` raises it (at most 4096), for a host that
-  starts many checks at once.
-- Every start checks the whole executable (D31, "Integrity"); the cost grows with the file's size,
-  and one executable serves every command.
 
 ### Which Python
 
@@ -470,7 +487,9 @@ skip there (`tests/support/no-wheels.txt`).
 Apps built the usual way need glibc 2.34. `--glibc 2.28` (or `glibc = "2.28"` in
 `[tool.fsbpyr]`; the command line wins) builds for glibc 2.28 instead: RHEL 8 and its rebuilds
 (Rocky Linux 8, AlmaLinux 8), supported until 2029. `--glibc 2.34` is the default and builds
-as it always did. For 2.28 the build
+as it always did. It works for every kind of build: a project, projects without a build system,
+a directory of scripts and a single script (`glibc = "2.28"` in the scripts' directory settings
+or in a script's `# [tool.fsbpyr]` block). For 2.28 the build
 
 - puts a launcher into the app that is linked against Rocky Linux 8.10's glibc 2.28 (the
   default one is linked against Debian 12's);
@@ -515,9 +534,14 @@ the id it computes from its own launcher sources and pins); one of another relea
 refused, with the asset to use instead. That identity detects a stub of another release or
 Python, not a tampered one: only the download is verified against the published SHA-256, so
 check a file you place yourself against `SHA256SUMS-glibc2.28` first, and keep the directory of
-the fsbpyr executable and the cache writable by you alone. fsbpyr run from a checkout or a wheel has no release to
-fetch from: it uses the runtime that `fsbpyr runtime build --python X.Y --glibc 2.28` put in the
-cache, and says to run that command when there is none.
+the fsbpyr executable and the cache writable by you alone. `fsbpyr self update` replaces the
+executable but not the files you placed beside it, which belong to the old release and would be
+refused: the update names them in a warning; place the stubs of the new release there, or remove
+them and let `--glibc 2.28` download them.
+
+fsbpyr run from a checkout or a wheel has no release to fetch from: it uses the runtime that
+`fsbpyr runtime build --python X.Y --glibc 2.28` put in the cache, and says to run that command
+when there is none.
 
 Kernels with 64K pages (EL8's on aarch64) are smoke-tested in a QEMU virtual machine, not on
 hardware: `make test-vm` boots EL8's kernel, and the EL8 workflow runs an app built with
