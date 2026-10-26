@@ -528,29 +528,23 @@ def _uncaught_import(boot: ModuleType) -> str:
     return ""
 
 
-@pytest.mark.skipif(sys.version_info < (3, 15), reason="3.15 adds the site hint")
-def test_excepthook_replaces_the_site_hint_of_a_missing_module(
+def test_excepthook_handles_the_site_hint_of_a_missing_module_for_this_python(
     boot: ModuleType, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """From 3.15 the traceback module words a hint after ``python -S`` (a built app is one) and
+    the hook replaces it; before, there is no hint and the output is left alone."""
     monkeypatch.setattr(sys, "flags", _NoSiteFlags())
 
     _uncaught_import(boot)
 
     err = capsys.readouterr().err
     assert "Site initialization is disabled" not in err
-    assert "fsbpyr: fsbpyr_surely_missing_module is not in the executable: add it" in err
     assert isinstance(sys.flags, _NoSiteFlags)  # put back
-
-
-@pytest.mark.skipif(sys.version_info >= (3, 15), reason="the hint exists from 3.15")
-def test_excepthook_leaves_a_missing_module_alone_before_315(
-    boot: ModuleType, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _uncaught_import(boot)
-
-    err = capsys.readouterr().err
-    assert "No module named 'fsbpyr_surely_missing_module'" in err
-    assert "is not in the executable" not in err
+    if sys.version_info >= (3, 15):
+        assert "fsbpyr: fsbpyr_surely_missing_module is not in the executable: add it" in err
+    else:
+        assert "No module named 'fsbpyr_surely_missing_module'" in err
+        assert "is not in the executable" not in err
 
 
 def test_the_missing_module_is_found_in_the_chain_and_stdlib_modules_are_not(
