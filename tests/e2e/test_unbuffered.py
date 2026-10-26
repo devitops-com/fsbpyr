@@ -52,13 +52,19 @@ def _start(app: Path, cache: Path, variable: str | None) -> subprocess.Popen[byt
 
 
 def _read_within(stream: IO[bytes], seconds: float) -> bytes:
-    """What is readable from the pipe within ``seconds`` (nothing if no byte arrives)."""
+    """What is readable from the pipe within ``seconds`` (nothing if no byte arrives), up to
+    the end of the first line: print() writes "line" and "\\n" apart, and unbuffered, they
+    reach the pipe as two writes that a read may separate."""
     deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
+    received = b""
+    while time.monotonic() < deadline and not received.endswith(b"\n"):
         ready, _, _ = select.select([stream], [], [], 0.1)
         if ready:
-            return os.read(stream.fileno(), 4096)
-    return b""
+            chunk = os.read(stream.fileno(), 4096)
+            if not chunk:
+                break
+            received += chunk
+    return received
 
 
 @pytest.mark.parametrize("variable", ["1", "x"])
