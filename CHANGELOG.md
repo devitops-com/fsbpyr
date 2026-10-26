@@ -10,6 +10,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-26
+
 ### Added
 - **Builds that ask no questions.** `fsbpyr build` now builds what it finds, in four more cases
   than a project with one console script. None writes anything into the source tree, and none
