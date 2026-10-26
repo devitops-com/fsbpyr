@@ -30,7 +30,15 @@ class Target:
     libc: str  # "glibc", "musl" or "macos"
     xz_filter: int | None  # xz's BCJ filter for the payload's natives (lzma has no ARM64's)
     multiarch: str | None  # of the sysroot's directories
-    uv_platform: str  # uv's --python-platform
+    uv_platform: str  # uv's --python-platform, for the default glibc baseline
+
+    def platform_for(self, manylinux: str) -> str:
+        """uv's --python-platform for wheels of the glibc baseline ``manylinux`` ("2.28"): the
+        default's with its manylinux tag replaced; musl and macOS have no such tag."""
+        if self.libc != "glibc":
+            return self.uv_platform
+        arch = self.uv_platform.partition("-manylinux")[0]
+        return f"{arch}-manylinux_{manylinux.replace('.', '_')}"
 
 
 TARGETS = (

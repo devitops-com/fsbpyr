@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pwd.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,7 +32,19 @@
 #define STAMP_FLAGS (O_RDWR | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK | O_NOCTTY)
 
 /* Static: run once, before any thread, and frames stay small. */
-static char root[PATH_MAX], stamp[PATH_MAX], marker[PATH_MAX], cwd[PATH_MAX];
+static char root[PATH_MAX], stamp[PATH_MAX], marker[PATH_MAX], cwd[PATH_MAX], pwbuf[4096];
+
+/* The home directory as native.cache_directory has it: $HOME if absolute, else (unset, empty or
+ * relative) the passwd entry's, if absolute. NULL if none. */
+static const char *home(void) {
+    const char *env = getenv("HOME");
+    if (env != NULL && env[0] == '/') return env;
+    struct passwd entry, *found = NULL;
+    if (getpwuid_r(getuid(), &entry, pwbuf, sizeof pwbuf, &found) != 0 || found == NULL ||
+        found->pw_dir == NULL || found->pw_dir[0] != '/')
+        return NULL;
+    return found->pw_dir; /* into pwbuf */
+}
 
 /* ``path`` (absolute) without empty, "." and ".." components, as os.path.abspath leaves it. */
 static void normalize(char *path) {
@@ -53,8 +66,8 @@ static void normalize(char *path) {
 }
 
 /* The app's cache root as the boot code finds it (native.cache_directory): $FSBPYR_CACHE_DIR
- * (made absolute), else ${XDG_CACHE_HOME:-$HOME/.cache}/<app>, the app's name checked as there.
- * False if none can be told. */
+ * (made absolute), else ${XDG_CACHE_HOME:-<home>/.cache}/<app> (<home> as home() has it),
+ * the app's name checked as there. False if none can be told. */
 static bool cache_root(const char *app, size_t length) {
     const char *explicit = getenv("FSBPYR_CACHE_DIR"), *base = getenv("XDG_CACHE_HOME");
     if (length == 0 || memchr(app, '/', length) != NULL || memchr(app, '\0', length) != NULL ||
@@ -72,7 +85,7 @@ static bool cache_root(const char *app, size_t length) {
         if (n > 0 && (size_t)n < sizeof root) normalize(root);
     } else if (base != NULL && base[0] == '/') {
         n = snprintf(root, sizeof root, "%s/%.*s", base, (int)length, app);
-    } else if ((base = getenv("HOME")) != NULL && base[0] == '/') {
+    } else if ((base = home()) != NULL) {
         n = snprintf(root, sizeof root, "%s/.cache/%.*s", base, (int)length, app);
     } else {
         return false;

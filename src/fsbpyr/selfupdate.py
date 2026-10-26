@@ -40,6 +40,7 @@ _ASSET_NAME = re.compile(rf"fsbpyr-3\.\d+-({_TARGETS})")
 _TIMEOUT_S = 60
 _CHUNK = 1 << 20
 _RELEASE = re.compile(r"v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
+_PLACED_STUBS = "fsbpyr-stub-*-glibc*"  # EL8 stubs a user placed beside the executable (D46)
 _ACCEPT = {"Accept": "application/vnd.github+json", "User-Agent": "fsbpyr-self-update"}
 
 # What `make install` puts under the prefix (Makefile), and the command that writes each.
@@ -53,6 +54,10 @@ _EXTRAS = (
 
 class UpdateError(RuntimeError):
     """The update cannot be done; the message says why and what to do instead."""
+
+
+class NotFound(UpdateError):
+    """The server has no such file (404): the release does not publish it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,8 +141,14 @@ def latest_release(asset: str) -> Release:
     return Release(tag, numbers, assets[name])
 
 
-def unpack(url: str, target: Path) -> None:
-    """``url`` (an xz file), unpacked as it arrives into ``target``."""
+def _failed(url: str, exc: Exception) -> UpdateError:
+    missing = isinstance(exc, urllib.error.HTTPError) and exc.code == 404
+    return (NotFound if missing else UpdateError)(f"downloading {url} failed: {exc}")
+
+
+def unpack(url: str, target: Path, limit: int | None = None) -> None:
+    """``url`` (an xz file), unpacked as it arrives into ``target``; UpdateError when the
+    unpacked file would exceed ``limit`` bytes."""
     decoder = lzma.LZMADecompressor(format=lzma.FORMAT_XZ)
     try:
         request = urllib.request.Request(url, headers=_ACCEPT)  # noqa: S310  the release's URL
@@ -145,10 +156,47 @@ def unpack(url: str, target: Path) -> None:
                 target.open("wb") as out:  # noqa: S310
             while chunk := response.read(_CHUNK):
                 out.write(decoder.decompress(chunk))
+                if limit is not None and out.tell() > limit:
+                    raise UpdateError(f"{url} unpacks to more than {limit} bytes")
     except (OSError, lzma.LZMAError, EOFError) as exc:
-        raise UpdateError(f"downloading {url} failed: {exc}") from exc
+        raise _failed(url, exc) from exc
     if not decoder.eof:
         raise UpdateError(f"{url} ended before the end of its xz stream")
+
+
+def download_text(url: str, limit: int = _CHUNK) -> str:
+    """``url``'s body as text, of at most ``limit`` bytes (a checksums file)."""
+    try:
+        request = urllib.request.Request(url, headers=_ACCEPT)  # noqa: S310  the release's URL
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
+            body: bytes = response.read(limit + 1)
+    except OSError as exc:
+        raise _failed(url, exc) from exc
+    if len(body) > limit:
+        raise UpdateError(f"{url} is larger than {limit} bytes")
+    return body.decode("utf-8", "replace")
+
+
+def _glibc_version(text: object) -> tuple[int, ...] | None:
+    match = re.search(r"(\d+)\.(\d+)", text) if isinstance(text, str) else None
+    return None if match is None else (int(match[1]), int(match[2]))
+
+
+def check_glibc(baseline: object, host: str | None = None) -> None:
+    """Refuse a new executable whose glibc ``baseline`` (the ``glibc`` its build_info records)
+    is newer than the host's; musl and other hosts, and builds that record none, pass."""
+    if host is None:
+        try:
+            host = os.confstr("CS_GNU_LIBC_VERSION")
+        except (ValueError, OSError):  # not glibc
+            return
+    needed, have = _glibc_version(baseline), _glibc_version(host)
+    if needed is None or have is None or needed <= have:
+        return
+    raise UpdateError(
+        f"the new fsbpyr needs glibc {baseline}, this host has {host}; nothing was changed. "
+        "Keep the current version, or install a build for this host's glibc"
+    )
 
 
 def _render(new: Path, command: tuple[str, ...]) -> bytes:
@@ -222,10 +270,11 @@ def update(
         unpack(release.asset_url, new)
         new.chmod(stat.S_IMODE(executable.stat().st_mode))
         try:
-            read(new, verify=True)
+            report = read(new, verify=True)
         except InspectError as exc:
             raise UpdateError(f"the download failed verification, nothing was changed: {exc}"
                               ) from exc
+        check_glibc(report.info.get("glibc"))
         staged = _stage_extras(executable, new, warn)
         new.rename(executable)
     except BaseException:
@@ -241,6 +290,10 @@ def update(
         except OSError as exc:
             temporary.unlink(missing_ok=True)
             warn(f"{final} was not updated: {exc.strerror or exc}")
+    if placed := sorted(path.name for path in directory.glob(_PLACED_STUBS)):
+        warn(f"{', '.join(placed)} beside {executable.name} belong to the old release and "
+             f"`--glibc` will refuse them; place the stubs of {release.tag} there, or remove "
+             "these and let `--glibc` download them")  # fmt: skip
     log(f"updated {executable} to fsbpyr {release.tag}")
     return True
 

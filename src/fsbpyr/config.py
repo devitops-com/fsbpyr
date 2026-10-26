@@ -7,6 +7,7 @@ from typing import Any
 
 from .payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL
 from .project import Project
+from .runtime.pins import BASELINES, DEFAULT_BASELINE
 
 
 class ConfigError(ValueError):
@@ -33,6 +34,7 @@ class BuildConfig:
     interpreter_reexec: bool | None = None
     strict: bool = False  # a warning about the app, or an unlocked build, fails the build
     python: str | None = None  # "3.12": the Python to build for; None: the version rule decides
+    glibc: str = DEFAULT_BASELINE  # the glibc the app is built for: "2.34", or "2.28" (EL8, D46)
 
     def __post_init__(self) -> None:
         if self.fast_compression and self.best_compression:
@@ -67,6 +69,13 @@ def _package(key: str, value: Any) -> str:
 
 def _string(key: str, value: Any, project: Project) -> Any:
     return _expect(key, value, str)
+
+
+def _glibc(key: str, value: Any, project: Project) -> Any:
+    if _expect(key, value, str) not in BASELINES:
+        raise ConfigError(f"[tool.fsbpyr] {key} {value!r} is not a glibc fsbpyr builds for; "
+                          f"supported: {', '.join(BASELINES)}")  # fmt: skip
+    return value
 
 
 def _flag(key: str, value: Any, project: Project) -> Any:
@@ -131,6 +140,10 @@ CONFIG_KEYS = (
               "String. The Python version to build for, `X.Y` (3.12 to 3.15), inside "
               "`requires-python`; as `--python`. Without it `.python-version` and "
               "`requires-python` decide."),
+    ConfigKey("glibc", "glibc", _glibc,
+              "String. The glibc the app is built for: `2.34` (default) or `2.28`, for EL8 "
+              "hosts, which needs the glibc 2.28 stubs of the fsbpyr release (README, \"Older "
+              "systems\"); as `--glibc`."),
     ConfigKey("strict", "strict", _flag,
               "Boolean. Fail the build on warnings; as `--strict`."),
     ConfigKey("interpreter-reexec", "interpreter_reexec", _flag,

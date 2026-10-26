@@ -449,3 +449,22 @@ def test_a_frame_over_the_limit_fails_the_link(
 
     with pytest.raises(StubBuildError, match=r"stack frame size \(8888\).*cache_sync"):
         _link_printing(printed, monkeypatch, tmp_path)
+
+
+def test_stub_command_passes_the_runtime_id_the_stub_records(tmp_path: Path) -> None:
+    dist = _fake_dist(tmp_path)
+    inputs = link_inputs(dist, set())
+    toolchain = Toolchain(clang=Path("/x/clang-22"), lld=Path("/x/ld.lld-22"), major=22)
+
+    plain = stub_command(dist, inputs, toolchain, [Path("main.c")], Path("stub"))
+    named = stub_command(dist, inputs, toolchain, [Path("main.c")], Path("stub"),
+                         identity="cp314-x86_64-unknown-linux-gnu-0123456789ab")  # fmt: skip
+
+    assert not any(flag.startswith("-DFSBPYR_RUNTIME_ID") for flag in plain)
+    assert '-DFSBPYR_RUNTIME_ID="cp314-x86_64-unknown-linux-gnu-0123456789ab"' in named
+    assert [flag for flag in named if not flag.startswith("-DFSBPYR_RUNTIME_ID")] == plain
+
+
+def test_the_identity_flag_is_not_part_of_the_runtime_id() -> None:
+    """The id is what the flag carries: it cannot depend on it."""
+    assert not any("RUNTIME_ID" in flag for flag in (*stub.COMPILE_FLAGS, *stub.LINK_FLAGS))

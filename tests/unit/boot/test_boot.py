@@ -64,7 +64,12 @@ def test_every_module_with_a_fixup_is_listed(boot: ModuleType) -> None:
     """The boot module names them without importing _fsbpyr_rt.fixups."""
     fixups = importlib.import_module("_fsbpyr_rt.fixups")
 
-    assert set(fixups.FIXUPS) == boot._FIXUPS
+    assert set(fixups.FIXUPS) - {"argparse"} == boot._FIXUPS - {"argparse"}  # argparse: scripts
+
+
+def test_argparse_is_fixed_up_only_in_apps_of_scripts(boot: ModuleType) -> None:
+    """Where 3.14 and later give a script run by its file path a ``-m`` prog (fixups)."""
+    assert "argparse" not in boot._FIXUPS and boot._SCRIPT_APP is False
 
 
 def test_path_hook_claims_only_payload_paths(boot: ModuleType) -> None:
@@ -75,6 +80,34 @@ def test_path_hook_claims_only_payload_paths(boot: ModuleType) -> None:
     for foreign in ("/usr/lib/python3.14", boot.ROOT + "x", boot.ROOT + "/pkg/../.."):
         with pytest.raises(ImportError):
             boot.path_hook(foreign)
+
+
+def test_path_hook_normalizes_dotdot_but_never_above_the_executable(boot: ModuleType) -> None:
+    scripts = boot.ROOT + "/_fsbpyr_scripts"
+
+    assert boot.path_hook(f"{scripts}/tools/../lib").directory == "_fsbpyr_scripts/lib"
+    assert boot.path_hook(f"{scripts}/tools/./../lib/").directory == "_fsbpyr_scripts/lib"
+    assert boot.path_hook(f"{scripts}/a/b/../../c").directory == "_fsbpyr_scripts/c"
+    assert boot.path_hook(f"{scripts}/..").directory == ""
+    for above in (boot.ROOT + "/..", f"{scripts}/../..", f"{scripts}/a/../../../lib"):
+        with pytest.raises(ImportError):
+            boot.path_hook(above)
+
+
+def test_a_directory_below_the_scripts_root_that_is_no_python_name_is_its_mangled_one(
+    boot: ModuleType,
+) -> None:
+    loose = importlib.import_module("fsbpyr.loose")
+    names = ["sub-dir", "2024-tools", "v1.2", "ok_dir", "a b", "-", "ünï-code", "class"]
+    scripts = boot.ROOT + "/_fsbpyr_scripts"
+
+    for name in names:
+        assert boot._module_part(name) == loose._module_stem(name)
+    finder = boot.path_hook(f"{scripts}/2024-tools/sub-dir")
+    assert (finder.directory, finder._prefix) == (
+        "_fsbpyr_scripts/2024-tools/sub-dir", "_fsbpyr_scripts._2024_tools.sub_dir.")
+    assert finder._aliasable and boot.path_hook(f"{scripts}/lib")._aliasable
+    assert boot.path_hook(boot.ROOT + "/sub-dir")._aliasable is False  # elsewhere: Python names
 
 
 def test_package_spec_and_execution(boot: ModuleType) -> None:
@@ -470,9 +503,116 @@ def test_excepthook_adds_no_note_for_other_failures(
 ) -> None:
     for exc in (
         FileNotFoundError(2, "No such file", "/etc/nothing"),
-        FileNotFoundError(2, "No such file", f"{boot.ROOT}/nothing/x"),  # not in the payload
         ValueError("bad"),
     ):
         boot._excepthook(type(exc), exc, None)
 
     assert "fs-package" not in capsys.readouterr().err
+
+
+class _NoSiteFlags:
+    """``sys.flags`` of ``python -S``: the 3.15 traceback module words its hint after it."""
+
+    def __init__(self) -> None:
+        self._flags = sys.flags
+
+    def __getattr__(self, name: str) -> object:
+        return 1 if name == "no_site" else getattr(self._flags, name)
+
+
+def _uncaught_import(boot: ModuleType) -> str:
+    try:
+        import fsbpyr_surely_missing_module  # type: ignore[import-not-found]  # noqa: F401, PLC0415
+    except ModuleNotFoundError as exc:
+        boot._excepthook(ModuleNotFoundError, exc, exc.__traceback__)
+    return ""
+
+
+def test_excepthook_handles_the_site_hint_of_a_missing_module_for_this_python(
+    boot: ModuleType, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """From 3.15 the traceback module words a hint after ``python -S`` (a built app is one) and
+    the hook replaces it; before, there is no hint and the output is left alone."""
+    monkeypatch.setattr(sys, "flags", _NoSiteFlags())
+
+    _uncaught_import(boot)
+
+    err = capsys.readouterr().err
+    assert "Site initialization is disabled" not in err
+    assert isinstance(sys.flags, _NoSiteFlags)  # put back
+    if sys.version_info >= (3, 15):
+        assert "fsbpyr: fsbpyr_surely_missing_module is not in the executable: add it" in err
+    else:
+        assert "No module named 'fsbpyr_surely_missing_module'" in err
+        assert "is not in the executable" not in err
+
+
+def test_the_missing_module_is_found_in_the_chain_and_stdlib_modules_are_not(
+    boot: ModuleType
+) -> None:
+    inner = ModuleNotFoundError("No module named 'yaml'", name="yaml")
+    outer = RuntimeError("plugin failed")
+    outer.__cause__ = inner
+
+    assert boot._missing_module(outer) == "yaml"
+    assert boot._missing_module(ModuleNotFoundError(name="tkinter")) is None
+    assert boot._missing_module(ModuleNotFoundError(name="json.nope")) is None
+    assert boot._missing_module(ValueError("bad")) is None
+
+
+def _note(boot: ModuleType, monkeypatch: pytest.MonkeyPatch, path: str, **kinds: int) -> str:
+    """The note for an OSError on ``path``, with ``kinds`` (module name -> kind) as the payload."""
+    monkeypatch.setattr(boot._fsbpyr, "find_module",
+                        lambda name: (0, kinds[name]) if name in kinds else None)  # fmt: skip
+    note = boot._inside_executable_note(NotADirectoryError(20, "Not a directory", path))
+    assert isinstance(note, str)
+    return note
+
+
+def test_the_note_for_the_scripts_root_does_not_advise_fs_package(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    note = _note(boot, monkeypatch, f"{boot.ROOT}/_fsbpyr_scripts/sub/x.conf",
+                 _fsbpyr_scripts=boot.NAMESPACE)  # fmt: skip
+
+    assert "holds the project's Python files only" in note and "deploy the file there" in note
+    assert f"from {boot.ROOT.rpartition('/')[0]}/sub/x.conf" in note
+    assert "--fs-package" not in note
+
+
+@pytest.mark.parametrize("relative", ["x.conf", "data/x.conf", "mod.py"])
+def test_the_note_for_a_flat_module_says_fs_package_takes_packages_only(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch, relative: str
+) -> None:
+    note = _note(boot, monkeypatch, f"{boot.ROOT}/{relative}", mod=boot.MODULE)
+
+    assert "a top-level module's __file__" in note and "takes packages only" in note
+    assert "rebuild with --fs-package" not in note
+
+
+def test_the_note_for_a_namespace_directory_does_not_advise_fs_package_for_it(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    note = _note(boot, monkeypatch, f"{boot.ROOT}/ns/data.txt", ns=boot.NAMESPACE)
+
+    assert "ns is a directory without an __init__.py" in note
+    assert "rebuild with --fs-package ns" not in note and "add an __init__.py" in note
+
+
+def test_the_note_for_a_package_below_a_namespace_names_that_package(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    note = _note(boot, monkeypatch, f"{boot.ROOT}/google/cloud/x/data.txt",
+                 **{"google": boot.NAMESPACE, "google.cloud": boot.NAMESPACE,
+                    "google.cloud.x": boot.PACKAGE})  # fmt: skip
+
+    assert note.endswith("google.cloud.x reads files next to its __file__: rebuild with "
+                         "--fs-package google.cloud.x\n")  # fmt: skip
+
+
+def test_the_note_for_a_regular_package_is_unchanged_for_its_directory_too(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    note = _note(boot, monkeypatch, f"{boot.ROOT}/pkg", pkg=boot.PACKAGE)
+
+    assert "pkg reads files next to its __file__: rebuild with --fs-package pkg" in note

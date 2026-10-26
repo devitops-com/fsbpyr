@@ -10,6 +10,409 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-26
+
+### Added
+- **Builds that ask no questions.** `fsbpyr build` now builds what it finds, in four more cases
+  than a project with one console script. None writes anything into the source tree, and none
+  runs project code during the build.
+  - **Several console scripts build one executable with all of them.** With no `--entry` and two
+    or more console scripts, the build no longer asks for a choice: it writes `dist/<project>`
+    (or the `-o` path), whose entry point is a table of `name=target` lines (format version
+    unchanged), and a relative symlink `dist/<command>` beside it per command, each made as a
+    temporary link renamed into place. A regular file or directory in the way of a link fails the
+    build before anything is written; an existing symlink is replaced. A start runs the command its
+    `argv[0]` names (`.py` stripped), else the one `argv[1]` names, which is removed from
+    `sys.argv`; with neither the executable lists its commands on stderr and exits 2. A start under
+    a command's link is never a helper interpreter (D44): command A starting `B -m word` runs
+    command B; `sys.executable -m ...` is still refused, and so are hard-link starts. The selftest
+    checks every command, a forkserver preloads the parent's command, `fsbpyr inspect` (and its
+    JSON, as `commands`) and the build summary list the commands, and `--smoke-args` starts with
+    the command's name. Command names, of one console script as of several, must match
+    `[A-Za-z0-9][A-Za-z0-9_.+-]*`. All links share
+    one instance budget (D45). A one-command build is unchanged except that it carries the new
+    `_fsbpyr_rt.commands` module, which only a table loads.
+  - **A project with a `[project]` table and no `[build-system]` builds as `uv run main.py` runs
+    it.** That is `uv init --no-package`, and Poetry `package-mode = false` and PDM
+    `distribution = false` projects (a Poetry 1 project without a `[project]` table too: its name,
+    version, scripts and `[tool.poetry.dependencies]`, with `^` and `~` converted, are read from
+    `[tool.poetry]`; its `poetry.lock` locks the build); a uv workspace root keeps its build. These used to fall back
+    to setuptools: two modules failed with "Multiple top-level modules", a `utils/` package was
+    dropped, and `<name>.egg-info` was left in the tree. fsbpyr now writes the project's wheel
+    itself with the standard library (no build backend, no project code, nothing written into the
+    tree, the same bytes twice): the project's `*.py` files and nothing else, under the reserved
+    root `_fsbpyr_scripts/`, from `git ls-files` (the tracked files; the build warns for each
+    untracked Python file that is not ignored, which it leaves out) or a pruned walk without git;
+    links out of the tree are refused, and a `.py` file below a directory that is no Python name
+    is reported and left out. The dependencies come from `uv.lock` as before, else
+    `[project.dependencies]` unlocked, or from `poetry.lock` / `pdm.lock` (see the entry below).
+    The commands are `[project.scripts]`, else the modules with a main guard (one: the
+    project's command; several: a multi-command executable, named after the files, `main.py` after
+    the project, a collision fails naming both). A script runs as `__main__` with its directory
+    first on `sys.path`, so `import utils` works; `__file__` is next to the executable (`<exe dir>/main.py`; see the Changed
+    entry on `__file__`).
+  - **A directory of scripts builds as one executable with a command per link.** `fsbpyr build`
+    in a directory with no `setup.py` or `setup.cfg` (a `setup.cfg` alone is still refused) and
+    no `pyproject.toml`, or one that holds only tool settings, packages its Python files: `*.py`
+    and extensionless files whose first line is a python or `uv run` shebang, from `git ls-files`
+    (tracked files only; an untracked Python file that is not ignored, such as a `secrets.py`, is
+    left out with a warning naming it) or a pruned walk, and nothing else, so a `.env`, a key or a
+    data file is never in the executable. A file with a module-level main guard or a python
+    shebang is a command named after the file (hyphens kept, `main.py` and `__main__.py` after
+    the directory), test files are never commands, and two files with one name fail the build,
+    naming both. A file whose name is no Python name (`check-disk.py`, `10-backup`) is stored
+    under a module name in its directory (`check_disk.py`, `_10_backup.py`) and runs as
+    `__main__`; its `__file__` is that path. The dependencies are `requirements.txt` or
+    `pylock.toml`, else the union of the commands' PEP 723 blocks (`requires-python` intersected,
+    a conflict fails naming the files), else the venv the scripts run in (see the entry below), else
+    none. A `pyproject.toml` that holds
+    only tool settings (no `[project]`, `[build-system]`, Poetry tables, `setup.py` or `setup.cfg`)
+    is the directory's settings file: `[tool.fsbpyr]` (`glibc`, `python`, `strict`, ...) is read
+    from it, where setuptools' flat-layout discovery used to fail on several modules; a
+    `[tool.fsbpyr]` table in a command's PEP 723 block is ignored in a directory build, with a
+    warning. The static import check also searches a directory a file puts on `sys.path` with a
+    path built from its `__file__` (the `pylib` hack), and treats the imports of a file whose
+    `sys.path` change it cannot follow as optional. The output is `dist/<directory name>` and the
+    links, and the build prints how to install them on a host. README and
+    `docs/compatibility.md` cover monitoring plugins and cron fleets: the shared instance budget
+    (`FSBPYR_MAX_INSTANCES`; a start beyond it exits 70), the per-start integrity check, and
+    crontab lines that ran `python3 x.py`.
+  - **One script builds as an executable: `fsbpyr build report.py`.** The argument may be a
+    `*.py` file or an extensionless file whose first line is a python or `uv run --script`
+    shebang; it was refused with "Directory 'report.py' is a file". The app is named after the
+    file's stem (hyphens kept) and written to `dist/<name>` in the script's directory, or to `-o`.
+    Only the file and its static local-import closure are packaged (the siblings and packages it
+    imports from its directory, transitively, including a directory it adds to `sys.path` from
+    its `__file__`): never the rest of the directory, so a script among 200 unrelated ones holds
+    its own few modules, and the directory's `pyproject.toml`, `requirements.txt` and `uv.lock`
+    are not read. It runs as in a directory of scripts. The PEP 723 block gives the dependencies
+    (unlocked), the `requires-python` (which selects the Python and dispatches to another
+    Python's fsbpyr as a project's does) and `[tool.fsbpyr]`, read as in `pyproject.toml`,
+    unknown keys rejected. A `<script>.lock` that `uv lock --script` wrote beside the script
+    locks the build: the staging environment is filled by `uv sync --script --active --locked`,
+    so a lock the block has outgrown fails the build; the build records it as `script.lock`.
+    fsbpyr never writes beside the script: no lock, no environment, no cache.
+  - **Scripts are checked statically and never run by the build.** The smoke test finds a
+    script and does not import it, so a script's top-level code never runs on the build host
+    (a `--entry module` build still runs that module's top-level code, as it always did, and the
+    README says so). A static import check follows each command's imports and skips a command
+    that imports what the executable lacks, with `file:line` (`--strict` fails; none left
+    fails), and names a standard library module removed in the build's Python (`cgi`, `imp`, ...)
+    with the older `--python` that has it. The build warns about files a script reads next to its
+    `__file__` (`file:line`), and a `.py` file below a directory that is no Python name is
+    reported for the project's own files (a directory of scripts packages it, see below).
+  - **Scripts find their siblings by relative paths, in directories with any name, and start
+    each other.** The executable's path hook resolves a `..` in a `sys.path` entry inside the
+    executable (`sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))`
+    imports `lib/`), and an entry that would climb above the executable is not served from it;
+    the static import check follows the same path. In a directory of scripts, a directory whose
+    name is no Python name (`sub-dir/`, `2024-tools/`) is packaged, stored under the name made
+    as a file's (`sub_dir/`, `_2024_tools/`; two directories that give one name fail the build):
+    a script in it is a command with its directory first on `sys.path`, and
+    `sys.path.append(os.path.join(os.path.dirname(__file__), "sub-dir"))` finds its modules; the
+    build no longer warns that it leaves such files out. A script that starts one of the app's
+    own commands as `subprocess.run([sys.executable, <sibling's __file__>, ...])` gets that
+    command, run as `python sibling.py` would, instead of exit 70 (D44 stays for every other
+    helper-interpreter child, and a path that is a command's link already ran the command).
+- **A project with no console scripts builds from its `__main__` package or guarded module.**
+  With no `--entry`, the build picks the project's only top-level package with a `__main__.py`
+  (run as `python -m pkg`), else its only top-level module with an `if __name__ == "__main__":`
+  guard (found with `ast`, never by importing it), and prints which one and why. Several
+  candidates, or a package and a module, keep the "choose one with --entry" error and list them.
+- **A directory of requirements builds the tools it names: `cd tools && fsbpyr build`.** A
+  directory with no Python file (no `pyproject.toml`, or one that holds only tool settings) and a
+  lock source (`requirements.txt`, `pylock.toml`, `--requirements FILE`) used to fail with "no
+  Python files to package"; it now builds one executable whose commands are the console scripts
+  of the distributions the file names (`ansible-core==2.17.*`, `httpie==3.2.4`), with the links,
+  the deploy lines and the output name (`dist/<directory name>`, or `dist/<command>` for one) of
+  a directory of scripts. The lock is installed as for any pip project (pins, hashes and
+  `--strict` as before) with a wheel of metadata only for the directory, named after it, or
+  `<name>-tools` when a requirement has that name; nothing of the directory is packaged. A
+  requirements file names its distributions directly (`-r` includes are followed, `-c` files
+  name nothing; a line that gives no name, such as a path, is refused). A file that lists every
+  installed distribution (`pip freeze`, `uv pip freeze`, `pylock.toml`) has as tools only the
+  listed distributions that no other listed distribution requires, and the build prints which it
+  took and why. A dependency's scripts are not commands. A tool with no console or gui script of
+  its own falls through to its direct requirements, under the runtime's markers and the extras
+  asked for, when it is a meta-package (it installs no code of its own) or for the requirement
+  named after it (a made-up `acme` requiring `acme-cli`), down to a distribution with scripts (a
+  cycle or eight levels stop it), and the build names the meta-package and the tools taken
+  through it; any other distribution with no script is a library, not a tool, and the build says
+  so. A tool also has the commands of its **family**, decided while building it (not by the
+  owner): its direct requirements whose name is the tool's name and a dash (`ansible` gives
+  `ansible-core`'s `ansible`, `ansible-playbook`, ... beside its own `ansible-community`), under
+  the runtime's markers and the extras asked for, and theirs in turn; the build names the members
+  it took commands from; a script-name clash inside a family is the clash error. `gui_scripts` are commands like console scripts (pip and uv
+  install them as ordinary launchers on Linux). Two tools with one script name fail the build
+  naming both distributions (a console and a gui script of one name clash too); no script at all
+  fails it, saying what the file named. A directory with
+  a Python file is a directory of scripts as before. README ("A tool from its requirements
+  file") and `docs/compatibility.md` cover tools that start helpers through `sys.executable`
+  (exit 70 unless built with `--interpreter-reexec`), commands that are interpreters (reachable
+  as `tools ipython`; a `sudo` rule names the link) and the licences of the tools, which are
+  collected as for any app.
+- **`fsbpyr build --glibc 2.28` builds an app for EL8** (RHEL 8, Rocky Linux 8, AlmaLinux 8), as
+  does `glibc = "2.28"` in `[tool.fsbpyr]` (in a directory of scripts, in its settings-only
+  `pyproject.toml`; in a single script, in its block); the command line wins, other values are
+  rejected with the allowed ones, and `--glibc 2.34` is the default and builds as before. For 2.28
+  uv picks `manylinux_2_28` wheels, a dependency without one is built from its sdist against the
+  EL8 sysroot, the warnings about libstdc++, libgcc_s and libz use auditwheel's manylinux_2_28
+  limits, and `fsbpyr inspect` shows `baseline   glibc 2.28` (`glibc_baseline` in `--json` and in
+  the build information; builds for the default record nothing new). The launcher for 2.28 is a
+  separate release asset, one per Python and target
+  (`fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz`, with the SHA-256 of the stub in
+  `SHA256SUMS-glibc2.28`; a file placed by hand may be plain or `.xz`): a release fsbpyr pairs its
+  own standard library with the stub of its own release, taken from a file placed in the
+  directory of the fsbpyr executable (for machines without GitHub access), else from its cache,
+  else downloaded and verified. EL8 assets are published separately and not with every release:
+  without them the build stops and says so, naming the asset to place. fsbpyr run from a checkout
+  or a wheel uses the runtime that `fsbpyr runtime build --glibc 2.28` made, and never fetches.
+  Every launcher now records the runtime id it was linked as, and a stub that is not the one of
+  this fsbpyr's release, Python and target is refused; the default launcher's runtime id changed
+  for that (its behaviour did not). See the README, "Older systems".
+- **`fsbpyr runtime build --glibc 2.28` links the stub against an EL8 sysroot.** The sysroot is
+  Rocky Linux 8.10's glibc 2.28, libgcc 8 and kernel 4.18 headers, read from the pinned RPMs by a
+  reader of fsbpyr's own (no `rpm` tool is needed). A runtime built this way has an id of its
+  own and never mixes with the default one (Debian 12's sysroot, glibc 2.34, which stays the
+  default); `fsbpyr runtime list` now shows each runtime's glibc. The launcher compiles its
+  `_dl_find_object` wrapper only where the headers have it (glibc 2.35); the default stub behaves
+  as before, but its source changed, so its runtime id does.
+- **A separate workflow attaches EL8 stubs to a release.** `.github/workflows/el8.yml` runs on
+  the release tag itself: it starts on the push of a version tag, in parallel with `release.yml`,
+  or by hand on the tag's ref (`gh workflow run el8.yml --ref vX.Y.Z`, for a release that has
+  none or to retry), and is outside the release: `release.yml`, `full-suite.yml` and the release gate neither wait for it
+  nor know it, and a release may have EL8 stubs or not. For every Python and target it links the EL8
+  stub from the tag's sources twice in independent caches and requires the two to be byte for
+  byte identical, with no GLIBC symbol above 2.28 and the runtime id its release's fsbpyr
+  expects (`tools/release/el8-stub.py`); on the default Python only (CI minutes: the stubs differ
+  per Python only in the linked libpython, which that check covers for every Python) per target,
+  it runs the stub-dependent tests with the EL8 stub, the
+  portability matrix with apps the tag's own fsbpyr (built in the workflow as `build.yml` builds the
+  release) built with `--glibc 2.28` (the stub
+  placed beside it) on the 12 images and `rockylinux:8` and `almalinux:8`, four native-heavy
+  corpus apps (`pandas-csv`, `lxml`, `pillow`, `scipy`) built the same way and compared with
+  their venvs, and, on aarch64, an app on EL8's 64 KiB-page kernel with the EL8 userland in a
+  QEMU VM. Only when every job passed, and the release of the tag exists (it waits for it), does it write
+  `SHA256SUMS-glibc2.28`, attest the stubs (from a run on the tag) and
+  upload the eight `.xz` and then the sums to the release, touching no other asset; a release
+  has EL8 stubs when it has `SHA256SUMS-glibc2.28`.
+- **`make test-el8` runs the EL8 test mode and its portability matrix.** With
+  `FSBPYR_TEST_GLIBC=2.28` the tests that run the stub use the glibc 2.28 runtime and every
+  `fsbpyr build` of a test is a `--glibc 2.28` one (`make test-el8-stub`: the launcher, the
+  `_fsbpyr` contract and native wheels at manylinux_2_28); `make test-el8-portability` runs the
+  portability matrix on apps built for glibc 2.28, with `rockylinux:8` and `almalinux:8` added
+  (they are in no other run). `FSBPYR_CORPUS_APPS` runs a subset of the corpus, and
+  `tools/portability-apps.sh` takes the glibc as a fourth argument.
+- **`make release-check` checks a release's EL8 stubs.** With `SHA256SUMS-glibc2.28` among the
+  assets it verifies the sums, that each `.xz` unpacks to its listed digest, their attestations
+  by `el8.yml` from the tag, and that the release's fsbpyr builds a pure-Python fixture with `--glibc 2.28`,
+  fetching the stub as a user does, which runs in `rockylinux:8`; a release without reports
+  `skip  no EL8 stubs`, not a failure, and the EL8 assets are no longer reported as unexpected.
+- **`make test-vm` runs aarch64 apps on 16K- and 64K-page kernels.** `tools/vm-smoke.py` boots
+  Raspberry Pi 5's kernel (16 KiB pages) and EL8's (64 KiB pages) in `qemu-system-aarch64`
+  (TCG, no KVM) with an initramfs of a pinned Debian trixie (or Rocky Linux 8.10) root file
+  system and the aarch64 apps it is given, runs their commands and checks the page size, the
+  exit codes and the output on the serial console. Kernels and root file systems are pinned by
+  URL and SHA-256 (`tools/vm-pins.toml`). `full-suite.yml` gains a `vm-smoke` job that runs the
+  aarch64 executable and two fixture apps, one with native extensions, on both kernels. The
+  README no longer calls 16K- and 64K-page kernels untested: they are smoke-tested in virtual
+  machines, not on hardware.
+- **SLES 15 SP6 and SP7 are supported and tested.** Their glibc is 2.38 and fsbpyr apps run on
+  them; the 0.24.0 entry's statement that SLES/openSUSE Leap 15 are no longer supported holds for
+  SLES 15 SP4 and SP5 (glibc 2.31) and openSUSE Leap 15 only. The portability matrix gains
+  `registry.suse.com/bci/bci-base:15.7` (SLES 15 SP7, 12 images now, 11 on aarch64), and the
+  README and `docs/compatibility.md` list SLES 15 SP6 and newer.
+- **Legacy `scripts=` files that are Python are commands.** The files of the project's wheel
+  under `<dist>.data/scripts/` that start with `#!python` (setuptools writes that for
+  `scripts=['bin/tool']` and `script-files` from any python shebang; the build reads the wheel,
+  since staging rewrites the line) join the console scripts as commands named after the file,
+  hyphens kept: one makes the executable, several make the links of a multi-command
+  executable, and a name that is also a console script fails the build, naming both. A project
+  whose only commands they are builds without `--entry`. A script runs as `python script` runs
+  it (`__main__`, `argv[0]` the path it was started by, its directory first on `sys.path`); its
+  source is stored in the executable under a module name (`check-disk` as `check_disk.py`, `tool`
+  as `_x_tool.py`), and, as for the scripts of a directory, its `__file__` is that name next to
+  the executable. A file under `bin/` that is not a `#!python` script (a shell script), and a
+  script that does not compile, is not packaged, and the build warns naming it (use
+  `[project.scripts]` or `--entry`).
+- **`poetry.lock` and `pdm.lock` lock a build.** They used to be left unread, with a warning
+  and an unlocked build. fsbpyr converts the lock in its staging directory (nothing is written
+  into the project) into a requirements file for uv: the main (Poetry) or default (PDM) group
+  and the `--extra`s the lock lists, markers evaluated for the app's Python and platform, every
+  hash of a package, and `--require-hashes` when every package has one. Poetry locks of any
+  lock-version are read (1.0's `category` and `[metadata.files]`; 1.5 to 1.8 record no group, so
+  the packages are those the pyproject's dependencies reach through the lock; 2.x `groups` and
+  `markers`), and PDM locks of lock_version 4 with a group per package (`inherit_metadata`) or
+  the default group only. A path dependency installs as a regular package, a VCS entry keeps its
+  commit and a URL entry its hash; a package from another index, a VCS entry without a commit, a
+  missing path and a package locked at two versions that both apply are refused, naming the
+  entry. A lock whose content hash is not the pyproject's is a warning, and an error with
+  `--strict`. They rank after `requirements.txt` as lock sources. `build_info.lock.kind` and
+  `fsbpyr inspect` show `poetry.lock` or `pdm.lock`.
+- **`Pipfile.lock` locks a build.** A project or a directory of scripts (a legacy Pipenv app is
+  mostly that) with a `Pipfile.lock` is built from the lock's `default` section, never
+  `develop`: the same conversion in the staging directory, each entry's pinned version, all
+  its hashes and its markers for the app's Python and platform, with `--require-hashes`. A
+  `git` entry keeps its commit (a `ref` that is no commit is refused), a `file` entry its hash,
+  and a `path` entry (`editable` or not) installs as a regular package; `pipenv install -e .`
+  of the project itself is left to fsbpyr's own wheel. A package from a source other than PyPI
+  installs from the indexes uv is configured with, the lock's hashes deciding whether it found
+  the same files, and the build says so (not counted by `--strict`). `_meta.hash` that is not
+  the Pipfile's is a warning, an error with `--strict`; so is a lock with no Pipfile beside a
+  `pyproject.toml` that declares dependencies, which the lock replaces. `_meta.requires` (`python_version` or
+  `python_full_version`) chooses the Python as a `requires-python` of that minor version would,
+  but `--python`, `python` in `[tool.fsbpyr]` and `.python-version` outrank it, and a version
+  fsbpyr cannot build is a warning. It ranks last among the lock sources (a `requirements.txt`
+  beside it wins), and unlike `poetry.lock` and `pdm.lock` a directory of scripts reads it.
+  A directory with a `Pipfile.lock` and no Python file builds the tools in the Pipfile's
+  `[packages]`, or, with no Pipfile, the packages of the lock that no other package of it
+  needs ("A tool from its requirements file"). `build_info.lock.kind` and `fsbpyr inspect` show
+  `Pipfile.lock`; its hashes carry no file names, so a distribution has no `artifact_sha256`.
+- **The venv a script runs in gives the dependencies nothing declares.** A directory of scripts
+  or a single script with no requirements file, `pylock.toml`, lock or PEP 723 dependencies, and
+  an import nothing in the executable provides, used to skip the command with a hint. Now the
+  build reads the venv beside the scripts (`.venv`, `venv` or `env` with a `pyvenv.cfg`, else
+  `$VIRTUAL_ENV`) as files: its python is never started. The `*.dist-info` METADATA,
+  `top_level.txt` and RECORD say which installed distribution provides each unresolved import
+  (a PyPI name is never guessed from an import name), and those distributions and their
+  installed `Requires-Dist` closure are pinned `name==version` and installed fresh by uv for the
+  target (manylinux_2_34, or 2.28 with `--glibc 2.28`); nothing is copied from the venv. The
+  build warns that the dependencies came from the venv and gives the
+  `uv pip freeze --python <venv>/bin/python > requirements.txt` that declares them (for a single
+  script, the command without the redirection, for its block's dependencies); `--strict` fails
+  on it before anything is staged. A pin without a wheel for the target fails in uv, with uv's
+  reason; an editable or path install that is needed is refused. An import the venv does not
+  provide stays unresolved. `build_info.lock.kind` and `fsbpyr inspect` show `inferred`, with the
+  venv and the pins. The README's "a `.venv` is never read" is gone with this.
+- **Compile warnings of the project's own files are build warnings.** A `SyntaxWarning` or
+  `DeprecationWarning` that compiling emits (`"\d"` in a normal string, say) used to show
+  neither at build time nor at run time, while a venv run of the script prints it. The build now
+  prints it with its file and line (`fsbpyr: warning: pkg/mod.py:12: SyntaxWarning: ...`) for the
+  project's own modules; dependencies and the standard library stay silent, and `--strict`
+  counts it like the other warnings. The bytecode is unchanged.
+- **`FSBPYR_INSTALL_LINKS=DIR app` makes the command links on the target** (D14). The executable
+  links each of its commands into DIR (absolute symlinks to its real path), and `x.py` besides `x`
+  for a command that is a script, so a crontab, unit or NRPE line that runs `/opt/tools/x.py`
+  keeps working; it prints what it did and exits without running the app. A second run changes
+  nothing. A file, a directory or a link to something else in the way is never replaced: it is
+  reported, the other links are still made and the exit status is 1; a missing or unwritable DIR
+  is one error before any link. There is no option: `<binary> --install` would let a `sudo
+  <binary> *` rule create root-owned links anywhere, and sudo's `env_reset` drops `FSBPYR_*`. A
+  start pays one environ lookup; the code is in `_fsbpyr_rt/links.py`, imported only then. The
+  build's deploy recipe mentions it.
+
+### Changed
+- **`sys.argv[0]` is the full path of the start, as in a venv** (D14). A start by `app` on `PATH`,
+  `./app` or a link used to give the name as typed; the launcher now reports `AT_EXECFN` and the
+  boot sets `sys.argv[0]` to that path, made absolute, when its basename is `argv[0]`'s. `exec -a
+  other app` keeps `other`. A multi-command start and the restart idiom read the basename and are
+  unchanged. A relative start gives `/cwd/app` where a venv script keeps `./app`.
+- **`JOURNAL_STREAM` line-buffers the journal, and SIGTERM ends an app that is process 1** (D14).
+  When systemd's `JOURNAL_STREAM` (`device:inode`) names the file stdout or stderr is, that stream
+  is line-buffered, so each line reaches the journal as it is printed and survives a SIGTERM;
+  `PYTHONUNBUFFERED` still wins. An app that runs as process 1 (a container without an init) used
+  to ignore SIGTERM, as `python app.py` does, because the kernel drops a signal that process 1 has
+  no handler for; it now exits with status 143, unless the app installed a SIGTERM handler of its
+  own. Neither costs the common start more than an environment lookup and a pid check.
+- **`PYTHONUNBUFFERED` is honoured** (D14). Set and non-empty, it makes an app's stdout and
+  stderr unbuffered as CPython does, so a service's log lines reach a pipe as they are printed
+  and survive a SIGTERM. It is the only `PYTHON*` variable the apps read.
+- **`fsbpyr self update` refuses an executable that needs a newer glibc than the host has,** and
+  warns about EL8 stubs beside the executable. The glibc its build_info records is compared with
+  the host's before anything is replaced; the message names both versions. Stubs placed next to
+  the executable for `--glibc 2.28` belong to the old release and a build would refuse them: the
+  update names them and leaves them alone.
+- **The uncaught-error note for a file below the executable says when `--fs-package` does not
+  apply.** A top-level module that reads `<exe>/x.conf` (the path is no module) now gets a note, a
+  namespace directory is told to get an `__init__.py` first (a regular package below it is named),
+  and the note for a script says where the file is read (next to the executable, see below).
+- **A script's `__file__` is next to the executable, and what it reads there is the host's file**
+  (D24; the owner reversed decision 5.7(a) on 2026-10-25). For the scripts of a project without a
+  build system, a directory of scripts and a single script, `__file__` and `spec.origin` are the
+  executable's directory plus the file's path in the project (`/opt/tools/sub/x.py`), so `open(os.path.join(os.path.dirname(__file__),
+  "config.ini"))` reads the `config.ini` deployed beside the binary, as beside a script run by
+  path. The code is still the executable's: the path hook claims those directories too, so a
+  stale `.py` copy beside the binary is never imported and `sys.path.append(dirname(__file__) +
+  "/pylib")` serves the packaged `pylib`; code objects keep the payload file name, so a traceback
+  shows the packaged source lines. Packaged projects are unchanged. A `name.py` link started by
+  its own path keeps `argparse`'s prog the file's name on 3.14.9 and later, a sibling started as
+  `[sys.executable, <its __file__>]` is still the app's own command, and the build's report of
+  reads next to `__file__`, the uncaught-error note for a missing file there and README
+  say to deploy the file beside the binary. The script's own source is no file there:
+  `open(__file__)` fails unless a copy is deployed. A start pays a string check; the rest is
+  imported only by scripts that use it.
+- **A project without a build system whose `[project.scripts]` point into `src/`** must name
+  `_fsbpyr_scripts.src.pkg.mod:main`; the build says so. It built through setuptools before.
+- **The smoke test of a `module` or inferred entry runs that module's top-level code on the
+  build host,** as it always did; README now says so.
+- **`docs/compatibility.md` says what a hard link to an app does.** `sys.executable`, `__file__`
+  and `sys.path[0]` of a start through a hard link are below the link's own path, a symlink gives
+  the target's, and a rebuild leaves a hard link on the old build.
+
+### Fixed
+- **A forked child of an app that is process 1 gets the default SIGTERM back**, so a worker in
+  a long C call dies on SIGTERM as under `python app.py`.
+- **A command name cannot place the executable or a `FSBPYR_INSTALL_LINKS` link outside the
+  output or link directory**: a tool's single script name is validated like several are, the
+  links code also refuses a name with a directory part, and the background collection child
+  makes no links.
+- **A file next to the executable named like a script imports nothing before the parent check.**
+- **A distribution name read from a venv's metadata must be a valid name** before it becomes a
+  pin.
+- **A tool binary from a `Pipfile.lock` with extras** keeps what an extra needs as installed,
+  so a dependency does not become a command.
+- **A Poetry 1 dependency whose `markers` has an `or`** is kept apart from its `python`
+  constraint with parentheses.
+- **`--requirements` help** mentions the tool binary.
+- **A `--hash=` in a comment of a requirements file no longer makes the build expect hashes.**
+  One test now decides it for the early VCS-line check, the install and the manifest.
+- **An EL8 stub download stops at 256 MB unpacked** instead of filling the disk before the
+  size check.
+- **A static project with no console scripts, no `--entry` and no `__main__.py` or guarded
+  module fails before uv stages anything**, with the same message, instead of after the full
+  build and install.
+- **`-e ./libs/common` lines in a requirements file build.** They are installed as regular
+  packages (`uv pip install --no-editable`) instead of failing with "installed in editable
+  mode"; the build warns that such a line is whatever the tree holds. Lines pinned by a commit
+  SHA (`git+URL@<40 hex>`) or a `#sha256=` URL are no longer reported as unpinned. With no
+  `requirements.txt` but `requirements/*.txt`, the build prints a hint naming `--requirements`.
+- **`--strict`, and a requirements file with `--hash=` lines, refuse VCS requirement lines
+  early**, naming the file and lines and saying that a commit SHA pins the source but is not a
+  hash, rather than failing inside uv with a generic hash message (uv reads such a file in
+  `--require-hashes` mode too).
+- **A failed `uv build` shows why.** uv's build is no longer `--quiet`, so the error carries
+  the backend's own reason (such as setuptools' "Multiple top-level modules discovered in a
+  flat-layout"), and under `-v` "see its output above" is true.
+- **`fsbpyr build` no longer leaves `*.egg-info` or `build/` in a setuptools project's tree**
+  (in the project root and one directory below it, so `src/`). What the build created is
+  removed; what existed before is never touched.
+- **A directory with only `setup.cfg` is refused up front** with a clear message, not late
+  inside uv.
+- **A failed build no longer leaves an empty `dist/`** (or other output directory it created).
+- **The launcher's background cache collection (D38) now runs with `HOME` unset or empty.** The
+  launcher needed an absolute `$HOME` while the boot code fell back to the passwd home, so such an
+  app's cache was never collected (and with `HOME=''` the two disagreed about the cache root). An
+  unset, empty or relative `HOME` now means the passwd home in the launcher, the boot code and
+  the runtime registry alike.
+- **A script started through `sys.executable` finds the modules next to it** with
+  `--interpreter-reexec`: `[sys.executable, <exe>/pkg/a.py]` now has `<exe>/pkg` first on
+  `sys.path`, as `python /path/pkg/a.py` does, so `import common` of a sibling `pkg/common.py`
+  works.
+- **The restart idiom `os.execv(sys.executable, [sys.executable] + sys.argv)` gives the child
+  the argv of the parent.** gunicorn's USR2 re-exec and Django's autoreloader start
+  `[sys.executable, <interpreter flags>, sys.argv[0], *args]`; in a venv that is
+  `python /venv/bin/app args`, but a built app ran with its own path as an extra first argument.
+  A start whose first argument after the interpreter flags is this very executable (the same
+  file, a link to it included) now drops the flags and that argument, keeping it as
+  `sys.argv[0]`. Only interpreter flags (`-u`, `-v`, `-X x`, `-W x`, ...) may precede it; any
+  other option means the app's own arguments, and nothing is touched.
+- **CPython 3.15's misleading hint for a missing module is replaced.** It read "Site
+  initialization is disabled, did you forget to add the site-packages directory to sys.path or
+  to enable your virtual environment?", which is not what an fsbpyr user can do; an uncaught
+  `ModuleNotFoundError` now ends with "fsbpyr: X is not in the executable: add it to the
+  project's dependencies and rebuild". Only uncaught exceptions are changed, not those a program
+  formats itself with `traceback` or `logging`.
+
 ## [0.25.0] - 2026-10-25
 
 ### Changed

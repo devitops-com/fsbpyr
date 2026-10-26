@@ -80,6 +80,23 @@ def commit_time(directory: Path) -> int | None:
     return int(text) if text.isdecimal() else None
 
 
+def work_tree_files(directory: Path) -> tuple[list[str], list[str]] | None:
+    """The files below ``directory``, relative to it, that a git work tree holds: the tracked
+    ones, and the untracked but not ignored ones, which a build leaves out (a ``secrets.py``
+    nobody ignored is not the project's until it is added). None without git or outside a
+    work tree."""
+    git = shutil.which("git")
+    if git is None:
+        return None
+    tracked = _git(git, directory, "ls-files", "-z", "--cached")
+    if tracked is None or tracked.returncode != 0:
+        return None
+    others = _git(git, directory, "ls-files", "-z", "--others", "--exclude-standard")
+    untracked = others.stdout if others is not None and others.returncode == 0 else ""
+    return (sorted(set(filter(None, tracked.stdout.split("\0")))),
+            sorted(set(filter(None, untracked.split("\0")))))  # fmt: skip
+
+
 def version_string(state: Mapping[str, object] | None) -> str:
     commit = state.get("commit") if state else None
     if not isinstance(commit, str):
@@ -105,6 +122,19 @@ def release_asset(python: str, target: str) -> str:
     ``target`` ("x86_64-linux-gnu", a targets.Target.name): ``fsbpyr-3.12-x86_64-linux-gnu``.
     Every asset names its Python, the newest's too (owner, 2026-10-22)."""
     return f"fsbpyr-{python}-{target}"
+
+
+def release_stub_asset(python: str, target: str, glibc: str) -> str:
+    """The release asset (without ``.xz``) of the stub linked for the glibc baseline ``glibc``
+    ("2.28", EL8) that goes with the fsbpyr of ``python`` on ``target``: just the launcher,
+    ``fsbpyr-stub-3.12-x86_64-linux-gnu-glibc2.28``. A release may carry none (D46)."""
+    return f"fsbpyr-stub-{python}-{target}-glibc{glibc}"
+
+
+def release_stub_sums(glibc: str) -> str:
+    """The release asset listing the SHA-256 of each stub of the baseline ``glibc`` as
+    ``sha256sum`` does, over the stubs themselves (the names without ``.xz``)."""
+    return f"SHA256SUMS-glibc{glibc}"
 
 
 def release_asset_record(project: str, python: str, target: str) -> tuple[tuple[str, str], ...]:

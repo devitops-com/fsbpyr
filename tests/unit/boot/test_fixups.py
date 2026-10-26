@@ -1,5 +1,6 @@
 """_fsbpyr_rt.fixups: stdlib adjustments applied right after a module loads (Phase 6b)."""
 
+import importlib.machinery
 import importlib.util
 import os
 import sys
@@ -251,3 +252,33 @@ def test_other_times_are_as_before(
     (tmp_path / "app2").write_bytes(b"x")  # the executable's name is no prefix of its path
     with pytest.raises(NotADirectoryError):
         file_io(f"{tmp_path}/app2/x.py").get_last_modified()
+
+
+def test_argparse_prog_of_a_script_started_by_its_own_file_path_is_the_file_name(
+    fixups: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """3.14.9 and 3.15 say ``<exe> -m <module>`` where the main module's origin is argv[0]; a
+    script's origin is where it says it lives (a ``name.py`` link beside the executable)."""
+    argparse = ModuleType("argparse")
+    argparse._prog_name = lambda prog=None: prog or "exe -m _fsbpyr_scripts.x"  # type: ignore[attr-defined]
+    fixups._argparse(argparse)
+    main = ModuleType("__main__")
+    main.__spec__ = importlib.machinery.ModuleSpec("_fsbpyr_scripts.x", None, origin="/b/x.py")
+    monkeypatch.setitem(sys.modules, "__main__", main)
+
+    monkeypatch.setattr(sys, "argv", ["/b/x.py"])
+    assert argparse._prog_name() == "x.py"
+    assert argparse._prog_name("given") == "given"
+    monkeypatch.setattr(sys, "argv", ["/b/x"])  # started by a link of another name
+    assert argparse._prog_name() == "exe -m _fsbpyr_scripts.x"
+    main.__spec__ = importlib.machinery.ModuleSpec("pkg.cli", None, origin="/b/x.py")
+    monkeypatch.setattr(sys, "argv", ["/b/x.py"])  # a packaged module is not a script
+    assert argparse._prog_name() == "exe -m _fsbpyr_scripts.x"
+
+
+def test_an_argparse_without_a_prog_name_function_is_left_alone(fixups: ModuleType) -> None:
+    argparse = ModuleType("argparse")  # 3.12 and 3.13 take basename(argv[0]) themselves
+
+    fixups._argparse(argparse)
+
+    assert not hasattr(argparse, "_prog_name")

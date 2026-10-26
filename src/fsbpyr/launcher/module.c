@@ -11,7 +11,8 @@
  *   find_dist(name)    -> (index, name, dist_info, version) | None;  dists() -> all of them
  *   read(blob)         -> bytes (decompressed, size-checked)
  *   stream(blob)       -> Stream: the content a window at a time (readinto, seek, tell, size)
- *   info()             -> dict describing the executable
+ *   info()             -> dict describing the executable ("execfn": the path execve was given,
+ *                         AT_EXECFN, or None)
  *   stats()            -> read counters and integrity check time (FSBPYR_TRACE, benchmarks)
  *   files_below(path)  -> range of the FILES indices of every file below a directory ('' is all)
  *   sync(root, chain, files, checked, resources[, written]) -> number of files written (cache.h,
@@ -24,6 +25,7 @@
 #include "integrity.h"
 
 #include <string.h>
+#include <sys/auxv.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -765,9 +767,11 @@ static PyObject *info(PyObject *self, PyObject *noargs) {
     if (!fsb_str(&fsb_self, h->app_name, &app) || !fsb_str(&fsb_self, h->entrypoint, &entry) ||
         !fsb_str(&fsb_self, h->build_info, &build))
         return corrupt("header string", 0);
+    const char *execfn = (const char *)getauxval(AT_EXECFN); /* as execve got it: maybe relative */
     return Py_BuildValue(
-        "{s:N,s:s#,s:s#,s:s#,s:y#,s:I,s:K,s:K,s:K}", "executable",
+        "{s:N,s:N,s:s#,s:s#,s:s#,s:y#,s:I,s:K,s:K,s:K}", "executable",
         PyUnicode_DecodeFSDefault(fsb_self.executable), /* surrogateescape, like sys.executable */
+        "execfn", execfn != NULL ? PyUnicode_DecodeFSDefault(execfn) : Py_NewRef(Py_None),
         "app_name", app, (Py_ssize_t)h->app_name.length, "entrypoint", entry,
         (Py_ssize_t)h->entrypoint.length, "build_info", build, (Py_ssize_t)h->build_info.length,
         "generation_id", (const char *)h->generation_id, (Py_ssize_t)sizeof h->generation_id,

@@ -12,7 +12,7 @@
 [fsbpyr](https://github.com/devitops-com/fsbpyr) is a Python application bundler and
 standalone runtime builder. It packages a Python project and its locked dependencies together
 with CPython (3.12, 3.13, 3.14 or 3.15) into a single executable for Linux x86-64 or aarch64
-with glibc 2.34 or newer, so the target machine needs no Python.
+with glibc 2.34 or newer (2.28 with `--glibc 2.28`), so the target machine needs no Python.
 
 A fair comparison is with projects that solve the same deployment problem, not with tools that
 audit Python applications or distribute Python packages. Three questions:
@@ -37,7 +37,7 @@ docs/performance.md compares). [pex-tool/pex](https://github.com/pex-tool/pex): 
 about 2,100 commits, release 2.104.1 (2026-10-21).
 
 **Most interesting for a self-contained Linux executable: fsbpyr.** Its differentiators: it
-bundles CPython itself, so the target needs no Python; a glibc 2.34 baseline, tested on 11
+bundles CPython itself, so the target needs no Python; a glibc 2.34 baseline, tested on 12
 distributions in CI; a check of the whole file's SHA-256 at every start; a self-hosting build
 whose reproducibility an independent rebuild checks on every push to main; and attested
 releases with an SBOM per executable. [devitops-com/fsbpyr](https://github.com/devitops-com/fsbpyr):
@@ -60,8 +60,8 @@ application has been tested.
 | Bundles Python runtime | Yes | Yes | Usually no | No | Yes |
 | Runs without target Python installation | Yes | Yes | Generally no | No | Yes |
 | Windows and macOS | No: Linux x86-64 and aarch64 with glibc (musl and macOS put aside) | Yes | Supported configurations | Yes, with caveats | Historically supported; verify current status |
-| Linux glibc baseline explicitly targeted | Yes, 2.34, 11 distributions tested in CI | Platform-dependent | Platform-dependent | Platform-dependent | Configuration-dependent |
-| Dependency locking / reproducible inputs | uv.lock, pylock.toml or a hash-pinned requirements file; the lock's and every distribution's hash recorded in the executable | Build/specification driven | Strong locking support | pip-based packaging | Configuration-driven |
+| Linux glibc baseline explicitly targeted | Yes, 2.34, 12 distributions tested in CI | Platform-dependent | Platform-dependent | Platform-dependent | Configuration-dependent |
+| Dependency locking / reproducible inputs | uv.lock, pylock.toml, poetry.lock, pdm.lock, Pipfile.lock or a hash-pinned requirements file (a script's `uv lock --script` lock too); the lock's and every distribution's hash recorded in the executable | Build/specification driven | Strong locking support | pip-based packaging | Configuration-driven |
 | Native extensions | Supported; what the target must provide is reported, `FSBPYR_SELFTEST=natives` checks a target | Broad compatibility and hooks | Supported environments | Architecture-dependent | Supported, with integration work |
 | Built-in executable integrity verification | Yes, SHA-256 of the whole file at every start | Not an equivalent core feature | Not an equivalent core feature | Not an equivalent core feature | Not an equivalent core feature |
 | Self-hosting byte-reproducibility workflow | Yes: an independent rebuild compared byte for byte on every push to main | Not its defining feature | Reproducible-build tests exist | Not its defining feature | Not its defining feature |
@@ -110,8 +110,9 @@ The distinction that matters is between having tests and having evidence of reli
      docs/compatibility.md; 11 until 0.24.0) and a compatibility app with 18 library checks,
      each run in the executable and in the project's venv and compared on exit code, stdout
      and stderr; a build that passes while the app fails counts as a failure;
-   - clean machines: the built apps run on 11 distribution images without Python, from Rocky 9
-     and Amazon Linux 2023 (glibc 2.34) to Arch (2.44);
+   - clean machines: the built apps run on 12 distribution images without Python, from Rocky 9
+     and Amazon Linux 2023 (glibc 2.34) to Arch (2.44), and apps built with `--glibc 2.28` on
+     Rocky 8 and AlmaLinux 8;
    - adversarial: a fuzzer of the payload reader (30 s per run, 600 s weekly and whenever the
      launcher changed), the launcher under ASan and UBSan, damaged and truncated files,
      interrupted builds and concurrent first runs;
@@ -155,8 +156,9 @@ not measures of correctness, but they show the difference in demonstrated commun
 ### A specific concern with fsbpyr: its support envelope
 
 fsbpyr targets Linux x86-64 and aarch64 with glibc 2.34 or newer: RHEL 9 and its rebuilds,
-Amazon Linux 2023, Ubuntu 22.04 and Debian 12 onwards. RHEL 8, Debian 11, Ubuntu 20.04 and older
-systems are out since 0.24.0 (D42); there is no Windows, macOS or musl build. Apps run on
+Amazon Linux 2023, Ubuntu 22.04, Debian 12 onwards and SLES 15 SP6 onwards. `--glibc 2.28` adds
+RHEL 8 and its rebuilds (Rocky 8 and AlmaLinux 8 are tested), from a second, EL8 stub (D46).
+Debian 11, Ubuntu 20.04 and older systems stay out (D42); there is no Windows, macOS or musl build. Apps run on
 CPython 3.12 to 3.15, and fsbpyr itself runs on the same versions; on 3.15 the third-party wheels
 are not complete yet. The README documents how native dependencies that cannot be built against
 the baseline are handled.
@@ -172,7 +174,7 @@ dependency set to be shipped.
 - **Choose PEX for reproducible Python environments:** backend services, CLI tools and build
   pipelines where environment management and integration with existing tooling matter more
   than embedding an interpreter.
-- **Choose fsbpyr for controlled Linux infrastructure** (x86-64 or arm64, glibc 2.34 or newer):
+- **Choose fsbpyr for controlled Linux infrastructure** (x86-64 or arm64, glibc 2.34 or newer, or 2.28 with `--glibc 2.28`):
   one executable, no system Python, a defined and tested glibc baseline, and verifiable build
   artifacts. Being smaller or newer is no reason to reject it.
 
@@ -184,12 +186,12 @@ each point, and what stays the adopter's:
 | Requirement | What fsbpyr provides | Still the adopter's |
 | --- | --- | --- |
 | Compatibility: C/C++ extensions, libraries loaded at run time, files reached through `__file__` or `importlib.resources` | The corpus and the compat app in CI; `build --hints` lists packages that may read next to `__file__`; a note at run time names the package and the fix | Building and running the real dependency set |
-| Runtime independence on a clean Linux image | The 11 portability images have no Python and no build tools | The deployment image |
-| Portability: the oldest supported glibc and the actual environment | Rocky 9 and Amazon Linux 2023 (glibc 2.34) are in the matrix; `FSBPYR_SELFTEST=natives` checks a target before deploying | Running the self-test on the targets |
+| Runtime independence on a clean Linux image | The 12 portability images have no Python and no build tools | The deployment image |
+| Portability: the oldest supported glibc and the actual environment | Rocky 9 and Amazon Linux 2023 (glibc 2.34) are in the matrix; with `--glibc 2.28`, Rocky 8 and AlmaLinux 8 (glibc 2.28); `FSBPYR_SELFTEST=natives` checks a target before deploying | Running the self-test on the targets |
 | Reproducibility: two clean builds, differences explained | fsbpyr's own releases are rebuilt independently in CI; an app built from a wheel-only lock is byte-identical; distributions built from source are named as not reproducible elsewhere | Pinning the lock and the uv version |
 | Integrity and provenance | The whole-file digest at every start; releases with provenance and SBOM attestations (`gh attestation verify`); the README shows how to attest an app | A signature with an outside key does not exist yet (D31) |
 | Regression testing through the full functional suite | `--smoke-args` runs the executable once at build time | Running the app's own tests against the executable |
-| Operational behaviour: start time, memory, size, cache, upgrades, rollback | docs/performance.md: a no-op start in 7.6 ms (bare CPython 5.4 ms), later runs 1.03 to 1.21× the venv's time (0.19.0), sizes, memory, the cache's collection; `fsbpyr self update`; a tag's own `install.sh` installs that version | Measuring the real app |
+| Operational behaviour: start time, memory, size, cache, upgrades, rollback | docs/performance.md: a no-op start in 7.6 ms against 5.6 ms for bare CPython (0.25.0), later runs 1.03 to 1.21× the venv's time (0.19.0), sizes, memory, the cache's collection; `fsbpyr self update`; a tag's own `install.sh` installs that version | Measuring the real app |
 | Maintenance risk: issues, cadence, CI results, maintainer responsiveness | Public CI history since 2026-10-20; frequent releases | One maintainer, no community yet |
 
 ## Final scorecard
@@ -348,7 +350,7 @@ behave like the original application?" The layers proposed, with status:
 | --- | --- | --- |
 | 1. Unit and property-based | Archive parsing, dependency resolution, paths, ELF inspection, manifests, integrity, determinism | Done |
 | 2. Package compatibility | Small apps with real dependencies, plugins, dynamic imports, native extensions | Done: compat app and corpus |
-| 3. Clean-machine execution | Minimal containers without Python, compilers or headers | Done: 11 images, every Python and architecture, in CI |
+| 3. Clean-machine execution | Minimal containers without Python, compilers or headers | Done: 12 images, every Python and architecture, in CI |
 | 4. Adversarial and failure | Corrupt and truncated files, path traversal, bad names, missing libraries, interrupted builds, concurrency, low disk space | Done in the main: fuzzer, sanitizers, edge cases, interrupted builds, concurrent first runs |
 | 5. Differential and reproducibility | The same test cases against native Python, fsbpyr and PyInstaller | Done against native Python (the venv) and for reproducibility; no PyInstaller leg |
 
@@ -366,7 +368,7 @@ is tested and what differs from a venv.
 | Native dependency handling | Critical | Report external system requirements | Done |
 | Performance and artifact size | High | Benchmark against both PyInstaller modes | One-file measured (0.19.0); `--onedir` not |
 | Diagnostics and inspection | High | Make packaging failures easy to understand | Done |
-| Linux distribution compatibility | High | A measurable, dependable baseline | Done: glibc 2.34, 11 distributions in CI, a vendor-support policy (D42) |
+| Linux distribution compatibility | High | A measurable, dependable baseline | Done: glibc 2.34, 12 distributions in CI (and 2 EL8 ones for `--glibc 2.28`, D46), a vendor-support policy (D42) |
 | Cross-compilation | Medium | After the Linux experience is excellent | Not done: each fsbpyr builds for the platform it runs on; aarch64 builds on arm64 |
 | Windows and macOS support | Strategic | Decide by intended customers | Windows dropped; macOS arm64 and musl put aside (owner, 2026-10-21) |
 | GUI-specific features | Lower | When demand appears | Not pursued; tkinter is left out of the runtime |

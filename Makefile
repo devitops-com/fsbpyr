@@ -42,10 +42,10 @@ else
 WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-container test-corpus test-portability check check-c release-prep release clean
+.PHONY: help bootstrap build install uninstall test test-ci test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm check check-c release-prep release release-check clean
 
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
 
 # --- Setup ---
@@ -121,13 +121,14 @@ uninstall: ## Remove what `make install` installed
 TESTTMP ?= $(HOME)/tmp
 TEST_TASKS ?= 8192
 TEST_MEMORY ?= $(shell awk '/^MemTotal:/ { printf "%d", $$2 * 1024 * 0.7 }' /proc/meminfo)
-TESTENV := $(WITH_LLVM23) mkdir -p "$(TESTTMP)" && tmp=$$(mktemp -d "$(TESTTMP)/fsbpyr-test.XXXXXX") \
+SCRATCHENV := mkdir -p "$(TESTTMP)" && tmp=$$(mktemp -d "$(TESTTMP)/fsbpyr-test.XXXXXX") \
 	&& unit="fsbpyr-test-$$$$" contain= && if systemd-run --user --scope --quiet true 2>/dev/null; then \
 		contain="systemd-run --user --scope --quiet --collect --unit=$$unit -p TasksMax=$(TEST_TASKS) \
 			-p MemoryMax=$(TEST_MEMORY) -p MemorySwapMax=0 -p OOMPolicy=continue --"; fi \
 	&& trap 'systemctl --user kill --signal=SIGKILL "$$unit.scope" 2>/dev/null; \
 		rm -rf "$${tmp:?}" 2>/dev/null || { sleep 2; rm -rf "$${tmp:?}"; }' EXIT && TMPDIR="$$tmp" \
 	FSBPYR_TEST_DOWNLOADS="$${FSBPYR_TEST_DOWNLOADS:-$(TESTTMP)/fsbpyr-test-downloads}"
+TESTENV := $(WITH_LLVM23) $(SCRATCHENV)
 CONTAINED := $$contain
 # `make test` runs the tests in JOBS processes (pytest-xdist), each test file in one of them;
 # the real-world corpus is left to `make test-corpus`.
@@ -145,7 +146,10 @@ test: ## Run the test suite but the corpus in JOBS processes (default 8; tempora
 test-ci: ## Run the core of the test suite
 	$(TESTENV) $(CONTAINED) $(UVRUN) pytest tests/unit tests/integration tests/e2e/test_build.py \
 		tests/e2e/test_runtime_app.py tests/e2e/test_imports.py \
-		tests/e2e/test_stub_hardening.py \
+		tests/e2e/test_stub_hardening.py tests/e2e/test_multicall.py tests/e2e/test_scripts.py \
+		tests/e2e/test_loose_directory.py tests/e2e/test_single_script.py \
+		tests/e2e/test_install_links.py tests/e2e/test_pid1.py tests/e2e/test_unbuffered.py \
+		tests/e2e/test_file_overlay.py tests/e2e/test_pipfile_lock.py \
 		-k "not (sanitized and not release)" --cov --cov-report=term --cov-report=xml
 
 # Everything but the portability tests (`podman run` inside podman) and the corpus, in the
@@ -175,14 +179,53 @@ test-container: ## Run the whole suite but the portability tests and the corpus 
 test-corpus: ## Run the real-world corpus in JOBS processes (PYTHON=3.X; network)
 	$(TESTENV) $(CONTAINED) $(UVRUN) pytest -n $(JOBS) --dist load tests/e2e/test_corpus.py
 
-# The portability matrix (tests/e2e/test_portability.py): 11 images pulled and run with podman,
+# The portability matrix (tests/e2e/test_portability.py): 12 images pulled and run with podman,
 # on $(BIN)'s builds of the fixtures (tools/portability-apps.sh); needs llvm-objdump.
 # FSBPYR_TESTS_REQUIRE_ALL=portability fails any skip. Run `make build` first.
-test-portability: ## Run the portability matrix on 11 distributions (podman, dist/fsbpyr)
+test-portability: ## Run the portability matrix on 12 distributions (podman, dist/fsbpyr)
 	rm -rf dist/portability-apps
 	tools/portability-apps.sh $(BIN) dist/portability-apps $(PYTHON_MINOR)
 	$(TESTENV) FSBPYR_PORTABILITY_APPS="$(CURDIR)/dist/portability-apps" FSBPYR_TESTS_REQUIRE_ALL=portability \
 		$(UVRUN) pytest tests/e2e/test_portability.py
+
+# The EL8 test mode (FSBPYR_TEST_GLIBC=2.28, tests/support/baseline.py): the tests that build and
+# run executables use the glibc 2.28 stub, built here from Rocky Linux 8.10's sysroot, and every
+# `fsbpyr build` of a test is a `--glibc 2.28` one. What differs between an EL8 build and a
+# default one is the stub, so these are the tests that run it: the launcher's (edges, due, slots,
+# gc, restore, find_object), the _fsbpyr contract (runtime_app, imports, stub_hardening, cache
+# root, streaming) and the build of apps with natives from manylinux_2_28 wheels (compat,
+# natives). tests/e2e/test_el8.py compares an EL8 build with a default one, so it runs with
+# both runtimes, not in the mode. full-suite.yml does not run any of it; el8.yml, which attaches
+# the EL8 stubs to a release, does.
+EL8_TESTS := tests/e2e/test_runtime_app.py tests/e2e/test_imports.py tests/e2e/test_stub_hardening.py \
+	tests/e2e/test_edges.py tests/e2e/test_cache_root.py tests/e2e/test_gc.py tests/e2e/test_slots.py \
+	tests/e2e/test_due.py tests/e2e/test_restore.py tests/e2e/test_find_object.py \
+	tests/e2e/test_streaming.py tests/e2e/test_stream_windows.py tests/e2e/test_unbuffered.py \
+	tests/e2e/test_digests.py tests/e2e/test_compat.py tests/e2e/test_natives.py \
+	tests/unit/test_test_modes.py
+
+test-el8-stub: ## Run the stub-dependent tests with the glibc 2.28 (EL8) stub, and tests/e2e/test_el8.py, in JOBS processes (PYTHON=3.X)
+	$(TESTENV) $(CONTAINED) env FSBPYR_TEST_GLIBC=2.28 $(UVRUN) pytest -n $(JOBS) --dist loadfile $(EL8_TESTS)
+	$(TESTENV) $(CONTAINED) $(UVRUN) pytest tests/e2e/test_el8.py
+
+# The portability matrix (podman) with apps built `--glibc 2.28`: the 12 images and, only in this
+# mode, rockylinux:8 and almalinux:8. The apps are built by the tests with the EL8 runtime (as
+# without FSBPYR_PORTABILITY_APPS); el8.yml builds them with tools/portability-apps.sh instead,
+# with the release's fsbpyr and the stub it has just linked.
+test-el8-portability: ## Run the portability matrix with apps built for glibc 2.28, on the 12 distributions and rockylinux:8, almalinux:8 (podman; PYTHON=3.X)
+	$(TESTENV) $(CONTAINED) env FSBPYR_TEST_GLIBC=2.28 FSBPYR_TESTS_REQUIRE_ALL=portability \
+		$(UVRUN) pytest tests/e2e/test_portability.py
+
+test-el8: test-el8-stub test-el8-portability ## Run the EL8 (glibc 2.28) test mode and its portability matrix: what el8.yml runs, without the corpus subset and the VM
+
+# aarch64 apps in a QEMU system VM (tools/vm-smoke.py) whose kernel has 16 KiB pages (Raspberry
+# Pi 5's) and 64 KiB pages (EL8's), under TCG: no KVM, about a minute per boot. fsbpyr builds for
+# its own host, so the apps are aarch64 executables you built on one: VM_ARGS="--app dist/hello
+# --run 'hello => hello'" (see the script's header). Without VM_ARGS only the boots are checked.
+# Needs qemu-system-aarch64, which is yours to install; the kernels and root file systems it
+# fetches are pinned in tools/vm-pins.toml and kept in FSBPYR_TEST_DOWNLOADS.
+test-vm: ## Run aarch64 apps in a QEMU VM with 16K and 64K page kernels (qemu-system-aarch64; VM_ARGS=...)
+	$(SCRATCHENV) $(CONTAINED) $(UVRUN) python tools/vm-smoke.py $(VM_ARGS)
 
 check: ## Static checks: ruff + mypy
 	$(UVRUN) ruff check
@@ -207,6 +250,12 @@ release-prep: ## End this branch with the release commit: set the version (VERSI
 
 release: ## Tag main's tested HEAD and push the tag; CI builds, attests and publishes the release
 	@bash tools/release/release.sh$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
+
+# After `make release`, once the release is published: checks it as its users get it
+# (tools/release/check-release.sh says what), in a directory under TESTTMP and in the tests'
+# cgroup; it changes nothing outside them but uv's cache.
+release-check: ## Check the published release (VERSION=X.Y.Z, default the latest): assets, attestations, rebuild, installer, update
+	@$(SCRATCHENV) $(CONTAINED) bash tools/release/check-release.sh$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
 
 clean: ## Remove dist/
 	rm -rf dist

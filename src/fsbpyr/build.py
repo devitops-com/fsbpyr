@@ -1,5 +1,7 @@
 """``fsbpyr build``: project -> staging install -> classify -> executable (plan §3.6)."""
 
+import contextlib
+import dataclasses
 import json
 import os
 import shlex
@@ -12,26 +14,43 @@ from pathlib import Path
 
 from packaging.utils import canonicalize_name, parse_wheel_filename
 
-from . import pyversion
+from . import pipenv, pyversion
 from .assemble import App, build_temporary, runtime_module_names
+from .boot._fsbpyr_rt.commands import parse
+from .bytecode import SUPPORTED_PYTHON
 from .classify import BUILTIN_FS_PACKAGES, Uncounted, _record_path, classify
 from .closure import (
     ClosureError,
     InstalledDist,
     SiteIndex,
+    command_table,
+    marker_environment,
     resolve_entry,
     several_scripts_error,
     unknown_extras_error,
 )
 from .config import BuildConfig
 from .elf import ElfError, glibc_requirement, is_elf
-from .manifest import SCHEMA, LockError, built_here, dist_records, lock_record
+from .entry import source_has_candidate
+from .foreign import stale as foreign_stale
+from .importcheck import REMOVED_IN, Unresolved, check_command, top_level_names
+from .legacy import attach as attach_legacy_scripts
+from .links import LinkError, check_links, make_links
+from .loose import Package
+from .manifest import SCHEMA, LockError, built_here, dist_records, inferred_lock, lock_record
 from .natives import opened
 from .payload.format import NATIVE_KINDS, ModuleKind
 from .payload.spec import XZ_PRESET, Dist, File, Module
 from .payload.spill import Spill
 from .payload.writer import commit
-from .project import LockSource, Project, ProjectError, unpinned_requirements
+from .project import (
+    LockSource,
+    Project,
+    ProjectError,
+    has_hash_option,
+    unpinned_requirements,
+    vcs_requirements,
+)
 from .runtime import pins
 from .runtime.pbs import PbsError
 from .runtime.registry import Runtime, cache_root, select_runtime
@@ -49,7 +68,9 @@ from .staging import (
 )
 from .system import system_info, system_report, target_needs
 from .targets import target_named
+from .tools import listed_distributions, tool_scripts, with_commands
 from .vcs import git_state, own_version, release_asset_record
+from .venvdeps import Inferred, find_venv, infer
 
 TARGET_PYTHON = f"{sys.version_info[0]}.{sys.version_info[1]}"  # builder and apps run alike
 _SMOKE_TIMEOUT = 120
@@ -73,9 +94,16 @@ class BuildResult:
     warnings: tuple[str, ...]
     glibc: str | None = None  # the oldest glibc the app runs on, "2.25"
     target_needs: str | None = None  # "glibc >= 2.34; libstdc++.so.6 (...)"
+    commands: tuple[str, ...] = ()  # the names of a multi-command executable, else empty
+    links: tuple[Path, ...] = ()  # beside the output, one per command not named like it
+    loose: bool = False  # built from the project's Python files, with no build system
 
 
 def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
+    if "\n" in entrypoint:  # a table of commands: every target is checked
+        for target in parse(entrypoint).values():
+            _check_entry_module(target, app, runtime)
+        return
     module, colon, _ = entrypoint.partition(":")
     kinds = {m.name: m.kind for m in (*app.modules, *runtime.modules)}
     if module not in kinds:
@@ -85,6 +113,20 @@ def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
         raise BuildError(f"entry point module {module!r} is a package without {main!r}")
 
 
+_DEFAULT_GLIBC = (2, 34)  # pins.DEFAULT_BASELINE as a version
+
+
+def _commands_to_link(entrypoint: str, output: Path) -> tuple[str, ...]:
+    """The names of a multi-command executable's commands (none for a single command), checked
+    against what the output's directory holds."""
+    commands = tuple(parse(entrypoint)) if "\n" in entrypoint else ()
+    try:
+        check_links(output, commands)
+    except LinkError as exc:
+        raise BuildError(str(exc)) from exc
+    return commands
+
+
 def _version(value: tuple[int, int]) -> str:
     return f"{value[0]}.{value[1]}"
 
@@ -92,13 +134,16 @@ def _version(value: tuple[int, int]) -> str:
 def glibc_report(
     stub: bytes, natives: tuple[tuple[int, int], str] | None, *, baseline: tuple[int, int]
 ) -> tuple[str | None, list[str]]:
-    """The app's glibc requirement (the stub's, raised by bundled native code) and a warning
-    when a native file needs more than the baseline its wheels were chosen for."""
+    """The app's glibc requirement (the stub's, raised by bundled native code, and for another
+    baseline than the default never below it: a launcher linked against glibc 2.28 headers may
+    use symbols older than that) and a warning when a native file needs more than the baseline
+    its wheels were chosen for."""
     try:
         own = glibc_requirement(stub)
     except ElfError:
         own = None
-    needs = [own] if own is not None else []
+    floor = baseline if baseline != _DEFAULT_GLIBC else (0, 0)  # the default's report is unchanged
+    needs = [max(own, floor)] if own is not None else []
     warnings = []
     if natives is not None:
         needs.append(natives[0])
@@ -108,6 +153,12 @@ def glibc_report(
                 f"{_version(baseline)} baseline; on older systems it fails when imported"
             )
     return (_version(max(needs)) if needs else None), warnings
+
+
+def baseline_record(glibc: str) -> tuple[tuple[str, object], ...]:
+    """build_info's ``glibc_baseline``, for an app built for another baseline than the default
+    (D46); the default's build_info is what it always was."""
+    return () if glibc == pins.DEFAULT_BASELINE else (("glibc_baseline", glibc),)
 
 
 def _glibc_needs(dist: InstalledDist) -> Iterable[tuple[int, int]]:
@@ -165,7 +216,7 @@ def rebuild_on_baseline(  # noqa: PLR0913  the staging, what to rebuild, and off
         root = fetch_sysroot(baseline, cache)
     except (SysrootError, PbsError) as exc:
         return [f"{listed}: not rebuilt against the glibc {glibc} sysroot: {exc}"]
-    flags = build_flags(root, os.environ)
+    flags = build_flags(root, os.environ, baseline.layout)
     try:
         if canonicalize_name(parse_wheel_filename(wheel.name)[0]) in names:
             wheel = rebuild_wheel(plan, project_dir, flags, log=log, verbose=verbose)
@@ -198,13 +249,16 @@ def _provenance(  # noqa: PLR0913  what the records are made of, and where to lo
     *,
     project_dist: str,
     log: Callable[[str], None],
+    inferred: Inferred | None = None,
 ) -> tuple[tuple[str, object], ...]:
     """build_info's schema, ``lock``, ``dists`` and ``settings``. Dists built here from their
     sdists are named in one line of the build's output: information, not a warning, so
     --strict does not fail on it."""
     try:
-        lock, locked = lock_record(project.directory, source,
-                                   project.lock_path(source, config.requirements))  # fmt: skip
+        lock, locked = (
+            (inferred_lock(project.directory, inferred), {}) if inferred is not None else
+            lock_record(project.directory, source, project.lock_path(source, config.requirements))
+        )  # fmt: skip
     except LockError as exc:
         raise BuildError(str(exc)) from exc
     dists = dist_records((index.dists[d.name] for d in packaged), locked, project=project_dist)
@@ -273,21 +327,65 @@ def helper_interpreter_hints(modules: Iterable[Module], reexec: bool | None) -> 
 
 
 def unpinned_warning(unpinned: list[str]) -> list[str]:
-    """A warning for requirements without ``==``: uv resolves them now, so the build is not
-    reproducible, whatever the file is called."""
+    """A warning for requirements not pinned (no ``==``, commit SHA or URL hash; an ``-e`` path
+    is whatever the tree holds): uv resolves them now, so the build is not reproducible,
+    whatever the file is called."""
     if not unpinned:
         return []
     shown = ", ".join(unpinned[:3]) + (" ..." if len(unpinned) > 3 else "")
-    return [f"requirements not pinned with ==, so resolved now and not reproducible: {shown}"]
+    return [f"requirements not pinned with ==, a commit SHA or a hash, so resolved now and "
+            f"not reproducible: {shown}"]  # fmt: skip
 
 
 def lock_warnings(project: Project, source: LockSource, requirements: str | None) -> list[str]:
-    """What is not reproducible about the lock source: no lock at all, or unpinned lines."""
+    """What is not reproducible about the lock source: no lock at all, or unpinned lines. A
+    directory of scripts that declares no dependency has nothing to lock."""
     if source is LockSource.UNLOCKED:
-        return ["unlocked build: dependencies resolved now, not reproducible"]
+        if project.bare and not project.dependencies:
+            return []
+        warnings = ["unlocked build: dependencies resolved now, not reproducible"]
+        if project.script is not None:  # `uv lock --script FILE` writes the lock this reads
+            return warnings
+        for foreign in ("poetry.lock", "pdm.lock"):  # only a directory of scripts gets here
+            if (project.directory / foreign).is_file():
+                warnings.append(f"{foreign} is not read: the dependencies the scripts declare "
+                                "are resolved now (uv.lock or requirements.txt would lock them)")
+        if split := sorted((project.directory / "requirements").glob("*.txt")):
+            names = ", ".join(path.name for path in split)
+            warnings.append(Uncounted(f"no requirements.txt, but requirements/ holds {names}; "
+                                      f"--requirements requirements/<file> locks the build to one"))
+        return warnings
     if source is LockSource.REQUIREMENTS:
         return unpinned_warning(unpinned_requirements(project.requirements_path(requirements)))
+    return _converted_lock_warnings(source, project.directory)
+
+
+def _converted_lock_warnings(source: LockSource, directory: Path) -> list[str]:
+    """What is wrong with a Poetry, PDM or Pipenv lock beside its project: out of date, and
+    (Pipenv) packages from another index, a note on the host's uv that --strict does not count."""
+    if source in (LockSource.POETRY_LOCK, LockSource.PDM_LOCK):
+        return [message] if (message := foreign_stale(source, directory)) else []
+    if source is LockSource.PIPFILE_LOCK:
+        note = pipenv.other_indexes(directory)
+        return [*filter(None, [pipenv.stale(directory), note and Uncounted(note)])]
     return []
+
+
+def check_hashed_requirements(project: Project, config: BuildConfig) -> None:
+    """Refuse VCS lines in a requirements file that uv reads in --require-hashes mode (--strict,
+    or a ``--hash`` option in the file), before uv says so with a generic hash message: a
+    commit SHA pins the source, but is not a hash."""
+    requirements = config.requirements
+    if project.lock_source(requirements) is not LockSource.REQUIREMENTS:
+        return
+    path = project.requirements_path(requirements)
+    if not (config.strict or has_hash_option(path.read_text())):
+        return
+    why = "--strict needs" if config.strict else f"{path.name} has --hash lines, so uv needs"
+    if lines := vcs_requirements(path):
+        raise ProjectError(f"{why} every requirement to carry a hash (--require-hashes), "
+                           "and a requirement from version control cannot: a commit SHA pins "
+                           "the source, but is not a hash:\n  " + "\n  ".join(lines))
 
 
 def check_strict(warnings: Iterable[str]) -> None:
@@ -325,13 +423,186 @@ def check_before_staging(project: Project, config: BuildConfig) -> None:
     scripts and extras (and setup.py projects) are decided after staging."""
     name = project.name or project.directory.name
     if config.entry is None and project.static_scripts and len(project.scripts) > 1:
+        command_table(project.scripts)  # raises for a name that is no command
+    if (config.entry is None and project.static_scripts and project.static_entry_points
+            and not project.scripts and not project.loose and not project.may_have_legacy_scripts
+            and not source_has_candidate(project.directory)):
+        # no script, no __main__.py, no guarded module: staging cannot find an entry either
         raise several_scripts_error(name, project.scripts)
     if config.output is not None:
         check_output(config.output)
+    check_hashed_requirements(project, config)
     if project.static_extras and (
         message := unknown_extras_error(name, config.extras, project.extras)
     ):
         raise ProjectError(message)
+
+
+def load_package(project: Project, config: BuildConfig, warnings: list[str]) -> Package | None:
+    """The files and commands of a project without a build system (None for any other); the
+    build fails here when it has no command and ``--entry`` names none."""
+    if not project.loose:
+        return None
+    declared = project.lock_source(config.requirements) is not LockSource.UNLOCKED
+    if project.tools:  # no Python file, a lock source: the lock names the tools
+        listed = listed_distributions(project, project.lock_source(config.requirements),
+                                      config.requirements)  # fmt: skip
+        return Package.tool_binary(project.directory, {item.name for item in listed})
+    package = Package.load(project.directory, declared=declared, script=project.script)
+    warnings += package.warnings
+    if config.entry is None and not package.commands and project.bare:
+        raise ProjectError(f"{project.directory} has no Python file with an if __name__ == "
+                           "'__main__' guard or a python shebang; choose one with --entry "
+                           "(a command name or _fsbpyr_scripts.module[:attr])")  # fmt: skip
+    if config.entry is None and not package.commands:
+        raise ProjectError(f"{package.name} has no [project.scripts] and no Python file with an "
+                           "if __name__ == '__main__' guard; choose one with --entry (a "
+                           "command name or _fsbpyr_scripts.module[:attr]); a file whose name "
+                           "is no Python name is not packaged")
+    return package
+
+
+_REMOVED_REPLACEMENT = {
+    "imp": "importlib", "distutils": "setuptools or packaging", "asyncore": "asyncio",
+    "asynchat": "asyncio", "smtpd": "aiosmtpd",
+}  # fmt: skip
+
+
+def _removed_hint(name: str) -> str:
+    """Where a removed standard library module is still to be had: the newest Python fsbpyr
+    builds for that has it, else a word that the script needs porting."""
+    removed = REMOVED_IN[name]
+    text = f"{name} was removed in Python {removed[0]}.{removed[1]}"
+    older = max((v for v in SUPPORTED_PYTHON if v < removed), default=None)
+    if older is not None:
+        return f"{text}; build with --python {older[0]}.{older[1]}"
+    port = f" (use {_REMOVED_REPLACEMENT[name]})" if name in _REMOVED_REPLACEMENT else ""
+    return f"{text}; no Python fsbpyr builds for has it, so the script needs porting{port}"
+
+
+def _unresolved_warning(
+    command: str, problems: list[Unresolved], project: Project, python: tuple[int, int]
+) -> str:
+    """The warning for a command skipped for imports that nothing resolves: file:line of each
+    (the first few), why a removed standard library module is missing, and where the module
+    may come from."""
+    shown = "; ".join(problem.describe() for problem in problems[:3])
+    more = f" (and {len(problems) - 3} more)" if len(problems) > 3 else ""
+    text = f"command {command} skipped: not in the executable: {shown}{more}"
+    removed = {problem.module.partition(".")[0] for problem in problems} & REMOVED_IN.keys()
+    hints = [_removed_hint(name) for name in sorted(removed) if REMOVED_IN[name] <= python]
+    if {problem.module.partition(".")[0] for problem in problems} - set(removed):
+        where = ("requirements.txt, or in a '# /// script' block of the script" if project.bare
+                 else "[project] dependencies")  # fmt: skip
+        if project.script is not None:
+            where = "the dependencies of the script's '# /// script' block"
+        hints += [f"declare it in {where} (a project's own file is found next to the script "
+                  "that imports it)"]
+        if (project.directory / ".venv").is_dir():
+            command = "uv pip freeze --python .venv/bin/python"
+            then = ("lists what it holds; put what the script needs in its block's dependencies"
+                    if project.script is not None else
+                    "writes what it holds, and the build reads requirements.txt")
+            redirect = "" if project.script is not None else " > requirements.txt"
+            why = ("a .venv supplies pins only when nothing declares a dependency and it holds "
+                   "a distribution that provides the import" if project.bare
+                   else "a .venv is not read for undeclared dependencies")  # fmt: skip
+            hints[-1:] = [f"{why}; `{command}{redirect}` {then}"]
+    return f"{text}. {'. '.join(hints)}"
+
+
+def _checked_commands(package: Package, config: BuildConfig) -> dict[str, str]:
+    """The commands whose imports are followed: all of the table, or the one ``--entry`` names."""
+    if config.entry in package.commands:
+        return {config.entry: package.commands[config.entry]}
+    if config.entry is not None:  # a module: its own imports, not the table's
+        return {config.entry: config.entry}
+    return package.commands
+
+
+def infer_dependencies(
+    package: Package, project: Project, config: BuildConfig, runtime: Runtime, warnings: list[str]
+) -> tuple[Package, Inferred | None]:
+    """Rung 3 of the dependency ladder (venvdeps.py): a project without a build system whose
+    commands import what the runtime lacks, and that declares no dependency, gets the versions
+    its venv holds of the distributions that provide those imports, pinned in its wheel. The
+    pins are installed fresh, nothing is copied. A warning names the venv and the command that
+    declares the dependencies; --strict fails on it, before anything is staged."""
+    if (venv := find_venv(project.directory)) is None:
+        return package, None
+    known = {n.partition(".")[0] for n in runtime_module_names(runtime)}
+    modules = {problem.module for target in _checked_commands(package, config).values()
+               for problem in check_command(target, package.sources, known)
+               if problem.module and not problem.module.startswith(".")}  # fmt: skip
+    found = infer(venv, modules, marker_environment(runtime.python_version)) if modules else None
+    if found is None:
+        return package, None
+    shown = (venv.relative_to(project.directory) if venv.is_relative_to(project.directory)
+             else venv)  # fmt: skip
+    command = f"uv pip freeze --python {shown}/bin/python"
+    declare = (f"`{command}` lists them for the '# /// script' block's dependencies"
+               if project.script is not None else f"`{command} > requirements.txt` declares them")
+    listed = ", ".join(found.pins[:5]) + (" ..." if len(found.pins) > 5 else "")
+    warnings.append(f"no dependency is declared: the versions in {shown} were read as files "
+                    f"(nothing is copied) and are installed fresh: {listed}; {declare}")
+    if config.strict:
+        check_strict(warnings)
+    return package.with_dependencies(found.pins), found
+
+
+def check_script_imports(  # noqa: PLR0913  the package and what resolves its imports
+    package: Package,
+    project: Project,
+    config: BuildConfig,
+    site: Path,
+    runtime: Runtime,
+    *,
+    warnings: list[str],
+) -> frozenset[str]:
+    """Follow the static imports of each command of a project without a build system and warn
+    about the commands that import what the executable lacks; their names are returned. --strict
+    fails on the first such warning; so does a build with no command left."""
+    known = top_level_names(site) | {n.partition(".")[0] for n in runtime_module_names(runtime)}
+    major, minor = (int(part) for part in runtime.python_version.split(".")[:2])
+    python = (major, minor)
+    chosen = _checked_commands(package, config)
+    skipped = set()
+    for command, target in chosen.items():
+        if problems := check_command(target, package.sources, known):
+            problems = [dataclasses.replace(p, path=package.origins.get(p.path, p.path))
+                        for p in problems]  # fmt: skip
+            warnings.append(_unresolved_warning(command, problems, project, python))
+            skipped.add(command)
+    if skipped and config.strict:
+        check_strict(warnings)
+    if skipped and skipped == set(chosen):
+        raise BuildError(f"{package.name}: no command can run in the executable, each imports "
+                         "what it does not hold")  # fmt: skip
+    return frozenset(skipped)
+
+
+def tool_binary(  # noqa: PLR0913  the build's state: what is staged, and the progress line
+    package: Package | None,
+    project: Project,
+    config: BuildConfig,
+    index: SiteIndex,
+    dist: InstalledDist,
+    *,
+    python_version: str,
+    log: Callable[[str], None],
+) -> InstalledDist | None:
+    """For a tool binary (None for any other build): the project as the distribution whose
+    console scripts are those of the tools its lock names, chosen and logged here."""
+    if package is None or not package.tools:
+        return None
+    source = project.lock_source(config.requirements)
+    listed = listed_distributions(project, source, config.requirements)
+    path = project.lock_path(source, config.requirements)
+    tools = tool_scripts(index, listed, project=dist.name, source=path.name if path else "",
+                         python_version=python_version)  # fmt: skip
+    for note in tools.notes:
+        log(note)
+    return with_commands(dist, tools)
 
 
 def smoke_test(executable: Path, app_name: str, output: Path | None = None) -> None:
@@ -390,8 +661,9 @@ def build(
     notes, which cli.py prints. ``verbose`` shows uv's commands and lets its errors through."""
     warnings: list[str] = []
     written: list[Path] = []  # the new executable beside the output, until it is committed
+    made: list[Path] = []  # the output directory, when this build created it
     try:
-        result = _build(directory, config, log, warnings, written, verbose=verbose)
+        result = _build(directory, config, log, warnings, written, made=made, verbose=verbose)
         if config.smoke:
             log(f"smoke-testing {written[0]}")
             smoke_test(written[0], result.app_name, result.output)
@@ -400,6 +672,12 @@ def build(
                 smoke_run(written[0], result.output, config.smoke_args)
         commit(written[0], result.output)
         written.clear()
+        if result.commands:
+            try:
+                links = tuple(make_links(result.output, result.commands))
+            except LinkError as exc:
+                raise BuildError(str(exc)) from exc
+            result = dataclasses.replace(result, links=links)
         return result
     except Exception as exc:
         if not isinstance(exc, StrictError):  # its message lists them
@@ -409,6 +687,9 @@ def build(
     finally:
         for path in written:  # the build failed or was interrupted
             path.unlink(missing_ok=True)
+        for path in made:  # rmdir takes only an empty directory: not the one holding the output
+            with contextlib.suppress(OSError):
+                path.rmdir()
 
 
 def python_warnings(project: Project, config: BuildConfig) -> tuple[str, ...]:
@@ -422,36 +703,52 @@ def python_warnings(project: Project, config: BuildConfig) -> tuple[str, ...]:
     return chosen.warnings
 
 
-def _build(  # noqa: PLR0913  the build's state and the progress keyword
+def _make_output_dir(directory: Path, made: list[Path]) -> None:
+    """Create the output directory; ``made`` records each level that did not exist, leaf first."""
+    made.extend(path for path in (directory, *directory.parents) if not path.exists())
+    directory.mkdir(parents=True, exist_ok=True)
+
+
+def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keyword; one pass
     directory: Path,
     config: BuildConfig,
     log: Callable[[str], None],
     warnings: list[str],
     written: list[Path],
     *,
+    made: list[Path],
     verbose: bool,
 ) -> BuildResult:
     """Everything up to the new executable, written beside the output: ``written`` holds it as
-    soon as it exists."""
-    project = Project.load(directory)
+    soon as it exists, ``made`` the output directory if this build created it."""
+    project = Project.load(directory, config.requirements)
     check_before_staging(project, config)
+    package = load_package(project, config, warnings)
     uv = find_uv()  # before anything slow: a build cannot go far without it (D26)
     uv_used = uv_version(uv)
     warnings += python_warnings(project, config)
-    runtime = select_runtime(TARGET_PYTHON)
+    runtime = select_runtime(TARGET_PYTHON, baseline=config.glibc)
     project.check_python(runtime.python_version)
     warnings += uv_mismatch(builder=builder_uv(), current=uv_used)
     source = project.lock_source(config.requirements)
+    inferred = None
+    if (package is not None and project.bare and source is LockSource.UNLOCKED
+            and not project.dependencies):
+        package, inferred = infer_dependencies(package, project, config, runtime, warnings)
+        source = LockSource.INFERRED if inferred is not None else source
     warnings += lock_warnings(project, source, config.requirements)
     log(f"staging {project.name or project.directory.name} from {source.value}")
     # the staged files and the spill live until the executable is written: files too large to
     # hold are streamed from them (D38)
     with tempfile.TemporaryDirectory(prefix="fsbpyr-stage-") as tmp:
         triple = runtime.tag.partition("-")[2]
-        baseline = pins.sysroot_for(triple)  # the stub's glibc (D25)
-        options = StagingOptions(TARGET_PYTHON, config.extras, config.offline, config.requirements,
-                                 platform=target_named(triple).uv_platform,
-                                 strict=config.strict)  # fmt: skip
+        baseline = pins.sysroot_for(triple, config.glibc)  # the stub's glibc (D25, D46)
+        options = StagingOptions(
+            TARGET_PYTHON, config.extras, config.offline, config.requirements,
+            platform=target_named(triple).platform_for(baseline.manylinux),
+            strict=config.strict, package=package,
+            environment=marker_environment(runtime.python_version),
+        )  # fmt: skip
         plan = staging_plan(project, source, uv, Path(tmp), options)
         wheel = run_plan(plan, project.directory, log=log, verbose=verbose)
         index = SiteIndex.scan(plan.site)
@@ -464,12 +761,20 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
             warnings += failed
             if not failed:
                 index = SiteIndex.scan(plan.site)
-        dist = _installed_project(index, wheel, project, config)
-        walk = index.walk(dist, extras=config.extras, python_version=runtime.python_version)
-        app_name, entrypoint = resolve_entry(dist, config.entry)
+        dist = attach_legacy_scripts(
+            _installed_project(index, wheel, project, config), wheel, warnings)
+        index.dists[dist.name] = dist
+        tool_dist = tool_binary(package, project, config, index, dist,
+                               python_version=runtime.python_version, log=log)
+        walk = index.walk(tool_dist or dist, extras=config.extras,
+                          python_version=runtime.python_version)  # fmt: skip
+        app_name, entrypoint = resolve_entry(tool_dist or dist, config.entry, log, omit=(
+            check_script_imports(package, project, config, index.site, runtime, warnings=warnings)
+            if package is not None and tool_dist is None else ()))  # fmt: skip
         output = (config.output or project.directory / "dist" / app_name).resolve()
         check_output(output)
-        output.parent.mkdir(parents=True, exist_ok=True)
+        commands = _commands_to_link(entrypoint, output)
+        _make_output_dir(output.parent, made)
         log(f"collecting {len(index.dists)} distributions")
         level = config.zstd_level
         with Spill(output.parent) as spill:
@@ -485,9 +790,11 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                 spill=spill,
                 runtime_modules=runtime_module_names(runtime),
                 project=dist.name,
+                origins=package.origins if package is not None else {},
             )
             warnings += walk.warnings
-            if walk.unreachable:
+            # a directory of scripts has no dependencies of its own: the file declares them all
+            if walk.unreachable and not (project.bare and source is not LockSource.UNLOCKED):
                 warnings.append(
                     f"packaged although not required by {dist.name}: "
                     f"{', '.join(walk.unreachable)} (they come from the lock or requirements file)"
@@ -497,7 +804,7 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                 *helper_interpreter_hints(content.modules, config.interpreter_reexec)]  # fmt: skip
             glibc, glibc_warnings = glibc_report(runtime.stub, content.glibc,
                                                  baseline=baseline.baseline)  # fmt: skip
-            libraries, system_warnings = system_report(runtime.stub, content.system)
+            libraries, system_warnings = system_report(runtime.stub, content.system, config.glibc)
             warnings += [*glibc_warnings, *system_warnings]
             app = App(
                 app_name,
@@ -513,12 +820,14 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                         index,
                         content.dists,
                         project_dist=dist.name,
+                        inferred=inferred,
                         log=log,
                     ),
                     ("project", {"name": dist.name, "version": dist.version}),
                     ("fsbpyr_version", own_version()),  # with the commit (fsbpyr inspect)
                     ("uv", uv_used),  # builds the wheel, installs everything
                     ("glibc", glibc),
+                    *baseline_record(config.glibc),
                     ("system", system_info(libraries, content.system)),  # target needs, guesses
                     ("zstd_level", level),  # of the app's content and of every block
                     (
@@ -540,7 +849,7 @@ def _build(  # noqa: PLR0913  the build's state and the progress keyword
                 check_strict(warnings)
             log(f"writing {output}")
             written.append(build_temporary(runtime, app, output))
-    size = written[0].stat().st_size
     return BuildResult(
-        output, app_name, entrypoint, size, tuple(warnings), glibc, target_needs(libraries, glibc)
-    )
+        output, app_name, entrypoint, written[0].stat().st_size, tuple(warnings), glibc,
+        target_needs(libraries, glibc), commands, loose=project.loose,
+    )  # fmt: skip

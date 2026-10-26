@@ -71,8 +71,13 @@ def cli(ctx: click.Context) -> None:
 @cli.command(
     "build",
     help="build a single-file executable from a project\n\nPROJECT is the project's directory "
-    "(default: the current one). Options given here win over `[tool.fsbpyr]` in its "
-    "`pyproject.toml`.\n\n"
+    "(default: the current one); a directory of Python files with no `pyproject.toml` or "
+    "`setup.py` is built from them, one command per file with a main guard or a python "
+    "shebang. A single Python file (`*.py`, or a python or `uv run --script` shebang) builds "
+    "with the files it imports from its directory, and nothing else of it; its PEP 723 "
+    "block gives the dependencies, `requires-python` and `[tool.fsbpyr]`, and a "
+    "`<file>.lock` from `uv lock --script` locks them. Options given here win over "
+    "`[tool.fsbpyr]` in its `pyproject.toml`.\n\n"
     "The app runs on the Python that `--python`, `python` in `[tool.fsbpyr]`, a supported "
     "`.python-version` pin or `requires-python` choose, in that order (the lowest supported "
     "version `requires-python` allows, the highest below an upper-only bound). Each Python "
@@ -80,20 +85,26 @@ def cli(ctx: click.Context) -> None:
     "fetched into the cache once and run with the same arguments. A developer build never "
     "fetches one; it says how to build it.",
 )
-@click.argument("project", required=False, default=".",
-                type=click.Path(file_okay=False, path_type=Path))  # fmt: skip
+@click.argument("project", required=False, default=".", type=click.Path(path_type=Path))
 @click.option("--python", metavar="X.Y",
               help="the Python to build for, 3.12 to 3.15, inside `requires-python` "
                    "(default: `python` in `[tool.fsbpyr]`, else `.python-version`, else "
                    "`requires-python` decides)")  # fmt: skip
+@click.option("--glibc", metavar="X.Y", type=click.Choice(["2.34", "2.28"]),
+              help="the glibc the app is built for: 2.34 (default), or 2.28 for EL8 hosts, which "
+                   "needs the glibc 2.28 stub of the fsbpyr release (default: `glibc` in "
+                   "`[tool.fsbpyr]`, else 2.34)")  # fmt: skip
 @click.option("--entry", metavar="NAME", shell_complete=_complete_entry,
               help="console script name, `module` or `module:function` "
-                   "(default: the only script)")  # fmt: skip
+                   "(default: the only script, else all of them as one multi-command "
+                   "executable, else the only `__main__` package or guarded module)")  # fmt: skip
 @click.option("-o", "--output", type=click.Path(path_type=Path),
-              help="where to write the executable (default: `dist/` and the console "
-                   "script's name)")  # fmt: skip
+              help="where to write the executable (default: `dist/` and the entry's "
+                   "name, or the project's name for several commands)")  # fmt: skip
 @click.option("--requirements", metavar="FILE", type=click.Path(),
-              help="pinned requirements file, for pip projects without `pylock.toml`")  # fmt: skip
+              help="pinned requirements file, for pip projects without `pylock.toml`; in a "
+                   "directory with no Python file it names the tools to build "
+                   "(a tool binary)")  # fmt: skip
 @click.option("--extra", "extras", metavar="NAME", multiple=True, shell_complete=_complete_extra,
               help="install a project extra (repeat); requirements and pylock files must "
                    "already contain its dependencies")  # fmt: skip
@@ -129,7 +140,8 @@ def cli(ctx: click.Context) -> None:
 @click.option("--smoke-args", "smoke_args_text", metavar="ARGS",
               help="also run the new executable once with ARGS (one string, split like a "
                    "shell would), for example \"--version\", and fail the build unless it "
-                   "exits 0; only you know which arguments have no side effects")  # fmt: skip
+                   "exits 0; only you know which arguments have no side effects; with several "
+                   "commands the first word is the command (\"acme-db --version\")")  # fmt: skip
 @click.option("--strict/--no-strict", default=None,
               help="fail the build, leaving the output as it was, on any warning about the app "
                    "and on an unlocked build; requirements files must pin and hash every "
@@ -140,6 +152,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     *,
     project: Path,
     python: str | None,
+    glibc: str | None,
     entry: str | None,
     output: Path | None,
     requirements: str | None,
@@ -183,10 +196,11 @@ def build_command(  # noqa: PLR0913  click passes every option by name
               DispatchError, PayloadError, ProjectError, RuntimeCacheError, StagingError,
               OSError)  # fmt: skip
     try:
-        loaded = Project.load(project)
+        loaded = Project.load(project, requirements)
         config = load_config(
             loaded,
             python=python,
+            glibc=glibc,
             entry=entry,
             output=output.resolve() if output else None,
             requirements=requirements,
@@ -217,10 +231,20 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     for warning in result.warnings:
         print(f"fsbpyr: warning: {warning}", file=sys.stderr)
     glibc = f", glibc >= {result.glibc}" if result.glibc else ""
-    print(f"fsbpyr: built {result.output} ({result.size / 1e6:.1f} MB, entry "
-          f"{result.entrypoint}{glibc})")  # fmt: skip
+    entry = f"{len(result.commands)} commands" if result.commands else f"entry {result.entrypoint}"
+    print(f"fsbpyr: built {result.output} ({result.size / 1e6:.1f} MB, {entry}{glibc})")
+    if result.commands:
+        print(f"fsbpyr: commands: {', '.join(result.commands)}; start one through its link, "
+              f"or as {result.output.name} COMMAND")  # fmt: skip
+    for link in result.links:
+        print(f"fsbpyr: linked {link} -> {link.readlink()}")
     if result.target_needs:
         print(f"fsbpyr: target needs: {result.target_needs}")
+    if result.loose:
+        from .links import deploy_recipe  # noqa: PLC0415  keep --version fast
+
+        for line in deploy_recipe(result.output, result.commands):
+            print(f"fsbpyr: {line}")
     return 0
 
 
@@ -287,9 +311,13 @@ def runtime_group() -> None:
 @runtime_group.command("build", help="fetch CPython, link launcher, compile stdlib")
 @click.option("--python", metavar="X.Y", default=DEFAULT_PYTHON, show_default=True,
               help="the Python version, major.minor")  # fmt: skip
+@click.option("--glibc", "baseline", type=click.Choice(["2.34", "2.28"]), default="2.34",
+              show_default=True,
+              help="the glibc the stub is linked for: 2.34 (Debian 12's sysroot) or 2.28 "
+              "(Rocky Linux 8.10's, for EL8 hosts)")  # fmt: skip
 @click.option("--clang", type=click.Path(path_type=Path),
               help="clang to use (default: search PATH)")  # fmt: skip
-def runtime_build(*, python: str, clang: Path | None) -> int:
+def runtime_build(*, python: str, baseline: str, clang: Path | None) -> int:
     if _unsupported_python():
         return 1
     _collect_when_due()
@@ -303,7 +331,7 @@ def runtime_build(*, python: str, clang: Path | None) -> int:
     )
 
     try:
-        registry.build_runtime(python, clang=clang)
+        registry.build_runtime(python, clang=clang, baseline=baseline)
     except (
         LookupError,
         registry.RuntimeCacheError,
@@ -329,8 +357,8 @@ def runtime_list() -> int:
     except registry.RuntimeCacheError as exc:
         print(f"fsbpyr: error: {exc}", file=sys.stderr)
         return 1
-    for runtime_id, version in runtimes:
-        print(f"{runtime_id}  Python {version}")
+    for runtime_id, version, baseline in runtimes:
+        print(f"{runtime_id}  Python {version}  glibc {baseline}")
     return 0
 
 
@@ -419,6 +447,10 @@ EXAMPLES = (
      "Build for Python 3.12, whatever `requires-python` and `.python-version` say. This fsbpyr "
      "hands the build to its 3.12 variant, which it fetches from its own release the first "
      "time."),
+    ("fsbpyr build --glibc 2.28",
+     "Build an app for EL8 hosts (glibc 2.28). It needs the glibc 2.28 stub of this fsbpyr's "
+     "release, which releases publish separately: fetched once, or placed beside the "
+     "fsbpyr executable."),
     ("fsbpyr build --entry mytool --extra fancy",
      "Pick one of the project's console scripts, and install the project's extra `fancy` "
      "with it."),

@@ -5,8 +5,8 @@ from __future__ import annotations
 import configparser
 import json
 import re
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Iterable, Mapping
+from dataclasses import dataclass, field
 from email.parser import HeaderParser
 from pathlib import Path
 from typing import Any
@@ -14,6 +14,10 @@ from typing import Any
 from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
+
+from .entry import installed_candidates
+from .links import COMMAND_NAME
+from .loose import MODULE_GROUP
 
 _EXTRAS_SUFFIX = re.compile(r"\s*\[[^\]]*\]\s*$")
 
@@ -33,17 +37,27 @@ class InstalledDist:
     entry_points: str
     direct_url: dict[str, Any] | None
     provides_extra: tuple[str, ...] = ()  # canonical names
+    legacy: Mapping[str, str] = field(default_factory=dict)  # legacy scripts: name -> module
 
     def console_scripts(self) -> dict[str, str]:
+        return self._entries("console_scripts")
+
+    def commands(self) -> dict[str, str]:
+        """The console scripts, the modules a project without a build system runs (loose.py)
+        and the legacy scripts of its wheel (legacy.py)."""
+        return {**self._entries("console_scripts"), **self._entries(MODULE_GROUP), **self.legacy}
+
+    def gui_scripts(self) -> dict[str, str]:
+        return self._entries("gui_scripts")
+
+    def _entries(self, section: str) -> dict[str, str]:
         parser = configparser.ConfigParser(delimiters=("=",), interpolation=None)
         parser.optionxform = str  # type: ignore[assignment,method-assign]
         parser.read_string(self.entry_points)
-        if not parser.has_section("console_scripts"):
+        if not parser.has_section(section):
             return {}
         # "module:attr [extra1, extra2]": the extras only mattered to the installer
-        return {
-            name: _EXTRAS_SUFFIX.sub("", value) for name, value in parser["console_scripts"].items()
-        }
+        return {name: _EXTRAS_SUFFIX.sub("", value) for name, value in parser[section].items()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,9 +125,7 @@ class SiteIndex:
 
     def walk(self, root: InstalledDist, *, extras: tuple[str, ...], python_version: str) -> Walk:
         """Requires-Dist closure under the runtime's marker environment (consistency check)."""
-        environment = {key: str(value) for key, value in default_environment().items()}
-        environment["python_full_version"] = python_version
-        environment["python_version"] = ".".join(python_version.split(".")[:2])
+        environment = marker_environment(python_version)
         seen: dict[str, set[str]] = {}
         warnings: list[str] = []
         pending = [(root, set(extras))]
@@ -123,7 +135,7 @@ class SiteIndex:
                 continue
             seen.setdefault(dist.name, set()).update(active)
             for line in dist.requires:
-                requirement = _requirement(line, dist)
+                requirement = requirement_of(line, dist)
                 if requirement.marker is not None and not any(
                     requirement.marker.evaluate({**environment, "extra": extra})
                     for extra in (active or {""})
@@ -144,20 +156,50 @@ class SiteIndex:
         return Walk(reachable, unreachable, tuple(warnings))
 
 
-def _requirement(line: str, dist: InstalledDist) -> Requirement:
+def marker_environment(python_version: str) -> dict[str, str]:
+    """The marker environment of the app: this host's (a build is for the platform it runs
+    on) with the runtime's Python, "3.14.1"."""
+    environment = {key: str(value) for key, value in default_environment().items()}
+    environment["python_full_version"] = python_version
+    environment["python_version"] = ".".join(python_version.split(".")[:2])
+    return environment
+
+
+def requirement_of(line: str, dist: InstalledDist) -> Requirement:
     try:
         return Requirement(line)
     except InvalidRequirement as exc:
         raise ClosureError(f"{dist.name}: invalid Requires-Dist {line!r}: {exc}") from exc
 
 
-def several_scripts_error(name: str, scripts: Iterable[str]) -> ClosureError:
-    """No --entry, and the project's console scripts are not exactly one."""
+def several_scripts_error(
+    name: str, scripts: Iterable[str], candidates: str = ""
+) -> ClosureError:
+    """No --entry and no console script; ``candidates`` describes the packages and modules
+    that entry inference found but could not choose from."""
     choices = ", ".join(sorted(scripts)) or "none"
+    found = f"; found: {candidates}" if candidates else ""
     return ClosureError(
         f"{name} has console scripts: {choices}; choose one with --entry "
-        "(a script name, 'module' or 'module:function')"
+        f"(a script name, 'module' or 'module:function'){found}"
     )
+
+
+def check_command_names(names: Iterable[str]) -> None:
+    """A command name is a file name the build writes and links and a command line word: the
+    build fails naming one that is not plain."""
+    for name in names:
+        if not COMMAND_NAME.fullmatch(name):
+            raise ClosureError(f"command name {name!r} is not valid for a command of an "
+                               "executable: letters, digits and _.+- only, "
+                               "starting with a letter or digit")  # fmt: skip
+
+
+def command_table(scripts: Mapping[str, str]) -> str:
+    """The entry point of a build with several console scripts (§11, 2026-10-25):
+    ``name=target`` lines, sorted."""
+    check_command_names(scripts)
+    return "\n".join(f"{name}={target}" for name, target in sorted(scripts.items()))
 
 
 def unknown_extras_error(name: str, wanted: Iterable[str], known: Iterable[str]) -> str | None:
@@ -172,14 +214,42 @@ def unknown_extras_error(name: str, wanted: Iterable[str], known: Iterable[str])
     )
 
 
-def resolve_entry(dist: InstalledDist, entry: str | None) -> tuple[str, str]:
-    """(application name, entry point) from --entry or the project's console scripts."""
-    scripts = dist.console_scripts()
+def infer_entry(dist: InstalledDist) -> tuple[str, str, str]:
+    """(application name, entry point, why) for a project with no console scripts: its only
+    package with __main__.py, else its only module with a main guard (run as ``python -m`` /
+    as the script, UC5)."""
+    found = installed_candidates(dist.site, dist.record)
+    if len(found.packages) == 1 and not found.modules:
+        name = found.packages[0]
+        why = f"package {name} is the only one with __main__.py; run as python -m {name}"
+        return name, name, why
+    if len(found.modules) == 1 and not found.packages:
+        name = found.modules[0]
+        return name, name, f"module {name} is the only one with an if __name__ == '__main__' guard"
+    raise several_scripts_error(dist.name, (), found.described())
+
+
+def resolve_entry(
+    dist: InstalledDist,
+    entry: str | None,
+    log: Callable[[str], None] = lambda _: None,
+    omit: Collection[str] = (),
+) -> tuple[str, str]:
+    """(application name, entry point) from --entry or the project's console scripts (several:
+    the project's name and a command table), else the inferred package or module (``log`` says
+    which and why). The commands in ``omit`` do not exist."""
+    scripts = {name: target for name, target in dist.commands().items() if name not in omit}
     if entry is None:
         if len(scripts) == 1:
+            check_command_names(scripts)
             return next(iter(scripts.items()))
-        raise several_scripts_error(dist.name, scripts)
+        if scripts:
+            return dist.name, command_table(scripts)
+        name, entrypoint, why = infer_entry(dist)
+        log(f"{dist.name} has no console scripts: {why}")
+        return name, entrypoint
     if entry in scripts:
+        check_command_names([entry])
         return entry, scripts[entry]
     module, _, attribute = entry.partition(":")
     if not all(part.isidentifier() for part in module.split(".")) or (

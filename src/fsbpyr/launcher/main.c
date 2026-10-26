@@ -22,6 +22,16 @@
 #error "define FSBPYR_BYTECODE_MAGIC: importlib.util.MAGIC_NUMBER as a little-endian u32"
 #endif
 
+#ifndef FSBPYR_RUNTIME_ID
+#define FSBPYR_RUNTIME_ID "none" /* test programs compiled from these sources */
+#endif
+
+/* The runtime id this stub was linked as (stub.py passes it). A build that is handed a stub it
+ * did not link, an EL8 one, reads this string out of the file (stub.stub_identity) to prove it
+ * is the stub of its own launcher sources, Python and target. Kept by `used` through LTO and
+ * stripping; nothing reads it at run time. */
+__attribute__((used)) static const char identity[] = "fsbpyr-stub-identity=" FSBPYR_RUNTIME_ID;
+
 #define EXIT_CORRUPT 70 /* EX_SOFTWARE */
 #define MAX_STARTUP_MODULES 4096u
 #define MAX_STARTUP_CODE (16u << 20)
@@ -151,6 +161,9 @@ int main(int argc, char **argv) {
     config.pathconfig_warnings = 0;
     config.module_search_paths_set = 1; /* empty sys.path until the boot module installs its hook */
     config.import_time = getenv("FSBPYR_IMPORTTIME") != NULL;
+    /* the one PYTHON* variable honoured, as CPython reads it: set and non-empty (D14) */
+    const char *unbuffered = getenv("PYTHONUNBUFFERED");
+    if (unbuffered != NULL && unbuffered[0] != '\0') config.buffered_stdio = 0;
     check(PyConfig_SetBytesArgv(&config, argc, argv));
     check(PyConfig_SetBytesString(&config, &config.executable, fsb_self.executable));
     pin_prefixes(&config);

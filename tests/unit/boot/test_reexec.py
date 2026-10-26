@@ -132,6 +132,60 @@ def test_without_the_setting_a_child_asking_for_python_is_refused(
     assert "--interpreter-reexec" in message and "--no-interpreter-reexec" in message
 
 
+def _scripts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A ``_fsbpyr_scripts`` package with two scripts, ``tools/probe.py`` and ``other.py``."""
+    root = tmp_path / "_fsbpyr_scripts"
+    (root / "tools").mkdir(parents=True)
+    (root / "__init__.py").write_text("")
+    (root / "tools" / "__init__.py").write_text("")
+    for script in (root / "tools" / "probe.py", root / "other.py"):
+        script.write_text("import sys\nseen = (__name__, sys.argv[:])\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    for name in [n for n in sys.modules if n.split(".")[0] == "_fsbpyr_scripts"]:
+        monkeypatch.delitem(sys.modules, name)  # another test's package of that name
+    return root
+
+
+def test_without_the_setting_a_script_that_is_an_own_command_runs_as_python_would(
+    reexec: ModuleType, child: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _scripts(tmp_path, monkeypatch)
+    script = str(root / "tools" / "probe.py")
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    argv = [EXE, "-u", script, "a"]
+    targets = ("_fsbpyr_scripts.other", "_fsbpyr_scripts.tools.probe", "pkg.cli:main")
+
+    assert reexec.run_child(argv, UNSET, f"{tmp_path}/", targets) is True
+    assert child.seen == ("__main__", [script, "a"])
+    assert sys.path[0] == str(root / "tools")
+
+
+def test_without_the_setting_a_script_that_is_no_own_command_is_still_refused(
+    reexec: ModuleType, child: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    root = _scripts(tmp_path, monkeypatch)
+
+    for argv, targets in (([EXE, str(root / "other.py")], ("_fsbpyr_scripts.tools.probe",)),
+                          ([EXE, str(root / "other.py")], ()),
+                          ([EXE, "-m", "_fsbpyr_scripts.other"], ("_fsbpyr_scripts.other",))):
+        with pytest.raises(SystemExit) as refused:
+            reexec.run_child(argv, UNSET, f"{tmp_path}/", targets)
+        assert refused.value.code == 70
+    assert not hasattr(child, "seen") and "refusing to run" in capsys.readouterr().err
+
+
+def test_a_script_that_is_an_own_command_is_not_run_by_a_caller_other_than_the_app(
+    reexec: ModuleType, child: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _scripts(tmp_path, monkeypatch)
+    monkeypatch.setattr(reexec, "_parent_runs_this_executable", lambda: False)
+    argv = [EXE, str(root / "other.py")]
+
+    assert reexec.run_child(argv, UNSET, f"{tmp_path}/", ("_fsbpyr_scripts.other",)) is False
+    assert not hasattr(child, "seen")
+
+
 def test_without_the_setting_the_apps_own_options_run_the_app(
     reexec: ModuleType, child: ModuleType
 ) -> None:
@@ -209,6 +263,24 @@ def test_a_payload_script_runs_as_its_module_with_its_path_first(
     assert child.seen == ("__main__", [str(package / "tool.py"), "a"])
 
 
+def test_a_payload_script_has_its_directory_first_on_the_path(
+    reexec: ModuleType, child: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """As CPython puts the script's directory at sys.path[0]: ``import common`` finds the
+    sibling."""
+    package = tmp_path / "sibling_pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "common.py").write_text("WORD = 'sibling'\n")
+    (package / "tool.py").write_text("import sys, common\nseen = (sys.path[0], common.WORD)\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(sys, "path", list(sys.path))  # the child's insert is undone
+    monkeypatch.setattr(sys, "argv", [EXE, str(package / "tool.py")])
+
+    assert reexec.run_child(sys.argv, ON, f"{tmp_path}/") is True
+    assert child.seen == (str(package), "sibling")
+
+
 def test_a_packages_main_script_runs_the_package(
     reexec: ModuleType, child: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -229,3 +301,45 @@ def test_a_payload_path_that_is_no_module_runs_the_app(
     argv = [EXE, f"{tmp_path}/nowhere/tool.py"]
 
     assert reexec.run_child(argv, ON, f"{tmp_path}/") is False
+
+
+def test_a_script_is_named_by_the_path_it_says_it_lives_at(
+    reexec: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In an app of scripts a module's ``__file__`` is next to the executable (owner decision
+    2026-10-25): a child started with that path, or with the path inside the executable, runs it."""
+    shown = {"_fsbpyr_scripts.tools.probe": "/srv/bin/tools/probe.py"}
+    monkeypatch.setattr(
+        reexec.importlib.util, "find_spec",
+        lambda name: types.SimpleNamespace(origin=shown[name]) if name in shown else None,
+    )  # fmt: skip
+    argv = [EXE, "-u", "/srv/bin/tools/probe.py", "a"]
+
+    assert reexec.child_command(argv, "/srv/bin/app/", "/srv/bin/") == (
+        "script", "/srv/bin/tools/probe.py", ["a"])
+    assert reexec._script_module("/srv/bin/tools/probe.py", "/srv/bin/app/", "/srv/bin/") == (
+        "_fsbpyr_scripts.tools.probe")
+    assert reexec._script_module(
+        "/srv/bin/app/_fsbpyr_scripts/tools/probe.py", "/srv/bin/app/", "/srv/bin/"
+    ) == "_fsbpyr_scripts.tools.probe"  # fmt: skip
+    assert reexec.child_command(argv, "/srv/bin/app/") is None  # not an app of scripts
+
+
+def test_a_file_of_the_host_next_to_the_executable_is_the_apps_own_argument_and_imports_nothing(
+    reexec: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Whether a path names a script is asked (it imports the script's packages) only after the
+    app started this process, and a file that is none runs the app."""
+    asked: list[str] = []
+    monkeypatch.setattr(reexec.importlib.util, "find_spec", asked.append)
+    argv = [EXE, "/srv/bin/other.py"]
+
+    command = reexec.child_command(argv, "/srv/bin/app/", "/srv/bin/")
+    monkeypatch.setattr(reexec, "_parent_runs_this_executable", lambda: False)
+    foreign = reexec.run_child(argv, UNSET, "/srv/bin/app/", (), "/srv/bin/")
+    monkeypatch.setattr(reexec, "_parent_runs_this_executable", lambda: True)
+    ours = reexec.run_child(argv, UNSET, "/srv/bin/app/", (), "/srv/bin/")
+
+    assert command == ("script", "/srv/bin/other.py", [])
+    assert foreign is False and ours is False
+    assert asked == ["_fsbpyr_scripts.other"]  # once, after the parent check

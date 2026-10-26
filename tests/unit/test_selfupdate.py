@@ -341,6 +341,20 @@ def test_man_page_and_completions_under_the_prefix_are_written_again(
     assert "left alone" in capsys.readouterr().err  # the hint for ones not found
 
 
+def test_placed_el8_stubs_of_the_old_release_are_named_in_a_warning(
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stub = installed.parent / "fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz"
+    stub.write_bytes(b"old stub")
+    github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
+
+    assert main(["self", "update"]) == 0
+
+    err = capsys.readouterr().err
+    assert stub.name in err and "belong to the old release" in err
+    assert stub.read_bytes() == b"old stub"  # the user's files are left alone
+
+
 def test_an_executable_outside_a_bin_directory_gets_the_hint_only(
     github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str]
@@ -384,3 +398,77 @@ def test_render_runs_the_new_executable_with_the_command(tmp_path: Path) -> None
     script.chmod(0o755)
 
     assert selfupdate._render(script, ("completion", "zsh")) == b"completion zsh\n"
+
+
+def _host_glibc(monkeypatch: pytest.MonkeyPatch, version: str) -> None:
+    monkeypatch.setattr(os, "confstr", lambda name: f"glibc {version}")
+
+
+def _binary_needing(tmp_path: Path, glibc: str) -> bytes:
+    out = tmp_path / "needs"
+    build_executable(FAKE_RUNTIME, App("fsbpyr", "fsbpyr.cli:main", dists=(),
+                                       build_info=(("glibc", glibc),)), out)  # fmt: skip
+    return out.read_bytes()
+
+
+def test_an_asset_needing_a_newer_glibc_than_the_hosts_is_never_installed(
+    github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    _host_glibc(monkeypatch, "2.28")
+    github.assets[f"{OWN}.xz"] = lzma.compress(_binary_needing(tmp_path, "2.34"))
+
+    assert main(["self", "update"]) == 1
+
+    err = capsys.readouterr().err
+    assert "needs glibc 2.34" in err and "glibc 2.28" in err and "Keep the current" in err
+    assert installed.read_bytes() == b"old"
+    assert sorted(p.name for p in installed.parent.iterdir()) == ["fsbpyr"]
+
+
+@pytest.mark.parametrize("host", ["2.34", "2.36", "2.100"])
+def test_an_asset_needing_the_hosts_glibc_or_less_is_installed(
+    github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    host: str
+) -> None:
+    _host_glibc(monkeypatch, host)
+    binary = _binary_needing(tmp_path, "2.34")
+    github.assets[f"{OWN}.xz"] = lzma.compress(binary)
+
+    assert main(["self", "update"]) == 0
+
+    assert installed.read_bytes() == binary
+
+
+@pytest.mark.parametrize(("baseline", "host", "refused"), [
+    ("2.34", "glibc 2.33", True), ("2.34", "glibc 2.34", False), ("2.9", "glibc 2.10", False),
+    ("2.10", "glibc 2.9", True), (None, "glibc 2.1", False), ("junk", "glibc 2.1", False),
+    ("2.34", "musl", False), ("2.34", "", False),
+])  # fmt: skip
+def test_the_glibc_guard_compares_numerically(
+    baseline: object, host: str, refused: bool
+) -> None:
+    if refused:
+        with pytest.raises(selfupdate.UpdateError, match="needs glibc"):
+            selfupdate.check_glibc(baseline, host)
+    else:
+        selfupdate.check_glibc(baseline, host)
+
+
+def test_the_guard_is_skipped_where_the_host_has_no_glibc(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def musl(name: str) -> str:
+        raise ValueError(name)
+
+    monkeypatch.setattr(os, "confstr", musl)
+
+    selfupdate.check_glibc("9.99")
+
+
+def test_unpack_stops_at_its_limit(tmp_path: Path) -> None:
+    packed = tmp_path / "big.xz"
+    packed.write_bytes(lzma.compress(b"\0" * 1_000_000))
+
+    with pytest.raises(selfupdate.UpdateError, match="unpacks to more than 1000 bytes"):
+        selfupdate.unpack(packed.as_uri(), tmp_path / "out", 1000)

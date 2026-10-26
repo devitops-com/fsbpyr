@@ -15,7 +15,8 @@ All integers are little-endian.
   bytes are inert.
 - `payload_offset` is a multiple of 65536 (4096 up to version 6), so that the payload can be
   mapped with `mmap` directly on kernels with 4K, 16K and 64K pages (version 7). Tested on
-  4K-page kernels only; no 16K or 64K kernel has been tried (owner decision 2026-10-21).
+  4K-page kernels; 16K- and 64K-page aarch64 kernels are smoke-tested in QEMU (`make test-vm`),
+  not on hardware.
 - The payload ends exactly where the trailer begins:
   `payload_offset + payload_size + 64 == file_size`.
 
@@ -96,13 +97,34 @@ equal), for two things:
 | 20 | 4 | bytecode magic (`importlib.util.MAGIC_NUMBER`) of the target CPython (3.12 to 3.15) |
 | 24 | 32 | `generation_id` (native cache generation, §7 of the plan) |
 | 56 | 8 | `app_name` — Str |
-| 64 | 8 | `entrypoint` — Str (`module:attr` or `module`) |
+| 64 | 8 | `entrypoint` — Str (`module:attr` or `module`; for several commands, newline-separated `name=target` lines, see below) |
 | 72 | 8 | `build_info` — Str (JSON for `inspect`; the runtime reads its `resources` key, D27) |
 | 80 | 8 × 16 | section table: `(u64 offset, u64 count)` for each section below, in this order |
 
 **Str** is `(u32 offset, u32 length)` into the string table. Every string is stored as UTF-8
 followed by one NUL byte, which the length does not count, so C code can use `strtab + offset`
 directly as a C string.
+
+**Several commands.** A build of a project with several console scripts stores them in
+`entrypoint` as lines `name=target`, a target being `module:attr` or `module`, sorted by name;
+a single command stays the plain target. The launcher treats the entrypoint as an opaque string
+(`format_version` stays 7: the boot code stored in the same file reads the table). A name matches
+`[A-Za-z0-9][A-Za-z0-9_.+-]*`, so no name contains `=` or a newline; the writer rejects only NUL.
+At start the boot code picks the command from `argv[0]`'s basename (also without `.py`), else
+from `argv[1]` as an exact name, which it removes from `sys.argv`. A start that names no command lists them on stderr (`usage: NAME COMMAND [ARGUMENT...]`) and exits with status 2; an argument that is a path is never a command (it is the restart idiom or a file argument). `argv[0]` is the name a link was started under.
+
+**Scripts.** A target below the module `_fsbpyr_scripts` (a project without a build system, a directory of scripts or a single script, README
+"Projects without a build system", "A directory of scripts", "A single script") is started after the boot code puts the target's module
+directory (`<exe>/` and the dotted name's path without its last part) first on `sys.path`; a
+target without `:attr` is run as `__main__` and the selftest only finds it, never imports it. A
+directory below `_fsbpyr_scripts` whose name is no Python name (`sub-dir`) is recorded under its
+mangled name (`sub_dir`; likewise a file `check-disk` is `check_disk.py`: each character no
+identifier holds becomes `_`, a leading `_` for a digit); the path hook maps an entry named by the on-disk name to the
+recorded one, so modules are still looked up by exact dotted names. A module of this root has
+`__file__` and `spec.origin` `<dir of the executable>/<path below the root>` (a file next to the
+executable, D24), and the path hook claims those directories too (entries with `..` or `.` components are normalized first), so the code is the payload's
+while the files a script reads next to `__file__` are the host's; its code objects keep the
+payload's `co_filename`. No format change.
 
 All offsets inside the payload are relative to the payload start. The value `0xFFFFFFFF`
 (`NONE`) means "no reference" in every u32 index field.
@@ -303,9 +325,9 @@ project's directory: nothing in it names the builder's paths, time or host.
 | Key | Content |
 |-----|---------|
 | `schema` | `1`. Incremented when a key changes meaning, never for a new key |
-| `lock` | `{kind, path, sha256, hashed}`: `kind` is `uv.lock`, `pylock.toml`, `requirements` or `unlocked`; `path` is relative to the project directory (`../uv.lock` for a workspace member), null if unlocked; `sha256` is of the file; `hashed` says whether it pins artifact hashes |
-| `dists` | `[{name, version, source, artifact_sha256}]`, sorted by name |
-| `runtime` | the runtime's id, `cp<python>-<triple>-<12 hex digits>` (a digest of the launcher, the PBS archive, the sysroot and the layout version) |
+| `lock` | `{kind, path, sha256, hashed}`: `kind` is `uv.lock`, `script.lock` (uv's `<script>.lock` beside a single script), `pylock.toml`, `requirements`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, `inferred` or `unlocked`; `path` is relative to the project directory (`../uv.lock` for a workspace member), null if unlocked; `sha256` is of the file; `hashed` says whether it pins artifact hashes (a `Pipfile.lock` does, but its hashes carry no file names, so a distribution of it has no `artifact_sha256`). For `inferred` (a directory of scripts or a single script that declared nothing, whose versions were read from the venv it runs in), `path` is that venv, relative to the project directory (just its directory name when it lies outside), `sha256` is null, `hashed` is false and `pins` lists the `name==version` pins installed |
+| `dists` | `[{name, version, source, artifact_sha256, backend}]`, sorted by name: `artifact_sha256` where the lock names the artifact, `backend` for `built-from-sdist` only |
+| `runtime` | the runtime's id, `cp<python>-<triple>-<12 hex digits>` (a digest of the launcher, the PBS archive, the sysroot and the layout version: the default Debian 12 sysroot and the EL8 one (`--glibc 2.28`) give different ids); the stub records it too (`fsbpyr-stub-identity=<id>` in its `.rodata`), which is how a build proves a stub it was handed is the one of its own release (D46) |
 | `runtime_tag` | the PBS distribution's tag and the target triple (`<tag>-<triple>`); it seeds `generation_id` |
 | `python` | the target CPython's version (3.12 to 3.15) |
 | `extension_suffixes` | the file name suffixes the runtime's interpreter imports extension modules by, in its order; asked of the interpreter itself since 0.25.0, as PYTHON.json's list lags (3.15.1's lacks `.abi3t.so`) |
@@ -314,8 +336,9 @@ project's directory: nothing in it names the builder's paths, time or host.
 | `resources` | `sha256` over every payload file's path, content digest and mode, cut to 32 hex digits: the name of the tree where resources extracted on demand live (D27) |
 | `runtime_inputs` | `{pbs: {release, name, sha256}, sysroot, layout}`: the python-build-standalone archive and the glibc sysroot the runtime was made from, and its layout version |
 | `runtime_components` | versions the runtime's interpreter reports: `openssl`, `sqlite`, `zlib`, `expat`, `libmpdec`. Read once when the runtime is built; an executable that builds another passes them on |
-| `stub_sha256` | SHA-256 of the bytes before the payload (the stub and its zero padding): `head -c <payload_offset> app \| sha256sum`. The same in every app built by the same fsbpyr release; there is no digest of the builder |
+| `stub_sha256` | SHA-256 of the bytes before the payload (the stub and its zero padding): `head -c <payload_offset> app \| sha256sum`. The same in every app built by the same fsbpyr release for the same glibc baseline (the EL8 stub differs from the default one, D46); there is no digest of the builder |
 | `settings` | `{entry, fs_packages, allow_system_libs, extras, include_source}`: `fs_packages` is the effective list (the built-in packages and the configured ones) |
+| `glibc_baseline` | only in an app built with `--glibc 2.28` (D46): the glibc baseline it is built for, `"2.28"`; an app without the key is built for the default, 2.34; the stub for it is a separate release asset (`fsbpyr-stub-3.X-<target>-glibc2.28`) or one placed next to fsbpyr, and a build accepts it only if its embedded `fsbpyr-stub-identity` equals the runtime id. `fsbpyr inspect --json` reports it as `glibc_baseline` for every app |
 | `release_asset` | only in fsbpyr's own executable: the release asset (without `.xz`) it is released as, `fsbpyr-3.X-<target>` (e.g. `fsbpyr-3.14-x86_64-linux-gnu`), the target being the host's name from the target table, which `fsbpyr self update` fetches the same Python's build of. 0.21.0 recorded `fsbpyr-<target>` for the newest Python (published until 0.21.0 only); a value that is not today's form makes `self update` use the asset of the Python the executable runs on |
 | `project` | `{name, version}` of the application |
 | `fsbpyr_version` | the builder's version, with the commit where there is one (`fsbpyr inspect`) |

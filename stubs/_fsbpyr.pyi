@@ -10,6 +10,7 @@ class CacheError(ImportError): ...
 
 class Info(TypedDict):
     executable: str
+    execfn: str | None
     app_name: str
     entrypoint: str
     build_info: str

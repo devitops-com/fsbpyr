@@ -181,3 +181,43 @@ def test_build_information_lists_guessed_libraries_apart_from_needs() -> None:
         "may_load": {"libmagic": ["a.py", "b.py"]},
     }
     assert system_info({}, SystemUse()) == {"libraries": {}}  # nothing guessed: no key
+
+
+@pytest.mark.parametrize(("target", "gcc"), [("x86_64-linux-gnu", (7, 0, 0)),
+                                             ("aarch64-linux-gnu", (7, 0, 0))])  # fmt: skip
+def test_each_target_has_auditwheels_manylinux_2_28_limits(
+    target: str, gcc: tuple[int, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """auditwheel's manylinux-policy.json, read on 2026-10-25."""
+    monkeypatch.setattr("fsbpyr.natives.host_target", lambda: target_named(target))
+
+    assert manylinux_limits("2.28") == {"GLIBCXX": (3, 4, 24), "CXXABI": (1, 3, 11), "GCC": gcc,
+                                        "ZLIB": (1, 2, 9)}  # fmt: skip
+
+
+def test_the_2_28_floors_are_older_than_the_2_34_ones_in_every_namespace() -> None:
+    old, new = manylinux_limits("2.28"), manylinux_limits("2.34")
+
+    assert old.keys() == new.keys()
+    assert all(old[namespace] <= new[namespace] for namespace in old)
+    assert old["GLIBCXX"] < new["GLIBCXX"] and old["CXXABI"] < new["CXXABI"]
+
+
+def test_a_libstdcxx_within_the_2_34_floor_warns_for_the_2_28_baseline() -> None:
+    newer = ("libstdc++.so.6", ("GLIBCXX_3.4.25", "CXXABI_1.3.11"))  # gcc 9, not RHEL 8's 8.5
+    use, _ = _reach({EXT: make_elf(needed=("libstdc++.so.6",), versions=(newer,))})
+
+    assert system_report(STUB_2_28, use)[1] == []  # the default: manylinux_2_34 allows 3.4.29
+    [warning] = system_report(STUB_2_28, use, "2.28")[1]
+    assert warning == (
+        f"{EXT} needs GLIBCXX_3.4.25 from libstdc++.so.6, newer than GLIBCXX_3.4.24 that "
+        "manylinux_2_28 systems (RHEL 8) provide; on older systems it fails when imported")
+
+
+def test_an_unknown_cxxabi_marker_names_the_baselines_policy() -> None:
+    odd = ("libstdc++.so.6", ("GLIBCXX_3.4.22", "CXXABI_ARM_1.3.3"))
+    use, _ = _reach({EXT: make_elf(needed=("libstdc++.so.6",), versions=(odd,))})
+
+    [warning] = system_report(STUB_2_28, use, "2.28")[1]
+
+    assert "manylinux_2_28 systems may not provide" in warning

@@ -4,7 +4,7 @@ import csv
 import posixpath
 import re
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from .closure import InstalledDist
 from .compiler import Compiled, Compiler, Job, compiled, compressed
 from .elf import ElfError, glibc_requirement, is_elf, is_executable, is_foreign
+from .loose import ROOT
 from .natives import NativeError, SystemUse, closures, is_extension_module, opened
 from .payload.format import (
     NATIVE_KINDS,
@@ -124,6 +125,17 @@ def module_name(rel: str) -> tuple[str, bool] | None:
     return ".".join(parts), is_package
 
 
+def _unimportable_warning(dist: InstalledDist, rel: str) -> list[str]:
+    """A warning for a ``.py`` file of the project that is stored as a file because a directory
+    above it is no Python name (``pkg/sub-dir/c.py``): no import reaches it."""
+    if rel.startswith(f"{dist.dist_info}/") or all(
+        part.isidentifier() for part in rel.split("/")[:-1]
+    ):
+        return []
+    return [f"{rel} is stored as a file, not as a module: a directory name is not a valid "
+            "Python name, so no import reaches it"]  # fmt: skip
+
+
 def extension_name(rel: str, suffixes: tuple[str, ...]) -> tuple[str, bool, int] | None:
     """Dotted name, is-package flag (``__init__`` compiled by Cython and the like) and suffix
     rank of an extension module file, if importable. CPython calls ``PyInit_<stem>``, so a
@@ -163,6 +175,21 @@ def _outside_directory(rel: str) -> str:
     return parts[0] if parts else ""
 
 
+def _legacy_script_warnings(dist: InstalledDist) -> list[str]:
+    """One warning for each file the project installs under bin/ that is neither a console or
+    gui script nor a legacy script that starts with ``#!python`` (setup.py ``scripts=``, a shell
+    script say): the bin/ exemption drops them."""
+    entry_scripts = {*dist.console_scripts(), *dist.gui_scripts(), *dist.legacy}
+    legacy = sorted({
+        PurePosixPath(rel).name for rel in map(_record_path, dist.record)
+        if _outside(rel) and _outside_directory(rel) == "bin"
+        and PurePosixPath(rel).name not in entry_scripts
+    })  # fmt: skip
+    return [f"{dist.name}: legacy script {name} is not packaged (only a legacy script that "
+            f"starts with #!python is; use [project.scripts] console scripts or --entry)"
+            for name in legacy]
+
+
 def _packaged(rel: str) -> bool:
     parts = PurePosixPath(rel).parts
     return bool(parts) and not (
@@ -182,8 +209,10 @@ class _Collector:
         spill: Spill | None = None,
         runtime_modules: frozenset[str] = frozenset(),
         project: str | None = None,
+        origins: Mapping[str, str] | None = None,
     ) -> None:
         self.runtime_modules = runtime_modules  # found before the payload's (assemble)
+        self.origins = origins or {}  # scripts root: payload path -> project file, if renamed
         self.project = project  # the project's distribution: its clashes fail the build
         self.level = level  # zstd level of every blob
         self.xz_natives = xz_natives  # native files as xz instead (D33)
@@ -286,6 +315,8 @@ class _Collector:
                 )
             if rel != f"{info}/RECORD":
                 self._add_path(dist, rel)
+        if dist.name == self.project:
+            self.warnings += _legacy_script_warnings(dist)
         if outside:
             where = ", ".join(f"{directory}/" for directory in sorted(outside))
             self.warnings.append(
@@ -316,6 +347,8 @@ class _Collector:
                     else "not an ELF shared object")  # fmt: skip
             self.warnings.append(f"{dist.name}: {rel} kept as data ({what})")
         names = self._names(rel, module_name) if rel.endswith(".py") else []
+        if rel.endswith(".py") and not names and dist.name == self.project:
+            self.warnings += _unimportable_warning(dist, rel)
         large = path.stat().st_size > _IN_MEMORY
         if names and large:  # compiling needs it whole (D38)
             self.warnings.append(f"{dist.name}: {rel} kept as data (over {_IN_MEMORY >> 20} MiB: "
@@ -337,7 +370,7 @@ class _Collector:
         self, dist: InstalledDist, rel: str, names: list[tuple[tuple[str, bool], int]], path: Path
     ) -> bool:
         tests = _TEST_DIRECTORIES.intersection(rel.split("/")[:-1])  # tests are never imported
-        hints = self.hints and not tests
+        hints = self._reads_wanted(rel) and not tests
         result = self._compiled(dist, rel, path, hints)
         if result.code is None:
             message, line = result.error or ("does not compile", None)
@@ -345,8 +378,12 @@ class _Collector:
             if names[0][0][1]:  # CPython cannot import this package either: no namespace stand-in
                 self.broken.add(rel.rpartition("/")[0])
             return False
+        if dist.name == self.project:  # the app's own files; a dependency's stay silent
+            self.warnings += [f"{self._shown(rel)}:{line}: {text}"
+                              for line, text in result.warnings]  # fmt: skip
         if hints:
             self.reads += [(dist.name, rel, line) for line in result.reads]
+        if hints and self.hints:
             for library in result.libraries:
                 self.system.may_load.setdefault(library, set()).add(rel)
         source = None
@@ -366,6 +403,17 @@ class _Collector:
             self.files[rel] = File(rel, FileKind.SOURCE, source, dist=dist.name)
         self.owners[rel] = dist.name
         return True
+
+    def _reads_wanted(self, rel: str) -> bool:
+        """Whether the reads next to ``__file__`` of this module are looked for: with --hints,
+        and always in the project's scripts (add_hints)."""
+        return self.hints or rel.startswith(f"{ROOT}/")
+
+    def _shown(self, rel: str) -> str:
+        """A module of the scripts root as the project names its file."""
+        if not rel.startswith(f"{ROOT}/"):
+            return rel
+        return self.origins.get(rel, rel.removeprefix(f"{ROOT}/"))
 
     def _compiled(self, dist: InstalledDist, rel: str, path: Path, hints: bool) -> Compiled:
         if self.compiler is not None:
@@ -388,7 +436,7 @@ class _Collector:
                 if path.stat().st_size > _IN_MEMORY:
                     continue
                 tests = _TEST_DIRECTORIES.intersection(rel.split("/")[:-1])
-                jobs.append(Job((dist.name, rel), path, rel, self.hints and not tests))
+                jobs.append(Job((dist.name, rel), path, rel, self._reads_wanted(rel) and not tests))
         return jobs
 
     def _prevails(self, name: str, rank: tuple[int, bool, int], dist: str) -> bool:
@@ -528,10 +576,23 @@ class _Collector:
 
     def add_hints(self) -> None:
         """Warnings for code that probably needs its files on disk (fs-packages)."""
+        self._hint_script_reads()
         if self.hints:
             self._hint_file_reads()
         self._hint_unused_natives()
         self._hint_executables()
+
+    def _hint_script_reads(self) -> None:
+        """The reads next to ``__file__`` in the project's scripts (decision 5.7(a), reversed
+        2026-10-25: their ``__file__`` is next to the executable): the executable holds their
+        Python files only, so a file they read there is the host's, deployed beside it."""
+        for _, rel, line in sorted(self.reads):
+            if rel.startswith(f"{ROOT}/"):
+                self.warnings.append(
+                    f"{self._shown(rel)}:{line}: reads a file next to its own __file__, which "
+                    "is read next to the executable (the executable holds only the project's "
+                    "Python files): deploy the file there, beside the binary"
+                )
 
     def _hint_file_reads(self) -> None:
         # (directory, name) of regular packages; sorted, the outermost container comes first
@@ -672,13 +733,14 @@ def classify(  # noqa: PLR0913  the build options, keyword-only
     spill: Spill | None = None,
     runtime_modules: frozenset[str] = frozenset(),
     project: str | None = None,
+    origins: Mapping[str, str] | None = None,
 ) -> Content:
     """With ``spill``, no file's bytes stay in memory: they are compressed into it, the
     largest a piece at a time from their files (D38); the files must outlive the build.
     A module in ``runtime_modules`` is kept as a file, unless ``project`` installs it."""
     collector = _Collector(extension_suffixes, include_source, hints=hints, level=level,
                            xz_natives=xz_natives, spill=spill, runtime_modules=runtime_modules,
-                           project=project)  # fmt: skip
+                           project=project, origins=origins)  # fmt: skip
     collector.read_pth_files(dists)
     collector.compiler = Compiler(collector.module_jobs(dists), level=level,
                                   include_source=include_source)  # fmt: skip

@@ -8,7 +8,14 @@ import pytest
 
 from fsbpyr.config import BuildConfig, ConfigError, load_config
 from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL
-from fsbpyr.project import LockSource, Project, ProjectError, unpinned_requirements
+from fsbpyr.project import (
+    LockSource,
+    Project,
+    ProjectError,
+    has_hash_option,
+    unpinned_requirements,
+    vcs_requirements,
+)
 from fsbpyr.staging import (
     EPOCH_FLOOR,
     SOURCE_DATE_EPOCH,
@@ -17,6 +24,7 @@ from fsbpyr.staging import (
     StagingOptions,
     StagingPlan,
     find_uv,
+    leave_tree_unchanged,
     rebuild,
     rebuild_wheel,
     run_plan,
@@ -41,6 +49,10 @@ dependencies = ["click>=8"]
 
 [project.scripts]
 hello = "hello_app.cli:main"
+
+[build-system]
+requires = ["uv_build"]
+build-backend = "uv_build"
 
 [tool.fsbpyr]
 extras = ["fancy"]
@@ -109,6 +121,13 @@ def test_setup_py_projects_are_accepted(tmp_path: Path) -> None:
     project = Project.load(tmp_path)
 
     assert (project.name, project.scripts, project.requires_python) == (None, {}, None)
+
+
+def test_setup_cfg_alone_is_rejected_before_uv_runs(tmp_path: Path) -> None:
+    (tmp_path / "setup.cfg").write_text("[metadata]\nname = legacy\n")
+
+    with pytest.raises(ProjectError, match=r"setup\.cfg but no pyproject\.toml or setup\.py"):
+        Project.load(tmp_path)
 
 
 def test_directory_without_project_files_is_rejected(tmp_path: Path) -> None:
@@ -184,6 +203,36 @@ def test_a_compression_flag_on_the_command_line_wins_over_the_project(tmp_path: 
     config = load_config(project, fast_compression=True)
 
     assert (config.fast_compression, config.best_compression) == (True, False)
+
+
+def test_glibc_defaults_to_2_34_and_comes_from_the_project_or_the_command_line(
+    tmp_path: Path,
+) -> None:
+    default = load_config(Project.load(_project(tmp_path, PYPROJECT)))
+    project = Project.load(_project(tmp_path, PYPROJECT + 'glibc = "2.28"\n'))
+
+    assert default.glibc == "2.34"
+    assert load_config(project).glibc == "2.28"
+    assert load_config(project, glibc="2.34").glibc == "2.34"  # the command line wins, both ways
+    assert load_config(Project.load(_project(tmp_path, PYPROJECT)), glibc="2.28").glibc == "2.28"
+    assert load_config(project, glibc=None).glibc == "2.28"  # unset on the command line
+
+
+@pytest.mark.parametrize("value", ['"2.17"', '"2.28 "', '""', '"2.36"'])
+def test_an_unknown_glibc_is_rejected_with_the_allowed_ones(tmp_path: Path, value: str) -> None:
+    project = Project.load(_project(tmp_path, PYPROJECT + f"glibc = {value}\n"))
+
+    with pytest.raises(ConfigError, match=r"glibc .* is not a glibc fsbpyr builds for; "
+                       r"supported: 2\.34, 2\.28"):
+        load_config(project)
+
+
+@pytest.mark.parametrize("value", ["2.28", "228", "true", '["2.28"]'])
+def test_glibc_must_be_a_string(tmp_path: Path, value: str) -> None:
+    project = Project.load(_project(tmp_path, PYPROJECT + f"glibc = {value}\n"))
+
+    with pytest.raises(ConfigError, match=r"glibc has the wrong type"):
+        load_config(project)
 
 
 def test_allowed_system_libs_come_from_tool_table_or_cli(tmp_path: Path) -> None:
@@ -265,6 +314,51 @@ def test_requirements_without_a_double_equals_are_unpinned(tmp_path: Path) -> No
                                            "url-dep @ https://x/y.whl"]  # fmt: skip
 
 
+SHA = "a" * 40
+
+
+def test_commit_pinned_and_hashed_urls_are_pinned_but_editable_paths_are_not(
+    tmp_path: Path,
+) -> None:
+    text = (f"vcs @ git+https://h/r.git@{SHA}\ngit+https://h/o.git@{SHA}#egg=old\n"
+            f"-e git+https://h/e.git@{SHA}#egg=ed\n"
+            f"url @ https://h/y.whl#sha256={'b' * 64}\n"
+            "branch @ git+https://h/b.git@main\n-e ./libs/common\nexact==1.0\nloose>=1\n")
+    path = tmp_path / "requirements.txt"
+    path.write_text(text)
+
+    assert unpinned_requirements(path) == ["branch @ git+https://h/b.git@main",
+                                           "-e ./libs/common", "loose>=1"]  # fmt: skip
+
+
+def test_vcs_requirements_name_file_and_line(tmp_path: Path) -> None:
+    path = tmp_path / "requirements.txt"
+    path.write_text(f"a==1\n# c\nb @ git+https://h/r.git@{SHA} \\\n  --hash=sha256:ab\n"
+                    "-e git+https://h/e.git#egg=e\nplain\n")
+
+    assert vcs_requirements(path) == [f"requirements.txt:3: b @ git+https://h/r.git@{SHA}",
+                                      "requirements.txt:5: -e git+https://h/e.git#egg=e"]
+
+
+def test_a_requirement_ending_on_a_backslash_is_still_read(tmp_path: Path) -> None:
+    path = tmp_path / "requirements.txt"
+    path.write_text("a==1\nloose \\")
+
+    assert unpinned_requirements(path) == ["loose"]
+
+
+def test_leave_tree_unchanged_removes_only_what_the_build_created(tmp_path: Path) -> None:
+    (tmp_path / "src" / "old.egg-info").mkdir(parents=True)
+    with leave_tree_unchanged(tmp_path):
+        (tmp_path / "flat.egg-info").mkdir()
+        (tmp_path / "src" / "new.egg-info").mkdir()
+        (tmp_path / "src" / "old.egg-info" / "PKG-INFO").write_text("x")
+        (tmp_path / "build").mkdir()
+
+    assert sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*")) == [
+        "src", "src/old.egg-info", "src/old.egg-info/PKG-INFO"]  # fmt: skip
+
+
 # --- staging ---------------------------------------------------------------------------------
 
 UV = Path("/u/uv")
@@ -275,7 +369,6 @@ UV_BUILD = [
     "{work}/wheel",
     "--python",
     "3.14",
-    "--quiet",
     "{project}",
 ]
 UV_VENV = ["/u/uv", "venv", "--python", "3.14", "--quiet", "{work}/stage"]
@@ -303,7 +396,7 @@ def test_uv_lock_syncs_dependencies_then_installs_the_fresh_wheel(tmp_path: Path
     assert plan.env == {"UV_PROJECT_ENVIRONMENT": str(stage),
                         SOURCE_DATE_EPOCH: str(EPOCH_FLOOR)}  # fmt: skip
     assert plan.build == ["/u/uv", "build", "--out-dir", str(work / "wheel"), "--python", "3.14",
-                          "--offline", "--quiet", str(tmp_path)]  # fmt: skip
+                          "--offline", str(tmp_path)]  # fmt: skip
     assert plan.install == [
         ["/u/uv", "sync", "--locked", "--no-dev", "--no-default-groups", "--no-editable",
          "--no-install-project", "--python", "3.14", "--project", str(tmp_path),
@@ -318,7 +411,7 @@ def test_uv_lock_syncs_dependencies_then_installs_the_fresh_wheel(tmp_path: Path
     [
         (LockSource.PYLOCK, [UV_VENV, [*UV_STAGE, "-r", "{project}/pylock.toml"],
                              [*UV_STAGE, "--no-deps", "{wheel}"]]),
-        (LockSource.REQUIREMENTS, [UV_VENV, [*UV_STAGE, "--require-hashes", "-r",
+        (LockSource.REQUIREMENTS, [UV_VENV, [*UV_STAGE, "--require-hashes", "--no-editable", "-r",
                                              "{project}/requirements.txt"],
                                    [*UV_STAGE, "--no-deps", "{wheel}"]]),
         (LockSource.UNLOCKED, [UV_VENV, [*UV_STAGE, "{wheel}"]]),
@@ -665,3 +758,8 @@ def test_the_source_date_reaches_the_staging_and_the_rebuild(tmp_path: Path) -> 
 
     assert seen.read_text().splitlines() == [f"{step} {EPOCH_FLOOR}" for step in
                                              ("build", "install", "install", "build")]  # fmt: skip
+
+
+def test_a_hash_in_a_comment_is_no_hash_option() -> None:
+    assert not has_hash_option("# pin with --hash=sha256:00 later\nfoo==1\n")
+    assert has_hash_option("foo==1 \\\n    --hash=sha256:00\n")

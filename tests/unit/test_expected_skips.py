@@ -72,7 +72,7 @@ def test_an_unknown_list_is_a_usage_error(
 
     assert result.ret == pytest.ExitCode.USAGE_ERROR
     result.stderr.fnmatch_lines(
-        ["*FSBPYR_TESTS_REQUIRE_ALL=cl: no such list (container, full, portability)*"]
+        ["*FSBPYR_TESTS_REQUIRE_ALL=cl: no such list (container, full, el8, portability)*"]
     )
 
 
@@ -82,6 +82,20 @@ def test_container_expects_only_the_skips_of_a_stage_without_podman(
     suite.makepyfile(test_nested="import pytest\n\n@pytest.mark.skip(reason='needs podman')\n"
                      "def test_nested():\n    pass\n")  # fmt: skip
     monkeypatch.setenv(REQUIRE_ALL, "container")
+    assert suite.runpytest().ret == pytest.ExitCode.OK
+
+    _probe(suite)
+
+    assert suite.runpytest().ret == pytest.ExitCode.TESTS_FAILED
+
+
+def test_el8_expects_the_skips_of_a_container_without_podman_and_no_other(
+    suite: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """el8.yml's tests job: the full suite's container, minus podman."""
+    suite.makepyfile(test_nested="import pytest\n\n@pytest.mark.skip(reason='needs podman')\n"
+                     "def test_nested():\n    pass\n")  # fmt: skip
+    monkeypatch.setenv(REQUIRE_ALL, "el8")
     assert suite.runpytest().ret == pytest.ExitCode.OK
 
     _probe(suite)

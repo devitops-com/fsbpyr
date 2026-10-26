@@ -1,6 +1,7 @@
 """tests/support/downloads.py: the pinned downloads one e2e session keeps for the next."""
 
 import hashlib
+import json
 from pathlib import Path
 
 from ..support import downloads
@@ -60,3 +61,29 @@ def test_a_second_session_finds_what_the_first_kept(tmp_path: Path) -> None:
     status = downloads.seed(PINNED, keep, tmp_path / "cache2")
 
     assert set(status.values()) == {"seeded"}
+
+
+def _runtime_directory(cache: Path, name: str, baseline: str | None) -> Path:
+    directory = cache / "runtimes" / name
+    directory.mkdir(parents=True)
+    meta = {} if baseline is None else {"baseline": baseline}
+    (directory / "runtime.json").write_text(json.dumps(meta))
+    return directory
+
+
+def test_pruning_a_runtime_spares_the_other_glibc_baselines(tmp_path: Path) -> None:
+    triple = "x86_64-unknown-linux-gnu"
+    default = _runtime_directory(tmp_path, f"cp314-{triple}-aaaaaaaaaaaa", "2.34")
+    old = _runtime_directory(tmp_path, f"cp314-{triple}-bbbbbbbbbbbb", "2.34")
+    unrecorded = _runtime_directory(tmp_path, f"cp314-{triple}-cccccccccccc", None)  # the default's
+    el8 = _runtime_directory(tmp_path, f"cp314-{triple}-dddddddddddd", "2.28")
+    other_python = _runtime_directory(tmp_path, f"cp313-{triple}-eeeeeeeeeeee", "2.34")
+
+    downloads.prune_runtimes(tmp_path, default.name)
+
+    assert not old.exists() and not unrecorded.exists()  # replaced by the current one
+    assert default.exists() and el8.exists() and other_python.exists()
+
+    downloads.prune_runtimes(tmp_path, f"cp314-{triple}-ffffffffffff", "2.28")
+
+    assert not el8.exists() and default.exists()

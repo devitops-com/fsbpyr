@@ -6,6 +6,7 @@ import re
 import sys
 import tempfile
 import types
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from fsbpyr.build import (
     BuildError,
     StrictError,
     _provenance,
+    baseline_record,
     best_compression_unused,
     build,
     builder_uv,
@@ -21,6 +23,7 @@ from fsbpyr.build import (
     check_strict,
     glibc_report,
     helper_interpreter_hints,
+    lock_warnings,
     rebuild_on_baseline,
     smoke_run,
     smoke_test,
@@ -40,6 +43,10 @@ from fsbpyr.staging import StagingError, StagingPlan
 
 from ...support.elf import make_elf
 from ..boot.conftest import FAKE_RUNTIME
+
+# a project without [build-system] is built by fsbpyr itself (loose.py): these use uv's build
+APP_PROJECT = ('[project]\nname = "app"\nversion = "1"\n'
+               '[build-system]\nrequires = ["uv_build"]\nbuild-backend = "uv_build"\n')
 
 
 def _script(path: Path, body: str) -> Path:
@@ -101,9 +108,10 @@ def test_build_without_project_files_fails_cleanly(
 def test_builds_without_uv_fail_before_looking_for_a_runtime(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "pyproject.toml").write_text(APP_PROJECT)
+    (tmp_path / "app.py").write_text("if __name__ == '__main__':\n    pass\n")  # an entry candidate
     monkeypatch.setattr("shutil.which", lambda name: None)
-    monkeypatch.setattr("fsbpyr.build.select_runtime", lambda version: pytest.fail("runtime"))
+    monkeypatch.setattr("fsbpyr.build.select_runtime", lambda *_, **__: pytest.fail("runtime"))
 
     with pytest.raises(StagingError, match="needs uv"):
         build(tmp_path, BuildConfig())
@@ -113,14 +121,15 @@ def _stand_ins(monkeypatch: pytest.MonkeyPatch) -> None:
     """uv and the runtime: build() runs neither, and builds for the boot tests' stand-in."""
     monkeypatch.setattr("fsbpyr.build.find_uv", lambda: Path("uv"))
     monkeypatch.setattr("fsbpyr.build.uv_version", lambda uv: "0.13.1")
-    monkeypatch.setattr("fsbpyr.build.select_runtime", lambda version: FAKE_RUNTIME)
+    monkeypatch.setattr("fsbpyr.build.select_runtime", lambda *_, **__: FAKE_RUNTIME)
     monkeypatch.setattr("fsbpyr.build.git_state", lambda directory, warn: None)
 
 
 def test_an_error_carries_the_warnings_collected_before_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "pyproject.toml").write_text(APP_PROJECT)
+    (tmp_path / "app.py").write_text("if __name__ == '__main__':\n    pass\n")  # an entry candidate
     _stand_ins(monkeypatch)
 
     def run_plan(plan: StagingPlan, project_dir: Path, **_: object) -> Path:
@@ -134,6 +143,20 @@ def test_an_error_carries_the_warnings_collected_before_it(
     assert caught.value.__notes__ == ["unlocked build: dependencies resolved now, not reproducible"]
 
 
+def test_split_requirements_files_get_one_hint_naming_the_option(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(APP_PROJECT)
+    (tmp_path / "requirements").mkdir()
+    for name in ("base.txt", "prod.txt"):
+        (tmp_path / "requirements" / name).write_text("")
+
+    warnings = lock_warnings(Project.load(tmp_path), LockSource.UNLOCKED, None)
+
+    assert len(warnings) == 2
+    assert "--requirements requirements/<file>" in warnings[1]
+    assert "base.txt, prod.txt" in warnings[1]
+    assert isinstance(warnings[1], Uncounted)
+
+
 APP = {"app/__init__.py": "", "app/cli.py": "def main():\n    pass\n"}
 
 
@@ -141,7 +164,7 @@ def _staged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sources: dict[str, 
     """A project whose staging installs ``sources`` as the distribution "app"; its directory."""
     project = tmp_path / "project"
     project.mkdir()
-    (project / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (project / "pyproject.toml").write_text(APP_PROJECT)
     _stand_ins(monkeypatch)
 
     def run_plan(plan: StagingPlan, project_dir: Path, **_: object) -> Path:
@@ -149,7 +172,10 @@ def _staged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sources: dict[str, 
             (plan.site / rel).parent.mkdir(parents=True, exist_ok=True)
         _installed(plan.site, "app", "py3-none-any",
                    {rel: text.encode() for rel, text in sources.items()})  # fmt: skip
-        return plan.wheel_dir / "app-1-py3-none-any.whl"
+        wheel = plan.wheel_dir / "app-1-py3-none-any.whl"
+        wheel.parent.mkdir(parents=True, exist_ok=True)
+        zipfile.ZipFile(wheel, "w").close()  # an empty wheel: the build reads its .data/scripts
+        return wheel
 
     monkeypatch.setattr("fsbpyr.build.run_plan", run_plan)
     return project
@@ -268,7 +294,7 @@ STUB_2_25 = make_elf(versions=(("libc.so.6", ("GLIBC_2.2.5", "GLIBC_2.25")),))
         (((2, 36), "a/_new.so"), "2.36", True),
     ],
 )
-def test_glibc_requirement_is_the_highest_of_stub_and_natives(
+def test_glibc_requirement_is_the_highest_of_stub_natives_and_baseline(
     natives: tuple[tuple[int, int], str] | None, expected: str, warns: bool
 ) -> None:
     requirement, warnings = glibc_report(STUB_2_25, natives, baseline=(2, 34))
@@ -485,7 +511,7 @@ def test_dists_built_here_from_sdists_are_named_in_one_line_that_is_no_warning(
         + "b" * 64
         + '" }]\n'
     )
-    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "pyproject.toml").write_text(APP_PROJECT)
     (tmp_path / "uv.lock").write_text(lock)
     site = tmp_path / "site"
     info = site / "pure-1.0.dist-info"
@@ -530,3 +556,26 @@ def test_libraries_starting_helper_interpreters_are_named_unless_the_build_runs_
 def test_no_hint_with_interpreter_reexec_or_without_such_a_library() -> None:
     assert helper_interpreter_hints(_modules("joblib.externals.loky"), True) == []
     assert helper_interpreter_hints(_modules("numpy", "joblib"), None) == []
+
+
+def test_a_native_file_above_the_2_28_baseline_warns_with_that_baseline() -> None:
+    natives = ((2, 31), "a/_new.so")
+
+    requirement, warnings = glibc_report(STUB_2_25, natives, baseline=(2, 28))
+
+    assert requirement == "2.31"
+    assert warnings == ["a/_new.so needs glibc 2.31, more than the 2.28 baseline; on older "
+                        "systems it fails when imported"]  # fmt: skip
+    assert glibc_report(STUB_2_25, natives, baseline=(2, 34))[1] == []
+
+
+def test_the_default_baseline_adds_nothing_to_build_info() -> None:
+    assert baseline_record("2.34") == ()
+    assert baseline_record("2.28") == (("glibc_baseline", "2.28"),)
+
+
+def test_a_launcher_older_than_the_2_28_baseline_still_reports_2_28() -> None:
+    """The EL8 stub is linked against glibc 2.28's headers and may use older symbols only; the
+    app is built and tested for 2.28, which the summary says."""
+    assert glibc_report(STUB_2_25, None, baseline=(2, 28)) == ("2.28", [])
+    assert glibc_report(STUB_2_25, ((2, 17), "a/_x.so"), baseline=(2, 28)) == ("2.28", [])

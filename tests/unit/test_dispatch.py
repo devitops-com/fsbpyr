@@ -2,6 +2,7 @@
 fetched from a fake release server on localhost (nothing reaches GitHub)."""
 
 import lzma
+import os
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -11,6 +12,8 @@ import pytest
 from fsbpyr import dispatch
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.cli import DEFAULT_PYTHON, main
+from fsbpyr.config import load_config
+from fsbpyr.project import Project
 from fsbpyr.pyversion import supported
 from fsbpyr.runtime import collect
 from fsbpyr.targets import TARGETS, host_target
@@ -135,6 +138,37 @@ def test_a_cached_variant_is_not_fetched_again_and_works_offline(
     assert releases.requests == [PATH]
 
 
+def test_glibc_reaches_the_variant_from_the_command_line_and_from_the_project(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path
+) -> None:
+    """The variant gets this command line as it is and reads the same pyproject, so both ways
+    of choosing the glibc (D46) work for a project of another Python."""
+    releases.files[PATH] = lzma.compress(_release(tmp_path))
+    assert main(["build", str(project), "--glibc", "2.28"]) == 0
+    assert ran.commands[0][1:] == ["build", str(project), "--glibc", "2.28"]
+
+    with (project / "pyproject.toml").open("a") as file:
+        file.write('[tool.fsbpyr]\nglibc = "2.28"\n')
+
+    assert main(["build", str(project)]) == 0
+    assert ran.commands[1][1:] == ["build", str(project)]
+    assert load_config(Project.load(project)).glibc == "2.28"
+
+
+def test_an_unknown_glibc_in_the_project_stops_before_the_variant_is_fetched(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    releases.files[PATH] = lzma.compress(_release(tmp_path))
+    with (project / "pyproject.toml").open("a") as file:
+        file.write('[tool.fsbpyr]\nglibc = "2.17"\n')
+
+    assert main(["build", str(project)]) == 1
+
+    assert "supported: 2.34, 2.28" in capsys.readouterr().err
+    assert releases.requests == [] and ran.commands == []
+
+
 def test_python_on_the_command_line_picks_the_variant(
     releases: FakeReleases, ran: Ran, tmp_path: Path
 ) -> None:
@@ -190,6 +224,22 @@ def test_a_download_that_fails_verification_is_not_kept_or_run(
 ) -> None:
     binary = _release(tmp_path)
     releases.files[PATH] = lzma.compress(binary[:-1000])  # truncated before it was compressed
+
+    assert main(["build", str(project)]) == 1
+
+    assert "could not be fetched" in capsys.readouterr().err
+    assert ran.commands == [] and _cached(tmp_path) == []
+
+
+def test_a_variant_needing_a_newer_glibc_than_the_host_is_not_kept_or_run(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "variant"
+    build_executable(FAKE_RUNTIME, App("fsbpyr", "fsbpyr.cli:main", dists=(),
+                                       build_info=(("glibc", "2.34"),)), out)  # fmt: skip
+    releases.files[PATH] = lzma.compress(out.read_bytes())
+    monkeypatch.setattr(os, "confstr", lambda name: "glibc 2.28")
 
     assert main(["build", str(project)]) == 1
 

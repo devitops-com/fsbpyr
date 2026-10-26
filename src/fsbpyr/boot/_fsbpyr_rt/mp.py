@@ -180,6 +180,21 @@ def _preload_entry_module(entrypoint: str) -> None:
         del process.current_process()._inheriting  # type: ignore[attr-defined]
 
 
+def _parent_target(table: str) -> str:
+    """The target of the command the parent runs, from the parent's own command line (the same
+    choice the start made, see ``commands``); empty if the parent runs none or cannot be read.
+    A forkserver of a multi-command executable preloads that command's module."""
+    from _fsbpyr_rt.commands import find, parse  # type: ignore[import-not-found]  # noqa: PLC0415
+
+    try:
+        with open(f"/proc/{os.getppid()}/cmdline", "rb") as cmdline:
+            argv = os.fsdecode(cmdline.read()).split("\0")[:-1]
+    except OSError:
+        return ""
+    found = find(parse(table), argv)
+    return found[0] if found is not None else ""
+
+
 def preload_names(arguments: tuple[object, ...]) -> list[str]:
     """The module names a forkserver command preloads (``_forkserver`` checked they are strings)."""
     names = arguments[2]
@@ -188,7 +203,7 @@ def preload_names(arguments: tuple[object, ...]) -> list[str]:
 
 def run_child(argv: list[str], entrypoint: str = "") -> bool:
     """Run the multiprocessing child ``argv`` asks for; False if it asks for none.
-    ``entrypoint`` is the app's own (``pkg.cli:main`` or a module name)."""
+    ``entrypoint`` is the app's own (``pkg.cli:main`` or a module name, or a table of commands)."""
     command = child_command(argv)
     if command is None:
         return False
@@ -197,7 +212,10 @@ def run_child(argv: list[str], entrypoint: str = "") -> bool:
     module, function, arguments, keywords, child_argv = command
     sys.argv[:] = child_argv  # what CPython's -c would have left in sys.argv
     forkserver = module == "multiprocessing.forkserver"
-    if forkserver and "__main__" in preload_names(arguments) and ":" in entrypoint:
-        _preload_entry_module(entrypoint)
+    if forkserver and "__main__" in preload_names(arguments):
+        if "\n" in entrypoint:
+            entrypoint = _parent_target(entrypoint)
+        if ":" in entrypoint:
+            _preload_entry_module(entrypoint)
     getattr(importlib.import_module(module), function)(*arguments, **keywords)
     return True

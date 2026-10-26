@@ -36,6 +36,20 @@ def _corrupt(what: str) -> NativeCacheError:
     return NativeCacheError(f"corrupt executable payload: {what}")
 
 
+def home_directory(environ: "Mapping[str, str]") -> str:
+    """$HOME if absolute, else (unset, empty or relative) the passwd entry's, as the launcher's
+    due.c has it; "" when there is none."""
+    home = environ.get("HOME", "")
+    if os.path.isabs(home):
+        return home
+    import pwd  # noqa: PLC0415  # only without a usable $HOME
+
+    try:
+        return pwd.getpwuid(os.getuid()).pw_dir
+    except KeyError:
+        return ""
+
+
 def cache_directory(app: str, environ: "Mapping[str, str]") -> str:
     if "/" in app or app in ("", ".", ".."):
         raise _corrupt(f"app name {app!r}")
@@ -43,7 +57,7 @@ def cache_directory(app: str, environ: "Mapping[str, str]") -> str:
         return os.path.abspath(explicit)
     base = environ.get("XDG_CACHE_HOME", "")
     if not os.path.isabs(base):  # relative values are invalid per the XDG spec
-        base = os.path.join(os.path.expanduser("~"), ".cache")
+        base = os.path.join(home_directory(environ), ".cache")
     if not os.path.isabs(base):
         raise NativeCacheError("cannot locate a cache directory; set FSBPYR_CACHE_DIR")
     return os.path.join(base, app)

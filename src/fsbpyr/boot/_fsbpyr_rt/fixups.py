@@ -23,6 +23,7 @@ SYSTEM_BUNDLES = (
     "/etc/ssl/ca-bundle.pem",
 )
 OWN_EXECUTABLE = "/proc/self/exe"
+SCRIPTS = "_fsbpyr_scripts."  # the root of a project's own files (loose.py)
 
 
 def fallback_bundle(environ: "Mapping[str, str]") -> str | None:
@@ -131,12 +132,32 @@ def _cv2_load_config(module: "ModuleType") -> None:
     sys.OpenCV_REPLACE_SYS_PATH_0 = True  # type: ignore[attr-defined]
 
 
+def _argparse(module: "ModuleType") -> None:
+    # 3.14.9 and 3.15 name the program "<exe> -m <module>" for a module run as __main__ whose
+    # origin is sys.argv[0]. A script started by the path its __file__ is (a `name.py` link beside
+    # the executable, run by cron) is a script run by path: prog is the file's name, as before.
+    prog_name = getattr(module, "_prog_name", None)
+    if prog_name is None:
+        return
+
+    def script_prog_name(prog: str | None = None) -> str:
+        if prog is None:
+            main = sys.modules.get("__main__")
+            spec = getattr(main, "__spec__", None)
+            if spec is not None and spec.origin == sys.argv[0] and spec.name.startswith(SCRIPTS):
+                return os.path.basename(sys.argv[0])
+        return prog_name(prog)  # type: ignore[no-any-return]
+
+    module._prog_name = script_prog_name  # type: ignore[attr-defined]
+
+
 FIXUPS = {
     "ssl": _ssl,
     "multiprocessing.spawn": _multiprocessing_spawn,
     "ctypes": _ctypes,
     "parso.file_io": _parso_file_io,
     "cv2.load_config_py3": _cv2_load_config,
+    "argparse": _argparse,
 }
 
 

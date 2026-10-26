@@ -820,6 +820,26 @@ def test_file_read_hints_name_a_package_fs_packages_accepts(site: Path) -> None:
              fs_packages=frozenset({"google.cloud.x"}))  # fmt: skip  # the advice works
 
 
+def test_reads_next_to_file_in_the_scripts_root_are_always_reported_by_project_file(
+    site: Path,
+) -> None:
+    _dist(site, "ops", "0", {"_fsbpyr_scripts/check_disk.py": READS_DATA,
+                             "_fsbpyr_scripts/sub/plain.py": READS_DATA,
+                             "_fsbpyr_scripts/tests/test_x.py": READS_DATA,
+                             "_fsbpyr_scripts/guarded.py":
+                                 b"if __name__ == '__main__':\n    open(__file__)\n",
+                             "other/__init__.py": READS_DATA})  # fmt: skip
+    dist = SiteIndex.scan(site).dists["ops"]
+
+    content = classify([dist], extension_suffixes=SUFFIXES, include_source=True, project="ops",
+                       origins={"_fsbpyr_scripts/check_disk.py": "check-disk"})  # fmt: skip
+
+    reads = [w for w in content.warnings if "next to its own __file__" in w]
+    assert [w.partition(": ")[0] for w in reads] == ["check-disk:2", "sub/plain.py:2"]
+    assert "read next to the executable" in reads[0] and "beside the binary" in reads[0]
+    assert not [w for w in content.warnings if "these packages read files" in w]  # no --hints
+
+
 def test_shared_objects_python_code_names_are_reported(site: Path) -> None:
     extension = make_elf(soname="PyInit__ext")  # the symbol name CPython looks up
     loader = b"import ctypes, os\nctypes.CDLL(os.path.join(HERE, 'libplugin.so.2'))\n"
@@ -1047,3 +1067,34 @@ def test_libraries_code_opens_by_name_are_listed_under_hints(site: Path) -> None
     }  # fmt: skip
     assert plain.system.may_load == {}  # type: ignore[attr-defined]
     assert not any("libmagic" in w for w in hinted.warnings)  # type: ignore[attr-defined]
+
+
+def test_compile_warnings_of_the_projects_own_files_are_build_warnings(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    escape = b"PATTERN = '\\d+'\n"
+    _dist(site, "app", "1.0", {"app/__init__.py": b"", "app/rx.py": b"X = 1\n" + escape})
+    _dist(site, "dep", "1.0", {"dep/__init__.py": escape})
+    dists = list(SiteIndex.scan(site).dists.values())
+
+    content = classify(dists, extension_suffixes=(".so",), include_source=False, project="app")
+
+    warned = [w for w in content.warnings if "invalid escape sequence" in w]
+    assert len(warned) == 1 and warned[0].startswith("app/rx.py:2: ")  # not dep/__init__.py
+    assert classify(dists, extension_suffixes=(".so",), include_source=False).warnings == ()
+
+
+def test_a_python_file_below_a_directory_that_is_no_name_is_reported_for_the_project_only(
+    tmp_path: Path,
+) -> None:
+    site = tmp_path / "site"
+    files = {"app/__init__.py": b"", "app/sub-dir/c.py": b"X = 1\n", "app/ok/__init__.py": b""}
+    _dist(site, "app", "1.0", files)
+    _dist(site, "dep", "1.0", {"dep/__init__.py": b"", "dep/sub-dir/c.py": b"X = 1\n"})
+    dists = list(SiteIndex.scan(site).dists.values())
+
+    content = classify(dists, extension_suffixes=(".so",), include_source=False, project="app")
+
+    warned = [w for w in content.warnings if "not a valid Python name" in w]
+    assert len(warned) == 1 and warned[0].startswith("app/sub-dir/c.py is stored as a file")
+    assert "app/sub-dir/c.py" in {f.path for f in content.files}  # still a resource
+    assert classify(dists, extension_suffixes=(".so",), include_source=False).warnings == ()

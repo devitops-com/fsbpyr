@@ -33,7 +33,7 @@ from fsbpyr.payload.format import (
 from fsbpyr.payload.reader import Executable, Payload
 from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob, Dist, File, Module, PayloadSpec
 from fsbpyr.payload.writer import encode_payload
-from fsbpyr.runtime import registry
+from fsbpyr.runtime import pins, registry
 from fsbpyr.runtime.registry import Runtime, RuntimeCacheError, check_owner, secure_directory
 
 from ..payload.conftest import make_spec
@@ -317,12 +317,67 @@ def test_runtime_from_executable_recovers_the_embedded_runtime(tmp_path: Path) -
     assert embedded.stub.startswith(runtime.stub) and len(embedded.stub) % 4096 == 0
 
 
+@pytest.mark.parametrize("baseline", pins.BASELINES)
+def test_the_baseline_survives_the_trip_through_an_executable(
+    tmp_path: Path, baseline: str
+) -> None:
+    """build_info records the sysroot's identity; the executable's runtime reads its baseline
+    back from it (the runtime's own metadata is not in the executable)."""
+    sysroot = pins.sysroot_for("x86_64-unknown-linux-gnu", baseline)
+    runtime = _runtime(inputs={"sysroot": sysroot.identity}, baseline=baseline)
+    out = tmp_path / "app"
+    build_executable(runtime, App("hello", "hello:main"), out)
+
+    assert Runtime.from_executable(out).baseline == baseline
+
+
+def test_an_executable_of_an_unknown_sysroot_has_the_default_baseline(tmp_path: Path) -> None:
+    out = tmp_path / "app"
+    build_executable(_runtime(inputs={"sysroot": "debian11-glibc2.31-x86_64-0123456789ab"}),
+                     App("hello", "hello:main"), out)  # fmt: skip
+
+    assert Runtime.from_executable(out).baseline == pins.DEFAULT_BASELINE
+
+
+def test_a_runtime_saved_before_baselines_loads_as_the_default(tmp_path: Path) -> None:
+    _runtime().save(tmp_path / "rt")
+    meta = json.loads((tmp_path / "rt" / "runtime.json").read_text())
+    del meta["baseline"]
+    (tmp_path / "rt" / "runtime.json").write_text(json.dumps(meta))
+
+    assert Runtime.load(tmp_path / "rt").baseline == "2.34"
+
+
+def test_select_runtime_takes_the_embedded_runtime_only_for_its_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    embedded = _runtime(baseline="2.28")
+    monkeypatch.setattr(registry, "running_executable", lambda: Path("/proc/self/exe"))
+    monkeypatch.setattr(Runtime, "from_executable", classmethod(lambda cls, path: embedded))
+    asked: list[str] = []
+
+    def find(python: str, cache: Path | None = None, baseline: str = "2.34") -> Runtime:
+        asked.append(baseline)
+        return _runtime()
+
+    monkeypatch.setattr(registry, "find_runtime", find)
+
+    assert registry.select_runtime("3.14", baseline="2.28") is embedded
+    assert registry.select_runtime("3.14") == _runtime() and asked == ["2.34"]
+
+
+def test_find_runtime_names_the_glibc_to_build_for(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeCacheError, match=r"Python 3\.14 and glibc 2\.28; run "
+                       r"`fsbpyr runtime build --python 3\.14 --glibc 2\.28`"):
+        registry.find_runtime("3.14", cache=tmp_path, baseline="2.28")
+
+
 def test_select_runtime_uses_the_cache_outside_executables(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _runtime().save(tmp_path / "rt")
-    monkeypatch.setattr(registry, "find_runtime", lambda python, cache=None: Runtime.load(
-        tmp_path / "rt"))  # fmt: skip
+    monkeypatch.setattr(registry, "find_runtime",
+                        lambda python, cache=None, baseline="2.34": Runtime.load(tmp_path / "rt"))
 
     assert registry.running_executable() is None  # pytest is not an fsbpyr executable
     assert registry.select_runtime("3.14") == _runtime()
@@ -438,3 +493,19 @@ def test_runtimes_cached_before_inputs_were_recorded_load_without_them(tmp_path:
 
     assert (Runtime.load(tmp_path / "rt").inputs, Runtime.load(tmp_path / "rt").components) == (
         {}, {})  # fmt: skip
+
+
+@pytest.mark.parametrize("home", [None, "", "relative"])
+def test_an_unusable_home_without_a_passwd_entry_is_a_clear_error(
+    monkeypatch: pytest.MonkeyPatch, home: str | None
+) -> None:
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.delenv("HOME", raising=False) if home is None else monkeypatch.setenv("HOME", home)
+
+    def no_entry(uid: int) -> None:
+        raise KeyError(uid)
+
+    monkeypatch.setattr("pwd.getpwuid", no_entry)
+
+    with pytest.raises(RuntimeError, match="set HOME, XDG_CACHE_HOME or FSBPYR_CACHE_DIR"):
+        registry.cache_home()

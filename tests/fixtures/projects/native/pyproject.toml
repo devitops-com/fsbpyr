@@ -1,0 +1,13 @@
+[project]
+name = "native"
+version = "1.0.0"
+description = "fsbpyr test fixture: two small native dependencies (the VM smoke test of tools/vm-smoke.py)"
+requires-python = ">=3.12"
+dependencies = ["orjson>=3.10", "markupsafe>=3"]
+
+[project.scripts]
+native = "native.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

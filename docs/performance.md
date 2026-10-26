@@ -52,6 +52,12 @@ D44, D45) is no slower than 0.24.0 on 3.14. D45's instance slot, an `open` and a
 every start, costs 0.03 to 0.08 ms: the app with `FSBPYR_MAX_INSTANCES=0`, interleaved with
 the other variants, started that much faster.
 
+Since 0.25.0 (unreleased) each start also looks up three environment variables
+(`FSBPYR_INSTALL_LINKS`, `JOURNAL_STREAM` and, in the launcher, `PYTHONUNBUFFERED`), calls
+`getpid`, reads `AT_EXECFN` for `argv[0]`, scans `argv` for the restart idiom and tests the
+entrypoint for a newline (a command table); the code they run is imported only when one applies.
+Not measured: the rows above are 0.25.0's.
+
 Budget (`test_startup_is_within_budget_of_bare_cpython`): everything but the integrity check
 within 1.5× bare CPython (1.15× until 0.7.0, 1.2× until 0.10.0; the owner raised it twice on
 2026-10-09 because the launcher sat at the edge, 1.20–1.21× in 0.9.1 and 0.10.0 alike, and failed
@@ -572,7 +578,8 @@ reuse the runtime and never link). lld's `--lto-partitions=8` failed: CPython's 
 once split, and it took 4.9 GB on 1.7 cores. The link printed one warning, unseen until 0.15.0
 showed every warning: `cache_sync`'s frame was 8888 bytes, over the 8192 limit, with
 `fsb_cache_sync` and `make_root`'s 4 KiB path buffer inlined into it; the buffer is on the heap
-and the link prints nothing now.
+and the link prints nothing now. `--glibc 2.28` links the same way against the Rocky 8.10
+sysroot (D46); its time and peak memory were not measured.
 
 ## Known effects
 
@@ -714,7 +721,8 @@ removes it at exit: 35.0 MB in 2 files for `hello` (`libpython3.14.so.1.0` and
    on a first run.
 2. `FSBPYR_IMPORTTIME=1 app ...`: CPython's import-time table, per module.
 3. Compare with the tables above: the no-op app isolates the launcher (its instance slot
-   apart: `FSBPYR_MAX_INSTANCES=0` turns it off) and the integrity check,
+   apart: `FSBPYR_MAX_INSTANCES=0` turns it off; the boot's start checks of the unreleased code
+   are not apart, see 'Starting a no-op app') and the integrity check,
    `heavy json` the payload imports, `heavy np` and `heavy onnx` the cache check and native
    loading, aiagent a large pure-Python import tree.
 4. `uv run pytest -q tests/e2e/test_runtime_app.py -k budget` checks the startup budget.

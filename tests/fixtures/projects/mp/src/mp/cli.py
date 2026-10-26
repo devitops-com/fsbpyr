@@ -2,6 +2,7 @@
 
 import importlib.util
 import multiprocessing
+import os
 import shlex
 import subprocess
 import sys
@@ -31,6 +32,26 @@ def main() -> None:
                                    check=False)  # fmt: skip
             print(child.returncode, child.stdout.strip())
         return
+    if sys.argv[1:] == ["sibling"]:  # a script of the payload imports a module next to it
+        script = importlib.util.find_spec("mp.scripts.a")
+        assert script is not None and script.origin is not None
+        child = subprocess.run([sys.executable, script.origin], capture_output=True, text=True,
+                               check=False)  # fmt: skip
+        print(child.returncode, child.stdout.strip(), child.stderr.strip()[-200:])
+        return
+    if sys.argv[1:] == ["argv0"]:  # the name this start gave the program (D14)
+        import argparse
+
+        print(sys.argv[0], argparse.ArgumentParser().prog)
+        return
+    if sys.argv[1:2] == ["restart"]:  # gunicorn's USR2 and Django's autoreloader do this
+        print("argv", sys.argv[1:], flush=True)
+        if "MP_RESTARTED" not in os.environ:
+            os.environ["MP_RESTARTED"] = "1"
+            os.execv(sys.executable, [sys.executable] + sys.argv)  # noqa: S606, RUF005  the idiom as it is written
+        return
+    if sys.argv[1:] == ["missing"]:  # an uncaught import of a module nobody installed
+        import mp_surely_not_installed  # type: ignore[import-not-found]  # noqa: F401
     if sys.argv[1:] == ["nest"]:  # starts itself without end: the instance limit stops it (D45)
         child = subprocess.run([sys.executable, "nest"], capture_output=True, text=True,
                                check=False)  # fmt: skip

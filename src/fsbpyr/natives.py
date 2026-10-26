@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .elf import ElfError, VersionNeed, dynamic_info, version_requirements
+from .runtime.pins import DEFAULT_BASELINE
 from .targets import host_target
 
 # Libraries manylinux wheels may take from the system (auditwheel policy, manylinux_2_17 and
@@ -60,25 +61,43 @@ def glibc_libraries() -> frozenset[str]:
     return _with_loader(_GLIBC_LIBRARIES)
 
 
-# The newest symbol version per namespace that auditwheel's manylinux_2_34 policy allows
-# (libstdc++ 11.x, libgcc_s, libz), per target, and the non-numeric CXXABI versions it allows:
-# auditwheel's policy file read on 2026-10-22 (NAT-2). The targets differ in GCC only; the
-# aarch64 policy lists CXXABI_TM_1 but not CXXABI_FLOAT128, and both use these markers.
-MANYLINUX = "manylinux_2_34"
-MANYLINUX_LIMITS: dict[str, dict[str, tuple[int, ...]]] = {
-    "x86_64-linux-gnu": {
-        "GLIBCXX": (3, 4, 29), "CXXABI": (1, 3, 13), "GCC": (7, 0, 0), "ZLIB": (1, 2, 9),
+# The newest symbol version per namespace that auditwheel's policy of each glibc baseline
+# allows (manylinux_2_34: libstdc++ 11.x; manylinux_2_28: 8.x), per target, and the non-numeric
+# CXXABI versions it allows: auditwheel's policy file (src/auditwheel/policy/manylinux-policy.json)
+# read on 2026-10-22 for 2.34 (NAT-2) and on 2026-10-25 for 2.28 (D46). The targets differ in GCC
+# only (the aarch64 2.34 policy allows libgcc_s 11.0); the aarch64 policies list CXXABI_TM_1
+# but not CXXABI_FLOAT128, and both use these markers.
+MANYLINUX_LIMITS: dict[str, dict[str, dict[str, tuple[int, ...]]]] = {
+    "2.34": {
+        "x86_64-linux-gnu": {
+            "GLIBCXX": (3, 4, 29), "CXXABI": (1, 3, 13), "GCC": (7, 0, 0), "ZLIB": (1, 2, 9),
+        },
+        "aarch64-linux-gnu": {
+            "GLIBCXX": (3, 4, 29), "CXXABI": (1, 3, 13), "GCC": (11, 0), "ZLIB": (1, 2, 9),
+        },
     },
-    "aarch64-linux-gnu": {
-        "GLIBCXX": (3, 4, 29), "CXXABI": (1, 3, 13), "GCC": (11, 0), "ZLIB": (1, 2, 9),
+    "2.28": {
+        "x86_64-linux-gnu": {
+            "GLIBCXX": (3, 4, 24), "CXXABI": (1, 3, 11), "GCC": (7, 0, 0), "ZLIB": (1, 2, 9),
+        },
+        "aarch64-linux-gnu": {
+            "GLIBCXX": (3, 4, 24), "CXXABI": (1, 3, 11), "GCC": (7, 0, 0), "ZLIB": (1, 2, 9),
+        },
     },
 }  # fmt: skip
 MANYLINUX_MARKERS = frozenset({"CXXABI_TM_1", "CXXABI_FLOAT128"})
+BASELINE_SYSTEMS = {"2.34": "RHEL 9, Ubuntu 22.04", "2.28": "RHEL 8"}  # named in warnings
 
 
-def manylinux_limits() -> dict[str, tuple[int, ...]]:
-    """The host target's limits: fsbpyr builds for the host it runs on."""
-    return MANYLINUX_LIMITS[host_target().name]
+def manylinux_tag(baseline: str) -> str:
+    """The wheel platform tag of a glibc baseline: ``manylinux_2_34``."""
+    return f"manylinux_{baseline.replace('.', '_')}"
+
+
+def manylinux_limits(baseline: str = DEFAULT_BASELINE) -> dict[str, tuple[int, ...]]:
+    """The host target's limits for the glibc ``baseline``: fsbpyr builds for the host it runs
+    on."""
+    return MANYLINUX_LIMITS[baseline][host_target().name]
 _LIBPYTHON = re.compile(r"^libpython3")
 _ORIGIN = re.compile(r"\$(ORIGIN(?![A-Za-z0-9_])|\{ORIGIN\})")  # as ld.so tokenizes it
 
