@@ -6,6 +6,7 @@ import io
 import lzma
 import re
 import struct
+import subprocess
 import tarfile
 from pathlib import Path
 from types import ModuleType
@@ -298,3 +299,35 @@ def test_a_guest_that_never_finished_init_fails() -> None:
     result = vm.parse_console(CONSOLE.replace("VMSMOKE-DONE\n", ""), "16k")
 
     assert "the guest did not reach the end of /init" in vm.check(result, 16384, ["a", "b"])
+
+
+def test_the_qemu_command_has_no_network_card() -> None:
+    command = vm.qemu_command(Path("kernel"), Path("initramfs"))
+
+    assert command[command.index("-nic") + 1] == "none"
+
+
+def test_a_qemu_that_exits_at_once_says_why_in_the_console_and_the_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    message = b"qemu-system-aarch64: failed to find romfile \"efi-virtio.rom\"\n"
+    failed = subprocess.CompletedProcess([], 1, stdout=b"", stderr=message)
+    monkeypatch.setattr(vm.subprocess, "run", lambda *_a, **_k: failed)
+    log = tmp_path / "console.log"
+
+    console = vm.run_qemu(Path("kernel"), Path("initramfs"), log)
+
+    assert "failed to find romfile" in console
+    assert log.read_text() == console
+    assert not (vm.parse_console(console, "16k").done)
+
+
+def test_a_successful_boot_with_no_stderr_leaves_the_console_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    booted = subprocess.CompletedProcess([], 0, stdout=CONSOLE.encode(), stderr=b"")
+    monkeypatch.setattr(vm.subprocess, "run", lambda *_a, **_k: booted)
+
+    console = vm.run_qemu(Path("kernel"), Path("initramfs"), tmp_path / "console.log")
+
+    assert console == CONSOLE

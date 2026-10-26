@@ -279,23 +279,34 @@ def build_initramfs(path: Path, rootfs: Path, apps: list[Path], commands: list[s
 # --- Running and checking ---
 
 
+def qemu_command(kernel: Path, initramfs: Path) -> list[str]:
+    """The QEMU command line; `-nic none` because the guest needs no network (and the default
+    virtio NIC needs an option ROM that some distributions package separately)."""
+    return [QEMU, "-M", "virt", "-cpu", "max", "-m", "2G", "-smp", "2", "-nographic",
+            "-nic", "none", "-no-reboot", "-kernel", str(kernel), "-initrd", str(initramfs),
+            "-append", CMDLINE]  # fmt: skip
+
+
 def run_qemu(kernel: Path, initramfs: Path, log: Path) -> str:
-    """The console of one boot: QEMU's output, which is also kept in ``log``."""
-    command = [QEMU, "-M", "virt", "-cpu", "max", "-m", "2G", "-smp", "2", "-nographic",
-               "-no-reboot", "-kernel", str(kernel), "-initrd", str(initramfs),
-               "-append", CMDLINE]  # fmt: skip
+    """The console of one boot: QEMU's output, which is also kept in ``log``.
+
+    QEMU's own stderr follows the console after a marker line, so a QEMU that cannot start says why.
+    """
     try:
         done = subprocess.run(  # noqa: S603  QEMU found on PATH, an argument list
-            command,
+            qemu_command(kernel, initramfs),
             capture_output=True,
             timeout=BOOT_TIMEOUT_S,
             check=False,
             stdin=subprocess.DEVNULL,
         )
-        output, tail = done.stdout, ""
+        output, errors, tail = done.stdout, done.stderr, ""
     except subprocess.TimeoutExpired as exc:
-        output, tail = exc.stdout or b"", f"\n{QEMU} killed after {BOOT_TIMEOUT_S} s\n"
+        output, errors = exc.stdout or b"", exc.stderr or b""
+        tail = f"\n{QEMU} killed after {BOOT_TIMEOUT_S} s\n"
     console = output.decode(errors="replace").replace("\r\n", "\n") + tail
+    if errors.strip():
+        console += f"\n--- {QEMU} stderr:\n{errors.decode(errors='replace')}"
     log.write_text(console)
     return console
 
