@@ -19,8 +19,8 @@
 #                 tag (gh attestation verify)
 #   el8 stubs     a release with SHA256SUMS-glibc2.28 has every (Python, target)'s stub .xz;
 #                 each unpacks to the digest listed, with a provenance attestation by el8.yml
-#                 (no source ref: a workflow_run runs on the default branch); skip: no EL8 stubs
-#                 for a release without
+#                 from refs/tags/<tag> (el8.yml runs on the tag); skip: no EL8 stubs for a
+#                 release without
 #   el8 build     with EL8 stubs: the default Python's executable builds the hello fixture with
 #                 --glibc 2.28, fetching the release's stub as a user's does, and the app runs
 #                 in rockylinux:8 (podman)
@@ -212,16 +212,17 @@ else
         [ -n "$want" ] && [ "$got" = "$want" ] && ok "$asset unpacks to the digest listed" \
             || fail "$asset does not unpack to the digest $EL8_SUMS lists"
         if gh attestation verify "$work/assets/$asset" --repo "$REPO" --signer-workflow "$EL8_SIGNER" \
-            >/dev/null 2>&1; then
+            --source-ref "refs/tags/$TAG" >/dev/null 2>&1; then
             ok "$asset: provenance"
         else
-            fail "$asset: no provenance attestation by el8.yml"
+            fail "$asset: no provenance attestation by el8.yml from refs/tags/$TAG"
         fi
     done
-    if gh attestation verify "$sums" --repo "$REPO" --signer-workflow "$EL8_SIGNER" >/dev/null 2>&1; then
+    if gh attestation verify "$sums" --repo "$REPO" --signer-workflow "$EL8_SIGNER" \
+        --source-ref "refs/tags/$TAG" >/dev/null 2>&1; then
         ok "$EL8_SUMS: provenance"
     else
-        fail "$EL8_SUMS: no provenance attestation by el8.yml"
+        fail "$EL8_SUMS: no provenance attestation by el8.yml from refs/tags/$TAG"
     fi
 fi
 

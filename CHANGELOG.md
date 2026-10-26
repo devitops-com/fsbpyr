@@ -177,21 +177,23 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   default); `fsbpyr runtime list` now shows each runtime's glibc. The launcher compiles its
   `_dl_find_object` wrapper only where the headers have it (glibc 2.35); the default stub behaves
   as before, but its source changed, so its runtime id does.
-- **A separate workflow attaches EL8 stubs to a release.** `.github/workflows/el8.yml` starts
-  when `release.yml` completes successfully for a version tag, or by hand with a tag
-  (`gh workflow run el8.yml -f tag=vX.Y.Z`, for a release that has none or to retry), and is
-  outside the release: `release.yml`, `full-suite.yml` and the release gate neither wait for it
+- **A separate workflow attaches EL8 stubs to a release.** `.github/workflows/el8.yml` runs on
+  the release tag itself: it starts on the push of a version tag, in parallel with `release.yml`,
+  or by hand on the tag's ref (`gh workflow run el8.yml --ref vX.Y.Z`, for a release that has
+  none or to retry), and is outside the release: `release.yml`, `full-suite.yml` and the release gate neither wait for it
   nor know it, and a release may have EL8 stubs or not. For every Python and target it links the EL8
   stub from the tag's sources twice in independent caches and requires the two to be byte for
   byte identical, with no GLIBC symbol above 2.28 and the runtime id its release's fsbpyr
   expects (`tools/release/el8-stub.py`); on the default Python only (CI minutes: the stubs differ
   per Python only in the linked libpython, which that check covers for every Python) per target,
   it runs the stub-dependent tests with the EL8 stub, the
-  portability matrix with apps the release's own fsbpyr built with `--glibc 2.28` (the stub
+  portability matrix with apps the tag's own fsbpyr (built in the workflow as `build.yml` builds the
+  release) built with `--glibc 2.28` (the stub
   placed beside it) on the 12 images and `rockylinux:8` and `almalinux:8`, four native-heavy
   corpus apps (`pandas-csv`, `lxml`, `pillow`, `scipy`) built the same way and compared with
   their venvs, and, on aarch64, an app on EL8's 64 KiB-page kernel with the EL8 userland in a
-  QEMU VM. Only when every job passed does it write `SHA256SUMS-glibc2.28`, attest the stubs and
+  QEMU VM. Only when every job passed, and the release of the tag exists (it waits for it), does it write
+  `SHA256SUMS-glibc2.28`, attest the stubs (from a run on the tag) and
   upload the eight `.xz` and then the sums to the release, touching no other asset; a release
   has EL8 stubs when it has `SHA256SUMS-glibc2.28`.
 - **`make test-el8` runs the EL8 test mode and its portability matrix.** With
@@ -203,7 +205,7 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   `tools/portability-apps.sh` takes the glibc as a fourth argument.
 - **`make release-check` checks a release's EL8 stubs.** With `SHA256SUMS-glibc2.28` among the
   assets it verifies the sums, that each `.xz` unpacks to its listed digest, their attestations
-  by `el8.yml`, and that the release's fsbpyr builds a pure-Python fixture with `--glibc 2.28`,
+  by `el8.yml` from the tag, and that the release's fsbpyr builds a pure-Python fixture with `--glibc 2.28`,
   fetching the stub as a user does, which runs in `rockylinux:8`; a release without reports
   `skip  no EL8 stubs`, not a failure, and the EL8 assets are no longer reported as unexpected.
 - **`make test-vm` runs aarch64 apps on 16K- and 64K-page kernels.** `tools/vm-smoke.py` boots

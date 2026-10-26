@@ -112,7 +112,7 @@ Apps built with `--glibc 2.28` (the pure-Python `hello` and an app with a manyli
 The EL8 workflow (`.github/workflows/el8.yml`, which attaches the glibc 2.28 stubs to a
 release and is no part of the release gate) links the stub of every Python and target twice and
 compares them. On the default Python only, it runs the stub tests, the four portability apps
-(built with `--glibc 2.28` by the release's fsbpyr) on the twelve distributions above and on
+(built with `--glibc 2.28` by the tag's fsbpyr, built in the workflow) on the twelve distributions above and on
 these two, and a small corpus subset against its venvs; on aarch64 it also runs a pure-Python
 and a native app in the VM described below.
 

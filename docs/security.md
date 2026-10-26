@@ -64,14 +64,15 @@ leading to it must be owned by root or by the user and writable by nobody else (
   file can change the digest too. Only checking from outside catches that: a release's
   provenance and SBOM attestations (made by release.yml, checked with `gh attestation
   verify`; the EL8 stubs are attested by el8.yml, a workflow of its own whose only writing job
-  is `publish`, checked with `--signer-workflow .../el8.yml`, README "Building for EL8"), the installer (`install.sh` checks each download against the SHA-256 the release
+  is `publish`, checked with `--signer-workflow .../el8.yml --source-ref refs/tags/vX.Y.Z`, README "Building for EL8"), the installer (`install.sh` checks each download against the SHA-256 the release
   recorded and runs `fsbpyr inspect --verify`; `FSBPYR_VERIFY=1` adds the attestation) and the
   reproduction steps in the README ("Verifying a release"). A signature checked with an outside
   key (D31) comes with signed releases, after the MVP.
 - **EL8 stubs** (D46). A stub is the launcher of every app built with `--glibc 2.28`. A
   download is checked against `SHA256SUMS-glibc2.28` of the same release (over HTTPS;
   `FSBPYR_RELEASE_DOWNLOADS` can point elsewhere), which catches a damaged or swapped file but
-  not a release whose assets and sums were both replaced; the attestations of el8.yml catch
+  not a release whose assets and sums were both replaced; the attestations of el8.yml (a run on the release's tag, never the default branch's context
+  executing the tag's code) catch
   that, and fsbpyr does not check them itself. A stub placed beside the fsbpyr executable, or
   already in the cache, is accepted on the runtime id it embeds (a hash of the launcher sources,
   the Python pin and the sysroot), not on its digest: that detects a stub of another release,

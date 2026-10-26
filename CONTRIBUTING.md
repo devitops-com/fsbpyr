@@ -117,18 +117,23 @@ The tiers, from fastest to most complete:
   GLIBC symbol above 2.28 and carries the runtime id its release's fsbpyr expects) and the two
   must be byte for byte identical. **The workflow is not part of the release and does not gate
   it**: `release.yml` and `full-suite.yml` do not wait for it or know it, and a release may have
-  EL8 stubs or not. It starts when `release.yml` completes successfully for a version tag
-  (`workflow_run`) and only the `publish` job, after every other job passed, writes: it uploads
+  EL8 stubs or not. It starts on the push of a version tag, in parallel with `release.yml`, and runs
+  on the tag itself (a workflow that ran in the default branch's context and checked out a tag's
+  code was flagged by CodeQL, D46); a `build` job builds the tag's executable as `build.yml`
+  does (reproducible: the release asset's bytes) for the portability and VM jobs. Only the
+  `publish` job, after every other job passed and the release of the tag exists (it waits up to
+  an hour for `release.yml` to publish it), writes: it uploads
   the eight `fsbpyr-stub-3.X-<target>-glibc2.28.xz` and then `SHA256SUMS-glibc2.28` to the tag's
   release, attests them, and touches no other asset (a rerun that finds the same sums uploads
   nothing). A release has EL8 stubs when it has `SHA256SUMS-glibc2.28`; `make release-check`
   verifies them when it does (and prints `skip: no EL8 stubs` when not). To attach them to a
-  release that has none, or to retry a failed run, start the workflow by hand: `gh workflow run
-  el8.yml -f tag=vX.Y.Z` (or Actions, EL8, Run workflow, from the default branch: the plan job
-  refuses another). Everything runs from the tag, so the tag must have the EL8 support (`fsbpyr
-  runtime build --glibc`, `tools/release/el8-stub.py`, `tests/support/baseline.py`); an older
-  one fails in the first job with a message. Like all workflows, the file used is the default
-  branch's. On a 24-core machine `make test-el8-stub` takes about 3.5 minutes with 4 processes
+  release that has none, or to retry a failed run, dispatch the workflow on the tag's ref: `gh workflow run
+  el8.yml --ref vX.Y.Z` (or Actions, EL8, Run workflow, choosing the tag; it has no inputs, and
+  dispatched on a branch the plan job finds no tag and nothing runs). Everything runs from the
+  tag, workflow file included, so the tag must have the EL8 support (`fsbpyr runtime build
+  --glibc`, `tools/release/el8-stub.py`, `tests/support/baseline.py`, el8.yml itself); an older
+  one fails in the first job with a message. A run whose `publish` found no release in an hour
+  says so: dispatch it again on the tag's ref once the release exists. On a 24-core machine `make test-el8-stub` takes about 3.5 minutes with 4 processes
   (the EL8 and default runtimes linked from cached downloads) and `make test-el8` about 3
   minutes once the runtimes and images are cached; how long the jobs take on a runner is not yet
   measured (each is meant to stay near 20 minutes).

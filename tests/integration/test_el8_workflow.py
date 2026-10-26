@@ -1,6 +1,7 @@
 """The shape of .github/workflows/el8.yml, which attaches EL8 stubs to a release outside the
 release gate. GitHub runs it, not these tests: they pin what can be read from the file (triggers,
-decoupling from the release, pins, permissions, asset names)."""
+decoupling from the release, pins, permissions, asset names, and that no job checks out or runs
+anything but the commit that started the run)."""
 
 import re
 from pathlib import Path
@@ -13,19 +14,30 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 EL8 = (WORKFLOWS / "el8.yml").read_text(encoding="utf-8")
 JOB = re.compile(r"^  ([a-z][a-z-]*):\n(.*?)(?=^  [a-z][a-z-]*:\n|\Z)", re.MULTILINE | re.DOTALL)
 JOBS = dict(JOB.findall(EL8.partition("\njobs:\n")[2]))
-MATRIX_JOBS = ("stub", "tests", "portability", "corpus")
+MATRIX_JOBS = ("stub", "build", "tests", "portability", "corpus")
 USES = re.compile(r"uses: (\S+)@([0-9a-f]{40}) # (v\d+\.\d+\.\d+)$", re.MULTILINE)
 
 
-def test_it_runs_after_a_release_and_on_request_and_never_for_a_pull_request() -> None:
+def test_it_runs_on_the_release_tag_and_on_request_without_inputs_only() -> None:
     block = EL8.split("\non:\n", 1)[1].split("\n\n", 1)[0]
     lines = [line for line in block.splitlines() if not line.lstrip().startswith("#")]
+    release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
 
-    assert lines[:4] == ["  workflow_run:", '    workflows: ["Release"]', "    types: [completed]",
-                         "  workflow_dispatch:"]  # fmt: skip
-    assert "tag:" in block and "required: true" in block
-    assert not [line for line in lines if re.search(r"push|pull_request|schedule", line)]
-    assert re.search(r"^name: Release$", (WORKFLOWS / "release.yml").read_text(), re.MULTILINE)
+    assert lines == ["  push:", '    tags: ["v*"]', "  workflow_dispatch:"]
+    assert '    tags: ["v*"]' in release  # the same trigger as the release's
+    assert "inputs:" not in EL8 and "workflow_run" not in EL8
+    assert not re.search(r"pull_request|schedule|workflow_run", block)
+
+
+def test_no_job_runs_anything_but_the_commit_that_started_the_run() -> None:
+    """CodeQL: a workflow in the default branch's context that checks out another ref (the tag
+    of a workflow_run, an input) is an untrusted checkout. Here the ref is the run's own."""
+    assert len(re.findall(r"uses: actions/checkout@", EL8)) == 7
+    assert not re.search(r"^\s+ref:", EL8, re.MULTILINE)
+    assert "workflow_run" not in EL8 and "inputs." not in EL8
+    published = 'gh release download "$TAG" --pattern SHA256SUMS'  # publish's idempotence check
+    assert "gh release download" not in EL8.replace(published, "")
+    assert EL8.count("persist-credentials: false") == 7
 
 
 def test_the_release_and_its_gate_know_nothing_of_it() -> None:
@@ -40,7 +52,7 @@ def test_the_release_and_its_gate_know_nothing_of_it() -> None:
 
 
 def test_a_tag_is_done_once() -> None:
-    assert "group: el8-${{ github.event.workflow_run.head_branch || inputs.tag }}" in EL8
+    assert "group: el8-${{ github.ref }}" in EL8
     assert "cancel-in-progress: false" in EL8
 
 
@@ -56,7 +68,7 @@ def test_the_jobs_run_every_target_on_a_runner_of_the_targets_architecture() -> 
             assert f"python: [{supported}]" in text
         else:
             assert default in text, name
-            assert re.search(r"needs: (plan|\[plan, stub\])\n", text), name
+            assert re.search(r"needs: (plan|\[plan, stub, build\])\n", text), name
         assert 'target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]' in text, name
         assert '- {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}' in text, name
         assert '- {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}' in text, name
@@ -68,10 +80,10 @@ def test_the_plan_reads_the_default_python_of_the_tag() -> None:
     plan = JOBS["plan"]
 
     assert "python: ${{ steps.release.outputs.python }}" in plan
-    assert "contents/.python-version?ref=$tag" in plan
+    assert 'python="$(cut -d. -f1,2 .python-version)"' in plan
     assert 'echo "python=" >> "$GITHUB_OUTPUT"' in plan  # no tag, no Python
-    for name in ("portability",):  # the stub of the entry's Python and target must exist
-        assert "needs: [plan, stub]" in JOBS[name]
+    for name in ("portability", "vm-smoke"):  # the stub and the executable of the entry must exist
+        assert "needs: [plan, stub, build]" in JOBS[name]
     stubs = re.search(r"for python in ([0-9. ]+); do", JOBS["publish"])
     assert stubs and stubs.group(1).split() == [
         "{}.{}".format(*version) for version in sorted(SUPPORTED_PYTHON)]  # publish: all of them
@@ -82,7 +94,7 @@ def test_the_image_is_the_builds_by_digest() -> None:
     build = re.findall(r"debian:trixie@sha256:([0-9a-f]{64})",
                        (WORKFLOWS / "build.yml").read_text(encoding="utf-8"))  # fmt: skip
 
-    assert len(digests) == 3  # stub, tests and corpus
+    assert len(digests) == 4  # stub, build, tests and corpus
     assert set(digests) == set(build) and len(set(build)) == 1
 
 
@@ -107,8 +119,9 @@ def test_only_publish_writes_and_it_needs_every_other_job() -> None:
     assert "      contents: write" in header
     assert "      id-token: write" in header and "      attestations: write" in header
     assert "actions:" not in header
-    assert re.search(r"needs: \[plan, stub, tests, portability, corpus, vm-smoke\]", header)
-    assert set(JOBS) - {"publish"} == {"plan", "stub", "tests", "portability", "corpus", "vm-smoke"}
+    assert re.search(r"needs: \[plan, stub, build, tests, portability, corpus, vm-smoke\]", header)
+    assert set(JOBS) - {"publish"} == {"plan", "stub", "build", "tests", "portability", "corpus",
+                                       "vm-smoke"}  # fmt: skip
     assert "continue-on-error" not in EL8
     assert "checkout" not in publish  # it runs nothing of the tag's
 
@@ -120,6 +133,7 @@ def test_publish_touches_the_el8_assets_of_the_release_only() -> None:
     assert uploads == ['gh release upload "$TAG" dist/fsbpyr-stub-*.xz --clobber',
                        f'gh release upload "$TAG" dist/{release_stub_sums("2.28")} --clobber']
     assert not re.search(r"gh release (create|edit|delete)|gh api", publish)
+    assert "--source-ref refs/tags/v" in publish  # the attestations come from a run on the tag
     assert uploads[-1].count("SHA256SUMS-glibc2.28") == 1  # the sums last
 
 
@@ -135,18 +149,42 @@ def test_the_asset_names_are_those_the_stub_fetch_reads() -> None:
     assert 'el8+=("fsbpyr-stub-$py-$target-glibc2.28.xz")' in check
 
 
-def test_the_tag_comes_from_the_event_through_the_environment_and_is_a_version() -> None:
+def test_the_tag_is_the_ref_through_the_environment_and_is_a_version() -> None:
     plan = JOBS["plan"]
+    script = plan.split("run: |", 1)[1]
 
-    assert "RUN_REF: ${{ github.event.workflow_run.head_branch }}" in plan
-    assert "GIVEN: ${{ inputs.tag }}" in plan
-    assert "${{ inputs." not in plan.split("run: |", 1)[1]  # never expanded into the script
-    assert "${{ github.event.workflow_run.head_branch }}" not in plan.split("run: |", 1)[1]
+    assert "REF: ${{ github.ref }}" in plan and "REF_NAME: ${{ github.ref_name }}" in plan
+    assert "${{ " not in script  # never expanded into the script
     assert r"xyz='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'" in plan
-    assert '[ "$RUN_CONCLUSION" != success ]' in plan and '[ "$RUN_EVENT" != push ]' in plan
-    for job in ("stub", "tests", "portability", "corpus", "vm-smoke", "publish"):
+    assert '[ "$REF" != "refs/tags/$REF_NAME" ]' in plan  # a branch dispatch does nothing
+    assert 'echo "tag=" >> "$GITHUB_OUTPUT"' in plan
+    assert 'echo "python=" >> "$GITHUB_OUTPUT"' in plan
+    for job in ("stub", "build", "tests", "portability", "corpus", "vm-smoke", "publish"):
         assert "if: needs.plan.outputs.tag != ''" in JOBS[job], job
-        assert "ref: refs/tags/${{ needs.plan.outputs.tag }}" in JOBS[job] or job == "publish"
+    for job in set(JOBS) - {"plan", "publish"}:
+        assert "${{ needs.plan.outputs.tag }}" not in JOBS[job], job
+    assert "TAG: ${{ needs.plan.outputs.tag }}" in JOBS["publish"]
+
+
+def test_publish_waits_for_the_release_of_the_tag() -> None:
+    publish = JOBS["publish"]
+    wait = publish.split("name: Wait for the release", 1)[1].split("      - name:", 1)[0]
+
+    assert "seq 1 120" in wait and "sleep 30" in wait  # up to an hour, every 30 seconds
+    assert 'gh release view "$TAG"' in wait
+    assert "does not exist yet; dispatch el8.yml on the tag ref once it does" in wait
+    assert "timeout-minutes: 75\n" in publish.split("steps:", 1)[0]
+
+
+def test_the_build_job_builds_the_release_executable_and_nothing_downloads_it() -> None:
+    build = JOBS["build"]
+
+    assert "run: make bootstrap" in build and "run: make build" in build
+    assert "ASSET: fsbpyr-${{ matrix.python }}-${{ matrix.target }}" in build
+    assert "fetch-depth: 0" in build  # the tag the executable records
+    assert "name: el8-fsbpyr-${{ matrix.python }}-${{ matrix.target }}" in build
+    for job in ("portability", "vm-smoke"):
+        assert "name: el8-fsbpyr-" in JOBS[job] and "gh release" not in JOBS[job], job
 
 
 def test_stubs_are_linked_in_the_stub_job_and_the_others_use_that_artifact() -> None:

@@ -734,13 +734,14 @@ a separate asset of its release, one per Python and target,
 be that or the unpacked stub), with the SHA-256 of each unpacked stub in
 `SHA256SUMS-glibc2.28`. **EL8 assets are published
 separately and not with every release.** A separate workflow (`.github/workflows/el8.yml`)
-builds, tests and attaches them to a release after it is published, and only when all of its
-jobs pass; the release itself never waits for it. **A release has EL8 stubs when its assets
+builds, tests and attaches them to a release, on the release's tag, in parallel with the release
+build and only when all of its jobs pass; the release itself never waits for it. **A release has EL8 stubs when its assets
 include `SHA256SUMS-glibc2.28`** (it is uploaded last, after the eight `.xz`): look for it on the
 [releases](https://github.com/devitops-com/fsbpyr/releases) page, or run `gh release view vX.Y.Z
 --json assets --jq '.assets[].name' | grep glibc2.28`. Each asset has a build provenance
 attestation: `gh attestation verify fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz --repo
-devitops-com/fsbpyr --signer-workflow devitops-com/fsbpyr/.github/workflows/el8.yml`. A release
+devitops-com/fsbpyr --signer-workflow devitops-com/fsbpyr/.github/workflows/el8.yml --source-ref
+refs/tags/vX.Y.Z` (the attestations come from a run of that workflow on the release's tag). A release
 without them makes `--glibc 2.28` stop with `this release (vX.Y.Z) has no glibc 2.28 stubs`,
 naming the asset to place and linking the releases; use a release that has them. fsbpyr
 takes the launcher from, in this order:
