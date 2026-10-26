@@ -2,12 +2,13 @@
 
 The installer is made from tools/release/install.sh.in by tools/release/make-install.sh out of a
 directory of fake release assets (shell scripts that answer `inspect --verify`, `man` and
-`completion` where a real fsbpyr is not needed), served over TLS from 127.0.0.1 with the
-self-signed certificate in tests/fixtures/install/ (a test key, valid for 100 years, trusted by
-nothing but these tests). curl and wget are pointed at it with CURL_CA_BUNDLE and WGETRC, the
-installer at the server with its test-only FSBPYR_INSTALLER_BASE_URL. HOME and every install
-directory are under ``tmp_path``, and PATH holds only the tools the installer needs, so a test
-can leave one out (xz, curl, gh) or fake one (uname, ldd, gh). Every test runs under dash,
+`completion` where a real fsbpyr is not needed), served over TLS from 127.0.0.1 with a
+self-signed certificate that the session makes with the openssl CLI (a key that lives one day in
+the session's temporary directory, trusted by nothing but these tests). curl and wget are
+pointed at it with CURL_CA_BUNDLE and WGETRC, the installer at the server with its test-only
+FSBPYR_INSTALLER_BASE_URL. HOME and every install directory are under ``tmp_path``, and PATH
+holds only the tools the installer needs, so a test can leave one out (xz, curl, gh) or fake one
+(uname, ldd, gh). Every test runs under dash,
 bash and busybox sh.
 """
 
@@ -31,7 +32,6 @@ import pytest
 
 ROOT = Path(__file__).parents[2]
 MAKE_INSTALL_SH = ROOT / "tools" / "release" / "make-install.sh"
-CERT_DIR = ROOT / "tests" / "fixtures" / "install"
 VERSION = "9.9.9"
 SCRIPT_TIMEOUT_S = 60.0
 BASH = shutil.which("bash") or "/bin/bash"
@@ -69,10 +69,35 @@ def shell(request: pytest.FixtureRequest) -> list[str]:
     return [found, *command[1:]]
 
 
+@dataclass(frozen=True)
+class Certificate:
+    cert: Path
+    key: Path
+
+
+@pytest.fixture(scope="session")
+def tls_certificate(tmp_path_factory: pytest.TempPathFactory) -> Certificate:
+    """A fresh self-signed certificate for 127.0.0.1 and localhost; no key is kept in the repo."""
+    openssl = shutil.which("openssl")
+    if openssl is None:
+        pytest.fail("the installer tests need the openssl CLI to make their test certificate")
+    directory = tmp_path_factory.mktemp("tls")
+    cert, key = directory / "cert.pem", directory / "key.pem"
+    subprocess.run(
+        [openssl, "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+         "-nodes", "-days", "1", "-subj", "/CN=localhost",
+         "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
+         "-keyout", str(key), "-out", str(cert)],
+        check=True, capture_output=True, text=True,
+    )
+    return Certificate(cert, key)
+
+
 class Server:
     """Serves ``files`` (path -> bytes) over HTTPS and logs the paths asked for."""
 
-    def __init__(self) -> None:
+    def __init__(self, certificate: Certificate) -> None:
+        self.certificate = certificate
         self.files: dict[str, bytes] = {}
         self.requests: list[str] = []
         files, requests = self.files, self.requests
@@ -91,7 +116,7 @@ class Server:
 
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.minimum_version = ssl.TLSVersion.TLSv1_2
-        context.load_cert_chain(CERT_DIR / "localhost-cert.pem", CERT_DIR / "localhost-key.pem")
+        context.load_cert_chain(certificate.cert, certificate.key)
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
         self.base = f"https://127.0.0.1:{self.server.server_port}"
@@ -105,8 +130,8 @@ class Server:
 
 
 @pytest.fixture
-def server() -> Iterator[Server]:
-    running = Server()
+def server(tls_certificate: Certificate) -> Iterator[Server]:
+    running = Server(tls_certificate)
     yield running
     running.close()
 
@@ -178,7 +203,7 @@ class Host:
         self.bin.mkdir()
         for tool in (*BASE_TOOLS, "xz", "curl"):
             self.link(tool)
-        cert = CERT_DIR / "localhost-cert.pem"
+        cert = server.certificate.cert
         wgetrc = tmp_path / "wgetrc"
         wgetrc.write_text(f"ca_certificate = {cert}\n")
         self.env = {
