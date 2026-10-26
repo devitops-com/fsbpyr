@@ -33,6 +33,7 @@ from .closure import marker_environment
 from .foreign import export
 from .loose import Package
 from .project import LockSource, Project, has_hash_option
+from .text import tail_lines
 from .vcs import commit_time
 
 WHEEL = "{wheel}"  # placeholder in install commands, replaced by the built wheel's path
@@ -95,7 +96,7 @@ def uv_version(uv: Path) -> str:
         raise StagingError(f"cannot run {uv} --version: {exc}") from exc
     match = _UV_VERSION.match(result.stdout)
     if result.returncode != 0 or match is None:
-        output = (result.stdout + result.stderr).strip()[-_ERROR_TAIL:]
+        output = tail_lines((result.stdout + result.stderr).strip(), _ERROR_TAIL)
         raise StagingError(f"{uv} --version did not report a version: {output}")
     return match.group(1)
 
@@ -307,7 +308,7 @@ def _run(
         return
     if verbose:
         raise StagingError(f"{step}: uv failed (exit {result.returncode}), see its output above")
-    output = (result.stderr or result.stdout)[-_ERROR_TAIL:]
+    output = tail_lines(result.stderr or result.stdout, _ERROR_TAIL)
     raise StagingError(f"{step}: uv failed (exit {result.returncode}):\n{output}")
 
 

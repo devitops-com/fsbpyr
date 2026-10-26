@@ -187,6 +187,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     from .pyversion import resolve  # noqa: PLC0415
     from .runtime.registry import RuntimeCacheError  # noqa: PLC0415
     from .staging import StagingError  # noqa: PLC0415
+    from .text import plural  # noqa: PLC0415
 
     try:
         smoke_args = None if smoke_args_text is None else tuple(shlex.split(smoke_args_text))
@@ -231,7 +232,8 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     for warning in result.warnings:
         print(f"fsbpyr: warning: {warning}", file=sys.stderr)
     glibc = f", glibc >= {result.glibc}" if result.glibc else ""
-    entry = f"{len(result.commands)} commands" if result.commands else f"entry {result.entrypoint}"
+    entry = (plural(len(result.commands), "command") if result.commands
+             else f"entry {result.entrypoint}")
     print(f"fsbpyr: built {result.output} ({result.size / 1e6:.1f} MB, {entry}{glibc})")
     if result.commands:
         print(f"fsbpyr: commands: {', '.join(result.commands)}; start one through its link, "

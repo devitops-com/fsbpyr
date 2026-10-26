@@ -68,12 +68,14 @@ from .staging import (
 )
 from .system import system_info, system_report, target_needs
 from .targets import target_named
+from .text import plural, tail_lines
 from .tools import listed_distributions, tool_scripts, with_commands
 from .vcs import git_state, own_version, release_asset_record
 from .venvdeps import Inferred, find_venv, infer
 
 TARGET_PYTHON = f"{sys.version_info[0]}.{sys.version_info[1]}"  # builder and apps run alike
 _SMOKE_TIMEOUT = 120
+_ERROR_TAIL = 3000
 _PACKAGES = (ModuleKind.PACKAGE, ModuleKind.NAMESPACE)
 
 
@@ -394,8 +396,8 @@ def check_strict(warnings: Iterable[str]) -> None:
     the app runs: none of them counts (they are Uncounted)."""
     counted = [warning for warning in warnings if not isinstance(warning, Uncounted)]
     if counted:
-        raise StrictError(f"--strict: the build has {len(counted)} warning"
-                          f"{'s' * (len(counted) > 1)}; nothing was written:\n  "
+        raise StrictError(f"--strict: the build has {plural(len(counted), 'warning')}; "
+                          "nothing was written:\n  "
                           + "\n  ".join(counted))
 
 
@@ -623,7 +625,8 @@ def smoke_test(executable: Path, app_name: str, output: Path | None = None) -> N
         raise BuildError(f"smoke test of {shown} failed: {exc}") from exc
     if result.returncode != 0 or f"fsbpyr selftest ok: {app_name}" not in result.stdout:
         raise BuildError(
-            f"smoke test of {shown} failed (exit {result.returncode}):\n{result.stderr[-3000:]}"
+            f"smoke test of {shown} failed (exit {result.returncode}):\n"
+            f"{tail_lines(result.stderr, _ERROR_TAIL)}"
         )
 
 
@@ -646,7 +649,7 @@ def smoke_run(executable: Path, output: Path, args: tuple[str, ...]) -> None:
                          ) from exc
     if result.returncode != 0:
         raise BuildError(f"smoke run of the new {output} with arguments {shown!r} failed "
-                         f"(exit {result.returncode}):\n{result.stderr[-3000:]}")
+                         f"(exit {result.returncode}):\n{tail_lines(result.stderr, _ERROR_TAIL)}")
 
 
 def build(
@@ -775,7 +778,7 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
         check_output(output)
         commands = _commands_to_link(entrypoint, output)
         _make_output_dir(output.parent, made)
-        log(f"collecting {len(index.dists)} distributions")
+        log(f"collecting {plural(len(index.dists), 'distribution')}")
         level = config.zstd_level
         with Spill(output.parent) as spill:
             content = classify(

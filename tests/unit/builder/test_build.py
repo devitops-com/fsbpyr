@@ -78,6 +78,20 @@ def test_a_failed_smoke_test_names_the_output_not_the_new_file(tmp_path: Path) -
         smoke_test(_script(tmp_path / ".app.x.tmp", "exit 3"), "app", tmp_path / "app")
 
 
+def test_a_failed_smoke_test_shows_whole_lines_of_the_tail(tmp_path: Path) -> None:
+    """The tail of a long error output is cut at a line start, and says what it left out."""
+    body = ('i=0; while [ $i -lt 400 ]; do echo "line $i of the traceback" >&2; i=$((i+1)); done; '
+            "exit 1")
+
+    with pytest.raises(BuildError) as caught:
+        smoke_test(_script(tmp_path / "app", body), "app")
+
+    lines = str(caught.value).splitlines()
+    assert re.fullmatch(r"\(\d+ earlier lines left out\)", lines[1])
+    assert re.fullmatch(r"line \d+ of the traceback", lines[2])
+    assert lines[-1] == "line 399 of the traceback"
+
+
 def test_smoke_run_passes_the_arguments_and_the_final_path_as_argv0() -> None:
     """The running file is the temporary one; the program sees the output's path."""
     check = "import sys; assert sys.orig_argv[0] == '/final/app' and sys.argv[1:] == ['x']"
@@ -479,6 +493,23 @@ def test_strict_does_not_count_the_build_hosts_uv_or_git(
 
     assert any(w.startswith("uv 0.13.1 is not uv 0.12.0") for w in result.warnings)
     assert any(w.startswith("git: boom") for w in result.warnings)
+
+
+def test_one_warning_is_one_warning() -> None:
+    with pytest.raises(StrictError, match=r"has 1 warning; "):
+        check_strict(["a"])
+
+
+def test_the_build_says_it_collects_one_distribution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _staged(tmp_path, monkeypatch, APP)
+    lines: list[str] = []
+
+    build(project, BuildConfig(entry="app.cli:main", output=tmp_path / "app", smoke=False),
+          log=lines.append)
+
+    assert "collecting 1 distribution" in lines
 
 
 def test_strict_counts_every_other_warning() -> None:
