@@ -107,6 +107,19 @@ def test_a_set_gid_start_is_refused(build_app: BuildApp) -> None:
     assert "refusing a privileged start" in result.stderr
 
 
+def test_a_set_uid_start_by_the_owner_is_not_privileged(build_app: BuildApp) -> None:
+    """AT_SECURE is set only when a start changes privileges; owner-run set-uid changes none."""
+    app = build_app(HELLO, "hello:main")
+    if os.statvfs(app).f_flag & os.ST_NOSUID:
+        pytest.skip("needs a mount that allows set-id bits, not nosuid")
+    app.chmod(app.stat().st_mode | stat.S_ISUID)
+
+    result = _run(app)
+
+    assert result.returncode == 0, result.stderr
+    assert "privileged start" not in result.stderr
+
+
 @pytest.mark.sanitized
 def test_uncaught_exception_shows_only_app_frames_with_source(build_app: BuildApp) -> None:
     app = build_app({"boom.py": "def main():\n    raise ValueError('bad input')\n"}, "boom:main")

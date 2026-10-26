@@ -1017,9 +1017,11 @@ directory anyone may add to, such as `/tmp`.) Environment variables the executab
 | `FSBPYR_IMPORTTIME` | when set, print CPython's import-time table |
 | `FSBPYR_MAX_INSTANCES` | how many copies of the app may run at once (decimal, at most 4096; `0`: no limit); by default 4 per CPU and 16, at least 64 and at most 1024 |
 
-An executable needs `/proc` (it finds itself through `/proc/self/exe`), and refuses to start
-set-uid, set-gid or with file capabilities (exit 70): the cache location comes from the
-caller's environment, or, at its first extraction, when the cache directory is owned by another
+An executable needs `/proc` (it finds itself through `/proc/self/exe`), and refuses a privileged
+start (exit 70): set-uid or set-gid to another user or group, or with file capabilities. The
+kernel flags such a start (AT_SECURE), and the cache location would come from the caller's
+environment; a set-uid copy owned by the user who runs it changes no privileges and starts
+normally. It also refuses, at its first extraction, when the cache directory is owned by another
 user or others may write to it (`fsbpyr: cannot start <executable>: refusing cache directory ...`).
 A start also exits 70 when as many copies of the app run already as
 the machine allows (`FSBPYR_MAX_INSTANCES` above): an app that keeps starting itself, by
