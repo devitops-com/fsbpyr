@@ -40,10 +40,10 @@ these from the machine:
 
 - **glibc 2.34 or newer** on Linux x86-64 or aarch64 (RHEL 9, Amazon Linux 2023, Ubuntu
   22.04, Debian 12 and newer, SLES 15 SP6 and newer). `fsbpyr inspect` shows the glibc the
-  executable actually needs. SLES 15 SP4 and SP5 (glibc 2.31) are not supported. Only 2.34 and
-  newer is tested: the distributions below, releases their vendors support. **EL8** (RHEL 8,
-  Rocky Linux 8, AlmaLinux 8; glibc 2.28) is supported by building with `--glibc 2.28`, which
-  needs the release's glibc 2.28 launcher ([README](../README.md#older-systems-el8-and-glibc-228));
+  executable actually needs. SLES 15 SP4 and SP5 (glibc 2.31) are not supported. The default
+  build is tested on the distributions in the first table below, releases their vendors support.
+  **EL8** (RHEL 8, Rocky Linux 8, AlmaLinux 8; glibc 2.28) is supported by building with
+  `--glibc 2.28`, which needs the release's glibc 2.28 stub ([README](../README.md#older-systems-el8-and-glibc-228));
   such an app needs glibc 2.28 or newer and is tested on the two EL8 images below. Debian 10 and
   11, Ubuntu 20.04 and SLES 15 SP4 and SP5 are not tested, with or without `--glibc 2.28`; CentOS
   7 and Amazon Linux 2 have a glibc below 2.28 and are out of reach.
@@ -75,7 +75,7 @@ these from the machine:
   (`place_unnamed` in `src/fsbpyr/launcher/cache.c`), and `close_range` is compiled out when
   the headers lack it (`src/fsbpyr/launcher/due.c`). The instance limit needs OFD locks
   (Linux 3.15) and `/dev/shm` or `$XDG_RUNTIME_DIR`; without them a start runs unguarded
-  (`src/fsbpyr/launcher/slots.c`).
+  (`src/fsbpyr/launcher/slots.c`). Page sizes of 16K and 64K: see Tested on.
 
 ## Tested on
 
@@ -109,9 +109,17 @@ Apps built with `--glibc 2.28` (the pure-Python `hello` and an app with a manyli
 | `docker.io/library/rockylinux:8` | 2.28 |
 | `docker.io/library/almalinux:8` | 2.28 |
 
-The EL8 workflow (`.github/workflows/el8.yml`, which attaches the glibc 2.28 launchers to a
-release and is no part of the release gate) runs all four portability apps, built with `--glibc
-2.28` by the release's fsbpyr, on the twelve distributions above and on these two.
+The EL8 workflow (`.github/workflows/el8.yml`, which attaches the glibc 2.28 stubs to a
+release and is no part of the release gate) links the stub of every Python and target twice and
+compares them. On the default Python only, it runs the stub tests, the four portability apps
+(built with `--glibc 2.28` by the release's fsbpyr) on the twelve distributions above and on
+these two, and a small corpus subset against its venvs; on aarch64 it also runs a pure-Python
+and a native app in the VM described below.
+
+aarch64 kernels with 16K pages (Raspberry Pi 5's) and 64K pages (EL8's) are smoke-tested in QEMU
+system VMs, not on hardware (`make test-vm`; the `vm-smoke` job of `full-suite.yml`, and the EL8
+workflow with the EL8 userland): a few built apps start and run. The container matrix above runs
+on 4K-page kernels.
 
 The `compat` app runs one small check per library or behaviour in each build:
 

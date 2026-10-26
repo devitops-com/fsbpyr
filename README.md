@@ -407,8 +407,8 @@ settings (see "Settings" below): a git repository of `.py` files and executable
 scripts that Ansible copies to hosts with the wrong Python or none, a set of monitoring plugins,
 a cron fleet. The result is one executable and a link per command, built as in "Projects
 without a build system", named after the directory. It runs where "Supported targets" says:
-RHEL, Oracle Linux, AlmaLinux and Rocky 9 and 10, Amazon Linux 2023, Ubuntu 22.04 and newer,
-Debian 12 and newer, SLES 15 SP6 and newer and SLES 16, and EL8 (RHEL 8, Rocky Linux 8,
+RHEL, AlmaLinux and Rocky 9 and 10, Amazon Linux 2023, Ubuntu 22.04 and newer,
+Debian 12 and newer, SLES 15 SP6 and newer, and EL8 (RHEL 8, Rocky Linux 8,
 AlmaLinux 8) with `--glibc 2.28` ("Older systems: EL8 and glibc 2.28"). CentOS 7, Amazon Linux 2
 and every musl system are out of reach, and Ubuntu 20.04, Debian 10 and 11 and SLES 15 SP4 and SP5
 are not tested. Scripts for Python 2, scripts that import what Python removed (`cgi`, `imp`,
@@ -547,7 +547,7 @@ binary itself as well. Put it in a directory of its own and link the commands wh
 looks, with an absolute target (`ln -sf /opt/tools/ops-scripts /etc/cron.daily/check_disk`).
 
 - All the links share **one instance budget** (D45), because it counts copies by the executable's
-  file. The limit is 4 per CPU, at least 64 and at most 1024; a start beyond it exits 70, which
+  file. The limit is 4 per CPU and 16, at least 64 and at most 1024; a start beyond it exits 70, which
   Nagios shows as CRITICAL. `FSBPYR_MAX_INSTANCES` raises it (at most 4096), for a host that
   starts many checks at once.
 - Every start checks the whole executable (D31, "Integrity"); the cost grows with the file's size,
@@ -770,8 +770,9 @@ fsbpyr run from a checkout or a wheel has no release to fetch from: it uses the 
 when there is none.
 
 Kernels with 64K pages (EL8's on aarch64) are smoke-tested in a QEMU virtual machine, not on
-hardware: `make test-vm` boots EL8's kernel, and the EL8 workflow runs an app built with
-`--glibc 2.28` on that kernel with the EL8 userland before it publishes the aarch64 stubs.
+hardware: the EL8 workflow runs an app built with `--glibc 2.28` on that kernel with the EL8
+userland (`tools/vm-smoke.py --kernel 64k --userland el8`) before it publishes the aarch64
+stubs, and `make test-vm` boots the 16K and 64K kernels with a Debian userland.
 
 ## Failing a build on warnings
 
@@ -798,8 +799,10 @@ older (`jq -e` exits 1 on `false`):
 
 ```sh
 fsbpyr build -o dist/mytool --strict
-fsbpyr inspect --json dist/mytool | jq -e '.glibc | split(".") | map(tonumber) <= [2, 28]'
+fsbpyr inspect --json dist/mytool | jq -e '.glibc | split(".") | map(tonumber) <= [2, 34]'
 ```
+
+For an app built with `--glibc 2.28`, use `[2, 28]`.
 
 ## Leaving out sources
 

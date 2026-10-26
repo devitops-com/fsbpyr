@@ -26,7 +26,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
     command B; `sys.executable -m ...` is still refused, and so are hard-link starts. The selftest
     checks every command, a forkserver preloads the parent's command, `fsbpyr inspect` (and its
     JSON, as `commands`) and the build summary list the commands, and `--smoke-args` starts with
-    the command's name. Command names must match `[A-Za-z0-9][A-Za-z0-9_.+-]*`. All links share
+    the command's name. Command names, of one console script as of several, must match
+    `[A-Za-z0-9][A-Za-z0-9_.+-]*`. All links share
     one instance budget (D45). A one-command build is unchanged except that it carries the new
     `_fsbpyr_rt.commands` module, which only a table loads.
   - **A project with a `[project]` table and no `[build-system]` builds as `uv run main.py` runs
@@ -46,7 +47,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
     The commands are `[project.scripts]`, else the modules with a main guard (one: the
     project's command; several: a multi-command executable, named after the files, `main.py` after
     the project, a collision fails naming both). A script runs as `__main__` with its directory
-    first on `sys.path`, so `import utils` works; `__file__` is below `<exe>/_fsbpyr_scripts/`.
+    first on `sys.path`, so `import utils` works; `__file__` is next to the executable (`<exe dir>/main.py`; see the Changed
+    entry on `__file__`).
   - **A directory of scripts builds as one executable with a command per link.** `fsbpyr build`
     in a directory with no `setup.py` or `setup.cfg` (a `setup.cfg` alone is still refused) and
     no `pyproject.toml`, or one that holds only tool settings, packages its Python files: `*.py`
@@ -216,10 +218,6 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   SLES 15 SP4 and SP5 (glibc 2.31) and openSUSE Leap 15 only. The portability matrix gains
   `registry.suse.com/bci/bci-base:15.7` (SLES 15 SP7, 12 images now, 11 on aarch64), and the
   README and `docs/compatibility.md` list SLES 15 SP6 and newer.
-- **A build warns about dropped legacy scripts.** Files a project's `setup.py` installs with
-  `scripts=` were dropped without a word; the warning now names each and says that legacy
-  scripts are not packaged (use `[project.scripts]` or `--entry`). Those that start with
-  `#!python` in the wheel are packaged as commands (see the next entry).
 - **Legacy `scripts=` files that are Python are commands.** The files of the project's wheel
   under `<dist>.data/scripts/` that start with `#!python` (setuptools writes that for
   `scripts=['bin/tool']` and `script-files` from any python shebang; the build reads the wheel,
@@ -230,8 +228,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   it (`__main__`, `argv[0]` the path it was started by, its directory first on `sys.path`); its
   source is stored in the executable under a module name (`check-disk` as `check_disk.py`, `tool`
   as `_x_tool.py`), and, as for the scripts of a directory, its `__file__` is that name next to
-  the executable. A legacy script that is not Python (a shell script)
-  is still not packaged, and the build warns.
+  the executable. A file under `bin/` that is not a `#!python` script (a shell script), and a
+  script that does not compile, is not packaged, and the build warns naming it (use
+  `[project.scripts]` or `--entry`).
 - **`poetry.lock` and `pdm.lock` lock a build.** They used to be left unread, with a warning
   and an unlocked build. fsbpyr converts the lock in its staging directory (nothing is written
   into the project) into a requirements file for uv: the main (Poetry) or default (PDM) group
@@ -287,7 +286,6 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   prints it with its file and line (`fsbpyr: warning: pkg/mod.py:12: SyntaxWarning: ...`) for the
   project's own modules; dependencies and the standard library stay silent, and `--strict`
   counts it like the other warnings. The bytecode is unchanged.
-
 - **`FSBPYR_INSTALL_LINKS=DIR app` makes the command links on the target** (D14). The executable
   links each of its commands into DIR (absolute symlinks to its real path), and `x.py` besides `x`
   for a command that is a script, so a crontab, unit or NRPE line that runs `/opt/tools/x.py`
@@ -327,8 +325,7 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - **A script's `__file__` is next to the executable, and what it reads there is the host's file**
   (D24; the owner reversed decision 5.7(a) on 2026-10-25). For the scripts of a project without a
   build system, a directory of scripts and a single script, `__file__` and `spec.origin` are the
-  executable's directory plus the file's path in the project (`/opt/tools/sub/x.py`), where they
-  were `<exe>/_fsbpyr_scripts/sub/x.py`, so `open(os.path.join(os.path.dirname(__file__),
+  executable's directory plus the file's path in the project (`/opt/tools/sub/x.py`), so `open(os.path.join(os.path.dirname(__file__),
   "config.ini"))` reads the `config.ini` deployed beside the binary, as beside a script run by
   path. The code is still the executable's: the path hook claims those directories too, so a
   stale `.py` copy beside the binary is never imported and `sys.path.append(dirname(__file__) +
@@ -344,10 +341,6 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   `_fsbpyr_scripts.src.pkg.mod:main`; the build says so. It built through setuptools before.
 - **The smoke test of a `module` or inferred entry runs that module's top-level code on the
   build host,** as it always did; README now says so.
-- **`--strict`'s early refusal of VCS requirement lines also applies to a requirements file with
-  `--hash=` lines.** uv reads such a file in `--require-hashes` mode too, and its VCS lines then
-  failed inside uv with its generic message; the build now refuses them first, naming the file
-  and line, with or without `--strict`.
 - **`docs/compatibility.md` says what a hard link to an app does.** `sys.executable`, `__file__`
   and `sys.path[0]` of a start through a hard link are below the link's own path, a symlink gives
   the target's, and a rebuild leaves a hard link on the old build.
@@ -355,10 +348,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ### Fixed
 - **A forked child of an app that is process 1 gets the default SIGTERM back**, so a worker in
   a long C call dies on SIGTERM as under `python app.py`.
-- **A command name from a single console script is validated** like several are (letters,
-  digits and `_.+-`), so a tool's script name cannot place the executable or a
-  `FSBPYR_INSTALL_LINKS` link outside the output or link directory; the links code also refuses
-  a name with a directory part, and the background collection child makes no links.
+- **A command name cannot place the executable or a `FSBPYR_INSTALL_LINKS` link outside the
+  output or link directory**: a tool's single script name is validated like several are, the
+  links code also refuses a name with a directory part, and the background collection child
+  makes no links.
 - **A file next to the executable named like a script imports nothing before the parent check.**
 - **A distribution name read from a venv's metadata must be a valid name** before it becomes a
   pin.
@@ -379,9 +372,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   mode"; the build warns that such a line is whatever the tree holds. Lines pinned by a commit
   SHA (`git+URL@<40 hex>`) or a `#sha256=` URL are no longer reported as unpinned. With no
   `requirements.txt` but `requirements/*.txt`, the build prints a hint naming `--requirements`.
-- **`--strict` with VCS lines in a requirements file is refused early**, naming the lines and
-  saying that a commit SHA pins the source but is not a hash, rather than failing inside uv
-  with a generic hash message.
+- **`--strict`, and a requirements file with `--hash=` lines, refuse VCS requirement lines
+  early**, naming the file and lines and saying that a commit SHA pins the source but is not a
+  hash, rather than failing inside uv with a generic hash message (uv reads such a file in
+  `--require-hashes` mode too).
 - **A failed `uv build` shows why.** uv's build is no longer `--quiet`, so the error carries
   the backend's own reason (such as setuptools' "Multiple top-level modules discovered in a
   flat-layout"), and under `-v` "see its output above" is true.
