@@ -112,7 +112,10 @@ def test_a_set_uid_start_by_the_owner_is_not_privileged(build_app: BuildApp) -> 
     app = build_app(HELLO, "hello:main")
     if os.statvfs(app).f_flag & os.ST_NOSUID:
         pytest.skip("needs a mount that allows set-id bits, not nosuid")
+    if "NoNewPrivs:\t1" in Path("/proc/self/status").read_text():
+        pytest.skip("needs set-id bits, which no_new_privs disables")
     app.chmod(app.stat().st_mode | stat.S_ISUID)
+    assert app.stat().st_mode & stat.S_ISUID
 
     result = _run(app)
 

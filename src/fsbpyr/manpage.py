@@ -20,10 +20,11 @@ EXIT_STATUS = (
     ("2", "Usage error: an unknown command or option, or a value the command refuses."),
     ("130", "Interrupted (Ctrl-C)."),
     ("70", "An executable built by fsbpyr refused to start: its integrity check failed (the "
-           "file was modified or damaged), it was started set-uid, set-gid or with file "
-           "capabilities, it was started by itself as a Python interpreter without "
-           "`--interpreter-reexec`, or as many copies of it run already as the machine "
-           "allows (FSBPYR_MAX_INSTANCES). Printed by the built app, not by `fsbpyr`."),
+           "file was modified or damaged), it was started with privileges changed "
+           "(set-uid or set-gid to another user or group, or file capabilities), it was "
+           "started by itself as a Python interpreter without `--interpreter-reexec`, or as "
+           "many copies of it run already as the machine allows (FSBPYR_MAX_INSTANCES). "
+           "Printed by the built app, not by `fsbpyr`."),
 )
 
 # (variable, meaning): the ones fsbpyr or an executable it built reads; a test keeps this

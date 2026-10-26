@@ -93,7 +93,8 @@ leading to it must be owned by root or by the user and writable by nobody else (
   `/proc/<ppid>`. Without `/proc` (or with one that is not procfs) it does not start, or the
   parent check says no.
 - **Privileged starts are refused.** `setcap cap_net_bind_service+ep app` and set-gid
-  deployments stop working (a set-uid start by the file's own owner is no privileged start). A fixed root-owned cache that ignores `FSBPYR_*`, XDG and HOME
+  deployments stop working (a set-uid start by the file's own owner changes no privileges
+  and is not refused). A fixed root-owned cache that ignores `FSBPYR_*`, XDG and HOME
   would allow them, at the cost of a second cache policy; it was not chosen.
 - **The instance limit is no security boundary** (D45). It stops an app that keeps starting
   itself, not an attacker: any process of the user can hold every slot (out of scope above),
