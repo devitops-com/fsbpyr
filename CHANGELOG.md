@@ -14,7 +14,7 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - **A failed smoke test shows whole lines.** The tail of the new executable's error output that
   the build prints starts at a line boundary, with a note of how many earlier lines were left out,
   instead of in the middle of a line. The same holds for the tails of `uv` and launcher link
-  errors.
+  errors, and of a failing compile worker or interpreter query.
 - **One is one.** The build says `collecting 1 distribution`, `1 command` and `the 1 distribution
   a lock source names`, not the plural.
 

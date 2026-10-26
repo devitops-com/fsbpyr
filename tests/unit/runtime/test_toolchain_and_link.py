@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -468,3 +469,23 @@ def test_stub_command_passes_the_runtime_id_the_stub_records(tmp_path: Path) -> 
 def test_the_identity_flag_is_not_part_of_the_runtime_id() -> None:
     """The id is what the flag carries: it cannot depend on it."""
     assert not any("RUNTIME_ID" in flag for flag in (*stub.COMPILE_FLAGS, *stub.LINK_FLAGS))
+
+
+def test_a_failed_link_shows_its_output_from_a_line_start(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    dist = _fake_dist(tmp_path)
+    toolchain = Toolchain(clang=Path("/x/clang-22"), lld=Path("/x/ld.lld-22"), major=22)
+    monkeypatch.setattr(ar, "members", lambda path: [])
+    printed = "".join(f"line {number} of the link\n" for number in range(600))
+    monkeypatch.setattr(subprocess, "run",
+                        lambda command, **kwargs: subprocess.CompletedProcess(command, 1, "",
+                                                                              printed))
+
+    with pytest.raises(StubBuildError) as caught:
+        stub.build_stub(dist, toolchain, tmp_path / "stub")
+
+    lines = str(caught.value).splitlines()
+    assert re.fullmatch(r"\(\d+ earlier lines left out\)", lines[1])
+    assert re.fullmatch(r"line \d+ of the link", lines[2])
+    assert lines[-1] == "line 599 of the link"

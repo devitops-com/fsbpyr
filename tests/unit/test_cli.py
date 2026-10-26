@@ -12,6 +12,7 @@ import click
 import pytest
 
 import fsbpyr
+from fsbpyr.build import BuildResult
 from fsbpyr.cli import cli, main
 from fsbpyr.runtime import pins, registry
 from fsbpyr.runtime.toolchain import ToolchainError
@@ -341,3 +342,15 @@ def test_build_commands_stop_first_on_any_python_but_3_12_to_3_15(
         "",
         "fsbpyr: error: fsbpyr runs on CPython 3.12, 3.13, 3.14 and 3.15 only, not 3.16\n",
     )
+
+
+def test_a_build_of_one_command_says_one_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    result = BuildResult(output=tmp_path / "app", app_name="app", entrypoint="a:main", size=0,
+                         warnings=(), commands=("serve",))
+    monkeypatch.setattr("fsbpyr.build.build", lambda *args, **kwargs: result)
+
+    assert main(["build", str(tmp_path)]) == 0
+    assert ", 1 command)" in capsys.readouterr().out

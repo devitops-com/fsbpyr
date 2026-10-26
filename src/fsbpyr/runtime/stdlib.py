@@ -16,6 +16,7 @@ from ..payload.format import (
     parallel,
 )
 from ..payload.spec import ZSTD_LEVEL, Blob, File, Module
+from ..text import tail_lines
 from .pbs import PbsDist
 
 EXCLUDED_DIRS = frozenset({
@@ -23,6 +24,7 @@ EXCLUDED_DIRS = frozenset({
     "lib-dynload", "__phello__",
 })  # fmt: skip
 _FAILED = 0xFFFFFFFF
+_ERROR_TAIL = 2000
 
 # Runs under the PBS interpreter (-I -S): compile each listed file and frame the marshal data.
 # stdin: NUL-separated pairs of (relative path, co_filename).
@@ -111,7 +113,8 @@ def decode_compiled(stream: bytes, rels: list[str]) -> dict[str, bytes | None]:
 def _run(command: list[str], stdin: str = "") -> subprocess.CompletedProcess[bytes]:
     result = subprocess.run(command, input=stdin.encode(), capture_output=True, check=False)
     if result.returncode != 0:
-        raise StdlibError(f"{command[0]} failed: {result.stderr.decode(errors='replace')[-2000:]}")
+        stderr = result.stderr.decode(errors="replace")
+        raise StdlibError(f"{command[0]} failed: {tail_lines(stderr, _ERROR_TAIL)}")
     return result
 
 
