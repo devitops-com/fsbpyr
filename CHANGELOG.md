@@ -30,6 +30,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   errors, and of a failing compile worker or interpreter query.
 - **One is one.** The build says `collecting 1 distribution`, `1 command` and `the 1 distribution
   a lock source names`, not the plural.
+- **A VM boot that hangs shows how far it got.** `tools/vm-smoke.py` (`make test-vm`, the
+  `vm-smoke` job) boots with kernel messages from the first line on (`earlycon`, no `quiet`), so
+  a boot that never reaches `/init` leaves its last messages in the report instead of an empty
+  console. `/init` turns them down to `quiet`'s level before its first marker line.
 
 ## [0.26.0] - 2026-10-26
 
