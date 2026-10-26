@@ -12,6 +12,7 @@ launcher's own digest routine (D31, D32): a modified file is reported and restor
 payload.
 """
 
+import contextlib
 import os
 from _frozen_importlib import ModuleSpec
 from _frozen_importlib_external import ExtensionFileLoader
@@ -22,14 +23,31 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
     from types import ModuleType
+    from typing import NoReturn
 
 NATIVE_EXT = 3
 NATIVE_LIB = 4
 GENERATION_DIGITS = 32
 _SYSTEM_LIBRARY_ERRORS = ("version `GLIBC", "GLIBCXX_", "CXXABI_", "cannot open shared object file")
+REFUSED = 70  # the launcher's "refused to start" (D41)
+_REFUSED = "refusing cache directory "  # how module.c's CacheError for a foreign/exposed one starts
 EXTRACTED: list[str] = []  # site-relative paths this process wrote, kept for FSBPYR_TRACE
 # ImportError: the native cache cannot be used, or the payload's data for it is corrupt.
 NativeCacheError = _fsbpyr.CacheError
+
+
+def refuse(exc: NativeCacheError) -> "NoReturn":
+    """A refused cache directory (owned by another user, or others may write to it) is a refused
+    start, as the launcher reports one (D41): the line and exit 70, without running more of the
+    app. ``os._exit``: the refusal may arise in a thread, or under code that catches SystemExit."""
+    import sys  # noqa: PLC0415  # only a refusal needs it
+
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(Exception):
+            stream.flush()
+    message = f"fsbpyr: cannot start {_fsbpyr.info()['executable']}: {exc}\n"
+    os.write(2, message.encode("utf-8", "replace"))
+    os._exit(REFUSED)
 
 
 def _corrupt(what: str) -> NativeCacheError:
@@ -82,10 +100,25 @@ class NativeCache:
         written = EXTRACTED if os.environ.get("FSBPYR_TRACE") else None
         return _fsbpyr.sync(self.root, self._chain, files, self._checked, resources, written)
 
+    def extract(self, files: "Sequence[int]", *, resources: bool = False) -> int:
+        """``sync`` for the import machinery and the resources API: a refused cache directory
+        (module.c's words) is a refused start, not an error the app could run into."""
+        try:
+            return self.sync(files, resources=resources)
+        except NativeCacheError as exc:
+            if str(exc).startswith(_REFUSED):
+                refuse(exc)
+            raise
+
 
 _CACHE: list[NativeCache] = []
 _RESOURCES: list[NativeCache] = []
 _MATERIALIZED: dict[str, str] = {}  # payload path -> path on disk, checked by this process
+
+
+def loaded_site() -> str | None:
+    """The native cache's ``site`` directory if this process has one, else None."""
+    return _CACHE[0].site if _CACHE else None
 
 
 def native_cache() -> NativeCache:
@@ -153,27 +186,27 @@ class PayloadExtensionLoader(ExtensionFileLoader):
     def create_module(self, spec: ModuleSpec) -> "ModuleType":
         cache = native_cache()
         try:
-            cache.sync(self.files)
-            try:
-                return super().create_module(spec)
-            except ImportError as exc:
-                if exc.path != spec.origin:  # raised by the module's own initialization
-                    raise
-                if _noexec(cache.root):
-                    raise NativeCacheError(
-                        f"{exc}; the native cache {cache.root} is on a noexec mount, "
-                        "set FSBPYR_CACHE_DIR to another directory",
-                        name=spec.name,
-                    ) from exc
-                if hint := _system_library_hint(str(exc)):
-                    raise ImportError(f"{exc}{hint}", name=exc.name, path=exc.path) from exc
-                raise
-        except OSError as exc:
+            cache.extract(self.files)
+        except OSError as exc:  # the extraction's own; the module's below are not ours to word
             raise NativeCacheError(
                 f"cannot extract native code for {spec.name} into {cache.root}: {exc}; "
                 "set FSBPYR_CACHE_DIR to a writable directory",
                 name=spec.name,
             ) from exc
+        try:
+            return super().create_module(spec)
+        except ImportError as exc:
+            if exc.path != spec.origin:  # raised by the module's own initialization
+                raise
+            if _noexec(cache.root):
+                raise NativeCacheError(
+                    f"{exc}; the native cache {cache.root} is on a noexec mount, "
+                    "set FSBPYR_CACHE_DIR to another directory",
+                    name=spec.name,
+                ) from exc
+            if hint := _system_library_hint(str(exc)):
+                raise ImportError(f"{exc}{hint}", name=exc.name, path=exc.path) from exc
+            raise
 
 
 def _shipped_libraries(dists: "set[int]") -> "Iterator[int]":
@@ -198,7 +231,7 @@ def materialize_package(directory: str) -> str:
         needed = (_fsbpyr.closure(record[6]) for record in records
                   if record[1] == NATIVE_EXT and record[6] != _fsbpyr.NONE)  # fmt: skip
         shipped = _shipped_libraries({record[5] for record in records} - {_fsbpyr.NONE})
-        cache.sync(tuple(dict.fromkeys(
+        cache.extract(tuple(dict.fromkeys(
             (*files, *(i for closure in needed for i in closure), *shipped)
         )))  # fmt: skip
     except OSError as exc:
@@ -224,7 +257,7 @@ def materialize(path: str) -> str:
         raise FileNotFoundError(2, "No such file in the executable payload", path)
     try:
         cache = resource_cache()
-        cache.sync(files, resources=True)
+        cache.extract(files, resources=True)
     except NativeCacheError as exc:  # its message says what to do
         raise OSError(f"cannot extract {path}: {exc}") from exc
     except OSError as exc:  # same class (PermissionError, ...), with the cache and the remedy
@@ -275,7 +308,7 @@ def bundled_library(name: str, caller: str | None = None) -> str | None:
                     members = linked
                     break
     cache = native_cache()
-    cache.sync((index, *members))
+    cache.extract((index, *members))
     return f"{cache.site}/{rel}"
 
 

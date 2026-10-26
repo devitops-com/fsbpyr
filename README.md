@@ -69,6 +69,10 @@ says:
   installs its own `sys.excepthook` (typer and rich do), and a package that only checks whether
   its files exist sees `False` and may fail later in another way. `fsbpyr build --hints` lists
   packages that may read files next to `__file__` (guesses).
+- An uncaught `FileNotFoundError` for a path below the native cache's `site/` directory (a
+  compiled package such as mypyc's `blib2to3` reading its data file) ends with `fsbpyr: <path> is
+  missing from the native cache, which holds the compiled files of a package only; <package> reads files next to its __file__: rebuild with
+  --fs-package <package>`.
 - A build that stops on `native files need libraries that are neither bundled nor standard
   system libraries` prints the `allow-system-libs` line that lets the target provide them.
 - A child process that exits 70 with `fsbpyr: refusing to run ... as Python` asks for
@@ -1015,7 +1019,9 @@ directory anyone may add to, such as `/tmp`.) Environment variables the executab
 
 An executable needs `/proc` (it finds itself through `/proc/self/exe`), and refuses to start
 set-uid, set-gid or with file capabilities (exit 70): the cache location comes from the
-caller's environment. A start also exits 70 when as many copies of the app run already as
+caller's environment, or, at its first extraction, when the cache directory is owned by another
+user or others may write to it (`fsbpyr: cannot start <executable>: refusing cache directory ...`).
+A start also exits 70 when as many copies of the app run already as
 the machine allows (`FSBPYR_MAX_INSTANCES` above): an app that keeps starting itself, by
 whatever route, stops there. See [docs/security.md](docs/security.md).
 

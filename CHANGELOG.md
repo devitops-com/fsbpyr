@@ -11,6 +11,19 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Fixed
+- **A refused cache directory is a refused start.** With `FSBPYR_CACHE_DIR` (or the default
+  cache) in a directory that another user owns or others may write to, an app with native code
+  ends with the one line `fsbpyr: cannot start <executable>: refusing cache directory <path>:
+  other users may write to it` and exit 70, as the integrity check does, at the first extraction.
+  It used to surface as the root cause of an `ImportError` (NumPy printed advice about a broken
+  installation) with exit 1. Other extraction failures stay errors; apps without native code pay
+  nothing. (#42)
+- **A compiled package's missing data file names `--fs-package`.** A compiled module's own
+  `OSError`, such as mypyc's `blib2to3` reading `Grammar.txt` while the package is imported, is no
+  longer reported as "cannot extract native code ... set FSBPYR_CACHE_DIR". When the missing
+  file is below the native cache's `site/` directory, the uncaught error ends with
+  `fsbpyr: <path> is missing from the native cache, which holds the compiled files of a package
+  only; <package> reads files next to its __file__: rebuild with --fs-package <package>`. (#43)
 - **A failed smoke test shows whole lines.** The tail of the new executable's error output that
   the build prints starts at a line boundary, with a note of how many earlier lines were left out,
   instead of in the middle of a line. The same holds for the tails of `uv` and launcher link

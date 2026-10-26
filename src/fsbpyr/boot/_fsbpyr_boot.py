@@ -549,11 +549,41 @@ def _inside_executable_note(exc: BaseException | None) -> str | None:
         if (
             isinstance(exc, FileNotFoundError)
             and isinstance(filename, str)
+            and (note := _site_note(filename)) is not None
+        ):
+            return note
+        if (
+            isinstance(exc, FileNotFoundError)
+            and isinstance(filename, str)
             and filename.startswith(_BIN)
             and _overlay_finder(filename.rpartition("/")[0]) is not None
         ):
             return _deploy_note(filename)
         exc = exc.__cause__ or exc.__context__
+    return None
+
+
+def _site_note(filename: str) -> str | None:
+    """The note for a file that is not there, below the native cache's ``site`` tree: only the
+    compiled files of a package are extracted there, and a compiled package that reads files
+    next to its ``__file__`` (mypyc's, ``blib2to3/Grammar.txt``) needs ``--fs-package``. None
+    when no extension was loaded, the path lies elsewhere or no regular package holds it."""
+    native = sys.modules.get("_fsbpyr_rt.native")
+    site = native.loaded_site() if native is not None else None
+    if site is None or not filename.startswith(site + "/"):
+        return None
+    parts = filename[len(site) + 1 :].split("/")
+    for depth in range(1, len(parts) + 1):  # the outermost regular package holds the others
+        name = ".".join(parts[:depth])
+        found = _fsbpyr.find_module(name)
+        if found is None or found[1] not in (PACKAGE, NAMESPACE):
+            break
+        if found[1] == PACKAGE:
+            return (
+                f"fsbpyr: {filename} is missing from the native cache, which holds the compiled "
+                f"files of a package only; {name} reads files next to its __file__: rebuild "
+                f"with --fs-package {name}\n"
+            )
     return None
 
 
