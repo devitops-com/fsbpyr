@@ -177,10 +177,12 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   when `release.yml` completes successfully for a version tag, or by hand with a tag
   (`gh workflow run el8.yml -f tag=vX.Y.Z`, for a release that has none or to retry), and is
   outside the release: `release.yml`, `full-suite.yml` and the release gate neither wait for it
-  nor know it, and a release may have EL8 stubs or not. Per Python and target it links the EL8
+  nor know it, and a release may have EL8 stubs or not. For every Python and target it links the EL8
   stub from the tag's sources twice in independent caches and requires the two to be byte for
   byte identical, with no GLIBC symbol above 2.28 and the runtime id its release's fsbpyr
-  expects (`tools/release/el8-stub.py`); runs the stub-dependent tests with the EL8 stub, the
+  expects (`tools/release/el8-stub.py`); on the default Python only (CI minutes: the stubs differ
+  per Python only in the linked libpython, which that check covers for every Python) per target,
+  it runs the stub-dependent tests with the EL8 stub, the
   portability matrix with apps the release's own fsbpyr built with `--glibc 2.28` (the stub
   placed beside it) on the 12 images and `rockylinux:8` and `almalinux:8`, four native-heavy
   corpus apps (`pandas-csv`, `lxml`, `pillow`, `scipy`) built the same way and compared with

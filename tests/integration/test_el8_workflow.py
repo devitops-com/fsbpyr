@@ -44,17 +44,37 @@ def test_a_tag_is_done_once() -> None:
     assert "cancel-in-progress: false" in EL8
 
 
-def test_the_jobs_run_every_target_and_python_on_a_runner_of_the_targets_architecture() -> None:
+def test_the_jobs_run_every_target_on_a_runner_of_the_targets_architecture() -> None:
+    """The stub job links every Python; the others run the default Python only (owner,
+    2026-10-26), which the plan job reads from the tag's .python-version."""
     supported = ", ".join(f'"{"{}.{}".format(*version)}"' for version in sorted(SUPPORTED_PYTHON))
+    default = "python: ${{ fromJSON(format('[\"{0}\"]', needs.plan.outputs.python)) }}"
     for name in MATRIX_JOBS:
         text = JOBS[name].split("    steps:", 1)[0]
         assert "    runs-on: ${{ matrix.runner }}\n" in text, name
-        assert f"python: [{supported}]" in text, name
+        if name == "stub":
+            assert f"python: [{supported}]" in text
+        else:
+            assert default in text, name
+            assert re.search(r"needs: (plan|\[plan, stub\])\n", text), name
         assert 'target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]' in text, name
         assert '- {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}' in text, name
         assert '- {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}' in text, name
         assert "fail-fast: false" in text, name
     assert "runs-on: ubuntu-24.04-arm" in JOBS["vm-smoke"]
+
+
+def test_the_plan_reads_the_default_python_of_the_tag() -> None:
+    plan = JOBS["plan"]
+
+    assert "python: ${{ steps.release.outputs.python }}" in plan
+    assert "contents/.python-version?ref=$tag" in plan
+    assert 'echo "python=" >> "$GITHUB_OUTPUT"' in plan  # no tag, no Python
+    for name in ("portability",):  # the stub of the entry's Python and target must exist
+        assert "needs: [plan, stub]" in JOBS[name]
+    stubs = re.search(r"for python in ([0-9. ]+); do", JOBS["publish"])
+    assert stubs and stubs.group(1).split() == [
+        "{}.{}".format(*version) for version in sorted(SUPPORTED_PYTHON)]  # publish: all of them
 
 
 def test_the_image_is_the_builds_by_digest() -> None:

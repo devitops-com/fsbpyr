@@ -15,11 +15,14 @@ name: EL8
 #   - on request, with the tag of an existing release: to attach the stubs to a release that
 #     has none, or to retry. The tag's sources must have the EL8 support (plan checks), since
 #     everything runs from the tag, not from the default branch's copy of the repository.
-# Per (target, Python) entry, as full-suite.yml's matrix (each target on a runner of its
-# architecture: x86_64-linux-gnu on ubuntu-24.04, aarch64-linux-gnu on ubuntu-24.04-arm), testing
-# only what differs from a default build: the stub (boot code, payload format, classification
-# and the build pipeline are the same bytes):
-#   - stub: the EL8 stub linked from the tag (`fsbpyr runtime build --python X --glibc 2.28`,
+# Per target (each on a runner of its architecture: x86_64-linux-gnu on ubuntu-24.04,
+# aarch64-linux-gnu on ubuntu-24.04-arm), testing only what differs from a default build: the
+# stub (boot code, payload format, classification and the build pipeline are the same bytes).
+# Only the stub job runs every Python (3.12 to 3.15, as full-suite.yml's matrix); the tests,
+# portability and corpus jobs run on the default Python only, the one .python-version names (the
+# plan job reads it from the tag; owner, 2026-10-26: CI minutes, and the stubs differ per Python
+# only in the linked libpython, which the stub job checks for every Python):
+#   - stub (every Python): the EL8 stub linked from the tag (`fsbpyr runtime build --python X --glibc 2.28`,
 #     tools/release/el8-stub.py) twice in independent caches, byte for byte identical; it needs
 #     no GLIBC_ symbol above 2.28 and carries the runtime id this tag's fsbpyr expects;
 #   - tests: the tests that run the stub, with the glibc 2.28 runtime (FSBPYR_TEST_GLIBC=2.28,
@@ -65,6 +68,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       tag: ${{ steps.release.outputs.tag }}
+      python: ${{ steps.release.outputs.python }}
     steps:
       # head_branch of a workflow_run caused by a tag push is the tag. The release must exist
       # (publish uploads to it), and the tag's sources must have what the jobs below run.
@@ -93,6 +97,7 @@ jobs:
             if [ "$RUN_CONCLUSION" != success ] || [ "$RUN_EVENT" != push ] || ! [[ "$tag" =~ $xyz ]]; then
               echo "::notice::the Release run ($RUN_EVENT of '$RUN_REF': $RUN_CONCLUSION) made no release: nothing to attach"
               echo "tag=" >> "$GITHUB_OUTPUT"
+              echo "python=" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           fi
@@ -102,7 +107,14 @@ jobs:
             gh api "repos/$GH_REPO/contents/$file?ref=$tag" --silent 2> /dev/null \
               || { echo "::error::$tag has no $file: it predates the EL8 support, which the EL8 stubs of a release need"; exit 1; }
           done
+          # The default Python of the tag, the one .python-version names (as build.yml and
+          # full-suite.yml read it): the tests, portability and corpus jobs run on it only.
+          python="$(gh api -H 'Accept: application/vnd.github.raw+json' \
+            "repos/$GH_REPO/contents/.python-version?ref=$tag" | cut -d. -f1,2)"
+          [[ "$python" =~ ^3\.[0-9]+$ ]] \
+            || { echo "::error::$tag has no usable .python-version ('$python')"; exit 1; }
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "python=$python" >> "$GITHUB_OUTPUT"
 
   # The EL8 stub of every (target, Python) entry, linked twice. Debian trixie and the toolchain
   # as build.yml sets them up (the image by digest, uv from tools/release/uv.version, clang/lld
@@ -210,7 +222,9 @@ jobs:
             dist/${{ env.ASSET }}.xz
           if-no-files-found: error
 
-  # The stub-dependent tests (`make test-el8-stub`) in the suite job's setup of full-suite.yml
+  # The stub-dependent tests (`make test-el8-stub`), on the default Python only (owner, 2026-10-26:
+  # CI minutes; the stubs differ per Python only in the linked libpython, which the stub job checks
+  # for every Python) in the suite job's setup of full-suite.yml
   # (privileged container, the user `tester`, /var/tmp a tmpfs), minus podman and the coverage
   # and fuzzing: the tests link the glibc 2.28 runtime themselves, with the same recipe as the
   # stub job. FSBPYR_TESTS_REQUIRE_ALL=el8: no skip is expected but podman's (tests/conftest.py).
@@ -222,7 +236,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12", "3.13", "3.14", "3.15"]  # as in the stub job
+        python: ${{ fromJSON(format('["{0}"]', needs.plan.outputs.python)) }}  # the default Python only
         target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
         include:
           - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
@@ -303,7 +317,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12", "3.13", "3.14", "3.15"]  # as in the stub job
+        python: ${{ fromJSON(format('["{0}"]', needs.plan.outputs.python)) }}  # the default Python only
         target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
         include:
           - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
@@ -392,7 +406,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12", "3.13", "3.14", "3.15"]  # as in the stub job
+        python: ${{ fromJSON(format('["{0}"]', needs.plan.outputs.python)) }}  # the default Python only
         target: ["x86_64-linux-gnu", "aarch64-linux-gnu"]
         include:
           - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}

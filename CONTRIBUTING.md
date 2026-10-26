@@ -90,8 +90,8 @@ The tiers, from fastest to most complete:
   `fsbpyr build` of a test is `--glibc 2.28` and `tests/e2e/test_el8.py` runs besides, with both
   runtimes) and the portability matrix with apps built for glibc 2.28, on the 12 images and
   `rockylinux:8` and `almalinux:8` (`make test-el8-portability`, podman; EL8 images are in no
-  other run). `.github/workflows/el8.yml` runs them for a release, per target and Python,
-  with a native-heavy corpus subset (`FSBPYR_CORPUS_APPS`, the mode's `pandas-csv`, `lxml`,
+  other run). `.github/workflows/el8.yml` runs them for a release, per target, on the default Python only
+  (every Python's stub is still linked and checked, below), with a native-heavy corpus subset (`FSBPYR_CORPUS_APPS`, the mode's `pandas-csv`, `lxml`,
   `pillow` and `scipy`) and, on aarch64, the 64 KiB-page VM smoke test with the EL8 userland
   (`tools/vm-smoke.py --kernel 64k --userland el8`; a pinned file gone from its mirror fails this job, since nothing else tests the 64 KiB pages: renew the pin and retry). Only what differs from a default build is
   tested: the stub. (`tests/e2e/test_el8_use_cases.py`, EL8 builds of a directory of scripts, a
