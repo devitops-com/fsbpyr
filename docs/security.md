@@ -89,9 +89,10 @@ in the wiki); the launcher checks each file's digest before it is loaded.
 - **Self update** verifies the new executable's digest (`inspect --verify`) and refuses one
   whose glibc baseline is newer than the host's before replacing anything; that is a guard
   against a broken install, not a trust check. Stubs placed beside the executable are not
-  touched. The update names those that are not stubs of the new release (their SHA-256 is not
-  in its companion's `SHA256SUMS-glibc2.28`), which a build refuses (the runtime id differs);
-  when it cannot read that file, it names all of them, as refused if the runtime id changed.
+  touched. The update names those that are not the new release's published stubs (their
+  SHA-256 is not in its companion's `SHA256SUMS-glibc2.28`), which a build refuses unless they
+  carry the same runtime id (a build accepts a stub on its id, not its bytes); when it cannot
+  read that file, it names all of them, as refused if the runtime id changed.
 - **POSIX ACLs and shared primary groups.** The cache root check reads the mode bits and the
   owner. A POSIX ACL on the cache root, or a primary group shared with other users, can give
   others write access that the check does not see. Keep the cache root in a directory only

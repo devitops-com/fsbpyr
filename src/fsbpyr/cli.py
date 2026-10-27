@@ -524,7 +524,8 @@ def _unsupported_python() -> bool:
 def _collect_when_due() -> None:
     """The tool's cache, collected at the start of ``build``, ``inspect``, ``runtime build`` and
     ``runtime list`` once a day, or once an hour when its file system has less than 10% free
-    (D38); a failure is reported and never stops the command."""
+    (D38); a failure never stops the command, and is reported unless it is a missing home
+    directory, a cache this user may not write or a read-only file system."""
     from .runtime import collect, registry  # noqa: PLC0415  keep --version fast
 
     try:

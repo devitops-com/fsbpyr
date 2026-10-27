@@ -108,7 +108,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   absolute home), `fsbpyr build`, `runtime build`, `runtime list` and `cache gc` print the one
   line `fsbpyr: error: cannot find the home directory; set HOME, XDG_CACHE_HOME or
   FSBPYR_CACHE_DIR` and exit 1. They used to print the internal-error traceback, which asked for a
-  bug report. (#59)
+  bug report. With `FSBPYR_CACHE_DIR` set, `cache gc` collects that cache and needs no home
+  directory. (#59)
 - **`FSBPYR_SELFTEST=natives` reports a refused cache directory as the app does.** With a cache
   directory that another user owns or others may write to, the native check of an app with native
   code now ends with the one line `fsbpyr: cannot start <executable>: refusing cache directory
@@ -151,7 +152,7 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   and which used to come in with clang-22. (#66)
 - **An app at its instance limit says the limit is per user.** The refusal said the copies running
   were `as many as this machine allows at once`, but the limit counts one user's copies. It now
-  ends `as many as this user may run at once`, and docs/compatibility.md quotes the new text.
+  says `as many as this user may run at once`, and docs/compatibility.md quotes the new text.
   (#67)
 - **fsbpyr's messages and help name `uv run` shebangs.** Any `uv run` shebang, with or without
   `--script`, makes a file a script, as a python shebang does. The error for a file that is not a

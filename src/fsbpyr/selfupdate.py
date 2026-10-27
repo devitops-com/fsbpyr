@@ -256,8 +256,9 @@ def _warn_about_placed_stubs(executable: Path, tag: str, warn: Callable[[str], N
         return
     names = ", ".join(str(path) for path in refused)
     if known:
-        warn(f"{names} are not the stubs of {tag}: `--glibc` will refuse them; place the stubs "
-             f"of {tag} next to them, or remove these and let `--glibc` download them")  # fmt: skip
+        warn(f"{names} are not the published stubs of {tag}: `--glibc` refuses them unless "
+             f"they carry its runtime id; place the stubs of {tag} next to them, or remove "
+             "these and let `--glibc` download them")  # fmt: skip
     else:
         warn(f"{names} could not be checked against the stubs of {tag}: if the runtime id of "
              f"{tag} differs, `--glibc` refuses them and names the stub to place")  # fmt: skip

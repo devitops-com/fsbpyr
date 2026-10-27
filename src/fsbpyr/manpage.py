@@ -25,8 +25,8 @@ EXIT_STATUS = (
            "started by itself as a Python interpreter unless it was built with "
            "`--interpreter-reexec` or `--no-interpreter-reexec`, the cache directory was "
            "refused (`refusing cache directory <path>`: owned by another user, or others "
-           "may write to it), or as many copies of it run already for the same user as the "
-           "machine allows (FSBPYR_MAX_INSTANCES). "
+           "may write to it), or as many copies of it run already as one user may run at "
+           "once (FSBPYR_MAX_INSTANCES). "
            "Printed by the built app, not by `fsbpyr`."),
 )
 

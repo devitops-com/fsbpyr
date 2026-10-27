@@ -406,7 +406,7 @@ def test_a_placed_el8_stub_the_new_release_does_not_list_is_named_in_a_warning(
 
     err = capsys.readouterr().err
     assert str(old) in err and str(current) not in err
-    assert "`--glibc` will refuse" in err and "v1.2.0" in err
+    assert "`--glibc` refuses them unless" in err and "v1.2.0" in err
     assert old.read_bytes() == b"old stub"  # the user's files are left alone
 
 
@@ -439,7 +439,7 @@ def test_without_a_companion_the_warning_is_conditional(
     err = capsys.readouterr().err
     assert str(stub) in err
     assert "if the runtime id of v1.2.0 differs" in err and "names the stub to place" in err
-    assert "will refuse them;" not in err
+    assert "refuses them unless" not in err
 
 
 def test_a_sums_read_cut_short_is_an_unknown_not_a_traceback(
