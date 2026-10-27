@@ -558,7 +558,7 @@ Status (v0.25.0): since 0.18.1 `make bootstrap` (`tools/bootstrap.sh`) runs thes
 Debian trixie on the host (with the user's uv and Python, and the clang/lld 23.1.3 tarball it
 fetches, `tools/release/llvm23`, since 0.23.0; since 2026-10-19 it installs no tools and names a
 missing one), elsewhere in a Debian trixie podman container (`Containerfile`). Stage 0 is
-`uv run --locked` on the Python of `.python-version` (3.14.9, the default; `make bootstrap
+`uv run --locked` on the Python of `.python-version` (3.14.10, the default; `make bootstrap
 PYTHON=3.X` or `bootstrap.sh --python 3.X` does a variant's three stages, 3.12 to 3.15, in
 `dist/stage1..3-3.X`); the stages land in `dist/stage1..3/`, each must pass `inspect --verify`,
 stages 2 and 3 must be identical, and stage 3 becomes `dist/fsbpyr`. CI runs it for every Python
@@ -1782,6 +1782,11 @@ compare jobs or the short asset names, later entries below and D42 apply.
     whose archives are LLVM 23.1.3 bitcode on every target; both targets link them with LLVM's
     23.1.3 release tarball for their architecture (`tools/release/llvm23`, the aarch64 one by
     the owner's choice of 2026-10-22). macOS would need upstream LLVM 23 accordingly.
+  - 2026-10-27, 0.28.0: the pins move to PBS 20261026 (CPython 3.12.16, 3.13.18, 3.14.10, 3.15.2)
+    on both targets (upstream-watch's issue #52); `.python-version` is 3.14.10. The 3.14 archives
+    are still LLVM 23.1.3 bitcode. The aarch64 distributions are linked with
+    `-Wl,--fix-cortex-a53-843419` (PYTHON.json's LDFLAGS), which our link does not take: it uses
+    its own literal `LINK_FLAGS` (stub.py), so the workaround does not reach the stub.
   - 2026-10-22, 0.24.0 (D42): the sysroot is Debian 12's (glibc 2.36) from deb.debian.org and the
     baseline glibc 2.34 (manylinux_2_34) on both targets; the entries above and below that name
     Debian 10, glibc 2.28 or manylinux_2_28 are as written then. The release build became the

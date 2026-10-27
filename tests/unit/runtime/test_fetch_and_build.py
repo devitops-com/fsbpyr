@@ -188,31 +188,31 @@ def test_pin_lookup() -> None:
 @pytest.mark.parametrize(
     ("triple", "python", "version", "sha256"),
     [
-        ("x86_64", "3.12", "3.12.15",
-         "5c992267780cef4c168bc07dba54f125ec1a2b9383a47946fc805f81a4712119"),
-        ("x86_64", "3.13", "3.13.17",
-         "344eec7e761e7b3dccce0ce2d91a3e70d40f8ff5d3ce7d907d979c23e8451fc7"),
-        ("x86_64", "3.14", "3.14.9",
-         "92f6abbce0283ed317873615396b5c43ccdcdf13ae9c7d68c9a07651df527528"),
-        ("aarch64", "3.12", "3.12.15",
-         "d40b4b72653d830884ac3ae432cf6b761a63b4c9b65d0d8f9241ddbd03c9c020"),
-        ("aarch64", "3.13", "3.13.17",
-         "6464bea3d1b41ebcb238ebdbb32332e9c01871d4ad14e7e66ca6aca18d5135fb"),
-        ("aarch64", "3.14", "3.14.9",
-         "f5726037fbea57a8d83ddb6bbe26242eeb96928fb396da2f6d9dbf3641aaff61"),
+        ("x86_64", "3.12", "3.12.16",
+         "789924432efcaaf05fec4bd3e4d8798733326c2ac0540eda33e84913c37a231e"),
+        ("x86_64", "3.13", "3.13.18",
+         "f003449a05408c2e4b184f2a7abd1ea277081ff1a9100289075243ab5ed81207"),
+        ("x86_64", "3.14", "3.14.10",
+         "4a2823d5deacb631e21b3c8387a1ec9be57e1b0ed37b7770e2e71cfe7b94eb94"),
+        ("aarch64", "3.12", "3.12.16",
+         "983593f8a9de59f8e25972b41851161a8ad139bb25b01766fbfa69979a15521d"),
+        ("aarch64", "3.13", "3.13.18",
+         "069e9ae72f35f8ac743e1dad224417b07a3728971bc8333fe08b78e4c24bee12"),
+        ("aarch64", "3.14", "3.14.10",
+         "2c2b62b6e02a1717b408c30d49a8bf293b280b2b4a22bb948f9b85ecc1f5ce54"),
     ],
 )  # fmt: skip
-def test_every_version_is_pinned_to_release_20261021(
+def test_every_version_is_pinned_to_release_20261026(
     triple: str, python: str, version: str, sha256: str
 ) -> None:
     pin = pin_for(python, f"{triple}-unknown-linux-gnu")
 
     assert (pin.version, pin.release, pin.flavor, pin.sha256) == (
-        version, "20261021", "pgo+lto-full", sha256,
+        version, "20261026", "pgo+lto-full", sha256,
     )  # fmt: skip
     assert pin.url == (
-        "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/"
-        f"cpython-{version}%2B20261021-{triple}-unknown-linux-gnu-pgo%2Blto-full.tar.zst"
+        "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/"
+        f"cpython-{version}%2B20261026-{triple}-unknown-linux-gnu-pgo%2Blto-full.tar.zst"
     )
 
 

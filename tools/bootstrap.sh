@@ -29,7 +29,7 @@
 # a verifier sets the uv a release records) makes the check for uv fail unless uv on PATH is
 # exactly that version. Without it any uv is accepted: user builds keep the user's own uv (D26).
 # The runtime is linked with clang/lld 23: the pinned python-build-standalone release
-# (src/fsbpyr/runtime/pins.py, 20261021) has LLVM 23 bitcode objects, and Debian trixie ships
+# (src/fsbpyr/runtime/pins.py, 20261026) has LLVM 23 bitcode objects, and Debian trixie ships
 # clang/lld 22 only (SEC-4). The toolchain is LLVM's release tarball for the host's
 # architecture that tools/release/llvm23 names (version, then the sha256 of the x86-64 and of
 # the aarch64 tarball); it is downloaded once into fsbpyr's cache,

@@ -68,7 +68,7 @@ later release changed.
 | DOC-3 | Correct the README's overclaims and stale numbers | S | 0 | 0.21.0 |
 | SCOPE-1 | State the 3.14-only target, and cap fsbpyr's own requires-python | S | 0 | 0.21.0; cap `<3.16` in 0.25.0 |
 | SEC-1 | Publish a security policy and the embedded-runtime CVE response | S | 0 | 0.21.0 |
-| SEC-2 | Move the runtime to PBS 20261009 now, and watch upstream daily | S | 0 | 0.21.0; pin 20261021 in 0.23.0 |
+| SEC-2 | Move the runtime to PBS 20261009 now, and watch upstream daily | S | 0 | 0.21.0; pin 20261021 in 0.23.0, 20261026 in 0.28.0 |
 | CI-1 | Turn unexpected skips into failures in CI, and run the D37 contract test there | S | 0 | 0.21.0 |
 | CI-2 | Measure and enforce coverage in CI | S | 0 | 0.21.0 |
 | CI-4 | Put the full test environment in the repo | M | 1 | 0.21.0 |
@@ -583,6 +583,7 @@ settings of §5 #2 are switched on. Released in 0.21.0.
   - A `workflow_dispatch` run of upstream-watch opens an issue that names the newest PBS release (20261013 today) and "LLVM 22.1.3 -> 23.1.3".
 - Effort: S. Depends on: none. Owner decision: none (D2 is unchanged at LLVM 22).
 - Status (0.23.0, 2026-10-22): the pin is on PBS 20261021 (CPython 3.12.15, 3.13.17, 3.14.9) for every Python and target, upstream-watch's issue #20; SEC-4 has the toolchain. 20261021 is still on SQLite 3.53.1, whose FTS5 CVE-2026-11822 and CVE-2026-11824 are fixed in 3.53.2, and zlib 1.3.2 (CVE-2026-85091, no fix yet): the next PBS release with them is the next runtime update.
+- Status (0.28.0, 2026-10-27): the pin is on PBS 20261026 (CPython 3.12.16, 3.13.18, 3.14.10, 3.15.2) for every Python and target, upstream-watch's issue #52. The next runtime update did not bring the fixes: 20261026 still ships SQLite 3.53.1 and zlib 1.3.2 (the version strings in the archive's `build/lib/libsqlite3.a` and `libz.a`, which are byte-identical to 20261021's; PYTHON.json records no library versions and the release notes name none), so CVE-2026-11822, CVE-2026-11824 and CVE-2026-85091 wait for a later release.
 
 ### CI-1 Turn unexpected skips into failures in CI, and run the D37 contract test there
 - Why: the v0.19.0 and v0.20.0 CI runs each skipped 28 items. pytest lists every reason (`-ra`) but exits 0 with any number of skips. Gaps: tests/silent-skips-in-ci-and-e2e, perf/ci-skips-count-guards (medium).
