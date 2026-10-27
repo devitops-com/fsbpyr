@@ -108,6 +108,7 @@ def test_a_start_over_the_limit_is_refused_until_a_slot_is_freed(
     assert lines == []
     stderr = _refused(over)
     assert "fsbpyr: refusing to start: 3 copies of this app are running already" in stderr
+    assert "as many as this user may run at once" in stderr
     assert "FSBPYR_MAX_INSTANCES" in stderr
     holders[0][0].send_signal(signal.SIGKILL)  # SIGTERM may be blocked: the kernel frees it
     holders[0][0].wait()
