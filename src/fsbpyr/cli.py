@@ -146,10 +146,10 @@ def cli(ctx: click.Context) -> None:
 @click.option("--strict/--no-strict", default=None,
               help="fail the build, leaving the output as it was, on any warning about the app "
                    "and on an unlocked build; requirements files must pin and hash every "
-                   "line. Not counted: the build host's uv and git, the notes on requirements/ "
-                   "files and Pipfile.lock indexes, and guesses about the app (helper "
-                   "interpreters, files read next to __file__, shared objects and executables "
-                   "in packages)")  # fmt: skip
+                   "line. Not counted: the build host's uv and git, the notes on `requirements/` "
+                   "files and `Pipfile.lock` indexes, and the guesses about packages (helper "
+                   "interpreters, files read next to `__file__`, shared objects, "
+                   "executables)")  # fmt: skip
 @click.option("-v", "--verbose", is_flag=True,
               help="print each uv command and let uv's error output through")  # fmt: skip
 def build_command(  # noqa: PLR0913  click passes every option by name

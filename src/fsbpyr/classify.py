@@ -96,12 +96,13 @@ class ClassifyError(RuntimeError):
 
 
 class Uncounted(str):
-    """A warning that ``--strict`` does not count: one about the build host, or a guess about the
-    app that only fs-packages (or a run) settles. Every kind:
+    """A warning that ``--strict`` does not count: one about the build host, advice beside a
+    warning that counts, or a guess about the packages. Every kind:
 
     - the uv that differs from the one that built this fsbpyr, and git errors (the host);
     - the note on ``Pipfile.lock`` packages from other indexes (the host's uv);
-    - the advice about ``requirements/*.txt`` when there is no ``requirements.txt``;
+    - the advice about ``requirements/*.txt`` when there is no ``requirements.txt`` (beside
+      the unlocked build, which counts);
     - packages that may start helper interpreters through ``sys.executable``;
     - the ``--hints`` guess that packages read files next to ``__file__``;
     - shared objects no extension module loads but a package's Python code names;
