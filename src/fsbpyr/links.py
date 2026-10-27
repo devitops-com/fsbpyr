@@ -45,8 +45,8 @@ def _earlier_output(path: Path, project: str) -> bool:
 
 def is_earlier_link(path: Path, project: str) -> bool:
     """Whether ``path`` is a link an earlier build of ``project`` made: a symlink to a bare name,
-    the earlier multi-command executable beside it (see ``_earlier_output``). A link to anything
-    else is the user's."""
+    an earlier output of the project beside it (see ``_earlier_output``), as a build of several
+    commands links each to its executable. A link to anything else is the user's."""
     if not path.is_symlink():
         return False
     target = os.readlink(path)
