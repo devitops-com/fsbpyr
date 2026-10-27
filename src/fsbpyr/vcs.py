@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 _RELEASE = re.compile(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
+_STUB_RELEASE_PREFIXES = {"2.28": "el8-"}  # the baselines whose stubs a companion release holds
 _HASH_DIGITS = 8
 _TIMEOUT = 10
 # Inherited from a git hook or script, these would point git at another repository.
@@ -125,16 +126,28 @@ def release_asset(python: str, target: str) -> str:
 
 
 def release_stub_asset(python: str, target: str, glibc: str) -> str:
-    """The release asset (without ``.xz``) of the stub linked for the glibc baseline ``glibc``
-    ("2.28", EL8) that goes with the fsbpyr of ``python`` on ``target``: just the launcher,
-    ``fsbpyr-stub-3.12-x86_64-linux-gnu-glibc2.28``. A release may carry none (D46)."""
+    """The asset (without ``.xz``) of the companion release (see ``release_stub_tag``) of the stub
+    linked for the glibc baseline ``glibc`` ("2.28", EL8) that goes with the fsbpyr of ``python``
+    on ``target``: just the launcher, ``fsbpyr-stub-3.12-x86_64-linux-gnu-glibc2.28``. A version
+    may have no companion release (D46)."""
     return f"fsbpyr-stub-{python}-{target}-glibc{glibc}"
 
 
 def release_stub_sums(glibc: str) -> str:
-    """The release asset listing the SHA-256 of each stub of the baseline ``glibc`` as
-    ``sha256sum`` does, over the stubs themselves (the names without ``.xz``)."""
+    """The asset of the companion release listing the SHA-256 of each stub of the baseline
+    ``glibc`` as ``sha256sum`` does, over the stubs themselves (the names without ``.xz``)."""
     return f"SHA256SUMS-glibc{glibc}"
+
+
+def release_stub_tag(glibc: str, tag: str) -> str:
+    """The tag of the companion release that holds the stubs of release ``tag`` for the glibc
+    baseline ``glibc`` ("2.28": ``el8-v0.27.0`` for ``v0.27.0``): el8.yml publishes it apart,
+    because a published release takes no new assets. The prefix must not start with ``v``, which
+    is the tag of a release."""
+    if glibc not in _STUB_RELEASE_PREFIXES:
+        raise ValueError(f"no glibc {glibc} stubs release; supported: "
+                         f"{', '.join(_STUB_RELEASE_PREFIXES)}")  # fmt: skip
+    return f"{_STUB_RELEASE_PREFIXES[glibc]}{tag}"
 
 
 def release_asset_record(project: str, python: str, target: str) -> tuple[tuple[str, str], ...]:

@@ -40,16 +40,19 @@ PINS = Path(__file__).with_name("vm-pins.toml")
 QEMU = "qemu-system-aarch64"
 BOOT_TIMEOUT_S = 300  # TCG boots in under a minute; the commands' limits come on top
 COMMAND_TIMEOUT_S = 300
-CMDLINE = "console=ttyAMA0 rdinit=/init panic=-1 quiet"
+# Not `quiet`: a boot that hangs shows how far it got; earlycon from the first line on.
+CMDLINE = "console=ttyAMA0 earlycon rdinit=/init panic=-1"
 EXPECT_SEPARATOR = " => "
 MARKER = "VMSMOKE"
 
 # The guest's /init: the marker lines are what the host parses. /vm-commands holds one command
-# line per line, /vm-timeout the limit of each.
+# line per line, /vm-timeout the limit of each. The kernel is as quiet as `quiet` from /init
+# on, so its messages do not break into the marker lines.
 INIT = f"""#!/bin/sh
 export PATH=/apps:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root
 export FSBPYR_CACHE_DIR=/tmp/cache
 mount -t proc proc /proc
+echo 4 > /proc/sys/kernel/printk
 mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev
 mount -t tmpfs tmpfs /tmp

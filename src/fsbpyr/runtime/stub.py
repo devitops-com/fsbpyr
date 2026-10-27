@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from ..text import tail_lines
 from . import ar
 from .pbs import LinkInputs, PbsDist, link_inputs
 from .toolchain import Toolchain
@@ -206,7 +207,7 @@ def build_stub(
                                identity=identity)  # fmt: skip
         result = subprocess.run(command, cwd=work, capture_output=True, text=True, check=False)
         if result.returncode != 0:
-            raise StubBuildError(f"launcher link failed:\n{result.stderr[-_ERROR_TAIL:]}")
+            raise StubBuildError(f"launcher link failed:\n{tail_lines(result.stderr, _ERROR_TAIL)}")
         shutil.copyfile(work / _LINKED, out)
     printed = tuple(line for line in result.stderr.splitlines() if line.strip())
     if over := [line for line in printed if "stack frame size" in line]:

@@ -7,7 +7,14 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.targets import TARGETS
-from fsbpyr.vcs import commit_time, git_state, release_asset, release_asset_record, version_string
+from fsbpyr.vcs import (
+    commit_time,
+    git_state,
+    release_asset,
+    release_asset_record,
+    release_stub_tag,
+    version_string,
+)
 
 COMMIT = "6457a95b" + "0" * 32
 GIT = shutil.which("git") or "git"
@@ -66,6 +73,17 @@ def test_the_highest_release_tag_wins_and_others_are_ignored(repo: Path) -> None
     state = git_state(repo)
 
     assert state is not None and state["tag"] == "v1.0.0"  # vX.Y.Z only, compared as versions
+
+
+def test_the_companion_release_of_a_tag_on_head_does_not_change_the_recorded_tag(
+    repo: Path,
+) -> None:
+    _git(repo, "tag", "v1.2.0")
+    _git(repo, "tag", "el8-v1.2.0")  # the release of the EL8 stubs, on the same commit
+
+    state = git_state(repo)
+
+    assert state is not None and state["tag"] == "v1.2.0"
 
 
 def test_directories_not_in_heads_tree_belong_to_no_commit(repo: Path) -> None:
@@ -147,3 +165,12 @@ def test_only_fsbpyr_itself_records_the_asset_it_is_released_as() -> None:
     assert release_asset_record("Fsbpyr", "3.14", "aarch64-macos") == (
         ("release_asset", "fsbpyr-3.14-aarch64-macos"),)
     assert release_asset_record("someapp", "3.12", gnu) == ()
+
+
+def test_the_stubs_of_a_release_are_in_the_companion_release_of_its_tag() -> None:
+    assert release_stub_tag("2.28", "v0.27.0") == "el8-v0.27.0"
+
+
+def test_a_baseline_without_stubs_of_its_own_has_no_companion_release() -> None:
+    with pytest.raises(ValueError, match=r"no glibc 2\.34 stubs release"):
+        release_stub_tag("2.34", "v0.27.0")

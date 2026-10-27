@@ -4,8 +4,9 @@
  *               closes (O_CLOEXEC unset); prints its number
  *
  * The process it starts to collect (FSBPYR_GC=background) runs this program again, which then
- * waits $PROBE_SLEEP seconds (an app that keeps a descriptor of its starter would make it wait as
- * long) and writes to $PROBE_OUT, a line each: the descriptors open, where 0, 1 and 2 lead, its
+ * waits for the file $PROBE_RELEASE to exist (an app that keeps a descriptor of its starter would
+ * make its starter wait as long; a cap of 30 s leaves no orphan if the file never comes) and
+ * writes to $PROBE_OUT, a line each: the descriptors open, where 0, 1 and 2 lead, its
  * nice value, its I/O priority class, whether it shares its starter's session ($PROBE_SESSION),
  * its working directory, and $FSBPYR_CACHE_DIR. Built with -Wl,--wrap=statvfs: with $PROBE_FREE
  * set, the file system has that many percent free.
@@ -45,8 +46,9 @@ static int report(void) {
         strncat(open_fds, d->d_name, sizeof open_fds - strlen(open_fds) - 1);
     }
     closedir(listed);
-    unsigned seconds = (unsigned)atoi(getenv("PROBE_SLEEP") ? getenv("PROBE_SLEEP") : "0");
-    sleep(seconds);
+    const char *release = getenv("PROBE_RELEASE");
+    for (int polls = 0; release != NULL && access(release, F_OK) != 0 && polls < 600; polls++)
+        usleep(50000);
     FILE *out = fopen(getenv("PROBE_OUT"), "a"); /* one report a process started */
     if (out == NULL) return 1;
     fprintf(out, "fds%s\n", open_fds);

@@ -1,6 +1,7 @@
 """Project discovery, build configuration and staging commands (plan §3.6 steps 1-3)."""
 
 import dataclasses
+import re
 import subprocess
 from pathlib import Path
 
@@ -763,3 +764,18 @@ def test_the_source_date_reaches_the_staging_and_the_rebuild(tmp_path: Path) -> 
 def test_a_hash_in_a_comment_is_no_hash_option() -> None:
     assert not has_hash_option("# pin with --hash=sha256:00 later\nfoo==1\n")
     assert has_hash_option("foo==1 \\\n    --hash=sha256:00\n")
+
+
+def test_a_failed_step_shows_the_tail_of_uvs_output_from_a_line_start(tmp_path: Path) -> None:
+    uv = str(_fake_uv(tmp_path, "i=0; while [ $i -lt 400 ]; do echo \"line $i of uv\" >&2; "
+                                "i=$((i+1)); done; exit 3"))
+    plan = StagingPlan(site=tmp_path, build=[uv, "build"], install=[],
+                       wheel_dir=tmp_path / "wheel")  # fmt: skip
+
+    with pytest.raises(StagingError) as caught:
+        run_plan(plan, tmp_path)
+
+    lines = str(caught.value).splitlines()
+    assert re.fullmatch(r"\(\d+ earlier lines left out\)", lines[1])
+    assert re.fullmatch(r"line \d+ of uv", lines[2])
+    assert lines[-1] == "line 399 of uv"

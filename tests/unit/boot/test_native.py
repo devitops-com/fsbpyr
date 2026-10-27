@@ -360,9 +360,9 @@ def test_import_errors_raised_by_the_module_itself_do_not_trigger_a_rehash(
     synced: list[tuple[int, ...]] = []
     real_sync = native.NativeCache.sync
 
-    def sync(self: Any, files: tuple[int, ...]) -> list[str]:
+    def sync(self: Any, files: tuple[int, ...], **kwargs: bool) -> list[str]:
         synced.append(files)
-        result: list[str] = real_sync(self, files)
+        result: list[str] = real_sync(self, files, **kwargs)
         return result
 
     monkeypatch.setattr(native.NativeCache, "sync", sync)
@@ -474,3 +474,93 @@ def test_an_fs_package_comes_with_the_libraries_its_distribution_ships(
     assert not (site / DUPS[1]).exists()  # cy's: of no distribution
     native.materialize_package("cy")
     assert (site / DUPS[1]).exists()  # below the package
+
+
+class _Exited(Exception):
+    """Stands in for the process ending: os._exit does not return."""
+
+
+def _refusing_sync(monkeypatch: pytest.MonkeyPatch, native: types.ModuleType, message: str) -> None:
+    def sync(*_: object) -> int:
+        raise native.NativeCacheError(message)
+
+    monkeypatch.setattr(native._fsbpyr, "sync", sync)
+
+    def leave(status: int) -> None:
+        raise _Exited(status)
+
+    monkeypatch.setattr(native.os, "_exit", leave)
+
+
+@pytest.mark.parametrize("why", ["other users may write to it", "owned by another user"])
+def test_a_refused_cache_directory_is_a_refused_start(
+    boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str], why: str
+) -> None:  # fmt: skip
+    _refusing_sync(monkeypatch, native, f"refusing cache directory /shared: {why}")
+    spec = _speed_spec(boot)
+
+    with pytest.raises(_Exited) as ended:
+        _loader(native, spec).create_module(spec)
+
+    assert ended.value.args == (70,)
+    executable = native._fsbpyr.info()["executable"]
+    assert capfd.readouterr().err == (
+        f"fsbpyr: cannot start {executable}: refusing cache directory /shared: {why}\n"
+    )
+
+
+def test_any_other_extraction_failure_stays_an_error(
+    boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _refusing_sync(monkeypatch, native, "corrupt executable payload: file 3")
+    spec = _speed_spec(boot)
+
+    with pytest.raises(native.NativeCacheError, match="corrupt executable payload"):
+        _loader(native, spec).create_module(spec)
+
+
+def test_a_modules_own_oserror_is_not_an_extraction_failure(
+    boot: types.ModuleType, native: types.ModuleType
+) -> None:
+    """mypyc runs a compiled package's body inside create_module (blib2to3 reads Grammar.txt)."""
+    spec = _speed_spec(boot)
+
+    class ReadsAFile(ExtensionFileLoader):
+        def create_module(self, spec: importlib.machinery.ModuleSpec) -> types.ModuleType:
+            raise FileNotFoundError(2, "No such file or directory", f"{spec.origin}.txt")
+
+    class Loader(native.PayloadExtensionLoader, ReadsAFile):  # type: ignore[misc,name-defined]
+        pass
+
+    factory: Any = Loader
+
+    with pytest.raises(FileNotFoundError) as failed:
+        factory(spec.name, spec.origin, _files(spec)).create_module(spec)
+    assert not isinstance(failed.value, native.NativeCacheError)
+    assert failed.value.filename == f"{spec.origin}.txt"
+
+
+def test_a_missing_file_below_the_cache_site_names_the_package_to_extract(
+    boot: types.ModuleType, native: types.ModuleType
+) -> None:
+    site = native.native_cache().site
+
+    note = boot._inside_executable_note(
+        FileNotFoundError(2, "No such file or directory", f"{site}/fast/Grammar.txt")
+    )
+
+    assert note is not None
+    assert "fast reads files next to its __file__: rebuild with --fs-package fast\n" in note
+    assert boot._inside_executable_note(
+        FileNotFoundError(2, "No such file or directory", f"{site}/nowhere/Grammar.txt")
+    ) is None  # fmt: skip
+    assert boot._inside_executable_note(
+        FileNotFoundError(2, "No such file or directory", "/elsewhere/fast/Grammar.txt")
+    ) is None  # fmt: skip
+
+
+def test_the_site_note_costs_nothing_before_an_extension_is_loaded(boot: types.ModuleType) -> None:
+    assert boot._inside_executable_note(
+        FileNotFoundError(2, "No such file or directory", "/c/runtime/g/site/fast/Grammar.txt")
+    ) is None  # fmt: skip

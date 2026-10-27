@@ -1,6 +1,6 @@
 name: EL8
 
-# The EL8 (glibc 2.28) stubs of a release, built, tested and attached to it after the fact. A
+# The EL8 (glibc 2.28) stubs of a release, built, tested and published in a companion release. A
 # release's executables need glibc 2.34; `fsbpyr build --glibc 2.28` builds apps for RHEL 8 and
 # its rebuilds with the release's EL8 stub, a stub-only asset per (Python, target):
 # `fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz`, with the SHA-256 of each in
@@ -8,11 +8,14 @@ name: EL8
 # 2026-10-25): release.yml, which full-suite.yml gates through tools/release/green-run.sh,
 # neither waits for it nor depends on it, and a release may have EL8 stubs or not. A release
 # without them is complete; `--glibc 2.28` says so plainly (README, "Older systems").
+# The stubs are not assets of the release itself: releases are immutable (REL-1), so vX.Y.Z takes
+# none once published. They are the assets of the companion release el8-vX.Y.Z, on the same
+# commit, which is not the latest release (`self update` and install.sh read that as vX.Y.Z).
 # It runs on the release tag itself (owner, 2026-10-26; CodeQL flags a workflow that runs in the
 # default branch's context and executes another ref's code, and its caches):
 #   - for a pushed version tag, like release.yml (both start on the same push, in parallel), and
-#   - on request, dispatched ON THE TAG'S REF, to attach the stubs to a release that has none or
-#     to retry: `gh workflow run el8.yml --ref vX.Y.Z` (no inputs). Dispatched on a branch, the
+#   - on request, dispatched ON THE TAG'S REF, to publish the stubs of a release that has none
+#     or to retry: `gh workflow run el8.yml --ref vX.Y.Z` (no inputs). Dispatched on a branch, the
 #     plan job finds no tag and the run does nothing.
 # So the workflow file used is the tag's, every job checks out the commit that started the run
 # (the tag), and the tag's sources must have the EL8 support (plan checks).
@@ -42,10 +45,11 @@ name: EL8
 # publish needs every job of the run to pass and waits for the release of the tag to exist
 # (release.yml publishes it in parallel; it fails after an hour without it, and the run is then
 # dispatched again on the tag's ref). It writes SHA256SUMS-glibc2.28 over the stubs, attests
-# them and uploads them, and the sums last, to the tag's release, touching none of its other
-# assets; a run that finds the same sums there publishes nothing. The attestations are this
-# workflow's, from the tag's ref: `gh attestation verify` takes
-# `--signer-workflow devitops-com/fsbpyr/.github/workflows/el8.yml --source-ref refs/tags/vX.Y.Z`.
+# them and publishes them in the companion release el8-vX.Y.Z (made as a draft, filled, then
+# published; the release of the tag is not touched); a run that finds the companion published
+# with the same sums publishes nothing, and one that finds other sums fails: a published release
+# cannot be changed. The attestations are this workflow's, from the tag's ref:
+# `gh attestation verify` takes `--signer-workflow devitops-com/fsbpyr/.github/workflows/el8.yml --source-ref refs/tags/vX.Y.Z`.
 
 on:
   push:
@@ -85,7 +89,7 @@ jobs:
         run: |
           xyz='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
           if [ "$REF" != "refs/tags/$REF_NAME" ] || ! [[ "$REF_NAME" =~ $xyz ]]; then
-            echo "::notice::'$REF' is no release tag vX.Y.Z: nothing to attach (to retry, dispatch this workflow on the tag's ref)"
+            echo "::notice::'$REF' is no release tag vX.Y.Z: nothing to publish (to retry, dispatch this workflow on the tag's ref)"
             echo "tag=" >> "$GITHUB_OUTPUT"
             echo "python=" >> "$GITHUB_OUTPUT"
             exit 0
@@ -607,7 +611,7 @@ jobs:
       # As full-suite.yml's vm-smoke job, with the EL8 kernel and userland only, and without the
       # tag's own fsbpyr (it needs glibc 2.34, which EL8 lacks). Unlike there, exit 3 (a
       # pinned input is gone from its mirror) fails the job: it is the only 64 KiB-page test
-      # of these stubs, and an attach can be retried (workflow_dispatch on the tag's ref) once the pin is
+      # of these stubs, and a publish can be retried (workflow_dispatch on the tag's ref) once the pin is
       # renewed (CONTRIBUTING.md).
       - name: Boot the 64K-page kernel with the EL8 userland and run the apps
         run: |
@@ -618,10 +622,14 @@ jobs:
             --run 'native => orjson {"a":[1,2]}' \
             --run 'FSBPYR_SELFTEST=natives native => all natives load'
 
-  # Only when every job above passed (the default of `needs`): the stubs go to the release, the
-  # sums last, so that a release that has SHA256SUMS-glibc2.28 has all of them. The only job
-  # that may write, and it runs nothing of the tag's. release.yml publishes the release in
-  # parallel, so it may not exist yet: publish waits for it.
+  # Only when every job above passed (the default of `needs`): the stubs go to a release of their
+  # own, the companion el8-vX.Y.Z of the release vX.Y.Z (owner, 2026-10-27). Releases are
+  # immutable (REL-1): once published, vX.Y.Z accepts no asset, so the stubs, which come after it,
+  # cannot join it. The companion is made as a draft, filled, and published at once, so that it
+  # never exists half done; published, it is immutable too. The only job that may write, and it
+  # runs nothing of the tag's. release.yml publishes the release in parallel, so it may not exist
+  # yet: publish waits for it, so that no companion is published for a version that was not
+  # released (its tag could not be used again).
   publish:
     name: attest + publish
     needs: [plan, stub, build, tests, portability, corpus, vm-smoke]
@@ -629,13 +637,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     permissions:
-      contents: write      # upload to the GitHub release
+      contents: write      # create the companion release and its tag
       id-token: write      # sign the attestation (Sigstore, through the job's OIDC token)
       attestations: write  # store it with the repository
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       TAG: ${{ needs.plan.outputs.tag }}  # github.ref_name, which the plan job checked
+      COMPANION: el8-${{ needs.plan.outputs.tag }}  # not "v...": release.yml and this workflow run on v*
     steps:
       - name: Download the stubs
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -667,34 +676,62 @@ jobs:
 
       # release.yml publishes the release of this tag in parallel and may be slower than every job
       # above. Up to an hour, every 30 seconds (the release run's build takes at most 75 minutes,
-      # and this job started after our own build).
+      # and this job started after our own build). Until it is published: `gh release create`
+      # with assets makes a draft first on a repository with immutable releases, and `gh release
+      # view` finds drafts too.
       - name: Wait for the release
         run: |
           for _ in $(seq 1 120); do
-            gh release view "$TAG" > /dev/null 2>&1 && exit 0
+            [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" = false ] && exit 0
             sleep 30
           done
           echo "::error::release $TAG does not exist yet; dispatch el8.yml on the tag ref once it does (gh workflow run el8.yml --ref $TAG)"
           exit 1
 
-      # A run that finds the very same sums and every stub on the release has nothing to publish
-      # (a retry, or a second request): the links are reproducible, so the same stubs give the
-      # same sums. A release with the sums but not a stub (removed by hand) is repaired.
+      # A published companion is immutable: a run that finds the very same sums and every stub
+      # there has nothing to publish (a retry, or a second request; the links are reproducible, so
+      # the same stubs give the same sums), and one that finds anything else cannot repair it.
+      # A draft is what a run that stopped between creating and publishing leaves: not public,
+      # without a tag, and made again from this run's stubs. `gh release view` finds drafts too.
       - name: Is it published
         id: published
         run: |
-          assets="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          if ! release="$(gh release view "$COMPANION" --json isDraft,assets 2> "$RUNNER_TEMP/view.err")"; then
+            grep -q "release not found" "$RUNNER_TEMP/view.err" || { cat "$RUNNER_TEMP/view.err"; exit 1; }
+            echo "new=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$(jq -r .isDraft <<<"$release")" = true ]; then
+            echo "::notice::$COMPANION is a draft of a run that stopped: it is deleted and made again"
+            gh release delete "$COMPANION" --yes
+            echo "new=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          assets="$(jq -r '.assets[].name' <<<"$release")"
           if grep -qx SHA256SUMS-glibc2.28 <<<"$assets"; then
-            gh release download "$TAG" --pattern SHA256SUMS-glibc2.28 --dir published
+            gh release download "$COMPANION" --pattern SHA256SUMS-glibc2.28 --dir published
             if cmp published/SHA256SUMS-glibc2.28 dist/SHA256SUMS-glibc2.28 \
                 && [ -z "$(comm -23 <(cd dist && ls fsbpyr-stub-*.xz | sort) <(echo "$assets" | sort))" ]; then
-              echo "::notice::$TAG already has these EL8 stubs: nothing to publish"
+              echo "::notice::$COMPANION already has these EL8 stubs: nothing to publish"
               echo "new=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            echo "::warning::$TAG has other or fewer EL8 stubs: they are replaced"
           fi
-          echo "new=true" >> "$GITHUB_OUTPUT"
+          echo "::error::$COMPANION is published with other stubs, and a published release is immutable: these stubs need a new version"
+          exit 1
+
+      # `gh release create` uses a tag el8-vX.Y.Z that exists (pushed by hand, or left by a release
+      # that was deleted) and ignores --target: a tag on another commit than the tag's is found
+      # here, not after the publication, which is immutable.
+      - name: Is the companion tag free
+        if: steps.published.outputs.new == 'true'
+        run: |
+          if gh api "repos/$GH_REPO/git/ref/tags/$COMPANION" > /dev/null 2> "$RUNNER_TEMP/ref.err"; then
+            [ "$(gh api "repos/$GH_REPO/commits/$COMPANION" --jq .sha)" = "$GITHUB_SHA" ] \
+              || { echo "::error::the tag $COMPANION exists on another commit than $TAG's (${GITHUB_SHA:0:8}); delete it or move it to that commit, then dispatch el8.yml on the tag ref again"; exit 1; }
+          else
+            grep -q "Not Found" "$RUNNER_TEMP/ref.err" || { cat "$RUNNER_TEMP/ref.err"; exit 1; }
+          fi
 
       # Verify with: gh attestation verify fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz \
       #   --repo devitops-com/fsbpyr \
@@ -709,10 +746,36 @@ jobs:
             dist/fsbpyr-stub-*.xz
             dist/SHA256SUMS-glibc2.28
 
-      # --clobber replaces an EL8 asset of an earlier, partial run; no other asset of the release
-      # is named here. The sums go last.
-      - name: Upload to the GitHub release
+      # The draft's tag el8-vX.Y.Z is made on $GITHUB_SHA when it is published: the commit of
+      # the tag vX.Y.Z, for a pushed tag and for a dispatch on the tag's ref alike (the next
+      # step compares them). --latest=false on both calls: publishing a draft makes it the
+      # latest release unless told otherwise, which `fsbpyr self update`, install.sh and
+      # check-release.sh read as vX.Y.Z, and an immutable release cannot be corrected.
+      - name: Publish the companion release
         if: steps.published.outputs.new == 'true'
         run: |
-          gh release upload "$TAG" dist/fsbpyr-stub-*.xz --clobber
-          gh release upload "$TAG" dist/SHA256SUMS-glibc2.28 --clobber
+          cat > notes.md <<EOF
+          The glibc 2.28 (RHEL 8) stubs of fsbpyr $TAG, one per Python and target, with the
+          SHA-256 of each unpacked stub in SHA256SUMS-glibc2.28. They pair with the fsbpyr
+          $TAG of the same Python and target: \`fsbpyr build --glibc 2.28\` downloads the one it
+          needs. To place one by hand, put its .xz next to the fsbpyr executable, under the same
+          name; no download is then made.
+
+          Verify with: gh attestation verify fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz --repo $GH_REPO --signer-workflow $GH_REPO/.github/workflows/el8.yml --source-ref refs/tags/$TAG
+          EOF
+          gh release create "$COMPANION" --draft --latest=false --target "$GITHUB_SHA" \
+            --title "EL8 stubs for $TAG" --notes-file notes.md \
+            dist/fsbpyr-stub-*.xz dist/SHA256SUMS-glibc2.28
+          gh release edit "$COMPANION" --draft=false --latest=false
+
+      # Published releases cannot be corrected, so say what went wrong at least. Read-only, and
+      # run when the companion was published already too: a retry after a failed check (the
+      # publication is immutable) must not end green.
+      - name: Check the result
+        if: steps.published.outputs.new != ''
+        run: |
+          latest="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)"
+          [ "$latest" != "$COMPANION" ] \
+            || { echo "::error::the latest release is $COMPANION: self update and install.sh would not find fsbpyr"; exit 1; }
+          [ "$(gh api "repos/$GH_REPO/commits/$COMPANION" --jq .sha)" = "$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)" ] \
+            || { echo "::error::$COMPANION is not on the commit of $TAG"; exit 1; }

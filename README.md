@@ -69,6 +69,10 @@ says:
   installs its own `sys.excepthook` (typer and rich do), and a package that only checks whether
   its files exist sees `False` and may fail later in another way. `fsbpyr build --hints` lists
   packages that may read files next to `__file__` (guesses).
+- An uncaught `FileNotFoundError` for a path below the native cache's `site/` directory (a
+  compiled package such as mypyc's `blib2to3` reading its data file) ends with `fsbpyr: <path> is
+  missing from the native cache, which holds the compiled files of a package only; <package> reads files next to its __file__: rebuild with
+  --fs-package <package>`.
 - A build that stops on `native files need libraries that are neither bundled nor standard
   system libraries` prints the `allow-system-libs` line that lets the target provide them.
 - A child process that exits 70 with `fsbpyr: refusing to run ... as Python` asks for
@@ -159,7 +163,7 @@ build-constraint-dependencies` (read by `uv sync`, for `uv.lock` projects) or fr
 | Option | |
 |---|---|
 | `--python X.Y` | the Python to build for, 3.12 to 3.15, inside `requires-python` (default: `python` in `[tool.fsbpyr]`, else `.python-version`, else `requires-python` decides) |
-| `--glibc X.Y` | the glibc the app is built for: 2.34 (default), or 2.28 for EL8 hosts, which needs the glibc 2.28 stub of the fsbpyr release (default: `glibc` in `[tool.fsbpyr]`, else 2.34) |
+| `--glibc X.Y` | the glibc the app is built for: 2.34 (default), or 2.28 for EL8 hosts, which needs the glibc 2.28 stub from the companion release `el8-vX.Y.Z` of the fsbpyr release (default: `glibc` in `[tool.fsbpyr]`, else 2.34) |
 | `--entry NAME` | console script name, `module` or `module:function` (default: the only script, else all of them as one multi-command executable, else the only `__main__` package or guarded module) |
 | `-o, --output PATH` | where to write the executable (default: `dist/` and the entry's name, or the project's name for several commands) |
 | `--requirements FILE` | pinned requirements file, for pip projects without `pylock.toml`; in a directory with no Python file it names the tools to build (a tool binary) |
@@ -729,38 +733,54 @@ or in a script's `# [tool.fsbpyr]` block). For 2.28 the build
 
 Where the launcher for 2.28 comes from depends on how you run fsbpyr. The release fsbpyr
 executable carries the standard library and the default launcher only; the launcher for 2.28 is
-a separate asset of its release, one per Python and target,
+an asset of the companion release `el8-vX.Y.Z` of its release, one per Python and target,
 `fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz` (the stub, compressed; a file you place may
 be that or the unpacked stub), with the SHA-256 of each unpacked stub in
 `SHA256SUMS-glibc2.28`. **EL8 assets are published
-separately and not with every release.** A separate workflow (`.github/workflows/el8.yml`)
-builds, tests and attaches them to a release, on the release's tag, in parallel with the release
-build and only when all of its jobs pass; the release itself never waits for it. **A release has EL8 stubs when its assets
-include `SHA256SUMS-glibc2.28`** (it is uploaded last, after the eight `.xz`): look for it on the
-[releases](https://github.com/devitops-com/fsbpyr/releases) page, or run `gh release view vX.Y.Z
---json assets --jq '.assets[].name' | grep glibc2.28`. Each asset has a build provenance
-attestation: `gh attestation verify fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz --repo
+separately and not with every release.** The companion release has its own tag, `el8-vX.Y.Z`, on
+the same commit as `vX.Y.Z`. It is a release of its own because releases are immutable: once
+`vX.Y.Z` is published it takes no more assets. It is not marked as the latest release, so
+`releases/latest` and `fsbpyr self update` still point at `vX.Y.Z`, which carries no stubs. A separate
+workflow (`.github/workflows/el8.yml`) builds and tests the stubs on the release's tag, in parallel
+with the release build and only when all of its jobs pass, and then publishes them in the
+companion release; the release itself never waits for it. **A version has EL8 stubs when the
+release `el8-vX.Y.Z` exists** (it is published whole: all nine assets, the eight `.xz` and
+`SHA256SUMS-glibc2.28`, or no release): look for it on the
+[releases](https://github.com/devitops-com/fsbpyr/releases) page (tag `el8-vX.Y.Z`), or run `gh release view
+el8-vX.Y.Z --repo devitops-com/fsbpyr --json assets --jq '.assets[].name'`. Each asset has a build
+provenance attestation: `gh attestation verify fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz --repo
 devitops-com/fsbpyr --signer-workflow devitops-com/fsbpyr/.github/workflows/el8.yml --source-ref
-refs/tags/vX.Y.Z` (the attestations come from a run of that workflow on the release's tag). A release
-without them makes `--glibc 2.28` stop with `this release (vX.Y.Z) has no glibc 2.28 stubs`,
-naming the asset to place and linking the releases; use a release that has them. fsbpyr
-takes the launcher from, in this order:
+refs/tags/vX.Y.Z` (the attestations come from a run of that workflow on the release's tag
+`vX.Y.Z`, not on `el8-vX.Y.Z`, so `--source-ref` is the `vX.Y.Z` tag). Without the companion release,
+`--glibc 2.28` stops with `release el8-vX.Y.Z (the glibc 2.28 stubs of vX.Y.Z) does not exist or
+has none for this Python`, naming the asset to place and linking the releases; use a version whose
+companion release exists, or place the stub.
+
+**fsbpyr 0.26.0** looks for the stubs in `v0.26.0`, which has none, and stops with
+`this release (v0.26.0) has no glibc 2.28 stubs`. The stubs of 0.26.0 are in the release
+[`el8-v0.26.0`](https://github.com/devitops-com/fsbpyr/releases/tag/el8-v0.26.0): download the
+stub for your Python and target (`fsbpyr-stub-3.X-<target>-glibc2.28` or its `.xz`), check it
+against `SHA256SUMS-glibc2.28` of that release (the sums are of the unpacked stub: check
+`xz -dc <asset>.xz | sha256sum`, or the plain file with `sha256sum`), and place it next to the fsbpyr executable
+(source 1 below). From the next release on, fsbpyr downloads from `el8-vX.Y.Z` itself.
+
+fsbpyr takes the launcher from, in this order:
 
 1. a file you placed in the directory of the fsbpyr executable, named exactly as the asset,
    plain or `.xz`: the directory of the path you run (`~/.local/bin` for `fsbpyr`) and, if
    different, of the executable's real path. This is how a machine without access to GitHub
-   builds for 2.28: download the asset on another machine and copy it there. For a project
+   builds for 2.28: download the asset from the release `el8-vX.Y.Z` on another machine and copy it there. For a project
    of another Python, whose fsbpyr is that Python's variant, place it next to the variant
    (in `~/.cache/fsbpyr/downloads/`);
 2. fsbpyr's cache, where an earlier download is kept (under the release's tag);
-3. a download from the release, checked against the SHA-256 in `SHA256SUMS-glibc2.28` and kept in the cache.
+3. a download from the companion release `el8-vX.Y.Z`, checked against the SHA-256 in its `SHA256SUMS-glibc2.28` and kept in the cache.
 
 Whatever the source, the launcher must be the one built for this fsbpyr's release, Python and
 target (every launcher records the runtime id it was linked as, and the build compares it with
 the id it computes from its own launcher sources and pins); one of another release or Python is
 refused, with the asset to use instead. That identity detects a stub of another release or
 Python, not a tampered one: only the download is verified against the published SHA-256, so
-check a file you place yourself against `SHA256SUMS-glibc2.28` first, and keep the directory of
+check a file you place yourself against the `SHA256SUMS-glibc2.28` of the same `el8-vX.Y.Z` release first (unpacked, as above), and keep the directory of
 the fsbpyr executable and the cache writable by you alone. `fsbpyr self update` replaces the
 executable but not the files you placed beside it, which belong to the old release and would be
 refused: the update names them in a warning; place the stubs of the new release there, or remove
@@ -976,9 +996,11 @@ gh attestation verify myapp --repo ORG/REPO \
 
 The attestation names the file's plain SHA-256, which `fsbpyr inspect --verify myapp` prints
 as `sha256` (the `digest` line is fsbpyr's own, checked at every start). A complete workflow
-is [.github/workflows/attest-example.yml](.github/workflows/attest-example.yml); it runs on
-manual dispatch only. That the example's attestation is accepted by `gh attestation verify`
-has not been tested yet.
+is [.github/workflows/attest-example.yml](.github/workflows/attest-example.yml): on manual
+dispatch it builds an app, attests it, checks the attestation with `gh attestation verify` as
+above, and keeps the app as the run's artifact `hello`. Downloaded from its run of 2026-10-27,
+the app passed `gh attestation verify`, and its attested SHA-256 is the `sha256` that
+`fsbpyr inspect --verify` prints.
 
 ## At run time
 
@@ -1013,9 +1035,13 @@ directory anyone may add to, such as `/tmp`.) Environment variables the executab
 | `FSBPYR_IMPORTTIME` | when set, print CPython's import-time table |
 | `FSBPYR_MAX_INSTANCES` | how many copies of the app may run at once (decimal, at most 4096; `0`: no limit); by default 4 per CPU and 16, at least 64 and at most 1024 |
 
-An executable needs `/proc` (it finds itself through `/proc/self/exe`), and refuses to start
-set-uid, set-gid or with file capabilities (exit 70): the cache location comes from the
-caller's environment. A start also exits 70 when as many copies of the app run already as
+An executable needs `/proc` (it finds itself through `/proc/self/exe`), and refuses a privileged
+start (exit 70): set-uid or set-gid to another user or group, or with file capabilities. The
+kernel flags such a start (AT_SECURE), and the cache location would come from the caller's
+environment; a set-uid copy owned by the user who runs it changes no privileges and starts
+normally. It also refuses, at its first extraction, when the cache directory is owned by another
+user or others may write to it (`fsbpyr: cannot start <executable>: refusing cache directory ...`).
+A start also exits 70 when as many copies of the app run already as
 the machine allows (`FSBPYR_MAX_INSTANCES` above): an app that keeps starting itself, by
 whatever route, stops there. See [docs/security.md](docs/security.md).
 
@@ -1121,8 +1147,8 @@ carrying that version's runtime only; the apps it builds run on that Python. Eac
 attested by GitHub Actions. An asset is named with its Python and its target, the platform it
 runs on: `fsbpyr-3.14-x86_64-linux-gnu`, `fsbpyr-3.12-aarch64-linux-gnu` and so on. fsbpyr
 releases for `x86_64-linux-gnu` and `aarch64-linux-gnu` (Linux with glibc on x86-64 and arm64)
-so far. A release may also carry stub-only assets for `--glibc 2.28`, which are not executables
-("Older systems").
+so far. The stub-only assets for `--glibc 2.28`, which are not executables, are not in the release but
+in its companion release `el8-vX.Y.Z` (a version may have none; "Older systems").
 
 You need one of them: whichever Python it runs on, an fsbpyr builds a project for any of the
 four, downloading the matching one of its own release when the project needs another Python

@@ -92,7 +92,8 @@ def cli(ctx: click.Context) -> None:
                    "`requires-python` decides)")  # fmt: skip
 @click.option("--glibc", metavar="X.Y", type=click.Choice(["2.34", "2.28"]),
               help="the glibc the app is built for: 2.34 (default), or 2.28 for EL8 hosts, which "
-                   "needs the glibc 2.28 stub of the fsbpyr release (default: `glibc` in "
+                   "needs the glibc 2.28 stub from the companion release `el8-vX.Y.Z` of the "
+                   "fsbpyr release (default: `glibc` in "
                    "`[tool.fsbpyr]`, else 2.34)")  # fmt: skip
 @click.option("--entry", metavar="NAME", shell_complete=_complete_entry,
               help="console script name, `module` or `module:function` "
@@ -187,6 +188,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     from .pyversion import resolve  # noqa: PLC0415
     from .runtime.registry import RuntimeCacheError  # noqa: PLC0415
     from .staging import StagingError  # noqa: PLC0415
+    from .text import plural  # noqa: PLC0415
 
     try:
         smoke_args = None if smoke_args_text is None else tuple(shlex.split(smoke_args_text))
@@ -231,7 +233,8 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     for warning in result.warnings:
         print(f"fsbpyr: warning: {warning}", file=sys.stderr)
     glibc = f", glibc >= {result.glibc}" if result.glibc else ""
-    entry = f"{len(result.commands)} commands" if result.commands else f"entry {result.entrypoint}"
+    entry = (plural(len(result.commands), "command") if result.commands
+             else f"entry {result.entrypoint}")
     print(f"fsbpyr: built {result.output} ({result.size / 1e6:.1f} MB, {entry}{glibc})")
     if result.commands:
         print(f"fsbpyr: commands: {', '.join(result.commands)}; start one through its link, "
@@ -448,9 +451,9 @@ EXAMPLES = (
      "hands the build to its 3.12 variant, which it fetches from its own release the first "
      "time."),
     ("fsbpyr build --glibc 2.28",
-     "Build an app for EL8 hosts (glibc 2.28). It needs the glibc 2.28 stub of this fsbpyr's "
-     "release, which releases publish separately: fetched once, or placed beside the "
-     "fsbpyr executable."),
+     "Build an app for EL8 hosts (glibc 2.28). It needs the glibc 2.28 stub from the "
+     "companion release el8-vX.Y.Z of this fsbpyr's release: fetched once, or placed "
+     "beside the fsbpyr executable."),
     ("fsbpyr build --entry mytool --extra fancy",
      "Pick one of the project's console scripts, and install the project's extra `fancy` "
      "with it."),

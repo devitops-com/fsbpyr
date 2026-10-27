@@ -39,7 +39,7 @@ standard library; on 3.15 it is 29.7 MB (22.1 and 7.4 MB).
 | 0.25.0 (two rounds of 201; as 0.24.0) | 5.57 ms | 7.58–7.59 ms | 5.95–5.96 ms (1.07×) | 1.63 ms |
 | 0.25.0 on Python 3.15 (two rounds of 201; bare: uv CPython 3.15.1) | 5.58–5.59 ms | 7.66–7.67 ms | 6.02–6.03 ms (1.08×) | 1.63–1.64 ms |
 
-The rows from 0.24.0 on were measured with `subprocess.run` as in the budget test, 5 warm-up
+The rows from 0.24.0 on were measured with `subprocess.run`, 5 warm-up
 runs and then 201 runs per variant per round, all variants of a round interleaved; the integrity
 check is `integrity_ns` of 201 further runs with `FSBPYR_TRACE=1`, interleaved with them.
 "App without the integrity check" is the app's p50 minus that p50, as in the 0.7.0 row (no
@@ -58,10 +58,13 @@ Since 0.25.0 (unreleased) each start also looks up three environment variables
 entrypoint for a newline (a command table); the code they run is imported only when one applies.
 Not measured: the rows above are 0.25.0's.
 
-Budget (`test_startup_is_within_budget_of_bare_cpython`): everything but the integrity check
-within 1.5× bare CPython (1.15× until 0.7.0, 1.2× until 0.10.0; the owner raised it twice on
-2026-10-09 because the launcher sat at the edge, 1.20–1.21× in 0.9.1 and 0.10.0 alike, and failed
-about one run in three). The check is budgeted apart: it costs what hashing the file costs.
+There is no startup budget test. Until 2026-10-26 `test_startup_is_within_budget_of_bare_cpython`
+required everything but the integrity check to be within 1.5× bare CPython (1.15× until 0.7.0,
+1.2× until 0.10.0; the owner raised it twice on 2026-10-09 because the launcher sat at the edge,
+1.20–1.21× in 0.9.1 and 0.10.0 alike, and failed about one run in three). The owner removed
+timing budgets on 2026-10-26 after the test measured 1.8× on a loaded 4-core GitHub runner
+against 1.21–1.24× locally. The ratios in the table above are measurements, not limits. The
+integrity check costs what hashing the file costs.
 
 ## The integrity check
 
@@ -725,4 +728,5 @@ removes it at exit: 35.0 MB in 2 files for `hello` (`libpython3.14.so.1.0` and
    are not apart, see 'Starting a no-op app') and the integrity check,
    `heavy json` the payload imports, `heavy np` and `heavy onnx` the cache check and native
    loading, aiagent a large pure-Python import tree.
-4. `uv run pytest -q tests/e2e/test_runtime_app.py -k budget` checks the startup budget.
+4. Compare the app's start with `python3 -I -S -c pass` as under "How these were measured"
+   above (no test checks a timing).

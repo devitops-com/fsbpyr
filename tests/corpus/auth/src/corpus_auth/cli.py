@@ -88,7 +88,8 @@ def ssh(key: paramiko.RSAKey) -> None:
     starter = threading.Thread(target=serve)
     starter.start()
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.get_host_keys().add("corpus", key.get_name(), key)  # pin the key the server holds
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
     client.connect("corpus", username="ada", password="x", sock=client_socket,
                    allow_agent=False, look_for_keys=False)
     _, stdout, _ = client.exec_command("hostname")

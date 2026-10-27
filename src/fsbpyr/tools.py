@@ -43,6 +43,7 @@ from .closure import ClosureError, InstalledDist, SiteIndex, marker_environment,
 from .foreign import ForeignLockError
 from .pipenv import tool_names
 from .project import LockSource, Project, ProjectError, requirement_lines
+from .text import plural
 
 _INCLUDE = re.compile(r"(?:-r\s*|--requirement(?:\s+|=))(\S.*)")
 _EDITABLE = re.compile(r"(?:-e|--editable)(?:\s+|=)\s*")
@@ -324,11 +325,12 @@ def tool_scripts(
     tops = [name for name in named if name not in required]
     tools, meta_notes = _through_metas({n: named[n] for n in tops}, index, environment)
     if required:
-        notes = [f"{source} lists all {len(named)} installed distributions, so the tools are "
-                 f"the {len(tops)} that no other listed distribution requires: "
+        notes = [f"{source} lists all {plural(len(named), 'installed distribution')}, so the "
+                 f"tools are the {len(tops)} that no other listed distribution requires: "
                  f"{_shown(tops)}"]  # fmt: skip
     else:
-        notes = [f"the tools are the {len(tops)} distributions {source} names: {_shown(tops)}"]
+        notes = [f"the tools are the {plural(len(tops), 'distribution')} {source} names: "
+                 f"{_shown(tops)}"]
     notes += meta_notes
     scripts: dict[str, str] = {}
     owners: dict[str, str] = {}

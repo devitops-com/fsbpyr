@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..compat import tarfile
+from ..text import tail_lines
 from .hold import hold
 from .pins import PbsPin
 
@@ -24,6 +25,7 @@ _INITTAB_ENTRY = re.compile(r'\{"([A-Za-z0-9_.]+)",\s*PyInit_')
 _LLVM_BITCODE = re.compile(r"llvm-bitcode:(\d+)\.")
 _CHUNK = 1 << 20
 _LIBZSTD = "build/lib/libzstd.a"
+_ERROR_TAIL = 500
 
 
 class PbsError(RuntimeError):
@@ -156,7 +158,7 @@ def _ask(interpreter: Path, script: str, what: str) -> object:
         raise PbsError(f"cannot run {interpreter} to read its {what}: {exc}") from exc
     if answer is None:
         raise PbsError(f"{interpreter} did not report its {what}: "
-                       f"{result.stderr.strip()[-500:]}")  # fmt: skip
+                       f"{tail_lines(result.stderr.strip(), _ERROR_TAIL)}")  # fmt: skip
     return answer
 
 

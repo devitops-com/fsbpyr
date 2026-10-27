@@ -195,8 +195,8 @@ test-portability: ## Run the portability matrix on 12 distributions (podman, dis
 # gc, restore, find_object), the _fsbpyr contract (runtime_app, imports, stub_hardening, cache
 # root, streaming) and the build of apps with natives from manylinux_2_28 wheels (compat,
 # natives). tests/e2e/test_el8.py compares an EL8 build with a default one, so it runs with
-# both runtimes, not in the mode. full-suite.yml does not run any of it; el8.yml, which attaches
-# the EL8 stubs to a release, does.
+# both runtimes, not in the mode. full-suite.yml does not run any of it; el8.yml, which publishes
+# the EL8 stubs in the companion release el8-vX.Y.Z, does.
 EL8_TESTS := tests/e2e/test_runtime_app.py tests/e2e/test_imports.py tests/e2e/test_stub_hardening.py \
 	tests/e2e/test_edges.py tests/e2e/test_cache_root.py tests/e2e/test_gc.py tests/e2e/test_slots.py \
 	tests/e2e/test_due.py tests/e2e/test_restore.py tests/e2e/test_find_object.py \
@@ -254,7 +254,7 @@ release: ## Tag main's tested HEAD and push the tag; CI builds, attests and publ
 # After `make release`, once the release is published: checks it as its users get it
 # (tools/release/check-release.sh says what), in a directory under TESTTMP and in the tests'
 # cgroup; it changes nothing outside them but uv's cache.
-release-check: ## Check the published release (VERSION=X.Y.Z, default the latest): assets, attestations, rebuild, installer, update
+release-check: ## Check the published release (VERSION=X.Y.Z, default the latest): assets, attestations, EL8 stubs, installer, update
 	@$(SCRATCHENV) $(CONTAINED) bash tools/release/check-release.sh$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
 
 clean: ## Remove dist/

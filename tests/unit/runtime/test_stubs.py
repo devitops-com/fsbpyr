@@ -1,7 +1,7 @@
 """The stub of a released fsbpyr for the EL8 baseline (runtime/stubs.py, D46): where it comes
-from (a file placed beside the executable, the cache, a download from the release served by a
-fake server on localhost), that it is proven to be this fsbpyr's own, and what is said when the
-release has none."""
+from (a file placed beside the executable, the cache, a download from the companion release of
+the tag served by a fake server on localhost), that it is proven to be this fsbpyr's own, and
+what is said when there is none."""
 
 import hashlib
 import lzma
@@ -14,13 +14,14 @@ from fsbpyr import dispatch
 from fsbpyr.runtime import collect, pins, registry, stubs
 from fsbpyr.runtime.stub import IDENTITY_MARKER, stub_identity
 from fsbpyr.targets import host_target
-from fsbpyr.vcs import release_stub_asset, release_stub_sums
+from fsbpyr.vcs import release_stub_asset, release_stub_sums, release_stub_tag
 
 from ...support.releases import FakeReleases
 from .test_registry import _runtime
 
 BASELINE = "2.28"
 TAG = "v1.2.0"
+COMPANION = release_stub_tag(BASELINE, TAG)
 PYTHON = "3.14"
 ASSET = release_stub_asset(PYTHON, host_target().name, BASELINE)
 SUMS = release_stub_sums(BASELINE)
@@ -49,8 +50,8 @@ def releases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeRe
 
 
 def publish(releases: FakeReleases, data: bytes, *, sums: bytes | None = None) -> None:
-    releases.files[f"/{TAG}/{ASSET}.xz"] = lzma.compress(data)
-    releases.files[f"/{TAG}/{SUMS}"] = sums if sums is not None else sums_line(data)
+    releases.files[f"/{COMPANION}/{ASSET}.xz"] = lzma.compress(data)
+    releases.files[f"/{COMPANION}/{SUMS}"] = sums if sums is not None else sums_line(data)
 
 
 def get(tmp_path: Path) -> bytes:
@@ -137,7 +138,7 @@ def test_a_download_is_verified_and_kept_for_offline_use(
 
     assert get(tmp_path) == data
 
-    assert releases.requests == [f"/{TAG}/{SUMS}", f"/{TAG}/{ASSET}.xz"]
+    assert releases.requests == [f"/{COMPANION}/{SUMS}", f"/{COMPANION}/{ASSET}.xz"]
     assert cached(tmp_path) == [f"{ASSET}-{TAG}"]  # whole, no temporary file left
     assert (tmp_path / "cache" / "downloads" / f"{ASSET}-{TAG}").read_bytes() == data
     releases.close()  # no network from here on
@@ -151,7 +152,21 @@ def test_the_download_url_follows_the_release_downloads_variable(
 
     get(tmp_path)
 
-    assert all(request.startswith(f"/{TAG}/") for request in releases.requests)
+    assert all(request.startswith(f"/{COMPANION}/") for request in releases.requests)
+
+
+def test_the_stub_is_fetched_from_the_companion_release_and_not_from_the_release(
+    releases: FakeReleases, tmp_path: Path
+) -> None:
+    data = make_stub()
+    releases.files[f"/{TAG}/{ASSET}.xz"] = lzma.compress(data)  # a release takes no stubs
+    releases.files[f"/{TAG}/{SUMS}"] = sums_line(data)
+
+    with pytest.raises(stubs.StubError):
+        get(tmp_path)
+
+    assert COMPANION == "el8-v1.2.0"
+    assert releases.requests == [f"/{COMPANION}/{SUMS}"]  # nothing under /v1.2.0/ is asked for
 
 
 def test_sums_may_use_the_binary_marker_and_list_other_stubs(
@@ -191,7 +206,7 @@ def test_a_placed_stub_of_another_release_is_refused_naming_the_expected_one(
 
     message = str(error.value)
     assert f"fsbpyr ({TAG})" in message and f"expects {EXPECTED}" in message
-    assert f"use the {ASSET} of release {TAG}" in message
+    assert f"use the {ASSET} of release {COMPANION}" in message
     assert releases.requests == []  # a refused file is not replaced by a download
 
 
@@ -244,8 +259,8 @@ def test_the_default_baselines_stub_is_not_the_el8_one() -> None:
 
 def _assert_the_plain_message(error: pytest.ExceptionInfo[stubs.StubError], tmp_path: Path) -> None:
     message = str(error.value)
-    assert f"this release ({TAG}) has no glibc {BASELINE} stubs" in message
-    assert "published separately and not with every release" in message
+    assert f"release {COMPANION} (the glibc {BASELINE} stubs of {TAG}) does not exist" in message
+    assert "published separately and not for every release" in message
     assert f"place {ASSET} (or {ASSET}.xz) next to {tmp_path / 'bin' / 'fsbpyr'}" in message
     assert f"or use a release that has them: {stubs.RELEASES}" in message
     assert "Traceback" not in message
@@ -264,7 +279,8 @@ def test_a_release_without_the_sums_file_has_no_el8_stubs(
 def test_a_release_whose_sums_lack_this_python_has_no_stub_for_it(
     releases: FakeReleases, tmp_path: Path
 ) -> None:
-    releases.files[f"/{TAG}/{SUMS}"] = sums_line(make_stub(), "fsbpyr-stub-3.12-x86_64-linux-gnu")
+    other = "fsbpyr-stub-3.12-x86_64-linux-gnu"
+    releases.files[f"/{COMPANION}/{SUMS}"] = sums_line(make_stub(), other)
 
     with pytest.raises(stubs.StubError) as error:
         get(tmp_path)
@@ -275,7 +291,7 @@ def test_a_release_whose_sums_lack_this_python_has_no_stub_for_it(
 def test_a_release_whose_asset_is_missing_has_no_el8_stub(
     releases: FakeReleases, tmp_path: Path
 ) -> None:
-    releases.files[f"/{TAG}/{SUMS}"] = sums_line(make_stub())  # listed, not uploaded
+    releases.files[f"/{COMPANION}/{SUMS}"] = sums_line(make_stub())  # listed, not uploaded
 
     with pytest.raises(stubs.StubError) as error:
         get(tmp_path)
@@ -292,7 +308,8 @@ def test_a_server_that_cannot_be_reached_is_not_called_a_release_without_stubs(
         get(tmp_path)
 
     message = str(error.value)
-    assert "could not be fetched" in message and "no glibc" not in message
+    assert f"release {COMPANION}'s {ASSET} could not be fetched" in message
+    assert "no glibc" not in message and "does not exist" not in message
     assert f"place {ASSET} next to {tmp_path / 'bin' / 'fsbpyr'}" in message
 
 

@@ -194,6 +194,15 @@ def test_a_pylock_names_its_packages(tmp_path: Path) -> None:
 # --- the tools -------------------------------------------------------------------------------
 
 
+def test_one_distribution_a_short_file_names_is_one_distribution() -> None:
+    index = _index(_dist("httpie", (), "http = httpie.core:main"))
+
+    tools = tool_scripts(index, _listed_by(["httpie"]), project="tools",
+                         source="requirements.txt", python_version=PYTHON)  # fmt: skip
+
+    assert tools.notes[0].startswith("the tools are the 1 distribution requirements.txt names")
+
+
 def test_the_distributions_a_short_file_names_are_all_tools_and_a_dependency_is_not() -> None:
     scripts = "ansible = ansible.cli:main\nansible-doc = a.doc:main"
     index = _index(

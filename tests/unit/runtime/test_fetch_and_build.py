@@ -5,6 +5,7 @@ import hashlib
 import importlib.machinery
 import io
 import json
+import re
 import sys
 import time
 import urllib.error
@@ -417,3 +418,35 @@ def test_extension_suffixes_name_an_interpreter_that_fails(tmp_path: Path) -> No
         pbs.extension_suffixes(Path("/bin/false"))
     with pytest.raises(pbs.PbsError, match="cannot run"):
         pbs.extension_suffixes(tmp_path / "missing")
+
+
+def _noisy_script(tmp_path: Path, label: str) -> Path:
+    script = tmp_path / "noisy"
+    script.write_text(f"#!/bin/sh\ni=0\nwhile [ $i -lt 300 ]; do echo \"line $i of {label}\" >&2; "
+                      "i=$((i+1)); done\nexit 1\n")
+    script.chmod(0o755)
+    return script
+
+
+def test_an_interpreter_that_fails_shows_its_error_output_from_a_line_start(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(pbs.PbsError) as caught:
+        pbs.component_versions(_noisy_script(tmp_path, "the query"))
+
+    lines = str(caught.value).splitlines()
+    assert re.search(r": \(\d+ earlier lines left out\)$", lines[0])
+    assert re.fullmatch(r"line \d+ of the query", lines[1])
+    assert lines[-1] == "line 299 of the query"
+
+
+def test_a_compile_worker_that_fails_shows_its_error_output_from_a_line_start(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(stdlib.StdlibError) as caught:
+        stdlib._run([str(_noisy_script(tmp_path, "the worker"))])
+
+    lines = str(caught.value).splitlines()
+    assert re.search(r": \(\d+ earlier lines left out\)$", lines[0])
+    assert re.fullmatch(r"line \d+ of the worker", lines[1])
+    assert lines[-1] == "line 299 of the worker"

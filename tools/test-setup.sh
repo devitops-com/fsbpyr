@@ -17,7 +17,7 @@ set -euo pipefail
 
 apt-get update -q
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-    libclang-rt-22-dev llvm-22 gcc strace groff-base zstd xz-utils wget busybox
+    libclang-rt-22-dev llvm-22 gcc strace groff-base zstd xz-utils wget busybox openssl
 rm -rf /var/lib/apt/lists/*
 
 groupadd --gid 2000 testers

@@ -122,12 +122,16 @@ The tiers, from fastest to most complete:
   code was flagged by CodeQL, D46); a `build` job builds the tag's executable as `build.yml`
   does (reproducible: the release asset's bytes) for the portability and VM jobs. Only the
   `publish` job, after every other job passed and the release of the tag exists (it waits up to
-  an hour for `release.yml` to publish it), writes: it uploads
-  the eight `fsbpyr-stub-3.X-<target>-glibc2.28.xz` and then `SHA256SUMS-glibc2.28` to the tag's
-  release, attests them, and touches no other asset (a rerun that finds the same sums uploads
-  nothing). A release has EL8 stubs when it has `SHA256SUMS-glibc2.28`; `make release-check`
-  verifies them when it does (and prints `skip: no EL8 stubs` when not). To attach them to a
-  release that has none, or to retry a failed run, dispatch the workflow on the tag's ref: `gh workflow run
+  an hour for `release.yml` to publish it), writes: it creates the companion release `el8-vX.Y.Z`
+  as a draft on the tag's commit, uploads the eight `fsbpyr-stub-3.X-<target>-glibc2.28.xz` and
+  `SHA256SUMS-glibc2.28` to it, attests them and publishes it (it becomes immutable) with
+  `--latest=false`, so that `releases/latest` keeps pointing at `vX.Y.Z`. It does not touch the
+  release `vX.Y.Z`: an immutable release accepts no later upload, which is why the stubs are not
+  attached to it (REL-1). A rerun that finds `el8-vX.Y.Z` published with the same sums publishes
+  nothing, one that finds other sums fails (a published release cannot be changed), and a draft
+  left by a failed run is deleted and made again. A version has EL8 stubs when the release
+  `el8-vX.Y.Z` exists; `make release-check` verifies it (and prints `skip: no EL8 stubs` when
+  there is none). To publish them for a tag that has no companion release, or to retry a failed run, dispatch the workflow on the tag's ref: `gh workflow run
   el8.yml --ref vX.Y.Z` (or Actions, EL8, Run workflow, choosing the tag; it has no inputs, and
   dispatched on a branch the plan job finds no tag and nothing runs). Everything runs from the
   tag, workflow file included, so the tag must have the EL8 support (`fsbpyr runtime build

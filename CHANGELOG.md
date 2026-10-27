@@ -10,6 +10,65 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-27
+
+### Changed
+- **The test suite has no timing budgets.** The startup budget test
+  (`test_startup_is_within_budget_of_bare_cpython`, 1.5x bare CPython) and the wall-clock bound
+  of the canonicalizer's nested-set test are removed, the detached-collector test no longer
+  measures how long the launcher took, and Hypothesis runs without its 200 ms per-example
+  deadline locally, as it already did in CI. The startup budget failed on a loaded runner (1.8x on
+  a 4-core GitHub runner against 1.21-1.24x locally), and a wall-clock bound fails a slow machine,
+  not a wrong result. Startup is measured, not gated: `docs/performance.md` still records the
+  measurements.
+
+### Fixed
+- **The EL8 stubs are published in a companion release.** `el8.yml` could not attach the glibc
+  2.28 stubs to the release `v0.26.0`: releases are immutable and take no asset after
+  publication (`HTTP 422: Cannot upload assets to an immutable release`). The stubs of `vX.Y.Z`
+  are now the assets of the release `el8-vX.Y.Z`, whose tag is on the same commit. `el8.yml`
+  creates it as a draft, uploads the eight `.xz` and `SHA256SUMS-glibc2.28`, and publishes it;
+  it is not the latest release, so `releases/latest`, `fsbpyr self update` and the installer
+  still point at `vX.Y.Z`. `fsbpyr build --glibc 2.28` downloads the stub from there, and says
+  `release el8-vX.Y.Z (the glibc 2.28 stubs of vX.Y.Z) does not exist or has none for this
+  Python` when there is none. `make release-check` checks the companion release. The attestations
+  are still those of the run on the tag: `--source-ref refs/tags/vX.Y.Z`. For `v0.26.0` the stubs
+  are in [`el8-v0.26.0`](https://github.com/devitops-com/fsbpyr/releases/tag/el8-v0.26.0)
+  (nine assets, attested from `refs/tags/v0.26.0`), but fsbpyr 0.26.0 itself still looks in
+  `v0.26.0` and stops with `this release (v0.26.0) has no glibc 2.28 stubs`: download the stub
+  for your Python and target from `el8-v0.26.0`, check it against its `SHA256SUMS-glibc2.28` (the
+  sums are of the unpacked stub: `xz -dc <asset>.xz | sha256sum`) and place it next to the fsbpyr
+  executable. README, "Older systems: EL8 and glibc 2.28".
+- **A refused cache directory is a refused start.** With `FSBPYR_CACHE_DIR` (or the default
+  cache) in a directory that another user owns or others may write to, an app with native code
+  ends with the one line `fsbpyr: cannot start <executable>: refusing cache directory <path>:
+  other users may write to it` and exit 70, as the integrity check does, at the first extraction.
+  It used to surface as the root cause of an `ImportError` (NumPy printed advice about a broken
+  installation) with exit 1. Other extraction failures stay errors; apps without native code pay
+  nothing. (#42)
+- **A compiled package's missing data file names `--fs-package`.** A compiled module's own
+  `OSError`, such as mypyc's `blib2to3` reading `Grammar.txt` while the package is imported, is no
+  longer reported as "cannot extract native code ... set FSBPYR_CACHE_DIR". When the missing
+  file is below the native cache's `site/` directory, the uncaught error ends with
+  `fsbpyr: <path> is missing from the native cache, which holds the compiled files of a package
+  only; <package> reads files next to its __file__: rebuild with --fs-package <package>`. (#43)
+- **A failed smoke test shows whole lines.** The tail of the new executable's error output that
+  the build prints starts at a line boundary, with a note of how many earlier lines were left out,
+  instead of in the middle of a line. The same holds for the tails of `uv` and launcher link
+  errors, and of a failing compile worker or interpreter query. (#41)
+- **One is one.** The build says `collecting 1 distribution`, `1 command` and `the 1 distribution
+  a lock source names`, not the plural. (#45)
+- **The attestation example works, and is checked.** `.github/workflows/attest-example.yml`
+  downloaded the release asset `fsbpyr`, which releases have not had since 0.22.0; it now takes
+  the latest release's `fsbpyr-3.14-x86_64-linux-gnu`, runs `gh attestation verify` on the app it
+  attested, as the README tells whoever downloads it, and keeps the app as the run's artifact.
+  The README no longer says this is untested: `gh attestation verify` accepted the downloaded
+  app, whose attested SHA-256 is the `sha256` that `fsbpyr inspect --verify` prints. (#46)
+- **A VM boot that hangs shows how far it got.** `tools/vm-smoke.py` (`make test-vm`, the
+  `vm-smoke` job) boots with kernel messages from the first line on (`earlycon`, no `quiet`), so
+  a boot that never reaches `/init` leaves its last messages in the report instead of an empty
+  console. `/init` turns them down to `quiet`'s level before its first marker line.
+
 ## [0.26.0] - 2026-10-26
 
 ### Added

@@ -30,6 +30,7 @@ from .payload.reader import Executable, FileRecord, Payload
 from .runtime.pins import DEFAULT_BASELINE
 from .sizes import PARTS, Sizes, measure
 from .system import target_needs
+from .text import plural
 from .vcs import version_string
 
 SCHEMA = 1  # of --json
@@ -381,10 +382,6 @@ def _columns(items: list[str]) -> list[str]:
     return [_INDENT + line.rstrip() for line in out.getvalue().splitlines()]
 
 
-def _plural(count: int, noun: str) -> str:
-    return f"{count} {noun}{'s' * (count != 1)}"
-
-
 def _modules_by_distribution(report: Report) -> list[str]:
     tops = _top_level(report)
     entries = []
@@ -394,11 +391,11 @@ def _modules_by_distribution(report: Report) -> list[str]:
         entries.append(f"{dist}: {' '.join(names)}" if names and not same else dist)
     count = len({name for names in tops.values() for name in names})  # namespaces count once
     runtime = _tops(report.runtime)
-    dists = _plural(len(report.dists), "distribution")
+    dists = plural(len(report.dists), "distribution")
     return [
-        f"modules: {_plural(count, 'top-level name')} in {dists}",
+        f"modules: {plural(count, 'top-level name')} in {dists}",
         *_columns(entries),
-        f"{RUNTIME}: {_plural(len(runtime), 'top-level name')}",
+        f"{RUNTIME}: {plural(len(runtime), 'top-level name')}",
         *_columns(runtime),
     ]
 
@@ -407,9 +404,9 @@ def _every_module(report: Report) -> list[str]:
     lines = []
     for dist, version in report.dists:
         names = report.modules[dist]
-        lines += [f"{_shown(f'{dist} {version}')}: {_plural(len(names), 'module')}",
+        lines += [f"{_shown(f'{dist} {version}')}: {plural(len(names), 'module')}",
                   *_columns(names)]  # fmt: skip
-    return [*lines, f"{RUNTIME}: {_plural(len(report.runtime), 'module')}",
+    return [*lines, f"{RUNTIME}: {plural(len(report.runtime), 'module')}",
             *_columns(report.runtime)]  # fmt: skip
 
 
@@ -457,7 +454,7 @@ def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
         *([f"baseline   glibc {_shown(_baseline(report.info))}"]
           if "glibc_baseline" in report.info else []),
         f"uv         {_shown(report.info.get('uv', UNKNOWN))}",
-        f"size       {report.size / 1e6:.1f} MB, {_plural(len(report.dists), 'distribution')}",
+        f"size       {report.size / 1e6:.1f} MB, {plural(len(report.dists), 'distribution')}",
         f"compressed {_shown(_compression(report))}",
         f"digest     {report.digest}{'' if report.covers_file else ' (payload only)'}"
         + (" verified" if report.verified else ""),

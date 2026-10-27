@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.assemble import App, build_executable
-from fsbpyr.payload.format import FileKind
-from fsbpyr.payload.spec import Blob, File
+from fsbpyr.payload.format import FileKind, ModuleKind
+from fsbpyr.payload.spec import Blob, File, Module
 from fsbpyr.runtime.registry import Runtime
 
 from .conftest import app_content
@@ -223,3 +223,27 @@ def test_a_way_too_long_once_a_symlink_is_followed_is_refused(app: Path, tmp_pat
     root = f"{tmp_path}/long/" + "b/" * 3600
 
     assert "File name too long" in _run(app, tmp_path, root=root)
+
+
+@pytest.fixture(scope="module")
+def importer(runtime: Runtime, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """An app whose one native extension is extracted at its import; the file is never loaded."""
+    rel = f"ext{runtime.extension_suffixes[0]}"
+    native = File(rel, FileKind.NATIVE_EXT, Blob.zstd(LIBRARY, digest=True), mode=0o755)
+    modules, files = app_content({"x.py": "def main():\n    import ext\n    print('imported')\n"})
+    modules = (*modules, Module("ext", rel, ModuleKind.EXTENSION, file=rel))
+    out = tmp_path_factory.mktemp("importer") / "x"
+    build_executable(runtime, App("x", "x:main", modules=modules, files=(*files, native)), out)
+    return out
+
+
+def test_a_refused_cache_directory_ends_the_start_with_one_line_and_exit_70(
+    importer: Path, exposed: Path
+) -> None:
+    result = subprocess.run([importer], capture_output=True, text=True, check=False, timeout=60,
+                            env={**os.environ, "FSBPYR_CACHE_DIR": str(exposed)})  # fmt: skip
+
+    assert result.returncode == 70, result.stderr
+    assert result.stdout == ""
+    assert result.stderr == (f"fsbpyr: cannot start {importer}: refusing cache directory "
+                             f"{exposed}: other users may write to it\n")  # fmt: skip

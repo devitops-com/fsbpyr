@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import json
 import os
 import platform
 import re
@@ -1934,3 +1935,36 @@ def test_the_release_check_refuses_what_is_no_version(
     assert result.returncode == 2
     assert message in result.stderr
     assert gh_calls(tmp_path) == []
+
+
+def test_the_release_check_refuses_a_companion_release_as_the_latest(
+    tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    """The EL8 companion el8-vX.Y.Z is no release to check, and the latest it must never be."""
+    write_program(tmp_path / "gh-bin" / "gh", "echo el8-v1.2.3\n")
+    write_program(tmp_path / "gh-bin" / "uv", "exit 0\n")
+
+    result = run_script(["bash", str(CHECK_RELEASE_SH)], release_env)
+
+    assert result.returncode == 2
+    assert "the latest release is el8-v1.2.3, not a version tag" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq is not installed")
+def test_the_release_before_a_release_is_the_one_of_a_version_not_a_companion() -> None:
+    """Companions are published after their release, so they interleave in the release list."""
+    script = CHECK_RELEASE_SH.read_text(encoding="utf-8")
+    match = re.search(r"--jq '(map\(select\(.*?)'", script)
+    assert match, "the previous-release filter is gone"
+    listing = [
+        {"tagName": "el8-v0.2.0", "createdAt": "2026-03-02T10:00:00Z"},
+        {"tagName": "v0.2.0", "createdAt": "2026-03-02T09:00:00Z"},
+        {"tagName": "el8-v0.1.0", "createdAt": "2026-03-01T10:00:00Z"},
+        {"tagName": "v0.1.0", "createdAt": "2026-03-01T09:00:00Z"},
+    ]
+
+    jq = shutil.which("jq") or "jq"
+    result = subprocess.run([jq, "-r", match.group(1)], input=json.dumps(listing),
+                            capture_output=True, text=True, check=True)  # fmt: skip
+
+    assert result.stdout.split() == ["v0.2.0", "v0.1.0"]

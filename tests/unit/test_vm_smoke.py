@@ -307,6 +307,21 @@ def test_the_qemu_command_has_no_network_card() -> None:
     assert command[command.index("-nic") + 1] == "none"
 
 
+def test_the_boot_is_verbose_from_the_first_line_so_a_hung_boot_shows_where() -> None:
+    cmdline = vm.qemu_command(Path("kernel"), Path("initramfs"))[-1].split()
+
+    assert "earlycon" in cmdline
+    assert "quiet" not in cmdline
+
+
+def test_init_quietens_the_kernel_before_the_first_marker() -> None:
+    lines = vm.INIT.splitlines()
+    quieten = lines.index("echo 4 > /proc/sys/kernel/printk")
+
+    assert lines.index("mount -t proc proc /proc") < quieten
+    assert quieten < next(i for i, line in enumerate(lines) if vm.MARKER in line)
+
+
 def test_a_qemu_that_exits_at_once_says_why_in_the_console_and_the_log(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -142,8 +142,8 @@ CONFIG_KEYS = (
               "`requires-python` decide."),
     ConfigKey("glibc", "glibc", _glibc,
               "String. The glibc the app is built for: `2.34` (default) or `2.28`, for EL8 "
-              "hosts, which needs the glibc 2.28 stubs of the fsbpyr release (README, \"Older "
-              "systems\"); as `--glibc`."),
+              "hosts, which needs the glibc 2.28 stub from the companion release of the fsbpyr "
+              "release (README, \"Older systems\"); as `--glibc`."),
     ConfigKey("strict", "strict", _flag,
               "Boolean. Fail the build on warnings; as `--strict`."),
     ConfigKey("interpreter-reexec", "interpreter_reexec", _flag,
