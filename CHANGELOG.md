@@ -21,6 +21,22 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   measurements.
 
 ### Fixed
+- **The EL8 stubs are published in a companion release.** `el8.yml` could not attach the glibc
+  2.28 stubs to the release `v0.26.0`: releases are immutable and take no asset after
+  publication (`HTTP 422: Cannot upload assets to an immutable release`). The stubs of `vX.Y.Z`
+  are now the assets of the release `el8-vX.Y.Z`, whose tag is on the same commit. `el8.yml`
+  creates it as a draft, uploads the eight `.xz` and `SHA256SUMS-glibc2.28`, and publishes it;
+  it is not the latest release, so `releases/latest`, `fsbpyr self update` and the installer
+  still point at `vX.Y.Z`. `fsbpyr build --glibc 2.28` downloads the stub from there, and says
+  `release el8-vX.Y.Z (the glibc 2.28 stubs of vX.Y.Z) does not exist or has none for this
+  Python` when there is none. `make release-check` checks the companion release. The attestations
+  are still those of the run on the tag: `--source-ref refs/tags/vX.Y.Z`. For `v0.26.0` the stubs
+  are in [`el8-v0.26.0`](https://github.com/devitops-com/fsbpyr/releases/tag/el8-v0.26.0)
+  (nine assets, attested from `refs/tags/v0.26.0`), but fsbpyr 0.26.0 itself still looks in
+  `v0.26.0` and stops with `this release (v0.26.0) has no glibc 2.28 stubs`: download the stub
+  for your Python and target from `el8-v0.26.0`, check it against its `SHA256SUMS-glibc2.28` (the
+  sums are of the unpacked stub: `xz -dc <asset>.xz | sha256sum`) and place it next to the fsbpyr
+  executable. README, "Older systems: EL8 and glibc 2.28".
 - **A refused cache directory is a refused start.** With `FSBPYR_CACHE_DIR` (or the default
   cache) in a directory that another user owns or others may write to, an app with native code
   ends with the one line `fsbpyr: cannot start <executable>: refusing cache directory <path>:

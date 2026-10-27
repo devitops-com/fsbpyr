@@ -44,7 +44,7 @@ these from the machine:
   executable actually needs. SLES 15 SP4 and SP5 (glibc 2.31) are not supported. The default
   build is tested on the distributions in the first table below, releases their vendors support.
   **EL8** (RHEL 8, Rocky Linux 8, AlmaLinux 8; glibc 2.28) is supported by building with
-  `--glibc 2.28`, which needs the release's glibc 2.28 stub ([README](../README.md#older-systems-el8-and-glibc-228));
+  `--glibc 2.28`, which needs the glibc 2.28 stub of the release, published in its companion release `el8-vX.Y.Z` ([README](../README.md#older-systems-el8-and-glibc-228));
   such an app needs glibc 2.28 or newer and is tested on the two EL8 images below. Debian 10 and
   11, Ubuntu 20.04 and SLES 15 SP4 and SP5 are not tested, with or without `--glibc 2.28`; CentOS
   7 and Amazon Linux 2 have a glibc below 2.28 and are out of reach.
@@ -110,8 +110,8 @@ Apps built with `--glibc 2.28` (the pure-Python `hello` and an app with a manyli
 | `docker.io/library/rockylinux:8` | 2.28 |
 | `docker.io/library/almalinux:8` | 2.28 |
 
-The EL8 workflow (`.github/workflows/el8.yml`, which attaches the glibc 2.28 stubs to a
-release and is no part of the release gate) links the stub of every Python and target twice and
+The EL8 workflow (`.github/workflows/el8.yml`, which publishes the glibc 2.28 stubs in the
+companion release `el8-vX.Y.Z` and is no part of the release gate) links the stub of every Python and target twice and
 compares them. On the default Python only, it runs the stub tests, the four portability apps
 (built with `--glibc 2.28` by the tag's fsbpyr, built in the workflow) on the twelve distributions above and on
 these two, and a small corpus subset against its venvs; on aarch64 it also runs a pure-Python

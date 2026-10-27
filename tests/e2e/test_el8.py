@@ -28,7 +28,7 @@ from fsbpyr.payload.reader import Executable
 from fsbpyr.runtime import pins, registry, stubs
 from fsbpyr.runtime.stub import stub_identity
 from fsbpyr.targets import host_target
-from fsbpyr.vcs import release_stub_asset, release_stub_sums
+from fsbpyr.vcs import release_stub_asset, release_stub_sums, release_stub_tag
 
 from ..support import contain
 from ..support.releases import FakeReleases
@@ -41,6 +41,7 @@ BASELINE = "2.28"
 ASSET = release_stub_asset(TARGET_PYTHON, host_target().name, BASELINE)
 SUMS = release_stub_sums(BASELINE)
 TAG = "v1.2.0"
+COMPANION = release_stub_tag(BASELINE, TAG)
 CRYPTOGRAPHY = "50.0.2"
 _MANYLINUX = re.compile(r"manylinux_(\d+)_(\d+)_")
 _LEGACY = {"manylinux1": (2, 5), "manylinux2010": (2, 12), "manylinux2014": (2, 17)}
@@ -269,10 +270,10 @@ def test_the_projects_own_extension_is_rebuilt_against_the_el8_sysroot(
 
 @pytest.fixture
 def releases(el8_runtime: registry.Runtime) -> Iterator[FakeReleases]:
-    """A release that publishes the EL8 stub of the tests' Python, as part 3's workflow will."""
+    """The companion release of v1.2.0, which publishes the EL8 stub of the tests' Python."""
     fake = FakeReleases()
-    fake.files[f"/{TAG}/{ASSET}.xz"] = lzma.compress(el8_runtime.stub)
-    fake.files[f"/{TAG}/{SUMS}"] = (
+    fake.files[f"/{COMPANION}/{ASSET}.xz"] = lzma.compress(el8_runtime.stub)
+    fake.files[f"/{COMPANION}/{SUMS}"] = (
         f"{hashlib.sha256(el8_runtime.stub).hexdigest()}  {ASSET}\n".encode())
     yield fake
     fake.close()
@@ -295,7 +296,7 @@ def test_a_release_builds_for_el8_with_its_stdlib_and_the_downloaded_stub(
 
     _build(_hello(tmp_path_factory, "hello-release"), out, "--glibc", BASELINE)
 
-    assert releases.requests == [f"/{TAG}/{SUMS}", f"/{TAG}/{ASSET}.xz"]
+    assert releases.requests == [f"/{COMPANION}/{SUMS}", f"/{COMPANION}/{ASSET}.xz"]
     assert out.read_bytes() == built["hello"].read_bytes()
     assert (tmp_path / "cache" / "downloads" / f"{ASSET}-{TAG}").is_file()
 
@@ -350,7 +351,7 @@ def test_a_real_release_downloads_the_el8_stub_and_builds_the_same_app(
     result = _release_build(release_fsbpyr, project, out, tmp_path / "cache", releases.base)
 
     assert result.returncode == 0, result.stderr
-    assert releases.requests == [f"/{TAG}/{SUMS}", f"/{TAG}/{ASSET}.xz"]
+    assert releases.requests == [f"/{COMPANION}/{SUMS}", f"/{COMPANION}/{ASSET}.xz"]
     assert_same_app(out, built["hello"])
 
 
@@ -383,7 +384,7 @@ def test_a_real_release_without_el8_stubs_says_so_plainly(
         empty.close()
 
     assert result.returncode == 1
-    assert f"this release ({TAG}) has no glibc 2.28 stubs" in result.stderr
+    assert f"release {COMPANION} (the glibc 2.28 stubs of {TAG}) does not exist" in result.stderr
     assert f"place {ASSET} (or {ASSET}.xz) next to {release_fsbpyr}" in result.stderr
     assert "Traceback" not in result.stderr and not (tmp_path / "hello").exists()
 
@@ -402,5 +403,5 @@ def test_a_real_release_refuses_the_default_stub_in_place_of_the_el8_one(
 
     assert result.returncode == 1
     assert f"is not the stub this fsbpyr ({TAG}) needs" in result.stderr
-    assert f"use the {ASSET} of release {TAG}" in result.stderr
+    assert f"use the {ASSET} of release {COMPANION}" in result.stderr
     assert not (tmp_path / "hello").exists()

@@ -1,4 +1,6 @@
-"""A fake GitHub release downloads server on localhost: ``/vX.Y.Z/ASSET`` from ``files``."""
+"""A fake GitHub release downloads server on localhost: the ``files`` it serves by path, such as
+``/vX.Y.Z/ASSET`` for a release's assets and ``/el8-vX.Y.Z/ASSET`` for the EL8 stubs and their sums
+file, which are assets of the companion release."""
 
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer

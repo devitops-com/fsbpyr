@@ -92,7 +92,8 @@ def cli(ctx: click.Context) -> None:
                    "`requires-python` decides)")  # fmt: skip
 @click.option("--glibc", metavar="X.Y", type=click.Choice(["2.34", "2.28"]),
               help="the glibc the app is built for: 2.34 (default), or 2.28 for EL8 hosts, which "
-                   "needs the glibc 2.28 stub of the fsbpyr release (default: `glibc` in "
+                   "needs the glibc 2.28 stub from the companion release `el8-vX.Y.Z` of the "
+                   "fsbpyr release (default: `glibc` in "
                    "`[tool.fsbpyr]`, else 2.34)")  # fmt: skip
 @click.option("--entry", metavar="NAME", shell_complete=_complete_entry,
               help="console script name, `module` or `module:function` "
@@ -450,9 +451,9 @@ EXAMPLES = (
      "hands the build to its 3.12 variant, which it fetches from its own release the first "
      "time."),
     ("fsbpyr build --glibc 2.28",
-     "Build an app for EL8 hosts (glibc 2.28). It needs the glibc 2.28 stub of this fsbpyr's "
-     "release, which releases publish separately: fetched once, or placed beside the "
-     "fsbpyr executable."),
+     "Build an app for EL8 hosts (glibc 2.28). It needs the glibc 2.28 stub from the "
+     "companion release el8-vX.Y.Z of this fsbpyr's release: fetched once, or placed "
+     "beside the fsbpyr executable."),
     ("fsbpyr build --entry mytool --extra fancy",
      "Pick one of the project's console scripts, and install the project's extra `fancy` "
      "with it."),
