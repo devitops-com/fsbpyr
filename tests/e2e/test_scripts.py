@@ -173,6 +173,7 @@ def test_an_import_the_executable_lacks_skips_that_command_with_file_and_line(
         + GUARDED.format(who="soft"),
     )  # fmt: skip
     (project / ".venv").mkdir()
+    (project / ".venv" / "pyvenv.cfg").write_text("")
 
     assert _build(project) == 0
 

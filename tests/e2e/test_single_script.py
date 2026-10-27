@@ -198,6 +198,7 @@ def test_an_import_nothing_provides_skips_the_script_with_the_freeze_hint(
 ) -> None:
     directory = _write(tmp_path / "ops", {"a.py": "import notinstalled\nprint(1)\n"})
     (directory / ".venv").mkdir()
+    (directory / ".venv" / "pyvenv.cfg").write_text("")
 
     code, _, err = _build(directory / "a.py", tmp_path / "a")
 
