@@ -72,8 +72,8 @@ def cli(ctx: click.Context) -> None:
     "build",
     help="build a single-file executable from a project\n\nPROJECT is the project's directory "
     "(default: the current one); a directory of Python files with no `pyproject.toml` or "
-    "`setup.py` is built from them, one command per file with a main guard or a python "
-    "shebang. A single Python file (`*.py`, or a python or `uv run` shebang) builds "
+    "`setup.py` is built from them, one command per file with a main guard or a python or "
+    "`uv run` shebang. A single Python file (`*.py`, or such a shebang) builds "
     "with the files it imports from its directory, and nothing else of it; its PEP 723 "
     "block gives the dependencies, `requires-python` and `[tool.fsbpyr]`, and a "
     "`<file>.lock` from `uv lock --script` locks them. Options given here win over "
