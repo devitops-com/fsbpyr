@@ -12,9 +12,8 @@ from .pbs import PbsDist, PbsError
 
 NOTICE_DIR = "_fsbpyr_licenses"  # in the stdlib fragment, so in every app
 FSBPYR_NOTICE = "LICENSE.fsbpyr.txt"
-# Listed by PYTHON.json, shipped by no PBS archive before 20261020; the launcher's own zstd (PBS
-# lists its text only for _zstd, which 3.12 and 3.13 lack) and the HACL* code in the hash modules
-# are supplied (a text PBS ships is used instead). zlib-ng is
+# Listed by PYTHON.json, shipped by no PBS archive before 20261020; the launcher's own zstd and
+# the HACL* code in the hash modules are supplied (a text PBS ships is used instead). zlib-ng is
 # listed for zlib and binascii, but libz.a is classic zlib (LICENSE.zlib.txt), so its text is
 # left out, shipped or not.
 _SUPPLIED = {"LICENSE.zstd.txt": ("fsbpyr.launcher", "vendor/zstd/LICENSE"),
@@ -26,7 +25,7 @@ _HACL_OBJECTS = "/_hacl/"
 @dataclass(frozen=True, slots=True)
 class Notices:
     texts: dict[str, bytes]  # file name -> text, PBS's and supplied ones
-    unshipped: frozenset[str]  # names PBS lists for the linked libraries but does not ship
+    unshipped: frozenset[str]  # names of the linked libraries' texts that PBS does not ship
 
 
 def _own_license() -> bytes:
@@ -66,7 +65,9 @@ def collect(dist: PbsDist) -> Notices:
     listed, hacl = _listed(dist)
     texts: dict[str, bytes] = {}
     unshipped: set[str] = set()
-    for name in sorted(listed - NOT_LINKED):
+    # the launcher links zstd whatever the Python; PBS lists its text only for _zstd, which 3.12
+    # and 3.13 lack
+    for name in sorted((listed | {"LICENSE.zstd.txt"}) - NOT_LINKED):
         path = dist.root / "licenses" / name
         if path.is_file():
             texts[name] = path.read_bytes()
@@ -74,8 +75,6 @@ def collect(dist: PbsDist) -> Notices:
             unshipped.add(name)
             if name in _SUPPLIED:
                 texts[name] = _supplied(name)
-    if "LICENSE.zstd.txt" not in texts:  # the launcher links zstd whatever the Python
-        texts["LICENSE.zstd.txt"] = _supplied("LICENSE.zstd.txt")
     if hacl:
         texts["LICENSE.hacl.txt"] = _supplied("LICENSE.hacl.txt")
     return Notices(texts, frozenset(unshipped))

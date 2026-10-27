@@ -116,6 +116,7 @@ def test_every_linked_static_library_has_a_licence_text(dist: pbs.PbsDist) -> No
         assert (names - notices.NOT_LINKED) <= found.texts.keys(), lib
     assert b"Apache License" in found.texts["LICENSE.openssl-3.txt"]
     assert "LICENSE.hacl.txt" in found.texts  # the hash modules' objects are HACL*'s
+    assert "LICENSE.zstd.txt" in found.texts  # the launcher's libzstd.a, whatever the Python
 
 
 def test_the_texts_pbs_lists_but_does_not_ship_are_known(dist: pbs.PbsDist) -> None:
