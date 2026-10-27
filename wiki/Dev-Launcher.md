@@ -1,7 +1,7 @@
 # Launcher
 
 The launcher is the native program at the start of every executable fsbpyr builds. This page
-describes it as of fsbpyr v0.27.0: what it is, what it does from `execve` until it hands control
+describes it as of fsbpyr v@VERSION@: what it is, what it does from `execve` until it hands control
 to the Python boot code, what it never does, how it is compiled and linked, and then each C
 source file in [`src/fsbpyr/launcher/`][dir] in turn: its purpose, its main functions, the data it
 reads and writes, the rules it enforces, and how it works with the other files. The bytes it
@@ -28,9 +28,9 @@ the same in every app built by the same fsbpyr release for the same Python, targ
 baseline. A released fsbpyr builds an app for the default baseline with its own stub, the bytes
 before its own payload (`Runtime.from_executable` in [`runtime/registry.py`][registry]), and an
 app for glibc 2.28 with the glibc 2.28 stub of its companion release `el8-vX.Y.Z`
-([`runtime/stubs.py`][stubs], see the recorded id below). The 0.27.0 release's executable for
-CPython 3.14.9 on x86-64 (`fsbpyr-3.14-x86_64-linux-gnu`) has a stub of 20,939,049 bytes
-(19.97 MiB), counted from its trailer's `payload_offset` with the stub's zero tail counted as
+([`runtime/stubs.py`][stubs], see the recorded id below). The 0.28.0 release's executable for
+CPython 3.14.10 on x86-64 (`fsbpyr-3.14-x86_64-linux-gnu`) has a stub of 20,997,993 bytes
+(20.03 MiB), counted from its trailer's `payload_offset` with the stub's zero tail counted as
 padding, as `fsbpyr inspect --json`'s `sizes` counts it (2026-10-27); the apps it builds for
 the default baseline get the same bytes before their payload, so the same `stub_sha256`. The
 stub records the runtime id it was linked as (see
@@ -43,7 +43,7 @@ payload.
 
 ![The launcher's startup: thirteen steps from opening /proc/self/exe to Py_RunMain, each with its failure exit](images/launcher-startup.svg)
 
-`main()` in [`main.c`][main.c#L128] runs these steps in this order. Steps 1 to 4 are
+`main()` in [`main.c`][main.c#L129] runs these steps in this order. Steps 1 to 4 are
 `fsb_payload_open` in [`payload.c`][payload.c].
 
 1. **Locate itself.** It reads the link `/proc/self/exe` for its path, opens `/proc/self/exe`
@@ -118,9 +118,9 @@ executable `sys.executable` is the app (the `executable` row above).
 | Status | Message on stderr | When |
 |---|---|---|
 | 70 | `fsbpyr: cannot start <path>: <reason>` | any of steps 1 to 6 and 9 to 11 fails (`fatal()` in `main.c`); `<path>` is the executable's path, or `executable` if it could not be read |
-| 70 | `fsbpyr: refusing to start: <N> copies of this app are running already, as many as this machine allows at once (does the app keep starting itself?); if it needs more, set FSBPYR_MAX_INSTANCES to a higher number` | step 7: every slot is taken |
+| 70 | `fsbpyr: refusing to start: <N> copies of this app are running already, as many as this user may run at once (does the app keep starting itself?); if it needs more, set FSBPYR_MAX_INSTANCES to a higher number` | step 7: every slot is taken |
 | 0 | none | step 7 in a background collection (`FSBPYR_GC=background`): every slot is taken, and the collection waits for another day |
-| 70 | `fsbpyr: cannot start <path>: refusing cache directory <dir>: owned by another user`, or `...: other users may write to it` | after step 13: the boot code extracts files to the native cache (an extension it imports, an fs-package, a resource asked for as a path, a bundled library), and the C code finds a directory `<dir>` on the way to the cache root, or in the cache, that another user owns or may write to; the boot code ends the start ([module.c](#modulec)) |
+| 70 | `fsbpyr: cannot start <path>: refusing cache directory <dir>: owned by another user`, or `...: other users may write to it` | after step 13: the boot code extracts files to the native cache (an extension it imports, an fs-package, a resource asked for as a path, a bundled library, or every native extension under `FSBPYR_SELFTEST=natives`), and the C code finds a directory `<dir>` on the way to the cache root, or in the cache, that another user owns or may write to; the boot code ends the start ([module.c](#modulec)) |
 | CPython's | CPython's | a `PyStatus` error from `Py_PreInitialize`, a `PyConfig_Set*` call or `Py_InitializeFromConfig`: `Py_ExitStatusException` ends the process |
 | 99 | the sanitizer's report | only in the sanitized test variant: an AddressSanitizer or UndefinedBehaviorSanitizer finding (`__asan_default_options`, `__ubsan_default_options` in `main.c`); neither Python (1) nor the launcher (70) uses it |
 | any other | | what `Py_RunMain()` returns: the boot code's and the app's exit status |
@@ -224,13 +224,21 @@ builds a runtime.
   libraries those modules link (`path_static` in `PYTHON.json`); PBS's `build/lib/libzstd.a`
   whenever it exists, since the launcher decodes zstd itself (3.12 and 3.13 have no `_zstd`
   module that would name it); and the system libraries PBS lists, as `-l` options. `libpython`
-  and the static libraries are wrapped in `-Wl,--start-group` / `-Wl,--end-group`. On aarch64
+  and the static libraries are wrapped in `-Wl,--start-group` / `-Wl,--end-group`. The
+  version of that `libzstd.a`, the string `ZSTD_versionString()` returns, is read from its
+  `zstd_common.o` (`zstd_version` in `runtime/pbs.py`) and recorded among the runtime's
+  components. On aarch64
   clang's compiler-rt builtins library is added for the outlined atomics PBS's objects call
   (`outlined_atomics`).
 - **Link flags** (`LINK_FLAGS`): `-Wl,--export-dynamic-symbol=Py*` and `=_Py*` (only the Python
   C API is exported, so libraries of wheels cannot bind to the static zlib, OpenSSL or libffi in
   the stub), `-Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now`, `-s` (stripped), `-static-libgcc`,
-  and `-Wl,--wrap=hypot -Wl,--wrap=_dl_find_object` for `glibc.c`.
+  and `-Wl,--wrap=hypot -Wl,--wrap=_dl_find_object` for `glibc.c`. On aarch64 `link_flags`
+  adds `-Wl,--fix-cortex-a53-843419` (`AARCH64_LINK_FLAGS`): on a Cortex-A53 an `adrp` in one
+  of a 4 KiB page's last two instruction slots, followed by certain loads or stores, can
+  compute a wrong address, and lld patches each such sequence. PBS links its own aarch64
+  builds so since 20261026, but the stub is linked here from PBS's bitcode, so the flag is the
+  stub's own.
 - **Stack frames.** Any line of the compiler's or linker's output that mentions a
   `stack frame size` fails the build (`StubBuildError`): with LTO the frames are sized again at
   the link, where only a warning says so. Every other warning is passed back and printed.
@@ -238,7 +246,8 @@ builds a runtime.
   characters, starting at a line boundary, after a note of how many earlier lines were left out
   (`tail_lines` in [`text.py`][text]).
 - **Identity.** `launcher_digest` is the SHA-256 over every file of `LAUNCHER_FILES` (name and
-  content) and the flags; `runtime_id` in `registry.py` hashes it with the PBS pin, the sysroot
+  content) and the compile and link flags for the target triple (so the aarch64 link flag is
+  part of the aarch64 ids); `runtime_id` in `registry.py` hashes it with the PBS pin, the sysroot
   and the layout version into the runtime's id, `cp<python>-<triple>-<12 hex digits>`. A change
   to a source or a flag gives a new runtime. The sysroot's identity is its pin's name and a
   digest of its packages' SHA-256, so the stubs of the two baselines never share an id.
@@ -250,34 +259,39 @@ builds a runtime.
   sources compiled without the define (test programs) record `none`. Nothing reads it at run
   time. `stub_identity` in `stub.py` reads it back out of a file: the text after
   `fsbpyr-stub-identity=` up to the next NUL, or `None` for a file that has none. A build that
-  is handed a stub it did not link uses it to prove the stub is the one of its own launcher
-  sources, Python, target and sysroot, and refuses a stub whose recorded id is not the runtime
-  id it computes.
+  is handed a stub it did not link uses it to check that the stub was linked from the inputs
+  of the id it computes (the launcher sources and flags, the Python pin, the sysroot and the
+  layout version, which several releases may share), and refuses a stub whose recorded id is
+  not that runtime id.
 - **The glibc 2.28 stub of a release.** A released fsbpyr carries the runtime of the default
   baseline only. For `fsbpyr build --glibc 2.28` it pairs its own standard library, which does
   not depend on the sysroot, with a glibc 2.28 stub (`paired` in [`runtime/stubs.py`][stubs]),
   and takes that stub, the asset `fsbpyr-stub-3.X-<target>-glibc2.28`, from the first of:
   1. a file of that name, or of that name with `.xz`, beside the fsbpyr executable (in the
-     directory of the path it was run by, or of its real path), for machines that cannot reach
-     GitHub;
-  2. the copy kept in the cache, `downloads/<asset>-<tag>`;
+     directory of the path it was run by, or of its real path; for a build another fsbpyr
+     handed over because the project needs another Python, first beside that fsbpyr, whose
+     paths `FSBPYR_DISPATCHED_BY` carries), for machines that cannot reach GitHub;
+  2. the copy kept in the cache, `downloads/<asset>-<runtime id>`, named by the id it must
+     carry, so an update that leaves the id unchanged reuses it;
   3. a download of `<asset>.xz` from the companion release `el8-vX.Y.Z` of its own tag
      (`release_stub_tag` in `vcs.py`; under `$FSBPYR_RELEASE_DOWNLOADS` if set), whose
      SHA-256 must be the one that release's `SHA256SUMS-glibc2.28` lists for the asset; it is
-     then kept in the cache.
+     then kept in the cache. `--offline` stops before this step, with a message that says
+     where to place the asset.
 
   Whichever it is, its recorded id must be the runtime id this fsbpyr computes for its launcher
-  sources, Python, target and the EL8 sysroot (`_checked`): a placed or downloaded stub that
-  records another id (another Python, the default baseline, launcher sources or pins of another
-  release) or none is refused with a message that names the asset and the release to take it
+  sources and flags, Python, target, the EL8 sysroot and the layout version (`_checked`): a
+  placed or downloaded stub that records another id (another Python, the default baseline,
+  launcher sources or pins of another release) or none is refused with a message that names the asset and the release to take it
   from, and a cached copy whose id differs is downloaded again. A file larger than 256 MiB is
   no stub. A tag without a companion release, or one that lists no stub for this Python, fails
   the build with a message that says to place the asset beside the executable. A developer
   build has no release to fetch from: it uses a cached runtime that
   `fsbpyr runtime build --glibc 2.28` built. A cached runtime is checked by its digests
   instead, and the runtime embedded in a released fsbpyr by that executable's own integrity
-  check. After `fsbpyr self update`, stubs placed beside the executable are named in a warning,
-  since they belong to the old release.
+  check. After `fsbpyr self update`, the stubs placed beside the executable whose SHA-256 the
+  new release's `SHA256SUMS-glibc2.28` does not list are named in a warning (all of them when
+  that file cannot be read), since `--glibc` refuses them unless they carry its runtime id.
 - **Sanitized variant.** With `sanitize=True` the compile drops `-O2`, `-flto=full` and
   `-D_FORTIFY_SOURCE=2`, adds `-O1 -fsanitize=address,undefined` and
   `-fno-sanitize-recover=undefined -fno-omit-frame-pointer -g`, and the link drops `-s`. Its
@@ -770,7 +784,9 @@ against it and compares every size, offset and constant with the Python definiti
 by their `ZSTD_VERSION_*` macros) and zstd's BSD `LICENSE`. Only `payload.c` includes them. The
 library itself is not vendored: it is PBS's static `libzstd.a`, linked in by `link_inputs`. The
 `LICENSE` is also the zstd licence text that [`runtime/notices.py`][notices] puts into a
-runtime's licence notices when PBS ships none.
+runtime's licence notices when PBS ships none. Every runtime carries a zstd text, 3.12's and
+3.13's too, since the launcher links zstd whatever the Python (`collect` there): PBS lists
+`LICENSE.zstd.txt` only for the `_zstd` module, which those two lack.
 
 ## Environment variables the C code reads
 
@@ -798,7 +814,7 @@ through a pipe with and without `PYTHONUNBUFFERED`; a test of `tests/e2e/test_gc
 app with `HOME` unset, empty and relative and expects the background collection in the passwd
 home's cache; and a test of `tests/e2e/test_cache_root.py` starts an app that imports a native
 extension, with a cache directory that others may write to, and expects the refusal line alone
-on stderr, nothing on stdout, and status 70. `tests/unit/runtime/test_toolchain_and_link.py`
+on stderr, nothing on stdout, and status 70, with and without `FSBPYR_SELFTEST=natives`. `tests/unit/runtime/test_toolchain_and_link.py`
 checks that `stub_command` passes the runtime id, that the define is outside the hashed flags,
 and that the message of a failed link starts the output it shows at a line boundary.
 
@@ -812,7 +828,7 @@ refuses the default stub placed where the EL8 one belongs.
 [dir]: ../src/fsbpyr/launcher
 [vendor]: ../src/fsbpyr/launcher/vendor/zstd
 [main.c]: ../src/fsbpyr/launcher/main.c
-[main.c#L128]: ../src/fsbpyr/launcher/main.c#L129
+[main.c#L129]: ../src/fsbpyr/launcher/main.c#L129
 [payload.c]: ../src/fsbpyr/launcher/payload.c
 [payload.c#L108]: ../src/fsbpyr/launcher/payload.c#L108
 [payload.h]: ../src/fsbpyr/launcher/payload.h

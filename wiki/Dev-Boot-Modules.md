@@ -27,7 +27,7 @@ compiles them with the building interpreter, which must have the runtime's bytec
 So inside an executable the helpers import as `_fsbpyr_rt.native`, `_fsbpyr_rt.gc` and so on,
 while fsbpyr itself (the tool) imports the collector as `fsbpyr.boot._fsbpyr_rt.gc`
 ([Runtime modules](Dev-Runtime-Modules.md)) and the parser of the command table as
-`fsbpyr.boot._fsbpyr_rt.commands` (`build` and `inspection`,
+`fsbpyr.boot._fsbpyr_rt.commands` (`build`, `classify` and `inspection`,
 [Build modules](Dev-Build-Modules.md)). Every build regenerates them: the runtime registry leaves
 `_fsbpyr_boot` and `_fsbpyr_rt` out of a runtime taken from an executable. They are hidden from
 `pkgutil.iter_modules` at the top level and from the `FSBPYR_TRACE` report.
@@ -81,7 +81,7 @@ data for it is corrupt; `_fsbpyr.NONE` is the format's "no reference" value.
 
 ## From `run()` to the app
 
-![Boot startup: the launcher runs _fsbpyr_boot.run(), which installs the import machinery; FSBPYR_INSTALL_LINKS makes the command links and exits; otherwise sys.argv[0] is set from AT_EXECFN, the restart idiom is undone, a command table is parsed and the service policies applied; then it checks in turn for a multiprocessing child, a helper-interpreter child, FSBPYR_GC, FSBPYR_SELFTEST=natives and FSBPYR_SELFTEST, chooses the command, puts a script's directory first on sys.path, and runs the target as a module or calls it; while the app runs, the first extraction into the cache ends the start with exit 70 when the cache directory is refused](images/boot-startup.svg)
+![Boot startup: the launcher runs _fsbpyr_boot.run(), which installs the import machinery; FSBPYR_INSTALL_LINKS makes the command links and exits; otherwise sys.argv[0] is set from AT_EXECFN, the restart idiom is undone, a command table is parsed and the service policies applied; then it checks in turn for a multiprocessing child, a helper-interpreter child, FSBPYR_GC, FSBPYR_SELFTEST=natives (which ends with exit 70 when the cache directory is refused) and FSBPYR_SELFTEST, chooses the command, puts a script's directory first on sys.path, and runs the target as a module or calls it; while the app runs, the first extraction into the cache ends the start with exit 70 when the cache directory is refused](images/boot-startup.svg)
 
 `_fsbpyr_boot.run()`:
 
@@ -113,7 +113,8 @@ data for it is corrupt; `_fsbpyr.NONE` is the format's "no reference" value.
    interpreter.
 10. With `FSBPYR_GC` set to `1` or `background`, collects the app's cache instead of running the
     app; any other value runs the app.
-11. With `FSBPYR_SELFTEST=natives`, runs the natives self-test.
+11. With `FSBPYR_SELFTEST=natives`, runs the natives self-test; a refused cache directory ends
+    it as it ends a run, with exit 70 ([Native code and the cache](#native-code-and-the-cache)).
 12. With any other non-empty `FSBPYR_SELFTEST`, checks the target of every command, whatever
     `argv[0]` is (`_check_entrypoint`): it imports the target's module and looks its attribute
     up without calling it, and for a package run as a module it also requires
@@ -336,11 +337,12 @@ such as the `OSError` of a compiled package that reads a file, is passed on as i
 A refused cache directory is a refused start, as the launcher reports one (D41). `_fsbpyr.sync`
 refuses a cache directory that belongs to another user, or one on the way to it that other
 users may write to. Wherever the boot code extracts (an extension, an FS_REQUIRED package, a
-bundled library for `ctypes`, a resource asked for as a path), `NativeCache.extract` then writes
-`fsbpyr: cannot start <executable>: refusing cache directory <path>: other users may write to
-it` (or `owned by another user`) to stderr and ends the process with exit 70. It flushes stdout
-and stderr first and leaves through `os._exit`, since the refusal may arise in a thread or under
-code that catches `SystemExit`; `atexit` handlers do not run. A start that extracts nothing is
+bundled library for `ctypes`, a resource asked for as a path, the extensions the natives
+self-test checks), `NativeCache.extract` then writes `fsbpyr: cannot start <executable>:
+refusing cache directory <path>: other users may write to it` (or `owned by another user`) to
+stderr and ends the process with exit 70. It flushes stdout and stderr first and leaves
+through `os._exit`, since the refusal may arise in a thread or under code that catches
+`SystemExit`; `atexit` handlers do not run. A start that extracts nothing is
 not affected. Any other failure to extract stays an error the app sees: a cache that cannot be
 written makes the import of an extension or an FS_REQUIRED package fail with an `ImportError`
 (`_fsbpyr.CacheError`) that says to set `FSBPYR_CACHE_DIR`, and a resource asked for as a path
@@ -491,9 +493,10 @@ Classes:
 - `NativeCache(root, *chain)`: one tree of the cache (`root`, `site`, and `tree`, the
   `runtime/<generation>` or `resources/<id>` part); `sync(files, resources=False)` extracts or
   checks the given payload files and returns how many it wrote; `extract(files,
-  resources=False)` is `sync` for the import machinery and the resources API, where a refused
-  cache directory ends the start (`refuse`). The extension loader, `materialize_package`,
-  `materialize` and `bundled_library` use `extract`; the natives self-test calls `sync`.
+  resources=False)` is `sync` for the import machinery, the resources API and the natives
+  self-test, where a refused cache directory ends the start (`refuse`). The extension loader,
+  `materialize_package`, `materialize`, `bundled_library` and `selftest.natives` use
+  `extract`.
 - `PayloadExtensionLoader(name, path, files)`: an `ExtensionFileLoader` that extracts the
   extension and its closure before it loads it, with the error hints above.
 
@@ -603,7 +606,7 @@ or by `argv[1]`.
 
 Imports: none.
 Imported by: `_fsbpyr_boot`, `_fsbpyr_rt.links`, `_fsbpyr_rt.mp`; in the tool, `fsbpyr.build`,
-`fsbpyr.inspection`.
+`fsbpyr.classify`, `fsbpyr.inspection`.
 
 ### `links`
 
@@ -829,7 +832,8 @@ Public functions:
 - `interpreter(header)`: the program interpreter an ELF64 little-endian file names, or `None`.
 - `missing(trace)`: the missing libraries and symbol versions in the loader's output.
 - `natives(loader=None)`: one line on stderr per missing item with the extensions that need
-  it and exit status 1, or a line on stdout saying all extensions load.
+  it and exit status 1, or a line on stdout saying all extensions load; a refused cache
+  directory ends it as it ends a run (`native.refuse`: the line on stderr and exit 70).
 
 Imports: `_fsbpyr_rt.native` (top).
 Imported by: `_fsbpyr_boot`.

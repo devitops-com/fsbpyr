@@ -4,7 +4,7 @@ What fsbpyr protects, from whom, and where that stops; where each defence sits i
 from the developer's build machine to the target machine; the known limits; and how to report a
 vulnerability. The threat model is
 [docs/security.md](../docs/security.md) at
-v0.27.0, the reporting policy
+v@VERSION@, the reporting policy
 [SECURITY.md](../SECURITY.md), and the user's
 side of the same checks is in the User Guide:
 [Integrity](User-Running.md#integrity) and [Refusals](User-Running.md#refusals-exit-70) on Running,
@@ -30,7 +30,8 @@ ncurses, libedit and libuuid). The target's own copies are never used, so a fix 
 reaches an executable only when it is rebuilt with an fsbpyr that carries the fixed runtime.
 `fsbpyr inspect` names the runtime (`build_info.runtime` in `--json`) and, for builds that
 record them, the versions of those libraries (`components`, from `component_versions` in
-[`runtime/pbs.py`](../src/fsbpyr/runtime/pbs.py)).
+[`runtime/pbs.py`](../src/fsbpyr/runtime/pbs.py), and zstd's, which the launcher links whatever
+the Python, read from its `libzstd.a` by `zstd_version` there).
 The app's own dependencies, and the libraries their wheels bundle, come from the app's lock
 file; updating them is up to the app and takes a rebuild as well. SECURITY.md states how soon
 a release with a fixed runtime follows a python-build-standalone release.
@@ -97,7 +98,7 @@ reach.
 | [7] | The cache root's way from `/` must be trusted, its directories the user's and private, and each extracted file's digest is checked before the process first uses it | [`launcher/way.c`](../src/fsbpyr/launcher/way.c), [`launcher/cache.c`](../src/fsbpyr/launcher/cache.c) |
 | [8] | The instance limit uses only a slot file that is a regular file of the user's that nobody else may use | [`launcher/slots.c`](../src/fsbpyr/launcher/slots.c) |
 | [9] | Arguments that ask for a multiprocessing child or a helper interpreter run as Python only in a child of this same executable, with the same real and effective ids; without `--interpreter-reexec` only a script that is one of the app's own commands runs, and from the payload | [`_fsbpyr_rt/mp.py`](../src/fsbpyr/boot/_fsbpyr_rt/mp.py), [`_fsbpyr_rt/reexec.py`](../src/fsbpyr/boot/_fsbpyr_rt/reexec.py) |
-| [10] | A project without a build system, a directory of scripts and a single script: fsbpyr writes the wheel itself from the tracked Python files, runs no build backend and no script; locks, requirements files, PEP 723 blocks and a venv's metadata are read as data; the smoke test finds a script without importing it | [`loose.py`](../src/fsbpyr/loose.py), `_uv_build` in [`staging.py`](../src/fsbpyr/staging.py), [`venvdeps.py`](../src/fsbpyr/venvdeps.py), [`importcheck.py`](../src/fsbpyr/importcheck.py), `_check_entrypoint` in [`_fsbpyr_boot.py`](../src/fsbpyr/boot/_fsbpyr_boot.py) |
+| [10] | A project without a build system, a directory of scripts and a single script: fsbpyr writes the wheel itself from the tracked Python files, runs no build backend and no script; locks, requirements files, PEP 723 blocks and a venv's metadata are read as data; the smoke test finds a script without importing it (it imports the module of a `module:function` command) | [`loose.py`](../src/fsbpyr/loose.py), `_uv_build` in [`staging.py`](../src/fsbpyr/staging.py), [`venvdeps.py`](../src/fsbpyr/venvdeps.py), [`importcheck.py`](../src/fsbpyr/importcheck.py), `_check_entrypoint` in [`_fsbpyr_boot.py`](../src/fsbpyr/boot/_fsbpyr_boot.py) |
 | [11] | In an app of scripts, the files beside the executable are data: the path hook claims those directories, so every module comes from the payload | `path_hook` and `_overlay_finder` in [`_fsbpyr_boot.py`](../src/fsbpyr/boot/_fsbpyr_boot.py) |
 | [12] | `FSBPYR_INSTALL_LINKS` makes only symlinks to the executable's real path, with plain file names, and replaces nothing | `install` in [`_fsbpyr_rt/links.py`](../src/fsbpyr/boot/_fsbpyr_rt/links.py) |
 | [13] | A release fsbpyr building for glibc 2.28: a stub downloaded from the companion release `el8-vX.Y.Z` must match the SHA-256 its `SHA256SUMS-glibc2.28` lists; that stub, one placed beside the fsbpyr executable and one kept in its cache must all carry the runtime id this fsbpyr computes | `stub_for`, `_download` and `_checked` in [`runtime/stubs.py`](../src/fsbpyr/runtime/stubs.py), `stub_identity` in [`runtime/stub.py`](../src/fsbpyr/runtime/stub.py) |
@@ -121,8 +122,8 @@ it.
 | D41 | A privileged start: when the kernel sets `AT_SECURE` (set-uid or set-gid to another user or group, or file capabilities; a set-uid file run by its owner changes no privileges and starts) the executable exits 70, because the cache location would come from the caller's environment and, under set-gid or capabilities, the invoking user would own the cache | `main` in [`launcher/main.c`](../src/fsbpyr/launcher/main.c) |
 | D14 (`FSBPYR_INSTALL_LINKS`) | A caller using the links feature to create files as another user: it is an environment variable only, with no `--install` argument, because under a `<binary> *` sudo rule an argument would let any caller create root-owned links anywhere, and sudo's `env_reset` (a default) drops `FSBPYR_*` unless `env_keep` or `SETENV` allows it. It makes symlinks to the executable's real path only (`name`, and `name.py` for a script command), never replaces a file, a directory or a link to anything else (reported, exit 1), refuses names that are not plain file names, and cannot run in a privileged start (D41 exits first) | `install` in [`_fsbpyr_rt/links.py`](../src/fsbpyr/boot/_fsbpyr_rt/links.py), `_install_links` in [`_fsbpyr_boot.py`](../src/fsbpyr/boot/_fsbpyr_boot.py) |
 | D24 (the overlay) | A file planted beside the executable running as code: in an app of scripts `__file__` is `dirname(executable)/<path>`, so that config, state and logs deployed beside the binary are read by `open(dirname(__file__) + ...)`; the modules always come from the payload (the path hook claims those directories, so a `.py` copy on the disk never shadows one). Data beside the executable is read as the app's input, so keep that directory writable by its owner only | `_shown`, `_overlay_finder` and `path_hook` in [`_fsbpyr_boot.py`](../src/fsbpyr/boot/_fsbpyr_boot.py) |
-| D5 | Project code on the build host, for a project with no build system, a directory of scripts and a single script: no build backend runs and no script is imported (the smoke test only finds a script module). In a git work tree the wheel is written by fsbpyr from the Python files that `git ls-files` lists as tracked, so an untracked `secrets.py` is never in it; a link to a `.py` file outside the project directory is an error. A venv's `*.dist-info`, `Pipfile.lock`, `poetry.lock`, `pdm.lock`, requirements files and PEP 723 blocks are read as data, never executed, and the unresolved-import check follows imports with `ast` alone | [`loose.py`](../src/fsbpyr/loose.py), `work_tree_files` in [`vcs.py`](../src/fsbpyr/vcs.py), [`venvdeps.py`](../src/fsbpyr/venvdeps.py), [`foreign.py`](../src/fsbpyr/foreign.py), [`pipenv.py`](../src/fsbpyr/pipenv.py), [`importcheck.py`](../src/fsbpyr/importcheck.py) |
-| D46 | A stub linked from other launcher sources, for another Python or target, or against another sysroot going into an app. Every stub, the default one included, records the runtime id it was linked as; a default build takes the stub of its runtime, which [2] checks. A release fsbpyr carries one runtime, its stub linked against the default sysroot; an app for glibc 2.28 (EL8) needs the stub linked against the EL8 sysroot, which the companion release of the tag, `el8-vX.Y.Z`, publishes apart from the executables, and the fsbpyr pairs its own standard library with it (the standard library does not depend on the sysroot). The stub comes from, in this order: a file the user placed beside the fsbpyr executable (for machines without GitHub), fsbpyr's cache, or a download from the companion release, checked against the SHA-256 that release publishes and then kept in the cache. Whichever it is, the stub must carry the runtime id this fsbpyr computes for its own launcher sources, pinned Python and EL8 sysroot, and is refused otherwise, so a stub linked from other launcher sources, for another Python or target, or against another sysroot never goes into an app. The id does not name the release: releases with the same launcher sources, pins and sysroot compute the same id and accept each other's stubs. A developer build has no release to fetch from: it uses a runtime of the cache, made by `fsbpyr runtime build --glibc 2.28`. See [The glibc 2.28 stub](#the-glibc-228-stub) | `identity` in [`launcher/main.c`](../src/fsbpyr/launcher/main.c), `stub_identity` in [`runtime/stub.py`](../src/fsbpyr/runtime/stub.py), `stub_for` and `paired` in [`runtime/stubs.py`](../src/fsbpyr/runtime/stubs.py), `select_runtime` in [`runtime/registry.py`](../src/fsbpyr/runtime/registry.py) |
+| D5 | Project code on the build host, for a project with no build system, a directory of scripts and a single script: no build backend runs and no script command is imported (the smoke test only finds a script module). A `module:function` command that such a project declares in `[project.scripts]` is the exception: the smoke test imports its module (`_check_entrypoint`, `_resolve`), so its top-level code runs on the build host. In a git work tree the wheel is written by fsbpyr from the Python files (`*.py`, and extensionless files with a python or `uv run` shebang) that `git ls-files` lists as tracked, so an untracked `secrets.py` is never in it; a link to a `.py` file outside the project directory is an error. A venv's `*.dist-info`, `Pipfile.lock`, `poetry.lock`, `pdm.lock`, requirements files and PEP 723 blocks are read as data, never executed, and the unresolved-import check follows imports with `ast` alone | [`loose.py`](../src/fsbpyr/loose.py), `work_tree_files` in [`vcs.py`](../src/fsbpyr/vcs.py), [`venvdeps.py`](../src/fsbpyr/venvdeps.py), [`foreign.py`](../src/fsbpyr/foreign.py), [`pipenv.py`](../src/fsbpyr/pipenv.py), [`importcheck.py`](../src/fsbpyr/importcheck.py) |
+| D46 | A stub linked from other launcher sources, for another Python or target, or against another sysroot going into an app. Every stub, the default one included, records the runtime id it was linked as, but only a stub a build is handed, the glibc 2.28 ones today, has its id compared (`_checked`); any other build takes the stub of its runtime, which [2] checks, or the running fsbpyr's own. A release fsbpyr carries one runtime, its stub linked against the default sysroot; an app for glibc 2.28 (EL8) needs the stub linked against the EL8 sysroot, which the companion release of the tag, `el8-vX.Y.Z`, publishes apart from the executables, and the fsbpyr pairs its own standard library with it (the standard library does not depend on the sysroot). The stub comes from, in this order: a file the user placed beside the fsbpyr executable (for machines without GitHub), fsbpyr's cache, or a download from the companion release (never with `--offline`), checked against the SHA-256 that release publishes and then kept in the cache under the runtime id. Whichever it is, the stub must carry the runtime id this fsbpyr computes for its own launcher sources and flags, pinned Python, EL8 sysroot and layout version, and is refused otherwise, so a stub linked from other launcher sources, for another Python or target, or against another sysroot never goes into an app. The id does not name the release: releases with the same launcher sources and flags, pins, sysroot and layout version compute the same id and accept each other's stubs. A developer build has no release to fetch from: it uses a runtime of the cache, made by `fsbpyr runtime build --glibc 2.28`. See [The glibc 2.28 stub](#the-glibc-228-stub) | `identity` in [`launcher/main.c`](../src/fsbpyr/launcher/main.c), `stub_identity` in [`runtime/stub.py`](../src/fsbpyr/runtime/stub.py), `stub_for` and `paired` in [`runtime/stubs.py`](../src/fsbpyr/runtime/stubs.py), `select_runtime` in [`runtime/registry.py`](../src/fsbpyr/runtime/registry.py) |
 
 The service policies change no trust: `JOURNAL_STREAM` only line-buffers a stream that is the
 file it names (a malformed value or another file does nothing), and as process 1 an app turns
@@ -223,15 +224,15 @@ deliberate rewrite. Origin is checked outside the file:
   run the new file (to write the man page and completions) and rename it over the executable's
   real path. A developer build refuses to update. The update does not check the attestation,
   and the glibc check is a guard against a broken install, not a trust check. The glibc 2.28
-  stubs placed beside the executable are left there and named in a warning (see
-  [Known limits](#known-limits)).
+  stubs placed beside the executable are left there, and those that are not the new release's
+  published stubs are named in a warning (see [Known limits](#known-limits)).
 - **The dispatch to another Python** (`variant` in
   [`dispatch.py`](../src/fsbpyr/dispatch.py)),
   when a project needs a Python the running fsbpyr does not carry, fetches the same release's
   variant the same way (`FSBPYR_RELEASE_DOWNLOADS` names another download URL), verifies it
   in-process, applies the same glibc check, and keeps it in `downloads/` of fsbpyr's own
-  private cache. Like every executable, the cached variant checks its whole file at every
-  start.
+  private cache; with `--offline` it fetches nothing, and a build without a cached variant
+  fails. Like every executable, the cached variant checks its whole file at every start.
 
 ### Code blobs are checksummed
 
@@ -350,7 +351,9 @@ called as `_fsbpyr.sync` from `launcher/module.c`) holds the cache to these rule
   it to `refuse`, which flushes stdout and stderr, prints
   `fsbpyr: cannot start <executable>: refusing cache directory ...` and ends the process with
   `os._exit(70)`, so neither an `except` in the app nor the thread it happened in carries on.
-  Other extraction failures stay errors the app sees. A file the runtime extracts on its own
+  The native check of `FSBPYR_SELFTEST=natives` extracts through it too (`natives` in
+  [`_fsbpyr_rt/selftest.py`](../src/fsbpyr/boot/_fsbpyr_rt/selftest.py)) and ends the same
+  way. Other extraction failures stay errors the app sees. A file the runtime extracts on its own
   whose record has no digest, or a path that could leave the directory it is opened from
   (`fsb_cache_safe`), fails as `corrupt executable payload`.
 - **Collection.** The collector removes only from a root with the marker `.fsbpyr-cache`, and
@@ -363,7 +366,9 @@ The tests:
 [`tests/e2e/test_cache_root.py`](../tests/e2e/test_cache_root.py)
 runs each case of the way rule with the release launcher and its ASan/UBSan build, and checks
 that an app whose first import extracts a native file into a refused directory prints that one
-line and exits 70 (`test_a_refused_cache_directory_ends_the_start_with_one_line_and_exit_70`);
+line and exits 70 (`test_a_refused_cache_directory_ends_the_start_with_one_line_and_exit_70`),
+and that its native check does the same
+(`test_the_native_check_reports_a_refused_cache_directory_as_the_app_does`);
 [`tests/unit/boot/test_way.py`](../tests/unit/boot/test_way.py)
 checks the rule's Python side.
 
@@ -549,18 +554,28 @@ it. `stub_for` takes the first of:
 
 1. **A file placed beside the fsbpyr executable**, named like the asset, plain or with `.xz`,
    in the directory of the path fsbpyr was run by (looked up on `PATH` when run by name, links
-   kept) or of its real path (`own_paths`, `_placed`). An `.xz` file is unpacked in memory;
-   either is read up to 256 MB, and a larger one is no stub.
-2. **The stub kept in fsbpyr's cache**, `downloads/<asset>-<tag>` below the directory that
-   `secure_directory` checks. A file there that does not carry the expected runtime id is
-   deleted and fetched again.
+   kept) or of its real path (`own_paths`, `_placed`). When another fsbpyr handed the build
+   over because the project needs another Python (`run` in [`dispatch.py`](../src/fsbpyr/dispatch.py)),
+   the directories of that fsbpyr come first: it passes its own paths in `FSBPYR_DISPATCHED_BY`,
+   of which only absolute entries count, and the messages name that place. The variable only
+   adds places to look in; a stub found there must still carry the runtime id. An `.xz` file
+   is unpacked in memory; either is read up to 256 MB, and a larger one is no stub.
+2. **The stub kept in fsbpyr's cache**, `downloads/<asset>-<runtime id>` below the directory
+   that `secure_directory` checks: named by the id the stub must carry, so an update that
+   leaves the id unchanged reuses it (a stub kept by a release before v0.28.0, named by its tag,
+   is not found and costs one more download). A file there that does not carry the expected
+   runtime id is deleted and fetched again.
 3. **A download** from `<base>/el8-vX.Y.Z/`, where `<base>` is `FSBPYR_RELEASE_DOWNLOADS` or
    else `https://github.com/devitops-com/fsbpyr/releases/download`. `_published` reads
    `SHA256SUMS-glibc2.28` and takes the line of the asset; `_download` unpacks
    `<asset>.xz` as it arrives into a temporary file in `downloads/`, with the same 256 MB
    limit, and compares the SHA-256 of the unpacked stub with the listed one: on a mismatch
-   nothing is kept. A stub that passes both checks is written to `downloads/<asset>-<tag>`
-   whole or not at all (`_keep`, a rename).
+   nothing is kept. A stub that passes both checks is written to
+   `downloads/<asset>-<runtime id>` whole or not at all (`_keep`, a rename). A build with
+   `--offline` never downloads: without a placed or cached stub it stops with `--offline: the
+   <asset> is not placed or cached, and nothing is downloaded; place <asset> (or <asset>.xz)
+   next to <fsbpyr>, or build once without --offline to cache it` (`_offline`), `<fsbpyr>`
+   being the first of the paths above.
 
 Each of the three must carry the runtime id this fsbpyr computes for its own launcher
 sources and flags, its pinned Python, the EL8 sysroot and the layout version (`runtime_id` in
@@ -589,7 +604,11 @@ What these checks are worth:
   computes the same id, and the stub of either is accepted by both. v0.26.0 and v0.27.0 are
   such a pair: both release executables for Python 3.14 on x86-64 embed the default runtime
   `cp314-x86_64-unknown-linux-gnu-add67757fca9`, and their EL8 ids, computed from the same
-  inputs with the same EL8 sysroot pins, match as well.
+  inputs with the same EL8 sysroot pins, match as well. v0.27.0 and v0.28.0 are not: v0.28.0's
+  launcher sources, new python-build-standalone pins and runtime layout version (10,
+  `LAYOUT_VERSION` in `registry.py`) give every runtime a new id (its executable for Python 3.14
+  on x86-64 embeds `cp314-x86_64-unknown-linux-gnu-6fe9008f23af`), and on aarch64 so does the
+  link flag `--fix-cortex-a53-843419` ([Launcher](Dev-Launcher.md#how-it-is-compiled-and-linked)).
 
 ### The project on the build host
 
@@ -636,7 +655,7 @@ sdist, which runs its build code; dependencies are out of scope as above.
   attestations (checked with `gh attestation verify`), the installer (SHA-256 of each download
   and `fsbpyr inspect --verify`; `FSBPYR_VERIFY=1` adds the attestation) and a rebuild from the
   tag compared byte for byte (`make release-check`). No signature checked with a key from outside the
-  file exists at v0.27.0.
+  file exists at v@VERSION@.
 - **glibc 2.28 stubs** (D46). A downloaded stub is checked against the sums of its companion
   release, which catches a damaged or swapped file but not a release whose stubs and sums were
   both replaced; the attestations of
@@ -647,9 +666,13 @@ sdist, which runs its build code; dependencies are out of scope as above.
   EL8 app built there. See [The glibc 2.28 stub](#the-glibc-228-stub).
 - **Self update's glibc check** refuses a new executable that needs a newer glibc than the host
   has, before replacing anything; it guards against a broken install and checks no trust.
-  Self update leaves glibc 2.28 stubs placed beside the executable where they are, and names
-  them in a warning (`fsbpyr-stub-*-glibc*`, `update` in
-  [`selfupdate.py`](../src/fsbpyr/selfupdate.py)).
+  Self update leaves glibc 2.28 stubs placed beside the executable where they are. It looks
+  where `--glibc` looks (beside the path fsbpyr was run by and beside its real path) and names
+  in a warning only the stubs whose SHA-256 is not in the `SHA256SUMS-glibc2.28` of the new
+  release's companion; when it cannot read that file (no companion yet, no network, a download
+  cut short) it names them all and says that `--glibc` refuses them if the runtime id changed
+  (`_warn_about_placed_stubs` in [`selfupdate.py`](../src/fsbpyr/selfupdate.py),
+  `refused_after_update` in [`runtime/stubs.py`](../src/fsbpyr/runtime/stubs.py)).
   A build checks them on their runtime id only: they pass when the new release computes the
   same id as the old one, and are refused when it does not (see [The glibc 2.28
   stub](#the-glibc-228-stub)).

@@ -48,7 +48,7 @@ never need to build one to build apps.
 
 ```console
 $ fsbpyr runtime list
-cp314-x86_64-unknown-linux-gnu-add67757fca9  Python 3.14.9  glibc 2.34
+cp314-x86_64-unknown-linux-gnu-6fe9008f23af  Python 3.14.10  glibc 2.34
 cp314-x86_64-unknown-linux-gnu-5bb7820024be  Python 3.14.9  glibc 2.34
 cp314-x86_64-unknown-linux-gnu-942f7ca276a0  Python 3.14.9  glibc 2.34
 cp314-x86_64-unknown-linux-gnu-add67757fca9  Python 3.14.9  glibc 2.34
@@ -89,12 +89,16 @@ fsbpyr self update
 Replaces the running executable with the latest release's build for the same Python, when that
 release is newer, after checking it as `inspect --verify` does. It refuses a build that needs a newer glibc than the
 machine has, naming both versions, before it replaces anything. EL8 stubs placed beside the
-executable (`fsbpyr-stub-*-glibc*`) are left alone: after the update a warning names them as
-the old release's, says `--glibc` will refuse them, and asks you to place the new release's
-stubs there, or to remove them and let `--glibc` download them. A `--glibc 2.28` build refuses
-them only if their runtime id differs from the new release's, which happens when the launcher,
-the pinned Python, the sysroot or the runtime layout changed. See
-[Updating](User-Installing.md#updating).
+executable (`fsbpyr-stub-*-glibc*`, beside the path it was run by or the file a link to it leads
+to, where `--glibc` looks) are left alone. After the update a warning names those whose SHA-256
+the new release's companion does not list in its `SHA256SUMS-glibc2.28`, says that `--glibc`
+refuses them unless they carry the new runtime id, and asks you to place the new release's
+stubs there, or to remove them and let `--glibc` download them; a stub that did not change is
+not named. When that file cannot be read (no companion release yet, no network), the warning
+names every placed stub and says that `--glibc` refuses them if the runtime id changed. A
+`--glibc 2.28` build refuses a stub only if its runtime id differs from the new release's,
+which happens when the launcher, the pinned Python, the sysroot or the runtime layout changed.
+See [Updating](User-Installing.md#updating).
 
 ## Completion and man
 

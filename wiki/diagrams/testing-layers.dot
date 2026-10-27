@@ -1,4 +1,4 @@
-// The test layers of fsbpyr v0.27.0: which make target runs each (left), the test
+// The test layers of fsbpyr v0.28.0: which make target runs each (left), the test
 // directories and tools/vm-smoke.py (middle), and what each exercises (right). Colours on the
 // right follow the wiki's legend: build time (blue), run time inside a built executable
 // (orange), external inputs (purple). Make targets and test directories are neutral (grey,
@@ -14,7 +14,7 @@ digraph testing_layers {
     node [style="filled" fillcolor="#f4f4f4" color="#888888"];
     test_ci [label="make test-ci"];
     test [label="make test"];
-    test_container [label="make test-container"];
+    test_container [label="make test-container\n-m \"not podman\""];
     test_corpus [label="make test-corpus"];
     test_portability [label="make test-portability"];
     test_el8_stub [label="make test-el8-stub"];
@@ -31,7 +31,7 @@ digraph testing_layers {
     el8_files [label="tests/e2e: 16 files that\nrun the stub, and\ntests/unit/test_test_modes.py"];
     el8_test [label="tests/e2e/test_el8.py"];
     probes [label="tests/probes, tests/fuzz\n(built by e2e tests)"];
-    portability [label="tests/e2e/\ntest_portability.py\n(skips without podman)"];
+    portability [label="tests/e2e/\ntest_portability.py\n(needs podman)"];
     corpus [label="tests/e2e/test_corpus.py\ntests/corpus/<app>"];
     vmsmoke [label="tools/vm-smoke.py\n(no pytest)"];
   }
@@ -64,7 +64,7 @@ digraph testing_layers {
   test_container -> probes;
   test_corpus -> corpus;
   test_portability -> portability;
-  test_el8_stub -> el8_files [style=dashed];
+  test_el8_stub -> el8_files [style=dashed label="-m \"not podman\""];
   test_el8_stub -> el8_test;
   test_el8_portability -> portability [style=dashed];
   test_vm -> vmsmoke;

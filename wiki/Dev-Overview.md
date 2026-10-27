@@ -6,7 +6,7 @@ the test corpus and the end-to-end tests establish. The User Guide starts at [Wh
 
 ## The project in brief
 
-fsbpyr is a Python program (`src/fsbpyr`, about 17,400 lines in 77 files) plus a C launcher
+fsbpyr is a Python program (`src/fsbpyr`, about 17,600 lines in 77 files) plus a C launcher
 (`src/fsbpyr/launcher`, 19 `.c`/`.h` files, about 4,300 lines). Its only runtime dependencies are
 click, packaging and, before Python 3.14, `backports.zstd`. It runs on CPython 3.12 to 3.15, and
 it ships as an executable built by itself.
@@ -49,7 +49,7 @@ Where to read on:
 
 The project's requirements are listed in the implementation plan,
 [§0 Requirements](../docs/IMPLEMENTATION_PLAN.md#0-requirements).
-How the code meets each one in 0.27.0:
+How the code meets each one in @VERSION@:
 
 | Goal | How it is met | Where |
 |---|---|---|
@@ -69,14 +69,14 @@ Two further properties are kept by the test suite: **reproducible builds** (the 
 lock, fsbpyr and uv give the same bytes) and **the same behaviour as in a venv** for every corpus
 app's commands.
 
-## Scope and limits (0.27.0)
+## Scope and limits (@VERSION@)
 
 - **Targets:** Linux x86-64 and aarch64 with glibc 2.34 or newer, or glibc 2.28 (EL8) for an
   app built with `--glibc 2.28`, whose launcher is linked against Rocky Linux 8.10's sysroot.
   Each fsbpyr builds for the platform it runs on; there are no cross builds. musl, macOS and
   aarch64 kernels with 16K pages are not supported.
-- **Python:** CPython 3.12.15, 3.13.17, 3.14.9 and 3.15.1, one fsbpyr executable per version;
-  3.14 is the default. Free-threaded CPython is refused.
+- **Python:** CPython 3.12.16, 3.13.18, 3.14.10 and 3.15.2 (python-build-standalone 20261026),
+  one fsbpyr executable per version; 3.14 is the default. Free-threaded CPython is refused.
 - **Apps:** anything with an entry point that uv can install; a project without a build system,
   a directory of scripts and a single script, packaged from their Python files; the console
   scripts of the tools a requirements file names. Some packages need [settings](User-Settings.md).
@@ -98,7 +98,7 @@ Every use case below is one the tests establish. Two kinds of test do:
   executable's output with what `python3 script.py` or uv prints for the same code. They are
   listed under [By how the code is kept](#by-how-the-code-is-kept). The research behind them is
   [`docs/use-case-research.md`](../docs/use-case-research.md),
-  written before they were built; the code and these tests are what 0.27.0 does.
+  written before they were built; the code and these tests are what @VERSION@ does.
 
 ### By field
 

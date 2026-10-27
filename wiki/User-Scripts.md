@@ -3,7 +3,7 @@
 Not every Python program is a packaged project. fsbpyr also builds a project without a build
 system, a directory of loose scripts, a single script, and the tools a requirements file names.
 The result is the same kind of executable as for a project, with a command per script and a
-link per command. This page shows each case with a real run of fsbpyr 0.27.0, then how to
+link per command. This page shows each case with a real run of fsbpyr 0.28.0, then how to
 deploy the result, and what scripts find next to the executable. What is common to every build
 (options, locks, the Python version) is on [Building an app](User-Building.md).
 
@@ -79,9 +79,13 @@ with `utils.py` and a `helpers/` package beside it:
 ```console
 $ fsbpyr build --python 3.14
 fsbpyr: staging scripts from uv.lock
+fsbpyr: writing scripts's wheel
+fsbpyr: uv: installing the locked distributions
+fsbpyr: uv: installing the project's wheel
 fsbpyr: collecting 1 distribution
-fsbpyr: smoke-testing .../scripts/dist/.scripts.m_6o8xgc.tmp
-fsbpyr: built .../scripts/dist/scripts (27.8 MB, entry _fsbpyr_scripts.main, glibc >= 2.34)
+fsbpyr: writing .../scripts/dist/scripts
+fsbpyr: smoke-testing .../scripts/dist/.scripts.usj1sxs1.tmp
+fsbpyr: built .../scripts/dist/scripts (27.9 MB, entry _fsbpyr_scripts.main, glibc >= 2.34)
 fsbpyr: target needs: glibc >= 2.34
 fsbpyr: to deploy, copy the file and link it by each command's name (DEST: a directory on the host):
 fsbpyr:   install -m 755 .../scripts/dist/scripts "$DEST"/scripts
@@ -150,10 +154,12 @@ ops-scripts/
 ```console
 $ fsbpyr build --python 3.14
 fsbpyr: staging ops-scripts from requirements
+...
 fsbpyr: collecting 2 distributions
-fsbpyr: smoke-testing .../ops-scripts/dist/.ops-scripts.gg8t7isk.tmp
+fsbpyr: writing .../ops-scripts/dist/ops-scripts
+fsbpyr: smoke-testing .../ops-scripts/dist/.ops-scripts.q6gtdydx.tmp
 fsbpyr: warning: requirements not pinned with ==, a commit SHA or a hash, so resolved now and not reproducible: ../greetlib
-fsbpyr: built .../ops-scripts/dist/ops-scripts (27.8 MB, 4 commands, glibc >= 2.34)
+fsbpyr: built .../ops-scripts/dist/ops-scripts (27.9 MB, 4 commands, glibc >= 2.34)
 fsbpyr: commands: 10-backup, check-disk, check_mem, report; start one through its link, or as ops-scripts COMMAND
 fsbpyr: linked .../ops-scripts/dist/10-backup -> ops-scripts
 fsbpyr: linked .../ops-scripts/dist/check-disk -> ops-scripts
@@ -211,19 +217,24 @@ fsbpyr: staging old-ops from unlocked
 ...
 fsbpyr: warning: command fetch skipped: not in the executable: fetch.py:1: import requests. declare it in requirements.txt, or in a '# /// script' block of the script (a project's own file is found next to the script that imports it)
 fsbpyr: warning: command old skipped: not in the executable: old.py:1: import cgi. cgi was removed in Python 3.13; build with --python 3.12
-fsbpyr: built .../old-ops/dist/old-ops (27.8 MB, 2 commands, glibc >= 2.34)
+fsbpyr: warning: conf.py:4: reads a file next to its own __file__, which is read next to the executable (the executable holds only the project's Python files): deploy the file there, beside the binary
+fsbpyr: built .../old-ops/dist/old-ops (27.9 MB, 2 commands, glibc >= 2.34)
 ...
 $ fsbpyr build --python 3.14 --strict -o dist/strict
 fsbpyr: staging old-ops from unlocked
+...
 fsbpyr: error: --strict: the build has 2 warnings; nothing was written:
   command fetch skipped: not in the executable: fetch.py:1: import requests. ...
   command old skipped: not in the executable: old.py:1: import cgi. cgi was removed in Python 3.13; build with --python 3.12
 ```
 
-With a `.venv` directory there, the warning's last hint is instead
-`uv pip freeze --python .venv/bin/python > requirements.txt`, which writes what the venv holds
-for the build to read (for a single script, without `> requirements.txt`: it lists what to put
-in the block). Python 2 is not bundled: an extensionless file with a `python2` shebang is no
+When the build finds a venv the scripts run in (`.venv`, `venv` or `env` in the directory, with a
+`pyvenv.cfg`, else `$VIRTUAL_ENV`), the warning's last hint is about it instead: a venv supplies
+pins only when nothing declares a dependency and it holds a distribution that provides the
+import, and `uv pip freeze --python .venv/bin/python > requirements.txt` writes what the venv
+holds for the build to read. The hint names the venv the build found, relative to the directory
+when it is inside it; for a single script it has no `> requirements.txt`, and lists what to put
+in the block. Python 2 is not bundled: an extensionless file with a `python2` shebang is no
 script and is not packaged, a command that does not parse as Python 3 is skipped with a warning
 (`file:line: cannot be parsed: ...`), and a file that does not compile is kept as data, with a
 warning.
@@ -247,7 +258,7 @@ with the pins.
 ## A single script
 
 `fsbpyr build report.py` builds one script: a `*.py` file, or an extensionless file whose first
-line is a python or `uv run --script` shebang. The app is named after the file's stem, hyphens
+line is a python or `uv run` shebang. The app is named after the file's stem, hyphens
 kept, and written to `dist/<name>` in the script's directory, or to `-o`.
 
 - **What is packaged:** the script and its static local-import closure: the modules and packages
@@ -267,6 +278,7 @@ kept, and written to `dist/<name>` in the script's directory, or to `-o`.
   ```console
   $ fsbpyr build --python 3.14 fetch.py
   fsbpyr: staging fetch from unlocked
+  ...
   fsbpyr: warning: command fetch skipped: not in the executable: fetch.py:1: import requests. declare it in the dependencies of the script's '# /// script' block (a project's own file is found next to the script that imports it)
   fsbpyr: error: fetch: no command can run in the executable, each imports what it does not hold
   $ echo $?
@@ -298,9 +310,11 @@ if __name__ == '__main__':
 ```console
 $ fsbpyr build --python 3.14 ops/report.py
 fsbpyr: staging report from unlocked
+...
 fsbpyr: collecting 1 distribution
-fsbpyr: smoke-testing .../ops/dist/.report.9nu5symu.tmp
-fsbpyr: built .../ops/dist/report (27.8 MB, entry _fsbpyr_scripts.report, glibc >= 2.34)
+fsbpyr: writing .../ops/dist/report
+fsbpyr: smoke-testing .../ops/dist/.report.yz0bio5g.tmp
+fsbpyr: built .../ops/dist/report (27.9 MB, entry _fsbpyr_scripts.report, glibc >= 2.34)
 ...
 $ ops/dist/report -x --y
 report 42 ['-x', '--y'] __main__
@@ -351,18 +365,20 @@ pyflakes==3.2.0
 ```console
 $ cd linters && fsbpyr build --python 3.14
 fsbpyr: staging linters from requirements
+...
 fsbpyr: requirements.txt lists all 4 installed distributions, so the tools are the 1 that no other listed distribution requires: flake8
 fsbpyr: commands: flake8 (flake8 7.1.1)
 fsbpyr: collecting 5 distributions
-fsbpyr: smoke-testing .../linters/dist/.flake8.5tle0jxy.tmp
-fsbpyr: built .../linters/dist/flake8 (28.2 MB, entry flake8.main.cli:main, glibc >= 2.34)
+fsbpyr: writing .../linters/dist/flake8
+fsbpyr: smoke-testing .../linters/dist/.flake8._6u96pw3.tmp
+fsbpyr: built .../linters/dist/flake8 (28.3 MB, entry flake8.main.cli:main, glibc >= 2.34)
 ...
 $ cd .. && linters/dist/flake8 sample.py
 sample.py:1:1: F401 'os' imported but unused
 sample.py:4:7: E201 whitespace after '('
 sample.py:4:9: E202 whitespace before ')'
 $ linters/dist/flake8 --version
-7.1.1 (mccabe: 0.7.0, pycodestyle: 2.12.1, pyflakes: 3.2.0) CPython 3.14.9 on
+7.1.1 (mccabe: 0.7.0, pycodestyle: 2.12.1, pyflakes: 3.2.0) CPython 3.14.10 on
 Linux
 ```
 
@@ -455,10 +471,16 @@ packaged `pylib`. A traceback shows the packaged source lines. The script's own 
 there (`open(__file__)` fails unless a copy is deployed); the loader's `get_source` gives it. A build with `--no-source` keeps no sources, so it has neither the source
 lines nor the source.
 
-The build warns for each such read it finds outside the script's
-`if __name__ == "__main__":` block (`conf.py:4: reads a file next to its own __file__, which is
-read next to the executable ...: deploy the file there, beside the binary`); it is a heuristic
-that knows `open`, `read_text`, `os.listdir` and the like. At run time, an uncaught
+The build warns for each such read it finds (`conf.py:4: reads a file next to its own __file__,
+which is read next to the executable ...: deploy the file there, beside the binary`), and
+`--strict` counts the warning. It reads the main guard (`if __name__ == "__main__":`) of each
+module the executable runs as `__main__`, its commands or the module `--entry` names, since
+that is where a script does most of its work. The main guard of every other module never runs
+and is not read: a module the commands import, a command that `--entry` leaves out, a module
+whose command calls a function in it (`tool:main`). A script that starts a sibling command as
+`subprocess.run([sys.executable, os.path.join(here, "sibling.py")])`, or with an `os.exec*` of
+`sys.executable`, is no such read: the sibling runs from the executable. The check is a
+heuristic that knows `open`, `read_text`, `os.listdir` and the like. At run time, an uncaught
 `FileNotFoundError` there says where the file was expected:
 
 ```console

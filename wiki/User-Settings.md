@@ -130,7 +130,7 @@ cannot find the template and answers 500:
 
 ```console
 $ dist/no-setting
-[2026-10-27 15:37:13,026] ERROR in app: Exception on /Ada [GET]
+[2026-10-27 22:02:29,175] ERROR in app: Exception on /Ada [GET]
 Traceback (most recent call last):
   ...
 jinja2.exceptions.TemplateNotFound: hello.html

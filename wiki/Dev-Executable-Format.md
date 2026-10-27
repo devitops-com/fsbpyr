@@ -1,7 +1,7 @@
 # Executable format
 
 This page specifies the file format of the executables fsbpyr builds, format version 7 (fsbpyr
-v0.27.0): the byte layout, the trailer, the integrity digest, the payload header (with the
+v@VERSION@): the byte layout, the trailer, the integrity digest, the payload header (with the
 entry point of an app of several commands and of an app of scripts), the eight sections and
 their records, the codecs, the rules a reader must enforce, the build information
 and determinism. It carries over [`docs/format.md`][format-md], checked against the two
@@ -12,7 +12,8 @@ the same in every app and which are the app's own. How fsbpyr writes a payload i
 [Payload modules](Dev-Payload-Modules.md); how the launcher reads one is in
 [Launcher](Dev-Launcher.md).
 
-`docs/format.md` calls `format.py` the single source of truth; `format.h` mirrors it, and
+`docs/format.md` calls `format.py`, the code the reader and the writer use, the single source
+of truth, and describes it; `format.h` mirrors it, and
 `tests/integration/test_launcher_format.py` compiles a probe against `format.h` and compares
 every size, offset and constant with the Python definitions. Numbers such as D31 name design
 decisions recorded in [`docs/IMPLEMENTATION_PLAN.md`][plan].
@@ -183,7 +184,8 @@ system, a directory of scripts or a single script
 [A directory of scripts](User-Scripts.md#a-directory-of-scripts),
 [A single script](User-Scripts.md#a-single-script)). Before it starts such a target, the boot code puts
 the target's module directory first on `sys.path`: the executable's directory joined with the
-dotted name's path without its last part. A target without `:attr` is run as `__main__`, and the
+dotted name's path below `_fsbpyr_scripts` without its last part (`_script_directory` in
+[`_fsbpyr_boot.py`](../src/fsbpyr/boot/_fsbpyr_boot.py)). A target without `:attr` is run as `__main__`, and the
 selftest only finds it, never imports it.
 
 A directory below `_fsbpyr_scripts` whose name is no Python name (`sub-dir`) is recorded under
@@ -243,7 +245,9 @@ Python: `BLOB = struct.Struct("<QQQBBHI")`; C: `struct fsb_blob`.
 - `size` is at most 2^62 (D38: no limit of fsbpyr's below what file systems hold; readers
   stream content larger than a window instead of holding it).
 - Blob order on disk: startup code, module code, resources, sources, natives. Within each class,
-  blobs are ordered by the first path that references them.
+  blobs are ordered by the first path that references them. The records follow the same order;
+  the block records follow them, and the records of the pieces of blobs of codecs 4 and 5 follow
+  the block records (`_Blobs` in [`payload/writer.py`][writer.py]).
 - Identical blobs are stored once; in blocks, identical content is one member whether the spec
   gave it raw or as a zstd frame.
 - **Raw blobs and holes.** For codec 0, `stored_size == size`. A raw blob of `DIGEST_LEAF`
@@ -256,7 +260,8 @@ Python: `BLOB = struct.Struct("<QQQBBHI")`; C: `struct fsb_blob`.
   packs every non-empty blob under 64 KiB except natives into blocks, one stream per placement
   class (startup code, code, resources and metadata, sources) filled in blob order: 64 KiB
   blocks for code, which an import decompresses whole, and 256 KiB for the rest. Block records
-  follow all other blob records; a block's data sits where its first member's would. Readers
+  follow all other blob records but the pieces'; a block's data sits where its first member's
+  would. Readers
   keep recently decompressed blocks (the launcher the last 32), since a package's modules share
   blocks.
 - **xz (version 5, D33).** A blob of codec 3 is one xz stream (`--best-compression`: xz -6 with
@@ -395,8 +400,9 @@ this short list to build CPython's frozen-module table, so it never scans the MO
 
 ## Validation rules
 
-The rules readers must enforce, as `Payload` in [`payload/reader.py`][reader.py] checks them
-([Who checks what](#who-checks-what) says which the launcher checks):
+The rules of the format. The Python reader (`Payload` in [`payload/reader.py`][reader.py])
+checks all of them, and the writer's output keeps them; the launcher checks the integrity digest
+first and leaves some of the others to it ([Who checks what](#who-checks-what) says which):
 
 - Trailer and header magic and version must match. `header_size` must be 208. Trailer `flags`
   must be 0. The launcher accepts only version 7; the Python reader also reads 1 to 6.
@@ -521,9 +527,9 @@ directory: nothing in it names the builder's paths, time or host.
 | Key | Content |
 |---|---|
 | `schema` | `1`. Incremented when a key changes meaning, never for a new key |
-| `lock` | `{kind, path, sha256, hashed}`: `kind` is `uv.lock`, `script.lock` (uv's `<script>.lock` beside a single script), `pylock.toml`, `requirements`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, `inferred` or `unlocked`; `path` is relative to the project directory (`../uv.lock` for a workspace member), null if unlocked; `sha256` is of the file; `hashed` says whether it pins artifact hashes (a `Pipfile.lock` does, but the hashes of its registry entries carry no file names, so such a distribution has no `artifact_sha256`). For `inferred` (a directory of scripts or a single script that declared nothing, whose versions were read from the venv it runs in), `path` is that venv, relative to the project directory (just its directory name when it lies outside), `sha256` is null, `hashed` is false, and a fifth key, `pins`, lists the `name==version` pins installed |
+| `lock` | `{kind, path, sha256, hashed}`: `kind` is `uv.lock`, `script.lock` (uv's `<script>.lock` beside a single script), `pylock.toml`, `requirements`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, `inferred` or `unlocked`; `path` is relative to the project directory (`../uv.lock` for a workspace member), null if unlocked; `sha256` is of the file; `hashed` says whether it pins artifact hashes (a `Pipfile.lock` does, but the hashes of its registry entries carry no file names, so such a distribution has no `artifact_sha256`; a `file` entry with exactly one hash is the exception: the hash is of the file it names (`_entry` in [`pipenv.py`](../src/fsbpyr/pipenv.py)), and that distribution gets it as `artifact_sha256` when the file is a wheel for the target, or as that of its sdist when it is built from one). For `inferred` (a directory of scripts or a single script that declared nothing, whose versions were read from the venv it runs in), `path` is that venv, relative to the project directory (just its directory name when it lies outside), `sha256` is null, `hashed` is false, and a fifth key, `pins`, lists the `name==version` pins installed |
 | `dists` | `[{name, version, source, artifact_sha256, backend}]`, sorted by name: `artifact_sha256` where the lock names the artifact, `backend` for `built-from-sdist` only (below) |
-| `runtime` | the runtime's id, `cp<python>-<triple>-<12 hex digits>` (a digest of the launcher, the PBS archive, the sysroot and the layout version, so the default and the glibc 2.28 runtime of one Python and target have different ids). The stub records it too, as `fsbpyr-stub-identity=<id>` in its `.rodata`: that is how a build proves that a stub it was handed (a glibc 2.28 one) is the one of its own launcher sources, Python, target and sysroot ([Launcher](Dev-Launcher.md#how-it-is-compiled-and-linked)) |
+| `runtime` | the runtime's id, `cp<python>-<triple>-<12 hex digits>` (a digest of the launcher sources and their compile and link flags for the target, the PBS pin, the sysroot and the layout version, so the default and the glibc 2.28 runtime of one Python and target have different ids). It names the stub's inputs, which several releases may share, not a release. The stub records it too, as `fsbpyr-stub-identity=<id>` in its `.rodata`: that is how a build checks that a stub it was handed (a glibc 2.28 one) was linked from the same inputs ([Launcher](Dev-Launcher.md#how-it-is-compiled-and-linked)) |
 | `runtime_tag` | the PBS distribution's tag and the target triple (`<tag>-<triple>`); it seeds `generation_id` |
 | `python` | the target CPython's version (3.12 to 3.15) |
 | `extension_suffixes` | the file name suffixes the runtime's interpreter imports extension modules by, in its order; asked of the interpreter itself (`pbs.extension_suffixes`), as `PYTHON.json`'s list lags (3.15.1's lacks `.abi3t.so`) |
@@ -531,7 +537,7 @@ directory: nothing in it names the builder's paths, time or host.
 | `zstd` | the libzstd version that compressed the payload (see [Determinism](#determinism)) |
 | `resources` | `sha256` over every payload file's path, content digest and mode, cut to 32 hex digits: the name of the tree where resources extracted on demand live (D27) |
 | `runtime_inputs` | `{pbs: {release, name, sha256}, sysroot, layout}`: the python-build-standalone archive and the glibc sysroot the runtime was made from, and its layout version. `sysroot` is the sysroot's identity, its name and 12 hex digits of a digest of its packages' SHA-256: `debian12-glibc2.36-<arch>-…` for the default baseline, `rocky8-glibc2.28-<arch>-…` for glibc 2.28; a runtime taken from an fsbpyr executable reads its baseline back from it |
-| `runtime_components` | versions the runtime's interpreter reports: `openssl`, `sqlite`, `zlib`, `expat`, `libmpdec`. Read once when the runtime is built; an executable that builds another passes them on |
+| `runtime_components` | versions the runtime's interpreter reports: `openssl`, `sqlite`, `zlib`, `expat`, `libmpdec`; and `zstd`, the version string in the `libzstd.a` the launcher links (`zstd_version` in [`runtime/pbs.py`](../src/fsbpyr/runtime/pbs.py); absent when the archive gives none). Read once when the runtime is built; an executable that builds another passes them on |
 | `stub_sha256` | SHA-256 of the bytes before the payload (the stub and its zero padding): `head -c <payload_offset> app \| sha256sum`. The same in every app built by the same fsbpyr release for the same Python, target and glibc baseline; the glibc 2.28 stub is another file than the default one (D46), so each baseline has its own value. There is no digest of the builder |
 | `settings` | `{entry, fs_packages, allow_system_libs, extras, include_source}`: `fs_packages` is the effective list (the built-in packages and the configured ones) |
 | `glibc_baseline` | only in an app built with `--glibc 2.28` (`baseline_record` in `build.py`, D46): `"2.28"`, the glibc baseline it is built for. An app without the key is built for the default, 2.34. Such an app's stub is linked against Rocky Linux 8.10's glibc 2.28: the stub of the companion release `el8-vX.Y.Z` (`fsbpyr-stub-3.X-<target>-glibc2.28`), one placed beside fsbpyr, or that of a runtime built with `fsbpyr runtime build --glibc 2.28`; a build takes a stub it did not link only if its recorded `fsbpyr-stub-identity` is the runtime id. `fsbpyr inspect --json` reports `glibc_baseline` for every app (`2.34` where the key is missing); the text report adds the line `baseline   glibc 2.28` where it is recorded |
@@ -586,10 +592,10 @@ From [`docs/executable-parts.md`][parts-md]: which parts of executables built fo
 the same in every app, and which are the app's own. Measured on 2026-10-24 with fsbpyr at commit
 42d8ecb (a developer build), CPython 3.14.9, x86-64, for three apps: `hello` and `mp`
 (pure-Python fixtures in `tests/fixtures/projects`) and `pandas-csv` (a corpus app: pandas and
-numpy, with native extensions). The launcher sources and the boot code of v0.27.0 differ from
+numpy, with native extensions). The launcher sources and the boot code of v0.28.0 differ from
 those of 42d8ecb (four more `_fsbpyr_rt` modules: `commands`, `links`, `restart`, `service`).
-The stub and padding rows give v0.27.0's sizes: the 0.27.0 release's executable for CPython
-3.14.9 on x86-64 (`fsbpyr-3.14-x86_64-linux-gnu`) has a stub of 20,939,049 bytes and 32,471
+The stub and padding rows give v0.28.0's sizes: the 0.28.0 release's executable for CPython
+3.14.10 on x86-64 (`fsbpyr-3.14-x86_64-linux-gnu`) has a stub of 20,997,993 bytes and 39,063
 bytes of padding, counted from its trailer's `payload_offset` with the stub's zero tail counted
 as padding, as `fsbpyr inspect --json`'s `sizes` counts them (2026-10-27), and it builds every
 app for the default baseline with those bytes (`Runtime.from_executable` hands on its stub
@@ -598,15 +604,15 @@ gives the uncompressed size and the size stored in the file.
 
 | Part | `hello` (26.51 MiB) | `mp` (26.51 MiB) | `pandas-csv` (62.01 MiB) | The same in all three? |
 |---|---|---|---|---|
-| Stub ELF: the launcher with CPython and its libraries linked in; it records the runtime id it was linked as | 19.97 MiB | 19.97 MiB | 19.97 MiB | yes, byte for byte (the default glibc 2.34 stub) |
-| Zero padding to the payload's 64 KiB boundary | 31.7 KiB | 31.7 KiB | 31.7 KiB | yes |
+| Stub ELF: the launcher with CPython and its libraries linked in; it records the runtime id it was linked as | 20.03 MiB | 20.03 MiB | 20.03 MiB | yes, byte for byte (the default glibc 2.34 stub) |
+| Zero padding to the payload's 64 KiB boundary | 38.1 KiB | 38.1 KiB | 38.1 KiB | yes |
 | Payload header (208 bytes) | | | | partly: the Python version and bytecode magic are; the app name, entry point (for an app of several commands, the table of their names and targets) and build information are not, nor is the native cache generation, which depends on the files an app extracts (`hello` and `mp` extract none and share it) |
 | Tables: strings and the blob, module, file and distribution records | 99.4 KiB | 99.5 KiB | 551.2 KiB | no |
 | Standard library bytecode, 551 modules | 10.80 → 4.09 MiB | same | same | the same content |
 | Standard library sources | 10.13 → 2.17 MiB | same | same | the same content |
 | Standard library data files (29) | 168 → 34 KiB | same | same | the same content |
 | Startup modules (4; the boot module is one), code and sources | 64 → 22 KiB | same | same | the same content |
-| fsbpyr's boot and runtime modules (11 at 42d8ecb; 15 in v0.27.0), code and sources | 256 → 94 KiB | same | same | the same content |
+| fsbpyr's boot and runtime modules (11 at 42d8ecb; 15 in v0.28.0), code and sources | 256 → 94 KiB | same | same | the same content |
 | The app's own package (for a project without a build system, its files under `_fsbpyr_scripts`): code, sources, metadata | 2 → 1 KiB | 9 → 3 KiB | 2 → 1 KiB | no |
 | Third-party bytecode (1,847 modules) | — | — | 39.81 → 13.04 MiB | the app's own |
 | Third-party sources | — | — | 28.75 → 5.51 MiB | the app's own |
@@ -625,9 +631,11 @@ gives the uncompressed size and the size stored in the file.
   carries the stub linked against the EL8 sysroot instead, whose size was not measured. A
   released fsbpyr pairs that stub with its own standard library (`paired` in
   [`runtime/stubs.py`][stubs]), and the boot code is generated for each build either way, so
-  the standard library and boot rows hold the same content with both stubs. What differs is the
-  stub and its padding, and the build information computed from the stub or the baseline
-  (`runtime`, `runtime_inputs`, `stub_sha256`, `glibc`, `system`, `glibc_baseline`); the
+  the standard library and boot rows hold the same content with both stubs, and the tables of
+  an app with the same files list the same records. What differs is the stub and its padding, and the build information computed
+  from the stub or the baseline (`runtime`, the `sysroot` of `runtime_inputs`, `stub_sha256`,
+  `glibc`, `system`, `glibc_baseline`), with the string, section and blob offsets that its
+  length moves; the header's `python_hexversion` and bytecode magic are the same. The
   third-party wheels are chosen for `manylinux_2_28` instead of `manylinux_2_34`
   (`Target.platform_for`), so the native files of an app with dependencies may differ too. The
   26.41 MiB figure above is for the default stub.

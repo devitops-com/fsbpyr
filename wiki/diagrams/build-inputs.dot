@@ -1,4 +1,4 @@
-// What fsbpyr build starts from (v0.27.0): project.Project.load (_read, _bare, _script) decides
+// What fsbpyr build starts from (v0.28.0): project.Project.load (_read, _bare, _script) decides
 // which of five kinds of input PROJECT is. The letters are the ones the step-by-step section and
 // build-pipeline.dot use.
 digraph build_inputs {
@@ -8,7 +8,7 @@ digraph build_inputs {
 
   // decisions, made by Project.load at build time
   file [shape=diamond label="a file?"];
-  script [shape=diamond label="*.py, or a\npython\nshebang?"];
+  script [shape=diamond label="*.py, or a\npython or\nuv run\nshebang?"];
   pyproject [shape=diamond label="pyproject\n.toml?"];
   settings [shape=diamond label="tool\nsettings\nonly?"];
   backend [shape=diamond label="packaged\nby a build\nsystem?"];

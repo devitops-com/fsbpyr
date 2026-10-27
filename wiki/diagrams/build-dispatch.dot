@@ -1,6 +1,7 @@
-// How fsbpyr build picks the Python and hands the build to another fsbpyr (v0.27.0):
+// How fsbpyr build picks the Python and hands the build to another fsbpyr (v0.28.0):
 // cli.build_command, config.load_config, pyversion.resolve, then dispatch.run, variant, _own_tag
-// and _fetch. The variant gets the same arguments, --glibc included.
+// and _fetch. The variant gets the same arguments, --glibc and --offline included, and
+// FSBPYR_DISPATCHED_BY, where it looks for a placed EL8 stub first.
 digraph build_dispatch {
   graph [fontname="Helvetica" fontsize=11 rankdir=LR bgcolor="white" pad=0.3 nodesep=0.35 ranksep=0.5];
   node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#eef3fb" color="#4a6fa5"];
@@ -11,8 +12,9 @@ digraph build_dispatch {
   build [label="build.build\nin this process"];
   dev [label="DispatchError:\nmake build PYTHON=X.Y"];
   cached [shape=diamond label="in the\ncache?"];
+  offline [label="DispatchError: run\nonce without --offline"];
   fetch [label="dispatch._fetch: selfupdate.unpack,\ninspection.read(verify=True),\nselfupdate.check_glibc, rename"];
-  run [label="dispatch.run: the variant\nruns the same ARGS, --glibc\nincluded; for 2.28 it takes\nthe EL8 stub of its Python"];
+  run [label="dispatch.run: the variant\nruns the same ARGS, --glibc\nincluded, FSBPYR_DISPATCHED_BY\nset; for 2.28 it takes the EL8\nstub of its Python, placed\nbeside this fsbpyr first"];
 
   node [fillcolor="#f3eefb" color="#7a5aa5"];
   release [label="release vA.B.C:\nfsbpyr-X.Y-TARGET.xz"];
@@ -26,6 +28,7 @@ digraph build_dispatch {
   own -> cached [label="no; release vA.B.C"];
   cached -> file [label="yes"];
   cached -> fetch [label="no"];
+  cached -> offline [label="no; --offline"];
   release -> fetch;
   fetch -> file;
   file -> run;

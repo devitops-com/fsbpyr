@@ -74,7 +74,9 @@ The groups:
   library and the boot collector to manage its cache. Its `stubs` module, which gets the
   release's glibc 2.28 (EL8) stub for a released fsbpyr, imports `dispatch`, `selfupdate`,
   `targets` and `vcs`: it downloads from the companion release as a variant or an update is
-  downloaded.
+  downloaded. `dispatch` and `selfupdate` import `stubs` in turn, inside functions: a variant is
+  told where the fsbpyr that handed it the build is, and an update names the placed stubs the
+  new release refuses. `pbs` imports `elf` to read zstd's version out of the archive.
 - **`payload/`** is the format library that everything writing or reading an executable uses.
 - **Shared helpers** (`targets`, `compat`) know the supported platforms and paper over
   differences between Python versions.
@@ -139,9 +141,9 @@ for that Python:
 A runtime is a launcher stub linked with one CPython plus that CPython's compiled standard
 library. A released fsbpyr executable carries its own and builds apps with it; from source,
 `fsbpyr runtime build` makes one from pinned inputs and caches it under an id that is a digest
-of the launcher's sources, the PBS release, the sysroot and the cache layout's version. The stub
-records that id in its read-only data (`fsbpyr-stub-identity=<id>`). See
-[Runtime modules](Dev-Runtime-Modules.md#what-a-runtime-is).
+of the launcher's sources and the flags it is built with for the target, the PBS release, the
+sysroot and the cache layout's version. The stub records that id in its read-only data
+(`fsbpyr-stub-identity=<id>`). See [Runtime modules](Dev-Runtime-Modules.md#what-a-runtime-is).
 
 ![The steps of building a runtime: pinned PBS archive, sysroot and toolchain in, a cached runtime out](images/runtime-build.svg)
 

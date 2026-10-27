@@ -25,15 +25,16 @@ stub; then it describes each module. `fsbpyr runtime build`, `fsbpyr runtime lis
 | `modules`, `files` | the standard library as payload specs ([Payload modules](Dev-Payload-Modules.md)), with the licence notices as files |
 | `toolchain` | the first `--version` line of the clang and lld that linked the stub (information only); empty for a release's glibc 2.28 stub, which was not linked here |
 | `inputs` | the PBS release, name and SHA-256, the sysroot's identity and the layout version; every app records them in `build_info` as `runtime_inputs` |
-| `components` | the versions of OpenSSL, SQLite, zlib, expat and libmpdec the interpreter reports; every app records them as `runtime_components` |
+| `components` | the versions of OpenSSL, SQLite, zlib, expat and libmpdec the interpreter reports, and that of the zstd the launcher links, read from PBS's `libzstd.a` (`pbs.zstd_version`; left out when the archive holds no single version string); every app records them as `runtime_components` |
 | `baseline` | the glibc baseline the stub is linked for: `2.34` (`pins.DEFAULT_BASELINE`), from the Debian 12 sysroot, or `2.28`, from the Rocky Linux 8.10 sysroot, for EL8 hosts ([Runtimes for glibc 2.28 (EL8)](#runtimes-for-glibc-228-el8)) |
 
 The runtime id is the first 12 hex digits of a SHA-256 over the launcher digest (the launcher's
-sources and its compiler and linker flags, `stub.launcher_digest`), the PBS archive's name and
-SHA-256, the sysroot's identity and `LAYOUT_VERSION` (9; the comment beside it lists what each
-bump changed). A change to any of them gives a new id, so an old runtime is never reused for new
-inputs. The two baselines have different sysroots, so the runtimes of one Python for 2.34 and
-for 2.28 have different ids. The clang and lld versions are not part of the id.
+sources and its compiler and linker flags for the target, `stub.launcher_digest`; aarch64's link
+has one flag more, [`stub`](#stub)), the PBS archive's name and SHA-256, the sysroot's identity
+and `LAYOUT_VERSION` (10; the comment beside it lists what each bump changed). A change to any
+of them gives a new id, so an old runtime is never reused for new inputs. The two baselines have
+different sysroots, so the runtimes of one Python for 2.34 and for 2.28 have different ids. The
+clang and lld versions are not part of the id.
 
 Every stub records the id it was linked as. `build_runtime` passes the id to `stub.build_stub`,
 which compiles it in (`-DFSBPYR_RUNTIME_ID`, a define kept out of the flags the launcher digest
@@ -91,10 +92,12 @@ The tool's cache root is `$FSBPYR_CACHE_DIR`, else `${XDG_CACHE_HOME:-~/.cache}/
 relative `XDG_CACHE_HOME` is ignored). The home directory `~` is `$HOME` when that is an
 absolute path; when `HOME` is unset, empty or relative it is the home directory of the user's
 passwd entry, so a service started without `HOME` still finds the cache. With no absolute path
-there either, `registry.cache_home` fails with
-`cannot find the home directory; set HOME, XDG_CACHE_HOME or FSBPYR_CACHE_DIR`, and the
-collection at a command's start (below) skips the cache. The boot code
-(`native.home_directory`) and the launcher (`due.c`) find an app's cache root by the same rule
+there either, `registry.cache_home` fails with a `RuntimeCacheError`,
+`cannot find the home directory; set HOME, XDG_CACHE_HOME or FSBPYR_CACHE_DIR`, which
+`fsbpyr build`, `fsbpyr runtime build`, `fsbpyr runtime list` and `fsbpyr cache gc` print as
+the one line `fsbpyr: error: <message>` before they exit 1, and the collection at a command's
+start (below) skips the cache. The boot code (`native.home_directory`) and the launcher
+(`due.c`) find an app's cache root by the same rule
 ([Boot modules](Dev-Boot-Modules.md#native-code-and-the-cache)).
 
 `registry.secure_directory` creates the cache root with mode 0700, or checks that it is owned
@@ -109,7 +112,7 @@ could write to would let them plant code.
 | `runtimes/<runtime id>/` | `stub` (mode 0755), `stdlib.fsbp`, `runtime.json` | `runtime.json` |
 | `pbs/<archive name>/` | the extracted PBS distribution | `python/PYTHON.json` |
 | `sysroots/<identity>/` | the extracted sysroot packages | `.fsbpyr-sysroot` |
-| `downloads/` | PBS archives, the sysroots' `.deb` and `.rpm` packages, the glibc 2.28 stubs a release fsbpyr downloaded (`<asset>-<tag>`, `stubs.py`) and the fsbpyr variants for other Pythons that `fsbpyr build` fetched (`dispatch.py`, [Build modules](Dev-Build-Modules.md)) | |
+| `downloads/` | PBS archives, the sysroots' `.deb` and `.rpm` packages, the glibc 2.28 stubs a release fsbpyr downloaded (`<asset>-<runtime id>`, `stubs.py`) and the fsbpyr variants for other Pythons that `fsbpyr build` fetched (`dispatch.py`, [Build modules](Dev-Build-Modules.md)) | |
 | `.fsbpyr-cache` | the marker that allows collection | |
 | `.gc-tool`, `.trash-tool` | the collection's stamp and trash | |
 
@@ -163,7 +166,9 @@ run it outside an executable.
   (`cli._collect_when_due`): without a home directory, on a read-only file system or with a
   cache it may not write nothing is collected, and another `OSError` is printed.
   `fsbpyr cache gc` collects the tool's cache and then every app cache `collect.app_caches`
-  finds, printing a report for each, and exits 1 if anything could not be removed.
+  finds, printing a report for each, and exits 1 if anything could not be removed. With
+  `FSBPYR_CACHE_DIR` set it needs no home directory; without either it reports the missing home
+  directory (above) and exits 1.
 
 ## Embedded and cached runtimes
 
@@ -191,9 +196,10 @@ standard library are a runtime. `registry.running_executable` returns `/proc/sel
   released fsbpyr pairs its embedded standard library with the stub of its release for that
   baseline (`stubs.paired`); a stub it cannot get is an error, not a fall-back to the cache.
   Otherwise, and in a developer build, it takes the cache.
-  `fsbpyr build` calls it with the Python fsbpyr itself runs on and the build's `glibc`
-  (`--glibc`, else `glibc` in `[tool.fsbpyr]`, else 2.34); a project that needs another Python
-  is handed to the matching fsbpyr release ([Build modules](Dev-Build-Modules.md)).
+  `fsbpyr build` calls it with the Python fsbpyr itself runs on, the build's `glibc`
+  (`--glibc`, else `glibc` in `[tool.fsbpyr]`, else 2.34) and its `offline` (`--offline`: the
+  stub must be placed or cached); a project that needs another Python is handed to the matching
+  fsbpyr release ([Build modules](Dev-Build-Modules.md)).
 - **Listing.** `list_runtimes` (`fsbpyr runtime list`) gives the embedded runtime first, if
   any, then every runtime in the cache that has a `runtime.json`, each as its id, its Python
   version and its glibc baseline; the command prints one line per runtime,
@@ -224,17 +230,26 @@ the sysroot. A runtime for 2.28 comes from one of two places:
 
 1. **Placed.** A file of that name, or the same name with `.xz` (then unpacked), in the
    directory of the path fsbpyr was run by (looked up on `PATH` when it was run by a bare name;
-   links are kept, so a file beside a link is found) or of its real path. This serves machines
-   without access to GitHub. A variant for another Python that `fsbpyr build` hands a project
-   to runs from `downloads/` in the cache (`dispatch.variant`), so it looks there.
-2. **Cached.** `downloads/<asset>-<tag>` in the tool's cache (`<tag>` the release's, `vX.Y.Z`).
-   A cached file that does not carry the expected runtime id is deleted and fetched again.
+   links are kept, so a file beside a link is found) or of its real path (`stubs.own_paths`).
+   This serves machines without access to GitHub. A variant for another Python that
+   `fsbpyr build` hands a project to runs from `downloads/` in the cache (`dispatch.variant`);
+   `dispatch.run` passes it the paths of the fsbpyr that handed it the build in
+   `FSBPYR_DISPATCHED_BY` (joined with `:`, absolute ones only), and it looks beside those
+   first, where the user places stubs, then beside itself.
+2. **Cached.** `downloads/<asset>-<runtime id>` in the tool's cache, named by the runtime id the
+   stub must carry rather than by the release, so an update that leaves the id unchanged reuses
+   the download (an entry that a release before 0.28.0 cached as `<asset>-<tag>` is not found
+   and costs one more download). A cached file that does not carry the expected runtime id is
+   deleted and fetched again.
 3. **Downloaded.** From the companion release `el8-vX.Y.Z` (`vcs.release_stub_tag`), since a
    published release takes no new assets, below `$FSBPYR_RELEASE_DOWNLOADS`, by default
    `https://github.com/devitops-com/fsbpyr/releases/download`. `SHA256SUMS-glibc2.28`
    (`vcs.release_stub_sums`), in `sha256sum`'s format over the unpacked stubs, names the
    SHA-256 of the asset; `<asset>.xz` is unpacked as it arrives, checked against that SHA-256,
-   checked for the runtime id, and only then kept in `downloads/`.
+   checked for the runtime id, and only then kept in `downloads/`. With `--offline` nothing is
+   downloaded: the build stops with `--offline: the <asset> is not placed or cached, and nothing
+   is downloaded; place <asset> (or <asset>.xz) next to <path>, or build once without --offline
+   to cache it`.
 
 Whichever it is, the stub must carry the runtime id that this fsbpyr computes from its own
 launcher sources and flags, the PBS pin, the EL8 sysroot pin and the layout version
@@ -243,19 +258,28 @@ from other launcher sources or pins, is refused: `<where> is not the stub this f
 needs: it is the stub of runtime <id>, and this fsbpyr expects <id>; use the <asset> of release
 el8-vX.Y.Z` (or `it carries no runtime id: it is no stub of an fsbpyr release`). The id holds
 no fsbpyr version: releases whose launcher, pins and layout version are the same compute the
-same id (0.26.0 and 0.27.0 do), and each accepts the other's stub. A placed or cached stub is
-accepted on that id alone, which does not detect a tampered file ([Security](Dev-Security.md)). A
-file over 256 MiB is refused as no stub. When the companion release, its sums file or the
-asset is missing, the build stops with `release el8-vX.Y.Z (the glibc 2.28 stubs of vX.Y.Z)
-does not exist or has none for this Python`, followed by how to place the file; a server that
-cannot be reached gives `release el8-vX.Y.Z's <asset> could not be fetched: ...; to build
-without the network, place <asset> next to <path>`.
+same id (0.26.0 and 0.27.0 do), and each accepts the other's stub. 0.28.0 changed every runtime
+id (new PBS pins, launcher sources and aarch64 link flags, layout version 10), so its stubs are
+new ones. A placed or cached stub is accepted on that id alone, which does not detect a tampered
+file ([Security](Dev-Security.md)). A file over 256 MiB is refused as no stub. When the
+companion release, its sums file or the asset is missing, the build stops with
+`release el8-vX.Y.Z (the glibc 2.28 stubs of vX.Y.Z) does not exist or has none for this
+Python`, followed by how to place the file; a server that cannot be reached, or a download cut
+short (`http.client.IncompleteRead`), gives
+`release el8-vX.Y.Z's <asset> could not be fetched: ...; to build without the network, place
+<asset> next to <path>`. `<path>` in these messages is the first of `own_paths`: for a variant,
+the fsbpyr that handed it the build.
 
-`fsbpyr self update` leaves the stubs placed beside the executable (`fsbpyr-stub-*-glibc*`)
-where they are and warns that they belong to the old release and that `--glibc` will refuse
-them (true only when the new release's runtime id differs, see above): place the new
-release's stubs there, or remove them and let `--glibc` download. The stubs are built from a
-cached 2.28 runtime and published by
+`fsbpyr self update` leaves the stubs placed beside the executable where they are and names
+those that the new release's `--glibc` refuses (`stubs.refused_after_update`). It looks where
+`--glibc` looks (`own_paths`, so beside the path fsbpyr was run by too) for files named like a
+stub asset, plain or `.xz`. It cannot compute the new release's runtime id, so a stub counts as
+current when its SHA-256 is listed in the `SHA256SUMS-glibc2.28` of the new release's companion;
+for the others it warns that `--glibc` refuses them unless they carry its runtime id: place the
+new release's stubs there, or remove them and let `--glibc` download. When it cannot read that
+file (no companion yet, no network, a download cut short), it names them all and says that
+`--glibc` refuses them if the runtime id changed. The stubs are built from a cached 2.28 runtime
+and published by
 [`.github/workflows/el8.yml`](../.github/workflows/el8.yml)
 with [`tools/release/el8-stub.py`](../tools/release/el8-stub.py).
 
@@ -272,8 +296,8 @@ sysroot (`sysroot.build_flags` with the `redhat` layout) and records `glibc_base
 [`src/fsbpyr/runtime/pins.py`](../src/fsbpyr/runtime/pins.py)
 
 The pinned inputs of every runtime. `PINS` lists one python-build-standalone archive per
-Python version and target: CPython 3.12.15, 3.13.17, 3.14.9 and 3.15.1 for
-`x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`, release 20261021, flavour
+Python version and target: CPython 3.12.16, 3.13.18, 3.14.10 and 3.15.2 for
+`x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`, release 20261026, flavour
 `pgo+lto-full`, each with its SHA-256. The triples and flavours are those of `targets.py`, and a
 test compares them (the comment above `PINS`).
 
@@ -329,9 +353,10 @@ failure (four attempts, pausing 2, 5 and 10 seconds), never after an HTTP error,
 `.part` file and renames it only once its SHA-256 matches; `sysroot` downloads its packages
 with it too. `PbsDist` reads the distribution's `PYTHON.json`; `link_inputs` turns its build
 information into what the stub's link needs, and the interpreter itself is asked for its
-extension suffixes and library versions. When the interpreter exits with an error, the
-`PbsError` quotes the last 500 characters of its stderr from a line boundary, with a note of how
-many earlier lines were left out (`text.tail_lines`).
+extension suffixes and library versions; zstd's version is read from the archive `libzstd.a`.
+When the interpreter exits with an error, the `PbsError` quotes the last 500 characters of its
+stderr from a line boundary, with a note of how many earlier lines were left out
+(`text.tail_lines`).
 
 Classes:
 
@@ -352,6 +377,12 @@ Public functions:
   and 3.12 and 3.13 have no `_zstd` module that would name it).
 - `component_versions(interpreter)`: OpenSSL, SQLite, zlib, expat and libmpdec versions, as the
   interpreter reports them (run with `-I -c`, 60 s timeout).
+- `zstd_version(dist)`: the version of the `libzstd.a` the launcher links, for every Python
+  (3.12 and 3.13 have no `_zstd` to ask): the one string of the form `X.Y.Z` among the C
+  strings (`.rodata.str1.1`) of its member `zstd_common.o`, which holds what
+  `ZSTD_versionString()` returns (the docstring says why not the whole object); `None` when
+  there is no readable archive, no such member or not exactly one such string.
+  `build_runtime` records it as the component `zstd`.
 - `extension_suffixes(interpreter)`: `importlib.machinery.EXTENSION_SUFFIXES` of the
   interpreter, in its order; the docstring explains why `PYTHON.json`'s list is not used.
 - `sha256_of(path)`: a file's SHA-256, read 1 MiB at a time.
@@ -362,8 +393,8 @@ Rules it enforces: only `https://` URLs are downloaded; a download or a cached a
 not match the pinned SHA-256 is refused; the archive must contain `python/PYTHON.json`;
 extraction applies the standard library's `data` filter.
 
-Imports: `fsbpyr.compat`, `fsbpyr.text`, `fsbpyr.runtime.hold`, `fsbpyr.runtime.pins` (all
-top).
+Imports: `fsbpyr.elf`, `fsbpyr.compat`, `fsbpyr.text`, `fsbpyr.runtime.ar`,
+`fsbpyr.runtime.hold`, `fsbpyr.runtime.pins` (all top).
 Imported by: `fsbpyr.build`, `fsbpyr.cli`, `fsbpyr.runtime.notices`, `fsbpyr.runtime.registry`,
 `fsbpyr.runtime.stdlib`, `fsbpyr.runtime.stub`, `fsbpyr.runtime.sysroot`.
 
@@ -454,7 +485,8 @@ Imported by: `fsbpyr.build`, `fsbpyr.cli`, `fsbpyr.runtime.registry`.
 
 A reader of Unix `ar` archives in the GNU long-name variant that llvm-ar writes. `stub` uses it
 to list the members of PBS's `libpython.a` (so that only the built-in modules' objects missing
-from it are added to the link), and `sysroot` to take the `data.tar` member out of a `.deb`.
+from it are added to the link), `sysroot` to take the `data.tar` member out of a `.deb`, and
+`pbs` to read `zstd_common.o` out of PBS's `libzstd.a` (`pbs.zstd_version`).
 The symbol tables (`/`, `/SYM64/`) are skipped and the long-name table (`//`) resolves names.
 
 Classes:
@@ -471,7 +503,7 @@ Rules it enforces: the archive magic, well-formed member headers (the terminator
 size), members inside the archive, valid long-name references, UTF-8 names.
 
 Imports: none inside fsbpyr.
-Imported by: `fsbpyr.runtime.stub`, `fsbpyr.runtime.sysroot`.
+Imported by: `fsbpyr.runtime.pbs`, `fsbpyr.runtime.stub`, `fsbpyr.runtime.sysroot`.
 
 ### `rpm`
 
@@ -531,7 +563,13 @@ the `_dl_find_object` wrapper is compiled out (the comment at the top of `glibc.
 bytecode magic is compiled in (`-DFSBPYR_BYTECODE_MAGIC`), and so is the runtime id the stub is
 linked as (`-DFSBPYR_RUNTIME_ID`, see [What a runtime is](#what-a-runtime-is)), which is not one
 of the fixed flags and so not part of the launcher digest. On aarch64 clang's compiler-rt
-builtins are linked for the outlined atomics PBS's objects call.
+builtins are linked for the outlined atomics PBS's objects call, and the link adds
+`-Wl,--fix-cortex-a53-843419` (`AARCH64_LINK_FLAGS`): on a Cortex-A53, an `adrp` in one of a
+4 KiB page's last two instruction slots, followed by certain loads or stores, can compute a
+wrong address, and lld patches each such sequence. PBS links its own aarch64 builds so since
+20261026, but the stub is linked here from PBS's bitcode, so the flag is the stub's own (the
+comment above the constant). The launcher digest hashes the flags of the target, so the flag is
+part of the aarch64 runtime id.
 
 Classes:
 
@@ -539,13 +577,14 @@ Classes:
 
 Public functions:
 
-- `compile_flags(sanitize=False)` and `link_flags(sanitize=False)`: the fixed flags; the
-  sanitized variant drops `-O2`, LTO, `_FORTIFY_SOURCE` and stripping, and adds `-O1`, ASan,
-  UBSan (every undefined behaviour fatal), frame pointers and `-g`.
+- `compile_flags(sanitize=False)` and `link_flags(triple, sanitize=False)`: the fixed flags,
+  with `AARCH64_LINK_FLAGS` added to the link for an `aarch64-` triple; the sanitized variant
+  drops `-O2`, LTO, `_FORTIFY_SOURCE` and stripping, and adds `-O1`, ASan, UBSan (every
+  undefined behaviour fatal), frame pointers and `-g`.
 - `outlined_atomics(toolchain, triple)`: the compiler-rt builtins library on aarch64 (a
   `StubBuildError` naming `libclang-rt-<N>-dev` when clang has none), `None` on x86-64.
-- `launcher_digest(sanitize=False)`: SHA-256 over every launcher file and the flags; part of
-  the runtime id.
+- `launcher_digest(triple, sanitize=False)`: SHA-256 over every launcher file and the flags
+  for `triple`; part of the runtime id.
 - `stub_identity(data)`: the runtime id a stub's bytes record (the text between
   `IDENTITY_MARKER`, `fsbpyr-stub-identity=`, and the next NUL), or `None` for a file that
   records none.
@@ -616,11 +655,13 @@ Imported by: `fsbpyr.cli`, `fsbpyr.runtime.registry`.
 [`src/fsbpyr/runtime/licenses/`](../src/fsbpyr/runtime/licenses)
 
 The third-party licence notices of what a runtime links. The names come from `PYTHON.json`:
-the distribution's own licence and the `license_paths` of every built-in module's libraries.
-Each is taken from PBS's `licenses/` directory; where PBS ships none, fsbpyr supplies the text
-for zstd (from `launcher/vendor/zstd/LICENSE`) and HACL\* (from `runtime/licenses/`).
-`LICENSE.zlib-ng.txt` is left out (`NOT_LINKED`): the comment explains that `libz.a` is classic
-zlib. The HACL\* text is added whenever a built-in module's objects come from HACL\*, which
+the distribution's own licence and the `license_paths` of every built-in module's libraries;
+`LICENSE.zstd.txt` is added for every Python, since the launcher links zstd whatever the Python
+and PBS lists its text only for the `_zstd` module, which 3.12 and 3.13 lack (the comment in
+`collect`). Each is taken from PBS's `licenses/` directory; where PBS ships none, fsbpyr
+supplies the text for zstd (from `launcher/vendor/zstd/LICENSE`) and HACL\* (from
+`runtime/licenses/`). `LICENSE.zlib-ng.txt` is left out (`NOT_LINKED`): the comment explains
+that `libz.a` is classic zlib. The HACL\* text is added whenever a built-in module's objects come from HACL\*, which
 carries no licence entry of its own. With fsbpyr's own `LICENSE` (from the installed
 distribution, else the source checkout) the texts become RESOURCE files under
 `_fsbpyr_licenses/` in the standard-library fragment, and so in every app, where
@@ -630,7 +671,8 @@ The data directory `licenses/` holds one file, `LICENSE.hacl.txt`, the MIT licen
 
 Classes:
 
-- `Notices(texts, unshipped)`: file name to text, and the names PBS lists but does not ship.
+- `Notices(texts, unshipped)`: file name to text, and the names of the linked libraries' texts
+  that PBS does not ship.
 
 Public functions:
 
@@ -655,8 +697,9 @@ that every build regenerates and that is never runtime content.
 
 Classes:
 
-- `RuntimeCacheError`: no usable runtime (missing, incomplete, of an old layout, corrupt, or a
-  cache directory that fails the checks); `stubs.StubError` is one too.
+- `RuntimeCacheError`: no usable runtime (missing, incomplete, of an old layout, corrupt, a
+  cache directory that fails the checks, or no home directory to find the cache in);
+  `stubs.StubError` is one too.
 - `Runtime`: the dataclass above, with `save(directory)`, `load(directory)` and
   `from_executable(path)`.
 
@@ -675,13 +718,15 @@ Public functions:
 - `runtime_inputs(pin, baseline=DEFAULT_BASELINE)`: the `runtime_inputs` record, with the
   sysroot identity of `baseline`.
 - `running_executable()`: `/proc/self/exe` inside an fsbpyr executable, else `None`.
-- `select_runtime(python, cache=None, baseline=DEFAULT_BASELINE)`: the embedded runtime if its
-  Python and baseline match; for its Python and another baseline, `stubs.paired`, when that
-  gives a runtime; else `find_runtime`.
+- `select_runtime(python, cache=None, baseline=DEFAULT_BASELINE, offline=False)`: the embedded
+  runtime if its Python and baseline match; for its Python and another baseline, `stubs.paired`
+  (with `offline`: a placed or cached stub only), when that gives a runtime; else
+  `find_runtime`.
 - `find_runtime(python, cache=None, sanitize=False, baseline=DEFAULT_BASELINE)`: the cached
   runtime of that baseline, held and loaded.
 - `build_runtime(python, cache=None, clang=None, log=print, sanitize=False,
-  baseline=DEFAULT_BASELINE)`: the steps above, against the sysroot of `baseline`.
+  baseline=DEFAULT_BASELINE)`: the steps above, against the sysroot of `baseline`; the
+  components are the interpreter's and, when `pbs.zstd_version` finds one, zstd's.
 - `list_runtimes(cache=None)`: `(runtime id, Python version, glibc baseline)` of the embedded
   and the cached runtimes.
 
@@ -721,22 +766,29 @@ Public functions:
 
 - `own_tag()`: the tag of this release, `vX.Y.Z`, from the version its build recorded; `None`
   for a developer build.
-- `own_paths(argv0=None, real=None)`: the path this executable was run by (looked up on `PATH`
-  when run by name) and, if it differs, its real path.
-- `stub_for(python, baseline, tag, cache=None)`: the stub of release `tag` for `python` and
-  `baseline` with this fsbpyr's runtime id: placed, else cached, else downloaded from the
-  companion release and kept.
-- `paired(own, baseline, cache=None)`: the runtime `own` with that stub; `None` for a developer
-  build.
+- `own_paths(argv0=None, real=None)`: in a variant run by `dispatch.run`, first the paths of the
+  fsbpyr that dispatched to it (`FSBPYR_DISPATCHED_BY`, absolute entries only); then the path
+  this executable was run by (looked up on `PATH` when run by name) and, if it differs, its real
+  path.
+- `refused_after_update(tag, paths)`: the stubs placed beside `paths` that the fsbpyr of
+  release `tag` would refuse (those whose SHA-256 the companion release's sums file does not
+  list), and whether that is known; all of them, unknown, when the sums file cannot be read.
+  `fsbpyr self update` names them (`selfupdate`).
+- `stub_for(python, baseline, tag, cache=None, offline=False)`: the stub of release `tag` for
+  `python` and `baseline` with this fsbpyr's runtime id: placed, else cached, else downloaded
+  from the companion release and kept; `offline` downloads nothing.
+- `paired(own, baseline, cache=None, offline=False)`: the runtime `own` with that stub; `None`
+  for a developer build.
 
 Rules it enforces: a stub is used only if it carries the runtime id this fsbpyr computes for the
 baseline; a download only if it matches the SHA-256 that the companion release's sums file
 lists, and it is kept only after both checks; nothing over 256 MiB is read as a stub; a
-developer build never downloads a stub.
+developer build never downloads a stub, nor does an `offline` one.
 
 Imports: `fsbpyr.dispatch`, `fsbpyr.selfupdate`, `fsbpyr.targets`, `fsbpyr.vcs`,
 `fsbpyr.runtime.pins`, `fsbpyr.runtime.registry`, `fsbpyr.runtime.stub` (all top).
-Imported by: `fsbpyr.runtime.registry` (lazy).
+Imported by: `fsbpyr.dispatch` (lazy, in `run`), `fsbpyr.runtime.registry` (lazy),
+`fsbpyr.selfupdate` (lazy, for `self update`'s warning about placed stubs).
 
 ### `hold`
 
@@ -776,7 +828,9 @@ Public functions:
   a `gc.Report`.
 - `app_caches()`: directories in `${XDG_CACHE_HOME:-~/.cache}` that have the marker, or that
   may be given it (`gc.mark`: a cache an app of an earlier version made), owned by the user
-  and on a trusted way, plus `$FSBPYR_CACHE_DIR` if it has the marker.
+  and on a trusted way, plus `$FSBPYR_CACHE_DIR` if it has the marker. When `cache_home` finds
+  no home directory, only `$FSBPYR_CACHE_DIR` counts; when that is not set either, its
+  `RuntimeCacheError` is raised.
 - `collect_when_due(root)`: the daily check at a command's start.
 
 Rules it enforces: only marked roots, only names fsbpyr gives, only directories and files the
@@ -792,7 +846,7 @@ The package's tests are in
 [`tests/unit/runtime/`](../tests/unit/runtime),
 among them `test_rpm.py`, `test_sysroot.py` (the Debian and the RPM extraction, the layouts'
 links and flags) and `test_stubs.py` (where a release's stub comes from, against a fake
-release server, and how it is checked).
+release server, also for a variant and with `--offline`, and how it is checked).
 [`tests/e2e/test_el8.py`](../tests/e2e/test_el8.py)
 builds with real runtimes for glibc 2.28 and with a release fsbpyr that pairs its standard
 library with the EL8 stub, served by a fake release server or placed beside it; the EL8 test
