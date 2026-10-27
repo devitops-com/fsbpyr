@@ -48,7 +48,12 @@ def corpus(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def _fuzz(harness: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([harness, *args], capture_output=True, text=True, check=False)
+    """The harness, forked by a shell. Started directly (vfork, then exec), a process keeps its
+    parent's peak RSS as its own ru_maxrss, which libFuzzer compares with -rss_limit_mb (2048 by
+    default): after a test that left this process's peak above that, as other test files can
+    in a pytest-xdist worker, the harness stopped as out of memory at its first check."""
+    command = ["sh", "-c", '"$@" & wait "$!"', "sh", os.fspath(harness), *args]
+    return subprocess.run(command, capture_output=True, text=True, check=False)
 
 
 def test_the_parser_survives_every_edge_case(harness: Path, corpus: Path) -> None:
