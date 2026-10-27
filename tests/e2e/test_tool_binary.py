@@ -208,7 +208,7 @@ def test_a_pylock_names_its_packages_and_a_directory_named_like_a_tool_builds(
     code, out, err = _build(directory)
 
     assert code == 0, err
-    assert "the tools are the 1 distributions pylock.toml names: pyflakes" in out
+    assert "the tools are the 1 distribution pylock.toml names: pyflakes" in out
     assert [path.name for path in (directory / "dist").iterdir()] == ["pyflakes"]
 
 
