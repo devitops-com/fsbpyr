@@ -843,7 +843,8 @@ def test_reads_next_to_file_in_the_scripts_root_are_always_reported_by_project_f
                              "_fsbpyr_scripts/tests/test_x.py": READS_DATA,
                              "_fsbpyr_scripts/guarded.py":
                                  b"if __name__ == '__main__':\n    open(__file__)\n",
-                             "other/__init__.py": READS_DATA})  # fmt: skip
+                             "other/__init__.py": READS_DATA},
+          entry_points="[fsbpyr_scripts]\nguarded = _fsbpyr_scripts.guarded\n")  # fmt: skip
     dist = SiteIndex.scan(site).dists["ops"]
 
     content = classify([dist], extension_suffixes=SUFFIXES, include_source=True, project="ops",
@@ -851,7 +852,7 @@ def test_reads_next_to_file_in_the_scripts_root_are_always_reported_by_project_f
 
     reads = [w for w in content.warnings if "next to its own __file__" in w]
     assert [w.partition(": ")[0] for w in reads] == ["check-disk:2", "guarded.py:2",
-                                                     "sub/plain.py:2"]  # main guard included
+                                                     "sub/plain.py:2"]  # a command's guard
     assert "read next to the executable" in reads[0] and "beside the binary" in reads[0]
     assert not [w for w in content.warnings if "these packages read files" in w]  # no --hints
 
@@ -868,6 +869,36 @@ def test_hints_leave_out_packages_below_the_scripts_root(site: Path) -> None:
     (hint,) = [w for w in content.warnings if "these packages read files" in w]
     assert "datapkg (datapkg/__init__.py:2)" in hint and "_fsbpyr_scripts" not in hint
     assert [w for w in content.warnings if "tools/spawn.py:2: reads a file next" in w]
+
+
+GUARDED_READ = b"import os\nif __name__ == '__main__':\n    open(os.path.dirname(__file__))\n"
+
+
+def _guarded_warnings(site: Path, commands: str) -> list[str]:
+    _dist(site, "ops", "0", {"_fsbpyr_scripts/tool.py": GUARDED_READ,
+                             "_fsbpyr_scripts/helper.py": GUARDED_READ,
+                             "_fsbpyr_scripts/app/__init__.py": b"",
+                             "_fsbpyr_scripts/app/__main__.py": GUARDED_READ,
+                             "_fsbpyr_scripts/entry.py": GUARDED_READ},
+          entry_points=commands)  # fmt: skip
+    dist = SiteIndex.scan(site).dists["ops"]
+    content = classify([dist], extension_suffixes=SUFFIXES, include_source=True, project="ops")
+    return [w for w in content.warnings if "reads a file next" in w]
+
+
+def test_the_main_guard_read_of_a_command_script_is_reported_and_a_siblings_is_not(
+    site: Path,
+) -> None:
+    found = _guarded_warnings(site, "[fsbpyr_scripts]\ntool = _fsbpyr_scripts.tool\n"
+                                    "app = _fsbpyr_scripts.app\n")
+
+    assert [w.split(": reads")[0] for w in found] == ["app/__main__.py:3", "tool.py:3"]
+
+
+def test_the_main_guard_of_a_module_run_through_an_entry_function_never_runs(site: Path) -> None:
+    found = _guarded_warnings(site, "[console_scripts]\nentry = _fsbpyr_scripts.entry:main\n")
+
+    assert found == []
 
 
 def test_a_packages_read_in_the_main_guard_is_not_reported(site: Path) -> None:

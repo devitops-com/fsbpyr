@@ -102,6 +102,21 @@ def test_a_script_with_a_block_and_a_sibling_prints_what_python_prints(
     assert result.stdout == _python(directory / "report.py", "-x", "--y")
 
 
+def test_a_siblings_main_guard_read_is_not_reported_and_strict_builds(
+    tmp_path: Path, runtime: Runtime
+) -> None:
+    directory = _write(tmp_path / "ops", {
+        "report.py": _block('requires-python = ">=3.12"', "dependencies = []") + SCRIPT,
+        "helpers.py": "import os\n\nVALUE = 42\n\nif __name__ == '__main__':\n"
+        "    print(open(os.path.join(os.path.dirname(__file__), 'sample.txt')).read())\n",
+    })  # fmt: skip
+
+    code, _, err = _build(directory / "report.py", tmp_path / "out" / "report", "--strict")
+
+    assert code == 0, err
+    assert "reads a file next to its own __file__" not in err
+
+
 def test_the_executable_defaults_to_dist_beside_the_script_named_after_the_file(
     tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
 ) -> None:

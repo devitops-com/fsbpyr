@@ -231,6 +231,7 @@ class _Collector:
         self.suffixes = extension_suffixes
         self.include_source = include_source
         self.hints = hints  # guesses (reads next to __file__): only when asked for
+        self.mains: frozenset[str] = frozenset()  # scripts-root files that run as __main__
         self.modules: dict[str, Module] = {}
         self.files: dict[str, File] = {}
         self.owners: dict[str, str] = {}  # path -> dist
@@ -427,9 +428,10 @@ class _Collector:
         return self.origins.get(rel, rel.removeprefix(f"{ROOT}/"))
 
     def _compiled(self, dist: InstalledDist, rel: str, path: Path, hints: bool) -> Compiled:
+        main = rel in self.mains
         if self.compiler is not None:
-            return self.compiler.get((dist.name, rel), path, rel, hints)
-        return compiled(path.read_bytes(), rel, self.level, self.include_source, hints)
+            return self.compiler.get((dist.name, rel), path, rel, hints, main)
+        return compiled(path.read_bytes(), rel, self.level, self.include_source, hints, main)
 
     def module_jobs(self, dists: list[InstalledDist]) -> list[Job]:
         """The modules add_dist will compile, in the order it reaches them (add_dist and
@@ -447,7 +449,8 @@ class _Collector:
                 if path.stat().st_size > _IN_MEMORY:
                     continue
                 tests = _TEST_DIRECTORIES.intersection(rel.split("/")[:-1])
-                jobs.append(Job((dist.name, rel), path, rel, self._reads_wanted(rel) and not tests))
+                hints = self._reads_wanted(rel) and not tests
+                jobs.append(Job((dist.name, rel), path, rel, hints, rel in self.mains))
         return jobs
 
     def _prevails(self, name: str, rank: tuple[int, bool, int], dist: str) -> bool:
@@ -731,6 +734,20 @@ class _Collector:
         return list(found.values())
 
 
+def _mains(dists: list[InstalledDist], project: str | None) -> frozenset[str]:
+    """The files below the scripts root that run as ``__main__``: the project's commands that
+    name a module (``pkg.mod``, not ``pkg.mod:function``), a package by its ``__main__.py``."""
+    mains = set()
+    for dist in dists:
+        if dist.name != project:
+            continue
+        for target in dist.commands().values():
+            path, colon, _ = target.replace(".", "/").partition(":")
+            if not colon and path.startswith(f"{ROOT}/"):
+                mains |= {f"{path}.py", f"{path}/__main__.py"}
+    return frozenset(mains)
+
+
 def classify(  # noqa: PLR0913  the build options, keyword-only
     dists: list[InstalledDist],
     *,
@@ -753,6 +770,7 @@ def classify(  # noqa: PLR0913  the build options, keyword-only
                            xz_natives=xz_natives, spill=spill, runtime_modules=runtime_modules,
                            project=project, origins=origins)  # fmt: skip
     collector.read_pth_files(dists)
+    collector.mains = _mains(dists, project)
     collector.compiler = Compiler(collector.module_jobs(dists), level=level,
                                   include_source=include_source)  # fmt: skip
     try:

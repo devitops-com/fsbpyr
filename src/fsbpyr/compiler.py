@@ -63,15 +63,17 @@ class Compiled:
     error: tuple[str, int | None] | None = None
 
 
-def compiled(data: bytes, rel: str, level: int, include_source: bool, hints: bool) -> Compiled:
+def compiled(  # noqa: PLR0913, PLR0917  a job's fields, as _work unpacks them
+    data: bytes, rel: str, level: int, include_source: bool, hints: bool, main: bool = False
+) -> Compiled:
     try:
         code, emitted = compile_warned(data, rel)
     except SyntaxError as exc:
         return Compiled(None, error=(exc.msg, exc.lineno))
     source = Blob.zstd(data, level=level) if include_source else None
-    # a script's main-guard code runs; a package's never does on import
+    # a command's main-guard code runs; that of any module only imported never does
     script = rel.startswith(f"{ROOT}/")
-    reads = tuple(file_relative_reads(data, rel, script=script)) if hints else ()
+    reads = tuple(file_relative_reads(data, rel, script=script, main=main)) if hints else ()
     libraries = tuple(loaded_libraries(data, rel)) if hints else ()
     return Compiled(Blob.code(code, level=level), tree_digest(code), source,
                     tree_digest(data) if include_source else b"", reads, libraries,
@@ -96,7 +98,7 @@ def _one_thread() -> bool:
         return threading.active_count() == 1
 
 
-def _work(job: tuple[bytes, str, int, bool, bool]) -> Compiled:
+def _work(job: tuple[bytes, str, int, bool, bool, bool]) -> Compiled:
     return compiled(*job)
 
 
@@ -111,6 +113,7 @@ class Job:
     path: Path
     rel: str
     hints: bool  # its reads next to __file__ are wanted
+    main: bool = False  # it runs as __main__ (a command): its main guard runs
 
 
 class Compiler:
@@ -135,11 +138,12 @@ class Compiler:
                 return
             job = self._jobs.popleft()
             data = job.path.read_bytes()
-            work = (data, job.rel, self.level, self.include_source, job.hints)
+            work = (data, job.rel, self.level, self.include_source, job.hints, job.main)
             self._pending.append((job.key, len(data), pool.submit(_work, work)))
             self._pending_bytes += len(data)
 
-    def get(self, key: tuple[str, str], path: Path, rel: str, hints: bool) -> Compiled:
+    def get(self, key: tuple[str, str], path: Path, rel: str, hints: bool,
+            main: bool = False) -> Compiled:
         if key in self._ahead:
             while self._pending:
                 ahead, size, future = self._pending.popleft()
@@ -149,7 +153,7 @@ class Compiler:
                 if ahead == key:
                     return future.result()
                 future.cancel()  # passed over (a path two dists install, say)
-        return compiled(path.read_bytes(), rel, self.level, self.include_source, hints)
+        return compiled(path.read_bytes(), rel, self.level, self.include_source, hints, main)
 
     def compress(self, data: bytes) -> Future[tuple[Blob, bytes]] | None:
         """``data`` compressed on a worker too, so that a build keeps to 8 cores; None without

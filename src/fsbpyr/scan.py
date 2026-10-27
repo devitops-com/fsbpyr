@@ -115,10 +115,13 @@ def _main_guarded(tree: ast.Module) -> list[range]:
     ]
 
 
-def file_relative_reads(source: bytes, filename: str, *, script: bool = False) -> list[int]:
+def file_relative_reads(
+    source: bytes, filename: str, *, script: bool = False, main: bool = False
+) -> list[int]:
     """Line numbers of reads relative to ``__file__`` in one module (empty if it does not parse).
-    A package's main guard never runs on import, so it has none there; a script runs it, and
-    its ``sys.executable`` call of a sibling runs the sibling from the payload, no read."""
+    A main guard runs only in a module that runs as ``__main__`` (``main``: a command); an
+    imported module's has none. A module of the scripts root (``script``) calls a sibling with
+    ``sys.executable``: the sibling runs from the payload, no read."""
     if not any(marker in source for marker in _MARKERS):
         return []
     try:
@@ -126,7 +129,7 @@ def file_relative_reads(source: bytes, filename: str, *, script: bool = False) -
     except (SyntaxError, ValueError):
         return []
     tainted = _tainted_names(tree)
-    guarded = [] if script else _main_guarded(tree)
+    guarded = [] if main else _main_guarded(tree)
     calls = (node for node in ast.walk(tree) if isinstance(node, ast.Call))
     lines = {
         call.lineno for call in calls
