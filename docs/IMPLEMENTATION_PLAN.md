@@ -1782,11 +1782,6 @@ compare jobs or the short asset names, later entries below and D42 apply.
     whose archives are LLVM 23.1.3 bitcode on every target; both targets link them with LLVM's
     23.1.3 release tarball for their architecture (`tools/release/llvm23`, the aarch64 one by
     the owner's choice of 2026-10-22). macOS would need upstream LLVM 23 accordingly.
-  - 2026-10-27, 0.28.0: the pins move to PBS 20261026 (CPython 3.12.16, 3.13.18, 3.14.10, 3.15.2)
-    on both targets (upstream-watch's issue #52); `.python-version` is 3.14.10. The 3.14 archives
-    are still LLVM 23.1.3 bitcode. The aarch64 distributions are linked with
-    `-Wl,--fix-cortex-a53-843419` (PYTHON.json's LDFLAGS), which our link does not take: it uses
-    its own literal `LINK_FLAGS` (stub.py), so the workaround does not reach the stub.
   - 2026-10-22, 0.24.0 (D42): the sysroot is Debian 12's (glibc 2.36) from deb.debian.org and the
     baseline glibc 2.34 (manylinux_2_34) on both targets; the entries above and below that name
     Debian 10, glibc 2.28 or manylinux_2_28 are as written then. The release build became the
@@ -1798,6 +1793,11 @@ compare jobs or the short asset names, later entries below and D42 apply.
     (`fsbpyr-3.15-<target>`); 3.14 stays the default (`.python-version`, `make build`, the
     installer's default, which now comes from `.python-version`); `bytecode.SUPPORTED_PYTHON` is
     3.12 to 3.15, marshal versions 4 (3.12, 3.13), 5 (3.14) and 6 (3.15).
+  - 2026-10-27, 0.28.0: the pins move to PBS 20261026 (CPython 3.12.16, 3.13.18, 3.14.10, 3.15.2)
+    on both targets (upstream-watch's issue #52); `.python-version` is 3.14.10. The 3.14 archives
+    are still LLVM 23.1.3 bitcode. The aarch64 distributions are linked with
+    `-Wl,--fix-cortex-a53-843419` (PYTHON.json's LDFLAGS), which our link does not take: it uses
+    its own literal `LINK_FLAGS` (stub.py), so the workaround does not reach the stub.
 
   **Steps** (a target is done when, on its own runner, the full suite passes with that
   target's skip list, the three-stage bootstrap is byte-identical and an independent rebuild
