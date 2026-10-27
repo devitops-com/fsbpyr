@@ -63,8 +63,9 @@ def _extensions() -> list[tuple[str, tuple[int, ...]]]:
 
 def natives(loader: str | None = None) -> None:
     """Report on stderr one line per missing library or version, and raise SystemExit(1) if
-    there is any (or the check could not run); otherwise say so on stdout. ``loader``: the
-    dynamic loader, in place of this executable's."""
+    there is any (or the check could not run); otherwise say so on stdout. A refused cache
+    directory ends it as it ends a run (native.refuse: exit 70). ``loader``: the dynamic loader,
+    in place of this executable's."""
     if loader is None:
         with open("/proc/self/exe", "rb") as exe:
             loader = interpreter(exe.read(ELF_HEADER_SIZE))

@@ -101,8 +101,9 @@ class NativeCache:
         return _fsbpyr.sync(self.root, self._chain, files, self._checked, resources, written)
 
     def extract(self, files: "Sequence[int]", *, resources: bool = False) -> int:
-        """``sync`` for the import machinery and the resources API: a refused cache directory
-        (module.c's words) is a refused start, not an error the app could run into."""
+        """``sync`` for the import machinery, the resources API and the native check: a refused
+        cache directory (module.c's words) is a refused start, not an error the app could run
+        into."""
         try:
             return self.sync(files, resources=resources)
         except NativeCacheError as exc:
