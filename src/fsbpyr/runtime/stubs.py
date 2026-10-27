@@ -19,7 +19,6 @@ release to fetch from: it uses the cache's runtime (``fsbpyr runtime build --gli
 import contextlib
 import dataclasses
 import hashlib
-import http.client
 import lzma
 import os
 import re
@@ -151,7 +150,7 @@ def refused_after_update(tag: str, paths: list[Path]) -> tuple[list[Path], bool]
                 sums = download_text(f"{base}/{release_stub_tag(baseline, tag)}/"
                                      f"{release_stub_sums(baseline)}")
                 listed[baseline] = {line.partition(" ")[0].lower() for line in sums.splitlines()}
-        except (UpdateError, ValueError, http.client.HTTPException):  # unreadable: unknown
+        except (UpdateError, ValueError):  # unreadable: unknown
             return list(placed), False
         if _digest(path) not in listed[baseline]:
             refused.append(path)

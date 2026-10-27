@@ -9,9 +9,11 @@ import stat
 import sys
 import threading
 import types
-from collections.abc import Iterator
+import urllib.request
+from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -447,10 +449,14 @@ def test_a_sums_read_cut_short_is_an_unknown_not_a_traceback(
     stub = installed.parent / STUB
     stub.write_bytes(b"some stub")
 
-    def cut_short(url: str, limit: int = 0) -> str:
-        raise http.client.IncompleteRead(b"partial")
+    real = urllib.request.urlopen
 
-    monkeypatch.setattr("fsbpyr.runtime.stubs.download_text", cut_short)
+    def cut_short(request: urllib.request.Request, *args: Any, **kwargs: Any) -> Any:
+        if request.full_url.endswith("SHA256SUMS-glibc2.28"):
+            return _CutShort()
+        return real(request, *args, **kwargs)
+
+    monkeypatch.setattr(urllib.request, "urlopen", cut_short)
 
     _update(github, tmp_path)  # the update itself succeeded: exit status 0
 
@@ -578,6 +584,39 @@ def test_the_guard_is_skipped_where_the_host_has_no_glibc(
     monkeypatch.setattr(os, "confstr", musl)
 
     selfupdate.check_glibc("9.99")
+
+
+class _CutShort:
+    """A response whose body ends before its Content-Length."""
+
+    def __enter__(self) -> "_CutShort":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        pass
+
+    def read(self, size: int = -1) -> bytes:
+        raise http.client.IncompleteRead(b"partial")
+
+
+@pytest.mark.parametrize(
+    "fetch",
+    [
+        lambda tmp: selfupdate.latest_release(OWN),
+        lambda tmp: selfupdate.unpack("https://example.invalid/x.xz", tmp / "x"),
+        lambda tmp: selfupdate.download_text("https://example.invalid/sums"),
+    ],
+    ids=["latest-release", "unpack", "download-text"],
+)
+def test_a_body_cut_short_is_an_update_error(
+    fetch: Callable[[Path], object], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Not http.client's IncompleteRead, which no command reports: a traceback."""
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: _CutShort())
+    monkeypatch.setenv(selfupdate.API_VARIABLE, "https://example.invalid/api")
+
+    with pytest.raises(selfupdate.UpdateError):
+        fetch(tmp_path)
 
 
 def test_unpack_stops_at_its_limit(tmp_path: Path) -> None:

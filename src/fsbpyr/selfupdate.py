@@ -12,6 +12,7 @@ refused with the installer command that installs the latest release for its Pyth
 """
 
 import contextlib
+import http.client
 import json
 import lzma
 import os
@@ -127,7 +128,7 @@ def latest_release(asset: str) -> Release:
             document = json.load(response)
         tag = document["tag_name"]
         assets = {a["name"]: a["browser_download_url"] for a in document["assets"]}
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as exc:
         raise UpdateError(f"cannot read the latest release from {api}: {exc}") from exc
     numbers = release_numbers(tag) if isinstance(tag, str) else None
     if numbers is None:
@@ -157,7 +158,7 @@ def unpack(url: str, target: Path, limit: int | None = None) -> None:
                 out.write(decoder.decompress(chunk))
                 if limit is not None and out.tell() > limit:
                     raise UpdateError(f"{url} unpacks to more than {limit} bytes")
-    except (OSError, lzma.LZMAError, EOFError) as exc:
+    except (OSError, http.client.HTTPException, lzma.LZMAError, EOFError) as exc:
         raise _failed(url, exc) from exc
     if not decoder.eof:
         raise UpdateError(f"{url} ended before the end of its xz stream")
@@ -169,7 +170,7 @@ def download_text(url: str, limit: int = _CHUNK) -> str:
         request = urllib.request.Request(url, headers=_ACCEPT)  # noqa: S310  the release's URL
         with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
             body: bytes = response.read(limit + 1)
-    except OSError as exc:
+    except (OSError, http.client.HTTPException) as exc:
         raise _failed(url, exc) from exc
     if len(body) > limit:
         raise UpdateError(f"{url} is larger than {limit} bytes")
