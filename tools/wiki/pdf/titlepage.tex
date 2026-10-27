@@ -1,0 +1,60 @@
+% Title page of the PDF guides.
+% Included by tools/wiki/Makefile through pandoc -H; filled in and called by the guide's own
+% file title-<guide>.tex (pandoc -B).
+%
+% Why not through the pandoc variables title/subtitle/date: the input is the wiki's sidebar,
+% and a YAML header in a wiki page would show on GitHub. Version, source and date come from
+% the repository tree the wiki is built from instead (the Makefile fills them in).
+
+\usepackage{array}
+
+\newcommand{\DocTitle}{}
+\newcommand{\DocSubtitle}{}
+\newcommand{\DocLines}{}
+\newcommand{\DocFootnote}{}
+
+\newcommand{\doctitle}[1]{\renewcommand{\DocTitle}{#1}}
+\newcommand{\docsubtitle}[1]{\renewcommand{\DocSubtitle}{#1}}
+\newcommand{\docfootnote}[1]{\renewcommand{\DocFootnote}{#1}}
+% One row of the table of particulars. Can be called several times; the order of the calls
+% is the order on the page.
+\newcommand{\docline}[2]{\appto\DocLines{#1 & #2\\}}
+
+\definecolor{titlerule}{HTML}{1F3864}
+\definecolor{titlegrey}{HTML}{4A4A4A}
+
+\newcommand{\TitlePage}{%
+  \begin{titlepage}
+  \thispagestyle{empty}
+  \sffamily
+  \noindent
+  {\color{titlegrey}\footnotesize\MakeUppercase{fsbpyr\quad\textbar\quad github.com/devitops-com/fsbpyr}}\par
+  \vspace{2pt}
+  % \hrule instead of \rule: a rule inside a paragraph runs over the text block by
+  % \parindent (Overfull \hbox). \hrule is set in vertical mode and is exactly \hsize wide.
+  {\color{titlerule}\hrule height 1.2pt}
+
+  \vspace{5.5cm}
+
+  \noindent{\fontsize{30}{34}\selectfont\bfseries\DocTitle\par}
+
+  \vspace{10pt}
+  \noindent{\color{titlegrey}\fontsize{13}{18}\selectfont\raggedright\DocSubtitle\par}
+
+  \vspace{1.4cm}
+  {\color{titlerule}\hrule height 0.6pt}
+  \vspace{10pt}
+
+  \noindent\footnotesize
+  \begin{tabular}{@{}>{\bfseries}p{4.2cm}p{\dimexpr\linewidth-5cm\relax}@{}}
+    \DocLines
+  \end{tabular}
+
+  \vfill
+
+  {\color{titlerule}\hrule height 0.6pt}
+  \vspace{6pt}
+  \noindent{\color{titlegrey}\scriptsize\DocFootnote\par}
+  \end{titlepage}
+  \clearpage
+}

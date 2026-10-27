@@ -418,7 +418,8 @@ def test_a_commit_that_changes_only_documentation_is_released_on_its_tested_ance
     """full-suite.yml leaves a documentation-only push out (CONTRIBUTING.md): no run of its own;
     the run of the newest commit before it that has one stands for it."""
     repo = make_release_repo(tmp_path, release_env)
-    tested, head = _documented(repo, release_env, "README.md", "docs/guide.md", "docs/a/b.txt")
+    tested, head = _documented(repo, release_env, "README.md", "docs/guide.md", "docs/a/b.txt",
+                               "wiki/diagrams/flow.dot")
     env = release_env | {"FAKE_GH_FULL_RUN": "", "FAKE_GH_TESTED_SHA": tested,
                          "FAKE_GH_TESTED_RUN": f"4000 {DONE} {RUN_URL}/4000"}  # fmt: skip
 
@@ -489,8 +490,8 @@ def test_the_full_suite_leaves_out_the_pushes_a_release_may_stand_on_without_a_r
     full_suite = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
     on = full_suite.split("\non:\n", 1)[1].split("\n\n", 1)[0]
 
-    assert '    paths-ignore: ["**.md", "docs/**"]' in on
-    assert "*.md|docs/*) ;;" in GREEN_RUN_SH.read_text(encoding="utf-8")
+    assert '    paths-ignore: ["**.md", "docs/**", "wiki/**"]' in on
+    assert "*.md|docs/*|wiki/*) ;;" in GREEN_RUN_SH.read_text(encoding="utf-8")
 
 
 def test_a_documentation_commit_is_not_released_on_a_failed_ancestors_run(

@@ -1,0 +1,62 @@
+digraph runtime_build {
+  graph [fontname="Helvetica" fontsize=11 rankdir=LR bgcolor="white" pad=0.3 nodesep=0.35 ranksep=0.5];
+  node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#eef3fb" color="#4a6fa5"];
+  edge [fontname="Helvetica" fontsize=9 color="#555555"];
+
+  // external inputs
+  archive [label="PBS archive .tar.zst\n(GitHub release)" fillcolor="#f3eefb" color="#7a5aa5"];
+  debs [label="Debian 12 packages .deb\n(deb.debian.org)" fillcolor="#f3eefb" color="#7a5aa5"];
+  rpms [label="Rocky Linux 8.10 packages .rpm\n(dl.rockylinux.org)" fillcolor="#f3eefb" color="#7a5aa5"];
+  clang [label="clang + ld.lld\n(PATH or --clang)" fillcolor="#f3eefb" color="#7a5aa5"];
+
+  // inputs inside fsbpyr
+  pins [label="pins.py\nPbsPin, SysrootPin\n(per glibc baseline)"];
+  csrc [label="launcher C sources\nsrc/fsbpyr/launcher" fillcolor="#eaf5ea" color="#3d8b3d"];
+  licences [label="supplied licence texts\nruntime/licenses/,\nlauncher/vendor/zstd/" fillcolor="#eaf5ea" color="#3d8b3d"];
+
+  // steps
+  rid [label="registry.runtime_id\nlauncher digest, pin,\nsysroot, layout"];
+  fetch [label="pbs.fetch\nSHA-256, safe extract"];
+  sysfetch [label="sysroot.fetch_sysroot\nSHA-256, extract a .deb's data.tar\nor an .rpm's payload (rpm.py)"];
+  find [label="toolchain.find_toolchain\nclang >= PBS's LLVM major"];
+  stub [label="stub.build_stub\nclang -flto=full, lld"];
+  stdlib [label="stdlib.fragment\ncompiled by PBS's python"];
+  notices [label="notices.files\nlicence texts"];
+  ask [label="pbs: extension suffixes,\ncomponent versions"];
+  save [label="Runtime.save\nstaging dir, rename"];
+
+  // on disk
+  downloads [label="downloads/" fillcolor="#eaf5ea" color="#3d8b3d"];
+  pbsdir [label="pbs/<name>/python" fillcolor="#eaf5ea" color="#3d8b3d"];
+  sysdir [label="sysroots/<identity>" fillcolor="#eaf5ea" color="#3d8b3d"];
+  out [label="runtimes/<id>/\nstub, stdlib.fsbp,\nruntime.json, .lock" fillcolor="#eaf5ea" color="#3d8b3d"];
+
+  pins -> fetch [label="URL, SHA-256"];
+  archive -> fetch;
+  fetch -> downloads;
+  fetch -> pbsdir;
+  pins -> sysfetch [label="URLs, SHA-256"];
+  debs -> sysfetch [label="--glibc 2.34\n(default)"];
+  rpms -> sysfetch [label="--glibc 2.28\n(EL8)"];
+  sysfetch -> downloads;
+  sysfetch -> sysdir;
+  pins -> rid;
+  csrc -> rid;
+  clang -> find;
+  pbsdir -> find [label="PYTHON.json"];
+  find -> stub;
+  csrc -> stub;
+  pbsdir -> stub [label="libpython.a, objects,\nstatic libs, headers"];
+  sysdir -> stub [label="--sysroot"];
+  pbsdir -> stdlib;
+  pbsdir -> notices;
+  licences -> notices;
+  pbsdir -> ask;
+  rid -> stub [label="runtime id,\ncompiled in"];
+  rid -> save [label="directory name"];
+  stub -> save [label="stub"];
+  stdlib -> save [label="modules, files"];
+  notices -> save [label="files"];
+  ask -> save;
+  save -> out;
+}

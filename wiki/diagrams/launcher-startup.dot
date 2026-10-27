@@ -1,0 +1,73 @@
+// The launcher's startup sequence at fsbpyr v0.27.0: main() in src/fsbpyr/launcher/main.c,
+// with fsb_payload_open (payload.c), fsb_check_integrity (integrity.c), fsb_hold_slot (slots.c)
+// and fsb_collect_when_due (due.c). Steps run top to bottom; red edges are the failure exits.
+// After step 13 the boot code ends a start with 70 itself when the C code refuses the cache
+// directory (NativeCache.extract in boot/_fsbpyr_rt/native.py).
+// Steps 1 to 4 are fsb_payload_open. rankdir=TB, not the wiki's usual LR: 13 steps in sequence.
+digraph launcher_startup {
+  graph [fontname="Helvetica" fontsize=11 rankdir=LR bgcolor="white" pad=0.3 nodesep=0.35 ranksep=0.5];
+  node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#eef3fb" color="#4a6fa5"];
+  edge [fontname="Helvetica" fontsize=9 color="#555555"];
+  graph [rankdir=TB nodesep=0.3 ranksep=0.28];
+
+  node [fillcolor="#fdf1e3" color="#c77d2a" width=2.6];
+
+  exe [label="the executable file\n(/proc/self/exe)" fillcolor="#eaf5ea" color="#3d8b3d" width=1.8];
+
+  locate    [label="1. readlink, open and fstat\n/proc/self/exe (fsb_payload_open)"];
+  integrity [label="2. integrity digest of the whole file\n(fsb_check_integrity)"];
+  trailer   [label="3. read and check the trailer"];
+  map       [label="4. mmap the payload;\ncheck header and section table"];
+
+  secure    [label="5. AT_SECURE set?\n(set-uid, set-gid, capabilities)"];
+  versions  [label="6. bytecode magic and\nPython major.minor match?"];
+  slot      [label="7. hold an instance slot\n(fsb_hold_slot)"];
+  due       [label="8. cache collection due?\n(fsb_collect_when_due)"];
+
+  frozen    [label="9. frozen-module table from\nSTARTUP (decompressed)"];
+  inittab   [label="10. register _fsbpyr\n(PyImport_AppendInittab)"];
+  config    [label="11. isolated config,\nprefixes pinned to the executable"];
+  init      [label="12. Py_InitializeFromConfig"];
+  run       [label="13. Py_RunMain runs\nimport _fsbpyr_boot; _fsbpyr_boot.run()"];
+
+  exe -> locate [style=dashed];
+  locate -> integrity -> trailer -> map -> secure -> versions -> slot -> due -> frozen
+    -> inittab -> config -> init -> run;
+
+  node [width=0];
+  x1  [label="exit 70: needs /proc"];
+  x2  [label="exit 70: check failed (mismatch,\nread error, no memory)"];
+  x3  [label="exit 70: no payload, or trailer invalid"];
+  x4  [label="exit 70: cannot map, or header invalid"];
+  x5  [label="exit 70: refusing a privileged start"];
+  x6  [label="exit 70: different Python version"];
+  x7  [label="exit 70: refusing to start (all slots taken);\nexit 0 if FSBPYR_GC=background"];
+  x8  [label="detached collector: /proc/self/exe\nexecuted with FSBPYR_GC=background"];
+  x9  [label="exit 70: startup modules invalid,\ncorrupt, too many, or no memory"];
+  x10 [label="exit 70: cannot register _fsbpyr"];
+  x11 [label="exit 70: executable path not absolute;\nCPython's exit on a config error"];
+  x12 [label="CPython's exit\n(Py_ExitStatusException)"];
+  x13 [label="exit with the status Py_RunMain returns;\nexit 70 from the boot code: cache\ndirectory refused (os._exit)"];
+
+  { rank=same; locate; x1; }
+  { rank=same; integrity; x2; }
+  { rank=same; trailer; x3; }
+  { rank=same; map; x4; }
+  { rank=same; secure; x5; }
+  { rank=same; versions; x6; }
+  { rank=same; slot; x7; }
+  { rank=same; due; x8; }
+  { rank=same; frozen; x9; }
+  { rank=same; inittab; x10; }
+  { rank=same; config; x11; }
+  { rank=same; init; x12; }
+  { rank=same; run; x13; }
+
+  edge [color="#aa3333" fontcolor="#aa3333"];
+  locate -> x1; integrity -> x2; trailer -> x3; map -> x4; secure -> x5 [label="yes"];
+  versions -> x6 [label="no"]; slot -> x7; frozen -> x9; inittab -> x10; config -> x11;
+  init -> x12 [label="error"];
+  edge [color="#555555" fontcolor="#555555"];
+  due -> x8 [style=dashed label="due: fork twice"];
+  run -> x13;
+}

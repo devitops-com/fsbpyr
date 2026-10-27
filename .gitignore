@@ -155,3 +155,7 @@ coverage.xml
 
 # fsbpyr test fixtures carry their own lock and requirements files
 !tests/fixtures/projects/**/requirements.txt
+
+# The wiki's PDFs and images are made when it is built (into dist/wiki/), never kept
+wiki/**/*.pdf
+wiki/**/*.png

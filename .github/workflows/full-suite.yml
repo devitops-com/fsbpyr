@@ -32,7 +32,7 @@ name: Full suite
 on:
   push:
     branches: [main]
-    paths-ignore: ["**.md", "docs/**"]  # the documentation green-run.sh lets a release stand on
+    paths-ignore: ["**.md", "docs/**", "wiki/**"]  # the documentation green-run.sh lets a release stand on
   schedule:
     # Weekly. Keep the string equal to WEEKLY in "Choose the fuzzing time".
     - cron: "43 3 * * 0"
