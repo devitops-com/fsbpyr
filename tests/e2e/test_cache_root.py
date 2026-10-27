@@ -223,3 +223,16 @@ def test_a_refused_cache_directory_ends_the_start_with_one_line_and_exit_70(
     assert result.stdout == ""
     assert result.stderr == (f"fsbpyr: cannot start {importer}: refusing cache directory "
                              f"{exposed}: other users may write to it\n")  # fmt: skip
+
+
+def test_the_native_check_reports_a_refused_cache_directory_as_the_app_does(
+    importer: Path, exposed: Path
+) -> None:
+    result = subprocess.run([importer], capture_output=True, text=True, check=False, timeout=60,
+                            env={**os.environ, "FSBPYR_CACHE_DIR": str(exposed),
+                                 "FSBPYR_SELFTEST": "natives"})  # fmt: skip
+
+    assert result.returncode == 70, result.stderr
+    assert result.stdout == ""
+    assert result.stderr == (f"fsbpyr: cannot start {importer}: refusing cache directory "
+                             f"{exposed}: other users may write to it\n")  # fmt: skip

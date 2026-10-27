@@ -75,7 +75,7 @@ def natives(loader: str | None = None) -> None:
     extensions = _extensions()
     needed_by: dict[str, list[str]] = {}
     for rel, files in extensions:
-        cache.sync(files)
+        cache.extract(files)
         try:
             traced = subprocess.run(  # noqa: S603  the executable's own loader, our cache file
                 [loader, f"{cache.site}/{rel}"], capture_output=True, text=True,
