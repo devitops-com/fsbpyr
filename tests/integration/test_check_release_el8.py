@@ -58,12 +58,13 @@ gh() {
 git() { case "$3" in fetch) return 0 ;; rev-parse) echo "${FAKE_TAG_COMMIT:-$COMMIT}" ;; esac; }
 command() { if [ "$1 $2" = "-v podman" ]; then return 1; fi; builtin command "$@"; }
 managed() { return 0; }
-# a build of the app: records what stood beside the executable, and fetches the stub if none did
+# a build of the app: records what stood beside the executable, and fetches the stub if none did,
+# keeping it under CACHED_AS (0.27.0 and earlier: the tag; later: the runtime id it carries)
 building() {
     ls "${1%/*}" > "$work/beside"
     [ -e "${1%/*}/$ASSET.xz" ] && return 0
     mkdir -p "$work/cache/downloads"
-    printf %s "$STUB" > "$work/cache/downloads/$ASSET-$TAG"
+    printf %s "$STUB" > "$work/cache/downloads/$ASSET-${CACHED_AS:-$TAG}"
 }
 mkdir -p "$work/assets" "$work/src/tests/fixtures/projects/hello"
 touch "$work/assets/fsbpyr-$DEFAULT-$HOST"
@@ -155,15 +156,19 @@ def test_a_missing_asset_is_one_failure_not_two(check: Check) -> None:
     assert result.stdout.count("FAIL") == 1
 
 
+@pytest.mark.parametrize(("version", "cached_as"), [
+    ("0.27.0", "v0.27.0"),  # 0.27.0 named the cached stub by the tag
+    ("0.28.0", "cp314-x86_64-unknown-linux-gnu-0123456789ab"),  # later: by the runtime id
+])  # fmt: skip
 def test_a_complete_companion_release_passes_and_its_stub_is_fetched_by_a_later_fsbpyr(
-        check: Check) -> None:  # fmt: skip
+        check: Check, version: str, cached_as: str) -> None:  # fmt: skip
     check.release()
 
-    result = check.run()
+    result = check.run(version, CACHED_AS=cached_as)
 
     assert "FAIL" not in result.stdout, result.stdout
     assert f"{ASSET}.xz unpacks to the digest listed" in result.stdout
-    assert f"the stub it fetched is el8-v0.27.0's {ASSET}" in result.stdout
+    assert f"the stub it fetched is el8-v{version}'s {ASSET}" in result.stdout
     assert check.beside == ["fsbpyr-3.14-x86_64-linux-gnu"]  # nothing placed beside it
 
 
