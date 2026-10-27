@@ -10,6 +10,16 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Fixed
+- **The EL8 workflow can publish the companion release.** GitHub refuses a workflow's token a
+  release or tag whose target is a commit that adds or changes a workflow file, as v0.27.0's
+  merge commit did, so `el8.yml` could not create `el8-v0.27.0` (HTTP 403, also with the tag
+  already pushed, since it named the commit as the target). `make release` now pushes the tag
+  `el8-vX.Y.Z` with `vX.Y.Z`, on the same commit, and `el8.yml` creates the release on that tag
+  (`--verify-tag`, no target), as `release.yml` creates its own; it fails early, with the
+  command to push the tag, when it is missing. `el8-v0.27.0` was published by hand from the
+  stubs el8.yml built and attested on the v0.27.0 tag.
+
 ### Changed
 - **The test suite has no skips.** A test whose tool is missing (a C compiler, `uv`, `unshare`,
   `podman`, `llvm-objdump`, `groff`, `git`, `strace`, `zstd`, `wget`, `busybox`, `make`) or whose

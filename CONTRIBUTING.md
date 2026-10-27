@@ -215,7 +215,9 @@ The tiers, from fastest to most complete:
   does (reproducible: the release asset's bytes) for the portability and VM jobs. Only the
   `publish` job, after every other job passed and the release of the tag exists (it waits up to
   an hour for `release.yml` to publish it), writes: it creates the companion release `el8-vX.Y.Z`
-  as a draft on the tag's commit, uploads the eight `fsbpyr-stub-3.X-<target>-glibc2.28.xz` and
+  as a draft on the tag `el8-vX.Y.Z`, which `make release` pushed with `vX.Y.Z` on the same
+  commit (GitHub refuses the workflow's token a release or tag whose target is a commit that
+  changes a workflow file, as a release's merge often does), uploads the eight `fsbpyr-stub-3.X-<target>-glibc2.28.xz` and
   `SHA256SUMS-glibc2.28` to it, attests them and publishes it (it becomes immutable) with
   `--latest=false`, so that `releases/latest` keeps pointing at `vX.Y.Z`. It does not touch the
   release `vX.Y.Z`: an immutable release accepts no later upload, which is why the stubs are not

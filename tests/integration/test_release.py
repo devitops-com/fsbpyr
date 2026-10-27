@@ -286,13 +286,14 @@ def assert_nothing_tagged_or_pushed(repo: Path, tmp_path: Path, env: dict[str, s
 
 def assert_released_at_origin(repo: Path, tmp_path: Path, env: dict[str, str]) -> None:
     """No commit: the annotated tag is on HEAD, the tested release commit, here and on origin,
-    whose main is HEAD as before."""
+    whose main is HEAD as before; so is the tag of the EL8 companion release."""
     assert git(repo, "log", "--format=%s", env=env) == "initial"
     assert git(repo, "cat-file", "-t", TAG, env=env) == "tag"  # annotated
     assert git(repo, "tag", "-l", "--format=%(contents:subject)", TAG, env=env) == f"fsbpyr {TAG}"
     head = git(repo, "rev-parse", "HEAD", env=env)
     origin = tmp_path / "origin.git"
-    assert git(origin, "rev-parse", "main", f"{TAG}^{{commit}}", env=env).split() == [head, head]
+    assert git(origin, "rev-parse", "main", f"{TAG}^{{commit}}", f"el8-{TAG}^{{commit}}",
+               env=env).split() == [head, head, head]  # fmt: skip
 
 
 def released_files(repo: Path, env: dict[str, str]) -> list[str]:
@@ -711,7 +712,7 @@ def test_release_reports_a_failed_workflow_run_with_its_recovery(
 def test_release_reports_a_refused_tag_push_with_its_recovery(
     tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    """origin refuses the tag: nothing reaches origin, and the local tag can go."""
+    """origin refuses the tags: nothing reaches origin, and the local tags can go."""
     repo = make_release_repo(tmp_path, release_env)
     write_program(
         tmp_path / "origin.git" / "hooks" / "update",
@@ -724,9 +725,9 @@ def test_release_reports_a_refused_tag_push_with_its_recovery(
     assert "push failed" in result.stderr
     origin = tmp_path / "origin.git"
     assert git(origin, "tag", "--list", env=release_env) == ""
-    assert git(repo, "tag", "--list", env=release_env) == TAG
-    assert f"(a) Abort: git tag -d {TAG}\n" in result.stderr
-    assert f"git push hub {TAG}\n" in result.stderr
+    assert git(repo, "tag", "--list", env=release_env).split() == [f"el8-{TAG}", TAG]
+    assert f"(a) Abort: git tag -d {TAG} el8-{TAG}\n" in result.stderr
+    assert f"git push --atomic hub {TAG} el8-{TAG}\n" in result.stderr
     assert_nothing_built_or_published(tmp_path)
     assert not tag_run_calls(tmp_path)
 
@@ -1173,10 +1174,10 @@ def test_the_image_is_pinned_by_digest_in_the_workflow_and_the_containerfile() -
 
 
 def test_a_release_is_one_run_and_a_pull_request_starts_none() -> None:
-    """release.yml runs for a pushed tag only and pushes nothing; release.sh pushes the tag
-    alone, on the main commit the full suite tested. full-suite.yml runs for pushes to main
-    (merges), weekly and on request. Neither runs for pull requests: anyone can open one, and a
-    branch is tested locally first."""
+    """release.yml runs for a pushed tag only and pushes nothing; release.sh pushes the tag and
+    its EL8 companion's tag alone, on the main commit the full suite tested. full-suite.yml
+    runs for pushes to main (merges), weekly and on request. Neither runs for pull requests:
+    anyone can open one, and a branch is tested locally first."""
     triggers = {}
     for name in ("release.yml", "full-suite.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
@@ -1189,8 +1190,8 @@ def test_a_release_is_one_run_and_a_pull_request_starts_none() -> None:
     release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     assert "refs/heads/main" not in release and "git push" not in release
     script = RELEASE_SH.read_text(encoding="utf-8")
-    assert script.count("git push") == script.count("git push hub $TAG") + script.count(
-        'git push hub "$TAG"') == 2
+    assert script.count("git push") == script.count("git push --atomic hub $TAG $EL8_TAG") + \
+        script.count('git push --atomic hub "$TAG" "$EL8_TAG"') == 2
 
 
 def test_the_publish_job_checks_the_tagged_commits_full_suite_run_and_names_it() -> None:
