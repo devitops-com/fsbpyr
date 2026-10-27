@@ -207,7 +207,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
             python=python,
             glibc=glibc,
             entry=entry,
-            output=output.resolve() if output else None,
+            output=output.absolute() if output else None,  # a link: build._output_path
             requirements=requirements,
             extras=extras or None,
             allowed_system_libs=allowed_system_libs or None,

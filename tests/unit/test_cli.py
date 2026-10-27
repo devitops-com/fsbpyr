@@ -104,6 +104,19 @@ def test_no_usable_home_is_a_one_line_error(
     assert err.count("\n") == 1 and "Traceback" not in err
 
 
+def test_cache_gc_without_a_home_collects_the_cache_dir_it_is_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """FSBPYR_CACHE_DIR, the remedy the error names, works for gc too: no ~/.cache is read."""
+    monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.setattr("pwd.getpwuid", lambda uid: types.SimpleNamespace(pw_dir="nowhere"))
+
+    assert main(["cache", "gc"]) == 0
+    assert "cannot find the home directory" not in capsys.readouterr().err
+
+
 def test_main_without_command_prints_the_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--help"]) == 0
     help_text = capsys.readouterr().out
@@ -380,6 +393,28 @@ def test_a_build_of_one_command_says_one_command(
 
     assert main(["build", str(tmp_path)]) == 0
     assert ", 1 command)" in capsys.readouterr().out
+
+
+def test_the_output_is_handed_on_as_given_not_through_its_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """build._output_path decides whether a link is written through: one that an earlier build
+    of several commands made is replaced instead (#74)."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "a").symlink_to("app")
+    handed: list[object] = []
+
+    def build(project: Path, config: types.SimpleNamespace, **kwargs: object) -> None:
+        handed.append(config.output)
+        raise OSError("stop here")
+
+    monkeypatch.setattr("fsbpyr.build.build", build)
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["build", str(tmp_path), "-o", "dist/a"]) == 1
+    assert capsys.readouterr().err == "fsbpyr: error: stop here\n"
+    assert handed == [tmp_path / "dist" / "a"]
 
 
 def _handed(handed: list[str], chosen: str) -> int:

@@ -136,10 +136,17 @@ def _download(collection: gc.Run, parent: int, name: str) -> None:
 def app_caches() -> list[Path]:
     """The app caches to collect: directories in ${XDG_CACHE_HOME:-~/.cache} with the marker, or
     that may have it (gc.mark: a cache an app of an earlier version made, which marks nothing),
-    and $FSBPYR_CACHE_DIR if it has one."""
-    home = registry.cache_home()
-    found = sorted(p for p in home.glob("*/") if _marked(p)) if home.is_dir() else []
-    if explicit := os.environ.get("FSBPYR_CACHE_DIR"):
+    and $FSBPYR_CACHE_DIR if it has one. Without a home directory there is no ~/.cache, but
+    $FSBPYR_CACHE_DIR still is one."""
+    explicit = os.environ.get("FSBPYR_CACHE_DIR")
+    try:
+        home: Path | None = registry.cache_home()
+    except registry.RuntimeCacheError:
+        if not explicit:
+            raise
+        home = None
+    found = sorted(p for p in home.glob("*/") if _marked(p)) if home and home.is_dir() else []
+    if explicit:
         root = Path(os.path.abspath(explicit))  # as the boot code makes it (native.py)
         if (root / gc.MARKER).is_file() and root not in found:
             found.append(root)
