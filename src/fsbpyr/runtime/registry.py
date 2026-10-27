@@ -97,7 +97,7 @@ def _home() -> Path:
     except KeyError:
         entry = ""
     if not os.path.isabs(entry):
-        raise RuntimeError(
+        raise RuntimeCacheError(
             "cannot find the home directory; set HOME, XDG_CACHE_HOME or FSBPYR_CACHE_DIR"
         )
     return Path(entry)

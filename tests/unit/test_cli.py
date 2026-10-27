@@ -78,6 +78,30 @@ def test_other_commands_never_run_git(
     assert main(["runtime", "list"]) == 0
 
 
+@pytest.mark.parametrize("home", [None, "", "relative"])
+@pytest.mark.parametrize("argv", [["runtime", "list"], ["runtime", "build"], ["build", "."]])
+def test_no_usable_home_is_a_one_line_error(
+    argv: list[str], home: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "app.py").write_text("if __name__ == '__main__':\n    pass\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FSBPYR_CACHE_DIR", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    if home is None:
+        monkeypatch.delenv("HOME", raising=False)
+    else:
+        monkeypatch.setenv("HOME", home)
+    monkeypatch.setattr("pwd.getpwuid", lambda uid: types.SimpleNamespace(pw_dir="nowhere"))
+
+    assert main(argv) == 1
+
+    err = capsys.readouterr().err
+    assert err.startswith("fsbpyr: error: cannot find the home directory")
+    assert err.count("\n") == 1 and "Traceback" not in err
+
+
 def test_main_without_command_prints_the_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--help"]) == 0
     help_text = capsys.readouterr().out
