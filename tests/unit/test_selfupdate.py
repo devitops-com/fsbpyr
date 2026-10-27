@@ -18,7 +18,6 @@ import pytest
 from fsbpyr import dispatch, selfupdate
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.cli import main
-from fsbpyr.runtime import stubs
 from fsbpyr.targets import target_named
 
 from ..support.releases import FakeReleases
@@ -451,7 +450,7 @@ def test_a_sums_read_cut_short_is_an_unknown_not_a_traceback(
     def cut_short(url: str, limit: int = 0) -> str:
         raise http.client.IncompleteRead(b"partial")
 
-    monkeypatch.setattr(stubs, "download_text", cut_short)
+    monkeypatch.setattr("fsbpyr.runtime.stubs.download_text", cut_short)
 
     _update(github, tmp_path)  # the update itself succeeded: exit status 0
 

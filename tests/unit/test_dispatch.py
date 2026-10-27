@@ -335,16 +335,17 @@ def test_a_cached_variants_name_is_not_one_the_cache_collector_removes() -> None
 def test_the_variant_is_told_where_the_dispatcher_is(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from fsbpyr.runtime import stubs  # noqa: PLC0415
-
     seen: list[dict[str, str]] = []
 
-    def run(command: list[str], **kwargs: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
-        seen.append(kwargs["env"])
+    def run(
+        command: list[str], *, env: dict[str, str], **_: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        seen.append(env)
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(dispatch, "variant", lambda *_a, **_k: tmp_path / "variant")
-    monkeypatch.setattr(stubs, "own_paths", lambda: [tmp_path / "link", tmp_path / "real"])
+    monkeypatch.setattr("fsbpyr.runtime.stubs.own_paths",
+                        lambda: [tmp_path / "link", tmp_path / "real"])
     monkeypatch.setattr(subprocess, "run", run)
 
     assert dispatch.run(OTHER, ["build"]) == 0
