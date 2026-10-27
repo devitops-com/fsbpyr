@@ -379,3 +379,51 @@ def test_a_build_of_one_command_says_one_command(
 
     assert main(["build", str(tmp_path)]) == 0
     assert ", 1 command)" in capsys.readouterr().out
+
+
+def _handed(handed: list[str], chosen: str) -> int:
+    handed.append(chosen)
+    return 0
+
+
+def _pipfile_lock_project(directory: Path, settings: str) -> None:
+    (directory / "main.py").write_text("if __name__ == '__main__':\n    pass\n")
+    (directory / "Pipfile.lock").write_text(json.dumps({
+        "_meta": {"hash": {"sha256": "x"}, "pipfile-spec": 6,
+                  "requires": {"python_version": "3.12"}, "sources": []},
+        "default": {}, "develop": {}}))  # fmt: skip
+    (directory / "pyproject.toml").write_text(settings)
+    (directory / "reqs.txt").write_text("")
+
+
+@pytest.mark.version_rule  # the test session builds for its own Python otherwise
+def test_the_python_comes_from_the_lock_source_that_the_settings_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Pipfile.lock asks for 3.12, but `requirements` in [tool.fsbpyr] makes reqs.txt the lock
+    source, which the build installs."""
+    _pipfile_lock_project(tmp_path, '[tool.fsbpyr]\nrequirements = "reqs.txt"\n')
+    handed: list[str] = []
+    monkeypatch.setattr("fsbpyr.cli.DEFAULT_PYTHON", "3.14")  # the Pipfile.lock asks for 3.12
+    monkeypatch.setattr("fsbpyr.build.build", lambda *args, **kwargs: (_ for _ in ()).throw(
+        OSError("stop here")))
+    monkeypatch.setattr("fsbpyr.dispatch.run", lambda chosen, *args: _handed(handed, chosen))
+
+    main(["build", str(tmp_path)])
+
+    assert handed == []
+
+
+@pytest.mark.version_rule  # the test session builds for its own Python otherwise
+def test_a_pipfile_lock_that_is_the_lock_source_still_picks_the_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _pipfile_lock_project(tmp_path, "[tool.fsbpyr]\n")
+    handed: list[str] = []
+    monkeypatch.setattr("fsbpyr.cli.DEFAULT_PYTHON", "3.14")
+    monkeypatch.setattr("fsbpyr.build.build", lambda *args, **kwargs: pytest.fail("built"))
+    monkeypatch.setattr("fsbpyr.dispatch.run", lambda chosen, *args: _handed(handed, chosen))
+
+    main(["build", str(tmp_path)])
+
+    assert handed == ["3.12"]
