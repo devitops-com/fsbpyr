@@ -463,8 +463,8 @@ def load_package(project: Project, config: BuildConfig, warnings: list[str]) -> 
     warnings += package.warnings
     if config.entry is None and not package.commands and project.bare:
         raise ProjectError(f"{project.directory} has no Python file with an if __name__ == "
-                           "'__main__' guard or a python shebang; choose one with --entry "
-                           "(a command name or _fsbpyr_scripts.module[:attr])")  # fmt: skip
+                           "'__main__' guard or a python or `uv run` shebang; choose one with "
+                           "--entry (a command name or _fsbpyr_scripts.module[:attr])")  # fmt: skip
     if config.entry is None and not package.commands:
         raise ProjectError(f"{package.name} has no [project.scripts] and no Python file with an "
                            "if __name__ == '__main__' guard; choose one with --entry (a "
