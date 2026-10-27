@@ -65,8 +65,9 @@ def _fetch(python: str, tag: str, final: Path) -> None:
             new.unlink()
 
 
-def variant(python: str, log: Callable[[str], None] = print) -> Path:
-    """The executable of this release that runs on ``python``: from the cache, else fetched."""
+def variant(python: str, log: Callable[[str], None] = print, *, offline: bool = False) -> Path:
+    """The executable of this release that runs on ``python``: from the cache, else fetched
+    (``offline``: never fetched)."""
     tag = _own_tag(python)
     root = secure_directory(cache_root())
     directory = root / "downloads"
@@ -74,15 +75,23 @@ def variant(python: str, log: Callable[[str], None] = print) -> Path:
     asset = release_asset(python, host_target().name)
     final = directory / f"{asset}-{tag}"
     if not final.is_file():
+        if offline:
+            raise DispatchError(
+                f"this project builds with Python {python}, which needs {asset} of release "
+                f"{tag}; it is not in the cache and --offline fetches nothing: run the build "
+                "once without --offline"
+            )
         log(f"fetching {asset} of release {tag}")
         _fetch(python, tag, final)
     return final
 
 
-def run(python: str, args: Sequence[str], log: Callable[[str], None] = print) -> int:
+def run(
+    python: str, args: Sequence[str], log: Callable[[str], None] = print, *, offline: bool = False
+) -> int:
     """Run the variant for ``python`` with ``args`` (this command line, as given); its exit
     status."""
-    executable = variant(python, log)
+    executable = variant(python, log, offline=offline)
     log(f"the project builds with Python {python}: running {executable}")
     try:
         return subprocess.run([str(executable), *args], check=False).returncode  # noqa: S603

@@ -222,7 +222,8 @@ def build_command(  # noqa: PLR0913  click passes every option by name
         chosen = resolve(loaded, config.python, own=DEFAULT_PYTHON).version
         if chosen != DEFAULT_PYTHON:  # another fsbpyr builds it, given this command line
             args = click.get_current_context().obj  # main() put it there
-            return run(chosen, args, lambda message: print(f"fsbpyr: {message}"))
+            return run(chosen, args, lambda message: print(f"fsbpyr: {message}"),
+                       offline=config.offline)
         result = build(project, config, verbose=verbose,
                        log=lambda message: print(f"fsbpyr: {message}"))
     except errors as exc:

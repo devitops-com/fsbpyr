@@ -325,6 +325,52 @@ def test_a_server_that_cannot_be_reached_is_not_called_a_release_without_stubs(
     assert f"place {ASSET} next to {tmp_path / 'bin' / 'fsbpyr'}" in message
 
 
+# --- offline ----------------------------------------------------------------------------------
+
+
+def test_offline_downloads_nothing_and_says_where_to_place_the_stub(
+    releases: FakeReleases, tmp_path: Path
+) -> None:
+    publish(releases, make_stub())
+
+    with pytest.raises(stubs.StubError) as error:
+        stubs.stub_for(PYTHON, BASELINE, TAG, tmp_path / "cache", offline=True)
+
+    message = str(error.value)
+    assert "--offline" in message and "not placed or cached" in message
+    assert f"place {ASSET} (or {ASSET}.xz) next to {tmp_path / 'bin' / 'fsbpyr'}" in message
+    assert "without --offline" in message
+    assert releases.requests == [] and cached(tmp_path) == []
+
+
+def test_offline_uses_a_placed_or_a_cached_stub(releases: FakeReleases, tmp_path: Path) -> None:
+    (tmp_path / "cache" / "downloads").mkdir(parents=True)
+    (tmp_path / "cache" / "downloads" / CACHED).write_bytes(make_stub(filler=b"cached"))
+
+    assert stubs.stub_for(PYTHON, BASELINE, TAG, tmp_path / "cache", offline=True) == make_stub(
+        filler=b"cached")
+
+    (tmp_path / "bin" / ASSET).write_bytes(make_stub(filler=b"placed"))
+
+    assert stubs.stub_for(PYTHON, BASELINE, TAG, tmp_path / "cache", offline=True) == make_stub(
+        filler=b"placed")
+    assert releases.requests == []
+
+
+def test_select_runtime_passes_offline_on_to_the_stub(
+    releases: FakeReleases, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    own = _runtime(python_version="3.14.9")
+    monkeypatch.setattr(registry, "running_executable", lambda: Path("/proc/self/exe"))
+    monkeypatch.setattr(registry.Runtime, "from_executable", classmethod(lambda cls, path: own))
+    publish(releases, make_stub())
+
+    with pytest.raises(stubs.StubError, match="--offline"):
+        registry.select_runtime("3.14", tmp_path / "cache", BASELINE, offline=True)
+
+    assert releases.requests == []
+
+
 # --- the executable's own paths ---------------------------------------------------------------
 
 

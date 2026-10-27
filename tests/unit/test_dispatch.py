@@ -138,6 +138,34 @@ def test_a_cached_variant_is_not_fetched_again_and_works_offline(
     assert releases.requests == [PATH]
 
 
+def test_offline_runs_a_cached_variant_without_the_network(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path
+) -> None:
+    releases.files[PATH] = lzma.compress(_release(tmp_path))
+    assert main(["build", str(project)]) == 0
+    releases.close()
+
+    assert main(["build", str(project), "--offline"]) == 0
+
+    assert ran.commands[1][1:] == ["build", str(project), "--offline"]
+    assert releases.requests == [PATH]
+
+
+def test_offline_does_not_fetch_a_variant_and_says_how_to_get_it(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    releases.files[PATH] = lzma.compress(_release(tmp_path))
+
+    assert main(["build", str(project), "--offline"]) == 1
+
+    err = capsys.readouterr().err
+    assert f"needs {ASSET} of release v1.2.0" in err and "--offline" in err
+    assert "without --offline" in err
+    assert releases.requests == [] and ran.commands == []
+    assert not (tmp_path / "cache" / "downloads").exists() or _cached(tmp_path) == []
+
+
 def test_glibc_reaches_the_variant_from_the_command_line_and_from_the_project(
     releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path
 ) -> None:

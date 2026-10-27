@@ -730,7 +730,7 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
     uv = find_uv()  # before anything slow: a build cannot go far without it (D26)
     uv_used = uv_version(uv)
     warnings += python_warnings(project, config)
-    runtime = select_runtime(TARGET_PYTHON, baseline=config.glibc)
+    runtime = select_runtime(TARGET_PYTHON, baseline=config.glibc, offline=config.offline)
     project.check_python(runtime.python_version)
     warnings += uv_mismatch(builder=builder_uv(), current=uv_used)
     source = project.lock_source(config.requirements)

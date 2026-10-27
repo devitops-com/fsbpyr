@@ -309,11 +309,15 @@ def running_executable() -> Path | None:
 
 
 def select_runtime(
-    python: str, cache: Path | None = None, baseline: str = pins.DEFAULT_BASELINE
+    python: str,
+    cache: Path | None = None,
+    baseline: str = pins.DEFAULT_BASELINE,
+    *,
+    offline: bool = False,
 ) -> Runtime:
     """Our own embedded runtime when it matches ``python`` and the glibc ``baseline``
     (self-hosting); a released executable's own stdlib with its release's stub of another
-    baseline (stubs.py); else the cache."""
+    baseline (stubs.py; ``offline``: placed or cached, never downloaded); else the cache."""
     own = running_executable()
     if own is not None:
         runtime = Runtime.from_executable(own)
@@ -322,7 +326,7 @@ def select_runtime(
                 return runtime
             from . import stubs  # noqa: PLC0415  stubs.py needs this module
 
-            if (paired := stubs.paired(runtime, baseline, cache)) is not None:
+            if (paired := stubs.paired(runtime, baseline, cache, offline=offline)) is not None:
                 return paired
     return find_runtime(python, cache, baseline=baseline)
 

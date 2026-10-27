@@ -10,10 +10,10 @@ The stub comes from, in this order: a file the user placed beside the fsbpyr exe
 machines without GitHub), the tool's cache, a download from the companion release, verified
 against the SHA-256 it publishes and kept in the cache. Whichever it is, the stub must carry the
 runtime id this fsbpyr computes for its own launcher sources, pinned Python and sysroot (main.c,
-stub.py) and is refused otherwise, so a stub of another release or Python never goes into an app. The cache
-names a stub by that id, not by the release, so an update that leaves it unchanged reuses the
-download. A developer build has no release to fetch from: it uses the cache's runtime (``fsbpyr runtime
-build --glibc 2.28``)."""
+stub.py) and is refused otherwise, so a stub of another release or Python never goes into an
+app. The cache names a stub by that id, not by the release, so an update that leaves it unchanged
+reuses the download. A developer build has no release to fetch from: it uses the cache's runtime
+(``fsbpyr runtime build --glibc 2.28``)."""
 
 import contextlib
 import dataclasses
@@ -66,6 +66,13 @@ def _no_stubs(tag: str, release: str, baseline: str, asset: str, beside: Path) -
         f"for this Python: EL8 stubs are published separately and not for every release; "
         f"place {asset} (or {asset}.xz) next to {beside}, or use a release that has them: "
         f"{RELEASES}"
+    )
+
+
+def _offline(asset: str, beside: Path) -> StubError:
+    return StubError(
+        f"--offline: the {asset} is not placed or cached, and nothing is downloaded; place "
+        f"{asset} (or {asset}.xz) next to {beside}, or build once without --offline to cache it"
     )
 
 
@@ -149,10 +156,12 @@ def _keep(data: bytes, final: Path) -> None:
             new.unlink()
 
 
-def stub_for(python: str, baseline: str, tag: str, cache: Path | None = None) -> bytes:
+def stub_for(
+    python: str, baseline: str, tag: str, cache: Path | None = None, *, offline: bool = False
+) -> bytes:
     """The stub of release ``tag`` for ``python`` and ``baseline``, with this fsbpyr's runtime
     id: placed beside the executable, else kept in the cache, else downloaded (and kept) from
-    the companion release of the tag."""
+    the companion release of the tag; ``offline`` downloads nothing."""
     pin = pins.pin_for(python, registry.host_triple())
     expected = registry.runtime_id(pin, baseline=baseline)
     asset = release_stub_asset(python, host_target().name, baseline)
@@ -168,6 +177,8 @@ def stub_for(python: str, baseline: str, tag: str, cache: Path | None = None) ->
     if final.is_file() and stub_identity(final.read_bytes()) == expected:
         return final.read_bytes()
     final.unlink(missing_ok=True)  # not the stub (edited, damaged): again
+    if offline:
+        raise _offline(asset, beside)
     base = os.environ.get(DOWNLOADS_VARIABLE) or DEFAULT_DOWNLOADS
     try:
         data = _download(directory, base, release, baseline, asset)
@@ -185,7 +196,7 @@ def stub_for(python: str, baseline: str, tag: str, cache: Path | None = None) ->
 
 
 def paired(
-    own: registry.Runtime, baseline: str, cache: Path | None = None
+    own: registry.Runtime, baseline: str, cache: Path | None = None, *, offline: bool = False
 ) -> registry.Runtime | None:
     """``own``'s stdlib with the stub of its release for ``baseline``; None for a developer
     build, which has the cache's runtimes only."""
@@ -194,7 +205,7 @@ def paired(
         return None
     python = own.python_version.rpartition(".")[0]
     pin = pins.pin_for(python, registry.host_triple())
-    stub = stub_for(python, baseline, tag, cache)
+    stub = stub_for(python, baseline, tag, cache, offline=offline)
     return dataclasses.replace(
         own, runtime_id=registry.runtime_id(pin, baseline=baseline), stub=stub, toolchain={},
         inputs=registry.runtime_inputs(pin, baseline), baseline=baseline,

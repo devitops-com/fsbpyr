@@ -139,6 +139,27 @@ def _stand_ins(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("fsbpyr.build.git_state", lambda directory, warn: None)
 
 
+def test_offline_reaches_the_runtime_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(APP_PROJECT)
+    (tmp_path / "app.py").write_text("if __name__ == '__main__':\n    pass\n")  # an entry candidate
+    _stand_ins(monkeypatch)
+    asked: list[bool] = []
+
+    def select(*_: object, offline: bool, **__: object) -> object:
+        asked.append(offline)
+        raise StagingError("stop here")
+
+    monkeypatch.setattr("fsbpyr.build.select_runtime", select)
+
+    for offline in (True, False):
+        with pytest.raises(StagingError, match="stop here"):
+            build(tmp_path, BuildConfig(offline=offline))
+
+    assert asked == [True, False]
+
+
 def test_an_error_carries_the_warnings_collected_before_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
