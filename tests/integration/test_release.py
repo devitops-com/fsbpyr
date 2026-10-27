@@ -1406,7 +1406,9 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
         assert f"python: [{listed}]" in workflow, name
     suite = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
-    assert f"for version in {' '.join(supported)}; do" in suite  # the other runtimes
+    # the other runtime: test_dispatch's OTHER, the newest supported Python but the entry's own
+    assert f"other={supported[-1]}\n" in suite
+    assert f'[ "$MATRIX_PYTHON" != {supported[-1]} ] || other={supported[-2]}' in suite
 
     workflow = "".join((ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
                        for name in ("build.yml", "release.yml"))  # fmt: skip

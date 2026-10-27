@@ -135,8 +135,9 @@ The tiers, from fastest to most complete:
   for byte; everything but the portability tests and the corpus, as the user `tester` in a
   privileged Debian trixie container with rootless podman, so the root-only,
   supplementary-group and `podman unshare` tests run, in 4 processes (the cores of GitHub's
-  runners for public repositories), each test file in one of them; the other Pythons'
-  runtimes it needs are built at the same time; the corpus, in a job of its own; the
+  runners for public repositories), each test file in one of them, with the kept downloads
+  (`FSBPYR_TEST_DOWNLOADS`), so that the runtimes are built once before the workers start, as
+  in `make test`; the corpus, in a job of its own; the
   portability tests; and the page-size smoke test (below). It runs on every push to main that
   changes more than documentation (a merge; pull requests start no CI), weekly and on request,
   once per target (x86-64 on `ubuntu-24.04`, aarch64 on `ubuntu-24.04-arm`) and Python, with
