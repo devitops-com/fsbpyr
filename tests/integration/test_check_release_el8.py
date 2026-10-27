@@ -67,7 +67,6 @@ building() {
 mkdir -p "$work/assets" "$work/src/tests/fixtures/projects/hello"
 touch "$work/assets/fsbpyr-$DEFAULT-$HOST"
 """
-needs_xz = pytest.mark.skipif(shutil.which("xz") is None, reason="xz is not installed")
 
 
 class Check:
@@ -155,7 +154,6 @@ def test_a_missing_asset_is_one_failure_not_two(check: Check) -> None:
     assert result.stdout.count("FAIL") == 1
 
 
-@needs_xz
 def test_a_complete_companion_release_passes_and_its_stub_is_fetched_by_a_later_fsbpyr(
         check: Check) -> None:  # fmt: skip
     check.release()
@@ -168,7 +166,6 @@ def test_a_complete_companion_release_passes_and_its_stub_is_fetched_by_a_later_
     assert check.beside == ["fsbpyr-3.14-x86_64-linux-gnu"]  # nothing placed beside it
 
 
-@needs_xz
 @pytest.mark.parametrize("unattested", [f"{ASSET}.xz", SUMS])
 def test_each_file_whose_attestation_does_not_verify_fails_on_its_own(
         check: Check, unattested: str) -> None:  # fmt: skip
@@ -180,7 +177,6 @@ def test_each_file_whose_attestation_does_not_verify_fails_on_its_own(
     assert result.stdout.count("FAIL") == 1, result.stdout
 
 
-@needs_xz
 def test_the_stub_of_0_26_0_is_placed_beside_the_executable_which_cannot_fetch_it(
         check: Check) -> None:  # fmt: skip
     check.release()
