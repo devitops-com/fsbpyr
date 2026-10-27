@@ -431,6 +431,9 @@ def test_zstd_version_is_unknown_rather_than_guessed(tmp_path: Path) -> None:
     assert pbs.zstd_version(_libzstd(tmp_path / "noversion", {"zstd_common.o": b"\0x\0"})) is None
     two = {"zstd_common.o": b"\0001.5.7\0" + b"\0001.5.8\0"}
     assert pbs.zstd_version(_libzstd(tmp_path / "two", two)) is None
+    broken = _libzstd(tmp_path / "broken", {})
+    (broken.root / "build" / "lib" / "libzstd.a").write_bytes(b"\0001.5.7\0")  # no ar archive
+    assert pbs.zstd_version(broken) is None
 
 
 def test_component_versions_name_an_interpreter_that_fails(tmp_path: Path) -> None:
