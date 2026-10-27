@@ -212,17 +212,32 @@ jobs:
       # installed and its runtime in the cache; the bootstrap built the runtime of this entry's
       # Python only. Each runtime is built by fsbpyr on its own Python: an older Python cannot
       # canonicalize a newer one's bytecode.
+      # The three at once (the cache takes concurrent builds: each item is made aside and
+      # renamed into place); each one's output is shown after all have ended.
       - name: The other versions' runtimes
         env:
           MATRIX_PYTHON: ${{ matrix.python }}
         run: |
+          pids=() versions=()
           for version in 3.12 3.13 3.14 3.15; do
-            [ "$version" = "$MATRIX_PYTHON" ] || {
-              as-tester uv python install "$version"
-              as-tester UV_PROJECT_ENVIRONMENT=".venv-$version" \
-                uv run --python "$version" --locked fsbpyr runtime build --python "$version"
-            }
+            [ "$version" = "$MATRIX_PYTHON" ] && continue
+            {
+              as-tester uv python install "$version" &&
+                as-tester UV_PROJECT_ENVIRONMENT=".venv-$version" \
+                  uv run --python "$version" --locked fsbpyr runtime build --python "$version"
+            } > "$RUNNER_TEMP/runtime-$version.log" 2>&1 &
+            pids+=("$!") versions+=("$version")
           done
+          failed=0
+          for i in "${!pids[@]}"; do
+            status=0
+            wait "${pids[$i]}" || status=$?
+            echo "::group::runtime ${versions[$i]} (exit $status)"
+            cat "$RUNNER_TEMP/runtime-${versions[$i]}.log"
+            echo "::endgroup::"
+            [ "$status" -eq 0 ] || { echo "::error::the ${versions[$i]} runtime failed"; failed=1; }
+          done
+          exit "$failed"
 
       - name: Upload the executable
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -240,17 +255,20 @@ jobs:
         continue-on-error: true
         run: as-tester make check-c $MAKE_ARGS
 
-      # Everything but the portability tests and the corpus (the jobs below).
-      # Nothing in the suite skips, so a test that cannot run here fails the step. Branch
-      # coverage below pyproject.toml's fail_under fails it too. The launcher programs the tests
-      # build are instrumented for llvm-cov and kept (FSBPYR_LLVM_COV_DIR), for the report below.
+      # Everything but the portability tests and the corpus (the jobs below), in one process
+      # per core (4 on GitHub's runners for public repositories), each test file in one of them,
+      # as `make test` runs it. Nothing in the suite skips, so a test that cannot run here fails
+      # the step. Branch coverage below pyproject.toml's fail_under fails it too (pytest-cov
+      # combines the workers'). The launcher programs the tests build are instrumented for
+      # llvm-cov and kept (FSBPYR_LLVM_COV_DIR), for the report below.
       - name: The whole suite
         run: |
+          echo "$(nproc) cores"
           as-tester $UV_ENV \
             FSBPYR_FUZZ_SECONDS="$FSBPYR_FUZZ_SECONDS" FSBPYR_FUZZ_CORPUS=/home/tester/fuzz-corpus \
             FSBPYR_LLVM_COV_DIR=/home/tester/llvm-cov/bin \
             LLVM_PROFILE_FILE=/home/tester/llvm-cov/prof/%p-%m.profraw \
-            $UV_RUN pytest --ignore=tests/e2e/test_portability.py \
+            $UV_RUN pytest -n 4 --dist loadfile --ignore=tests/e2e/test_portability.py \
               --ignore=tests/e2e/test_corpus.py --durations=30 \
               --junitxml=full.xml --cov --cov-report=xml
 

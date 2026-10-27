@@ -144,8 +144,9 @@ test: ## Run the test suite but the corpus in JOBS processes (default 8; tempora
 # portability tests (podman) and the other end-to-end tests. -k also matches marker names, so it keeps the release half of
 # the tests marked `sanitized`. Branch coverage below pyproject.toml's fail_under fails the run;
 # coverage.xml is the report.
-test-ci: ## Run the core of the test suite
-	$(TESTENV) $(CONTAINED) $(UVRUN) pytest tests/unit tests/integration tests/e2e/test_build.py \
+test-ci: ## Run the core of the test suite in JOBS processes
+	$(TESTENV) $(CONTAINED) $(UVRUN) pytest -n $(JOBS) --dist loadfile \
+		tests/unit tests/integration tests/e2e/test_build.py \
 		tests/e2e/test_runtime_app.py tests/e2e/test_imports.py \
 		tests/e2e/test_stub_hardening.py tests/e2e/test_multicall.py tests/e2e/test_scripts.py \
 		tests/e2e/test_loose_directory.py tests/e2e/test_single_script.py \

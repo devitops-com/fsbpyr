@@ -13,6 +13,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [0.28.0] - 2026-10-27
 
 ### Changed
+- **The full suite runs each job's tests in 4 processes.** `full-suite.yml` ran them in one
+  process, 20 to 27 minutes of a 26 to 35 minute job; it now runs `pytest -n 4 --dist loadfile`,
+  one process per core of GitHub's runners for public repositories, as `make test` runs them in 8,
+  and builds the other Pythons' runtimes at the same time. `make test-ci` runs in `JOBS` processes
+  too.
 - **The test suite has no skips.** A test whose tool is missing (a C compiler, `uv`, `unshare`,
   `podman`, `llvm-objdump`, `groff`, `git`, `strace`, `zstd`, `wget`, `busybox`, `make`) or whose
   environment is not as it needs (a normal user, a supplementary group, user namespaces,
