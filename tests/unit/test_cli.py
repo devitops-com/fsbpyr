@@ -404,14 +404,19 @@ def test_the_python_comes_from_the_lock_source_that_the_settings_name(
     source, which the build installs."""
     _pipfile_lock_project(tmp_path, '[tool.fsbpyr]\nrequirements = "reqs.txt"\n')
     handed: list[str] = []
+    built: list[str | None] = []
+
+    def build(project: Path, config: object, **kwargs: object) -> None:
+        built.append(config.requirements)  # type: ignore[attr-defined]
+        raise OSError("stop here")
+
     monkeypatch.setattr("fsbpyr.cli.DEFAULT_PYTHON", "3.14")  # the Pipfile.lock asks for 3.12
-    monkeypatch.setattr("fsbpyr.build.build", lambda *args, **kwargs: (_ for _ in ()).throw(
-        OSError("stop here")))
+    monkeypatch.setattr("fsbpyr.build.build", build)
     monkeypatch.setattr("fsbpyr.dispatch.run", lambda chosen, *args: _handed(handed, chosen))
 
     main(["build", str(tmp_path)])
 
-    assert handed == []
+    assert (handed, built) == ([], ["reqs.txt"])  # this fsbpyr builds, from reqs.txt
 
 
 @pytest.mark.version_rule  # the test session builds for its own Python otherwise

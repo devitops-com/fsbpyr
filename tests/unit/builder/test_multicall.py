@@ -1,7 +1,6 @@
 """The build side of a multi-command executable: the table, the links, and the requirements
 check that belongs to the same change."""
 
-import dataclasses
 import json
 import os
 from pathlib import Path
@@ -105,7 +104,7 @@ def test_an_existing_symlink_is_replaced_even_when_dangling(tmp_path: Path) -> N
 def _earlier_output(path: Path, project: str | None = "ops", app_name: str | None = None) -> None:
     """An fsbpyr executable at ``path``, as an earlier build of ``project`` wrote it."""
     info = json.dumps({} if project is None else {"project": {"name": project, "version": "1"}})
-    spec = dataclasses.replace(make_spec(), app_name=app_name or path.name, build_info=info)
+    spec = make_spec(app_name=app_name or path.name, build_info=info)
     write_executable(path, b"\x7fELF" + b"x" * 100, spec)
 
 
