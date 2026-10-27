@@ -856,6 +856,20 @@ def test_reads_next_to_file_in_the_scripts_root_are_always_reported_by_project_f
     assert not [w for w in content.warnings if "these packages read files" in w]  # no --hints
 
 
+def test_hints_leave_out_packages_below_the_scripts_root(site: Path) -> None:
+    _dist(site, "ops", "0", {"_fsbpyr_scripts/tools/__init__.py": b"",
+                             "_fsbpyr_scripts/tools/spawn.py": READS_DATA,
+                             "datapkg/__init__.py": READS_DATA})  # fmt: skip
+    dist = SiteIndex.scan(site).dists["ops"]
+
+    content = classify([dist], extension_suffixes=SUFFIXES, include_source=True, project="ops",
+                       hints=True)  # fmt: skip
+
+    (hint,) = [w for w in content.warnings if "these packages read files" in w]
+    assert "datapkg (datapkg/__init__.py:2)" in hint and "_fsbpyr_scripts" not in hint
+    assert [w for w in content.warnings if "tools/spawn.py:2: reads a file next" in w]
+
+
 def test_a_packages_read_in_the_main_guard_is_not_reported(site: Path) -> None:
     _dist(site, "datapkg", "1.0", {"datapkg/__init__.py": b"",
                                    "datapkg/cli.py":

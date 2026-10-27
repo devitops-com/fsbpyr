@@ -613,8 +613,8 @@ class _Collector:
         )  # fmt: skip
         first: dict[str, str] = {}
         for _, rel, line in self.reads:
-            if rel.startswith(self.fs_directories):
-                continue
+            if rel.startswith(self.fs_directories) or rel.startswith(f"{ROOT}/"):
+                continue  # fs-packages does not apply to the scripts root (_hint_script_reads)
             package = next(
                 (name for directory, name in packages if rel.startswith(directory)), None
             )

@@ -16,6 +16,13 @@ _READ_CALLS = frozenset({
     "subprocess.check_output", "os.execv", "os.execve", "os.execvp", "os.execvpe", "os.execl",
     "os.execle", "os.execlp", "os.execlpe", "np.load", "numpy.load",
 })  # fmt: skip
+# Calls that start a program; with ``sys.executable`` as the program, a script's sibling is run
+# from the payload (D44), not read from beside the binary.
+_SPAWN_CALLS = frozenset({
+    "subprocess.run", "subprocess.Popen", "subprocess.call", "subprocess.check_call",
+    "subprocess.check_output", "os.execv", "os.execve", "os.execvp", "os.execvpe", "os.execl",
+    "os.execle", "os.execlp", "os.execlpe",
+})  # fmt: skip
 _READ_METHODS = frozenset({"open", "read_text", "read_bytes", "iterdir", "glob", "rglob"})
 # Methods of any receiver that read a path given as an argument: cffi's ffi.dlopen(path),
 # configparser's parser.read(path).
@@ -83,6 +90,18 @@ def _reads(call: ast.Call, tainted: set[str]) -> bool:
     return func.attr in _READ_METHODS and _mentions(func.value, tainted)
 
 
+def _runs_own_interpreter(call: ast.Call) -> bool:
+    """Whether a spawn call runs ``sys.executable``: the first element of the argument list
+    (a list or tuple literal), or for ``os.exec*`` the program argument."""
+    if _dotted(call.func) not in _SPAWN_CALLS:
+        return False
+    first = call.args[0] if call.args else next((k.value for k in call.keywords
+                                                 if k.arg == "args"), None)  # fmt: skip
+    if isinstance(first, ast.List | ast.Tuple):
+        first = first.elts[0] if first.elts else None
+    return first is not None and _dotted(first) == "sys.executable"
+
+
 def _main_guarded(tree: ast.Module) -> list[range]:
     """Lines of top-level ``if __name__ == "__main__":`` blocks, which never run on import."""
     return [
@@ -98,10 +117,10 @@ def _main_guarded(tree: ast.Module) -> list[range]:
     ]
 
 
-def file_relative_reads(source: bytes, filename: str, *, skip_main_guard: bool = True) -> list[int]:
-    """Line numbers of reads relative to ``__file__`` in one module (empty if it does not parse);
-    with ``skip_main_guard``, none in its main guard, which a package never runs on import (a
-    script runs it)."""
+def file_relative_reads(source: bytes, filename: str, *, script: bool = False) -> list[int]:
+    """Line numbers of reads relative to ``__file__`` in one module (empty if it does not parse).
+    A package's main guard never runs on import, so it has none there; a script runs it, and
+    its ``sys.executable`` call of a sibling runs the sibling from the payload, no read."""
     if not any(marker in source for marker in _MARKERS):
         return []
     try:
@@ -109,9 +128,12 @@ def file_relative_reads(source: bytes, filename: str, *, skip_main_guard: bool =
     except (SyntaxError, ValueError):
         return []
     tainted = _tainted_names(tree)
-    guarded = _main_guarded(tree) if skip_main_guard else []
+    guarded = [] if script else _main_guarded(tree)
     calls = (node for node in ast.walk(tree) if isinstance(node, ast.Call))
-    lines = {call.lineno for call in calls if _reads(call, tainted)}
+    lines = {
+        call.lineno for call in calls
+        if _reads(call, tainted) and not (script and _runs_own_interpreter(call))
+    }
     return sorted(line for line in lines if not any(line in block for block in guarded))
 
 

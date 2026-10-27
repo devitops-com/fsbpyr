@@ -70,8 +70,8 @@ def compiled(data: bytes, rel: str, level: int, include_source: bool, hints: boo
         return Compiled(None, error=(exc.msg, exc.lineno))
     source = Blob.zstd(data, level=level) if include_source else None
     # a script's main-guard code runs; a package's never does on import
-    skip_guard = not rel.startswith(f"{ROOT}/")
-    reads = tuple(file_relative_reads(data, rel, skip_main_guard=skip_guard)) if hints else ()
+    script = rel.startswith(f"{ROOT}/")
+    reads = tuple(file_relative_reads(data, rel, script=script)) if hints else ()
     libraries = tuple(loaded_libraries(data, rel)) if hints else ()
     return Compiled(Blob.code(code, level=level), tree_digest(code), source,
                     tree_digest(data) if include_source else b"", reads, libraries,

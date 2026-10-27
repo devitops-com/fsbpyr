@@ -255,6 +255,7 @@ def paths(tmp_path_factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
     with redirect_stderr(err):
         assert _build(directory) == 0
     assert "skipped" not in err.getvalue() and "not packaged" not in err.getvalue()
+    assert "reads a file next to its own __file__" not in err.getvalue()  # spawn.py, nspawn.py
     return directory
 
 
