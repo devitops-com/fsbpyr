@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Check whether the toolchain for "make wiki-pdf" is complete.
+# Check whether the toolchain for the wiki's PDFs (make wiki-build, make wiki-publish) is
+# complete.
 #
 # Why: whatever is missing here otherwise surfaces in the middle of the LaTeX run, as
 #
@@ -112,12 +113,12 @@ if command -v fc-list >/dev/null 2>&1; then
 fi
 
 if [[ ${#missing[@]} -eq 0 ]]; then
-  echo "toolchain for make wiki-pdf is complete"
+  echo "toolchain for the wiki's PDFs is complete"
   exit 0
 fi
 
 {
-  echo "make wiki-pdf cannot run -- missing:"
+  echo "the wiki's PDFs cannot be built -- missing:"
   printf '  %s\n' "${missing[@]}"
   if [[ ${#packages[@]} -gt 0 ]]; then
     echo

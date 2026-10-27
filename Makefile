@@ -42,7 +42,7 @@ else
 WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-prereqs test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm check check-c release-prep release release-check wiki-pdf wiki-diagrams wiki-lint wiki-checkout clean
+.PHONY: help bootstrap build install uninstall test test-ci test-prereqs test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm check check-c release-prep release release-check wiki-lint wiki-build wiki-publish clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -270,25 +270,24 @@ release-check: ## Check the published release (VERSION=X.Y.Z, default the latest
 
 # --- Wiki ---
 
-# The wiki holds documents only; its tools are in tools/wiki/, and these targets run them in a
-# checkout of the wiki (tools/wiki/Makefile says how). WIKI is that checkout; the default is
-# where `git clone https://github.com/devitops-com/fsbpyr.wiki.git` next to this one puts it.
-# The PDFs and images are written into the checkout, to be committed there. The release the
-# wiki describes (its footer names it) is taken from this repository's tag.
-WIKI ?= ../fsbpyr.wiki
-WIKI_MAKE = $(MAKE) -C '$(WIKI)' -f '$(CURDIR)/tools/wiki/Makefile'
+# The wiki's pages are wiki/ here, edited with the code they describe; the GitHub and GitLab
+# wikis are their published copy (tools/wiki/publish.py says how). wiki-lint checks the pages
+# (the tests do too); wiki-build builds the wiki of this checkout into dist/wiki/site to look at.
+# wiki-publish, run by an admin once a release is out, builds the wiki of the release tag
+# (VERSION=X.Y.Z, default the newest) with its PDFs and drawn diagrams and pushes it to both
+# wikis; it stops if either was changed by hand (FORCE=1 replaces such changes), and DRY_RUN=1
+# stops before pushing. Building needs Graphviz, rsvg-convert, pandoc 3 and LuaLaTeX
+# (tools/wiki/pdf/check-toolchain.sh names what is missing). Only a VERSION, FORCE=1 and
+# DRY_RUN=1 given on the make command line count: an exported FORCE never replaces anything.
+wiki_flag = $(and $(filter command line,$(origin $(1))),$(filter 1,$($(1))))
+wiki-lint: ## Check the wiki pages in wiki/: links, anchors, images, repository paths and lines
+	@python3 -I tools/wiki/lint.py .
 
-wiki-pdf: wiki-checkout ## Build the wiki's two guides as PDFs into the wiki checkout WIKI (pandoc 3, LuaLaTeX)
-	$(WIKI_MAKE) pdf
+wiki-build: ## Build the wiki of this checkout into dist/wiki/site (pages, diagrams, PDFs) to look at
+	@python3 -I tools/wiki/publish.py build
 
-wiki-diagrams: wiki-checkout ## Draw the wiki's diagrams into WIKI/images (Graphviz, rsvg-convert)
-	$(WIKI_MAKE) diagrams
-
-wiki-lint: wiki-checkout ## Check the wiki's links, images and anchors, and repository links at its release
-	$(WIKI_MAKE) lint
-
-wiki-checkout:
-	@test -f '$(WIKI)/_Sidebar.md' || { echo "make: $(WIKI) is no checkout of the fsbpyr wiki: git clone https://github.com/devitops-com/fsbpyr.wiki.git, or set WIKI" >&2; exit 2; }
+wiki-publish: ## Publish the wiki of release VERSION=X.Y.Z (default the newest) to the GitHub and GitLab wikis
+	@python3 -I tools/wiki/publish.py publish$(if $(filter command line,$(origin VERSION)), --version '$(VERSION)')$(if $(call wiki_flag,FORCE), --force)$(if $(call wiki_flag,DRY_RUN), --dry-run)
 
 clean: ## Remove dist/
 	rm -rf dist

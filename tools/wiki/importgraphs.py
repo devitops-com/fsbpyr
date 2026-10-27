@@ -41,6 +41,9 @@ GROUPS = {
 }
 SUBPACKAGES = {"payload": "payload/", "runtime": "runtime/", "boot": "boot/ (in the executable)"}
 FAINT = {"Build driver", "Shared helpers"}
+# The graphs main() writes, by file name without .dot (lint.py's IMPORT_GRAPHS names them too).
+OUTPUTS = ("arch-subsystems", "arch-modules-top", "arch-modules-payload", "arch-modules-runtime",
+           "arch-modules-boot")
 
 
 def short(name: str) -> str:

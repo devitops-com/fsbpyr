@@ -288,14 +288,15 @@ host): `/proc` shows the emulator, so
 
 ## Documentation-only changes
 
-A pull request that changes only documentation (`*.md` files and `docs/`) starts no full
+A pull request that changes only documentation (`*.md` files, `docs/` and `wiki/`) starts no full
 suite when it is merged: full-suite.yml leaves such pushes to main out (`paths-ignore`), its
 corpus included. Never put a CI skip instruction (`[skip ci]` and the like) in a merge commit's
 message instead: GitHub applies it to a tag pushed on that commit too, so release.yml would not
 run, and `make release` refuses such a commit. Before merging, run the tests that read
-documentation: `uv run pytest tests/unit/test_cli_docs.py`
-(the README's quickstart and `docs/compatibility.md`'s tables against the code, and that the
-commands under [Verifying a release](#verifying-a-release) name no version), and `uv run pytest
+documentation: `uv run pytest tests/unit/test_cli_docs.py tests/unit/test_wiki.py`
+(the README's quickstart and `docs/compatibility.md`'s tables against the code, that the
+commands under [Verifying a release](#verifying-a-release) name no version, and that every link
+of the wiki's pages has its target), and `uv run pytest
 tests/e2e/test_build.py -k quickstart` when the README's quickstart changed. A release made
 from such a commit stands on the run of the newest commit before it that full-suite.yml ran
 for: `tools/release/green-run.sh`, which `make release` and the publish job use, accepts it
@@ -306,37 +307,56 @@ tools runs the full suite when it is merged.
 ## The wiki
 
 The [wiki](https://github.com/devitops-com/fsbpyr/wiki) holds the User Guide and the
-Developer Guide: pages, images, and each guide as a PDF. It holds documents only; the tools
-that make its PDFs and images and check its pages are in `tools/wiki/`, and three targets run
-them in a checkout of the wiki:
+Developer Guide. Its pages live here, in `wiki/`, and change with the code they describe, in
+the same pull request. The GitHub wiki and the GitLab wiki are their published copy and are
+never edited by hand.
+
+- **Pages** are `wiki/*.md`. They link the way files of the repository do, so they read in the
+  repository too: another page as `Page.md` or `Page.md#heading`, a file or directory of the
+  repository as `../src/fsbpyr/build.py#L120-L140` or `../tools/`, a heading of a Markdown file
+  as `../docs/format.md#heading`. `@VERSION@` stands for the release the published wiki
+  describes. `_Sidebar.md` is the table of contents (each guide's pages and their order, which
+  the PDFs follow); `_Footer.md` is shown on every page of the GitHub wiki.
+- **Diagrams** are Graphviz sources in `wiki/diagrams/`; a page shows `images/<name>.svg`. The
+  import graphs (`images/arch-subsystems.svg`, `images/arch-modules-*.svg`) are drawn from
+  `src/fsbpyr`. Nothing drawn is kept: images and PDFs are made when the wiki is built, and
+  git ignores PNGs and PDFs under `wiki/`. An image that is not drawn goes in `wiki/images/`,
+  as an SVG.
+- `make wiki-lint` checks that every link of the pages has its target: the page and heading,
+  the file or directory and the lines, the diagram. `tests/unit/test_wiki.py` runs the same
+  check, so a broken link fails the tests.
+- `make wiki-build` builds the wiki of this checkout into `dist/wiki/site` as it would be
+  published: the pages with wiki links and with links into the repository at the tag
+  `v<version>`, the drawn diagrams, and `fsbpyr-User-Guide.pdf` and
+  `fsbpyr-Developer-Guide.pdf`. A page missing from the sidebar, a page whose first heading is
+  not its only H1, or raw HTML stops the build. It needs Graphviz, rsvg-convert, pandoc 3,
+  LuaLaTeX with the TeX packages `tools/wiki/pdf/check-toolchain.sh` lists, pdfinfo and the
+  DejaVu fonts; a missing piece is named with the package to install.
+
+### Publishing the wiki
+
+An admin publishes the wiki once a release is out, from a checkout that can push to both
+wikis (SSH):
 
 ```sh
-git clone https://github.com/devitops-com/fsbpyr.wiki.git ../fsbpyr.wiki
-make wiki-lint                   # or: make wiki-lint WIKI=<checkout of the wiki>
-make wiki-diagrams
-make wiki-pdf
+make wiki-publish                # the newest release tag; VERSION=X.Y.Z for another
+make wiki-publish DRY_RUN=1      # build and commit, but push nothing
 ```
 
-The wiki describes one release, the one its footer (`_Footer.md`) names; the targets take that
-release's tree from this repository's tag.
-
-- `make wiki-lint` checks every page's wiki links, images and anchors, and that links into the
-  repository name the release's tag and point at files and lines that exist there.
-- `make wiki-diagrams` draws `images/*.svg` from the Graphviz sources in
-  `tools/wiki/diagrams/` and from the release's import graphs (`arch-subsystems`,
-  `arch-modules-*`, drawn from its `src/fsbpyr`). Needs Graphviz and rsvg-convert.
-- `make wiki-pdf` writes `fsbpyr-User-Guide-<version>.pdf` and
-  `fsbpyr-Developer-Guide-<version>.pdf`. `_Sidebar.md` decides which pages each guide has and
-  in which order. A page missing from the sidebar, a link to a page or anchor that does not
-  exist, a page whose first heading is not its only H1, or raw HTML stops the build with what
-  to fix. The title page names the wiki commit that last changed the guide (`-modified` while
-  its pages have uncommitted changes), and the same commit gives the same file. Needs pandoc 3,
-  LuaLaTeX, the TeX packages `tools/wiki/pdf/check-toolchain.sh` lists, rsvg-convert, pdfinfo
-  and the DejaVu fonts; a missing piece is named with the package to install.
-
-What the targets write goes into the wiki checkout, to be committed there. When the wiki moves
-to a new release, build both PDFs again and point the links on the wiki's Home page at the new
+It builds from the release tag's own tree (`git archive`), with that tag's tools, so the wiki
+describes exactly that release; it refuses a tag GitHub does not have and a tag whose tree has
+no `wiki/`. The same build goes to the GitHub and the GitLab wiki; only names differ where the
+wikis need them (GitLab's front page and sidebar are `home.md` and `_sidebar.md`, copies of
+`Home.md` and `_Sidebar.md`). Nothing is pushed until both are ready; then GitLab is pushed,
+then GitHub. A wiki that already has the build gets no commit: the same tag gives the same
 files.
+
+Every publish commit ends with `Published-From: vX.Y.Z <commit>`. A wiki with a commit after
+the last of those was changed by hand: `make wiki-publish` lists those commits and stops.
+Make the change in `wiki/` instead, or publish with `FORCE=1` to replace them; `FORCE=1` is
+needed once, for a wiki that was never published this way. It also stops before publishing an
+older release over the newer one a wiki has, unless `FORCE=1`. `VERSION`, `FORCE=1` and
+`DRY_RUN=1` count only on the make command line.
 
 ## Verifying a release
 

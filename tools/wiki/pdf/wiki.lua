@@ -1,9 +1,9 @@
 --[[ Assemble one guide of the wiki into a single document.
 
-pandoc reads _Sidebar.md (`make wiki-pdf` passes it as the input); this filter replaces it
-with the pages of one guide. The sidebar is the table of contents of the wiki, so the PDF has
-the same pages in the same order, and a page added to the wiki but not to the sidebar is an
-error, not a silent omission.
+pandoc reads _Sidebar.md (tools/wiki/Makefile passes it as the input); this filter replaces
+it with the pages of one guide. The sidebar is the table of contents of the wiki, so the PDF
+has the same pages in the same order, and a page added to the wiki but not to the sidebar is
+an error, not a silent omission.
 
 Metadata, set by the Makefile:
   guide   the sidebar heading of the guide ("User Guide", "Developer Guide")

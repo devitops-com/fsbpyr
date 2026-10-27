@@ -1,8 +1,19 @@
-"""Check wiki pages: wiki links, images, repository links at the tag, anchors, plan mentions.
+"""Check the wiki pages in wiki/ of a repository tree: every link and image has a target.
 
-Usage: python -I lint.py WIKI_DIR TAG_TREE
-WIKI_DIR holds the pages (*.md) and images/; TAG_TREE is the extracted release tree, whose
-src/fsbpyr/__init__.py gives the tag (vX.Y.Z) that repository links must name.
+Usage: python -I lint.py REPO_ROOT [--mentions]
+Prints one line per problem and exits 1 if there is any. --mentions also lists the pages'
+mentions of plans and decisions (informational).
+
+The pages link the way files of the repository do; site.py turns the links into wiki links
+when the wiki is built:
+  Page.md, Page.md#anchor, #anchor   another page or a heading; the anchor is GitHub's
+  ../path, ../path#L10-L20           a file or directory of the repository, lines in range
+  ../doc.md#heading                  a heading of a Markdown file of the repository
+  images/name.svg                    a diagram drawn from wiki/diagrams/name.dot, an import
+                                     graph, or an SVG in wiki/images/
+  fsbpyr-User-Guide.pdf, ...         the PDFs the build makes
+A link into the repository pinned to a tag (blob/vX.Y.Z/...) is a problem: the build pins
+every relative link to the tag it publishes.
 """
 
 import re
@@ -10,11 +21,20 @@ import sys
 from pathlib import Path
 
 REPO = "https://github.com/devitops-com/fsbpyr/"
-LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)\)")
+# Every link target, the image's of an image and the outer one of a linked image alike (as
+# site.py rewrites them), and every reference definition.
+LINK = re.compile(r"\]\(([^)\s]+)\)|^\[[^\]]+\]:\s+(\S+)", re.M)
 IMAGE = re.compile(r"!\[[^\]]*\]\(([^)\s]+)\)")
+TITLED = re.compile(r"\]\(([^)\s]+)\s+[\"'(]")  # a link with a title: neither checked nor rewritten
+FENCE = re.compile(r"^(`{3,}|~{3,})[^\n]*\n.*?^\1[^\n]*$", re.M | re.S)
 PLAN = re.compile(
     r"\b(planned|Phase \d+|D\d{1,2}\b|IMPLEMENTATION_PLAN|improvement-plan|will be added)"
 )
+# The import graphs render.sh draws from the code: importgraphs.OUTPUTS, which a test compares.
+IMPORT_GRAPHS = ("arch-subsystems", "arch-modules-top", "arch-modules-payload",
+                 "arch-modules-runtime", "arch-modules-boot")  # fmt: skip
+# The PDFs tools/wiki/Makefile builds.
+PDFS = ("fsbpyr-User-Guide.pdf", "fsbpyr-Developer-Guide.pdf")
 
 
 def slug(heading: str) -> str:
@@ -22,79 +42,104 @@ def slug(heading: str) -> str:
     return text.replace(" ", "-")
 
 
-def anchors(page: Path) -> set[str]:
-    found = set()
-    in_code = False
-    for line in page.read_text().splitlines():
-        if line.startswith("```"):
-            in_code = not in_code
-        elif not in_code and line.startswith("#"):
-            found.add(slug(line.lstrip("#")))
+def anchors(text: str) -> set[str]:
+    found: set[str] = set()
+    for line in FENCE.sub("", text).splitlines():
+        if line.startswith("#"):
+            base = slug(line.lstrip("#"))
+            anchor, n = base, 0
+            while anchor in found:  # GitHub numbers a repeated heading: x, x-1, x-2
+                n += 1
+                anchor = f"{base}-{n}"
+            found.add(anchor)
     return found
 
 
-def release_tag(tree: Path) -> str:
-    match = re.search(r'__version__ = "([^"]+)"', (tree / "src/fsbpyr/__init__.py").read_text())
-    return "v" + match.group(1)
+def drawn_names(wiki: Path) -> set[str]:
+    """The diagrams the build draws, as image names."""
+    names = {f"{p.stem}.svg" for p in (wiki / "diagrams").glob("*.dot")}
+    return names | {f"{name}.svg" for name in IMPORT_GRAPHS}
 
 
-def check_repo(target: str, tree: Path, tag: str) -> str | None:  # noqa: PLR0911  one per problem
-    rest = target.removeprefix(REPO)
-    if rest == f"tree/{tag}":
-        return None
-    if re.match(r"(blob|tree)/v\d", rest) and not rest.startswith((f"blob/{tag}/", f"tree/{tag}/")):
-        return f"not at {tag}: {target}"
-    for kind in (f"blob/{tag}/", f"tree/{tag}/"):
-        if rest.startswith(kind):
-            path, _, frag = rest.removeprefix(kind).partition("#")
-            local = tree / path
-            if not local.exists():
-                return f"missing in tag: {path}"
-            if frag.startswith("L") and local.is_file():
-                lines = len(local.read_text(errors="replace").splitlines())
-                numbers = [int(n) for n in re.findall(r"\d+", frag)]
-                if any(n > lines for n in numbers):
-                    return f"line anchor past end ({lines}): {path}#{frag}"
-            return None
-    if "/blob/main/" in target or "/tree/main/" in target:
-        return "points at main"
+def check_repo_path(root: Path, target: str) -> str | None:
+    path, _, frag = target.removeprefix("../").partition("#")
+    local = root / path
+    if not local.exists():
+        return f"no such file or directory in the repository: {path}"
+    if frag and local.suffix == ".md" and not frag.startswith("L"):
+        heading = frag in anchors(local.read_text(errors="replace"))
+        return None if heading else f"no such heading: {target}"
+    if frag:
+        if not (re.fullmatch(r"L\d+(-L\d+)?", frag) and local.is_file()):
+            return f"not a line anchor of a file: {target}"
+        lines = len(local.read_text(errors="replace").splitlines())
+        if any(int(n) > lines for n in re.findall(r"\d+", frag)):
+            return f"line anchor past the end ({lines} lines): {target}"
     return None
 
 
-def main() -> None:  # noqa: PLR0912  one branch per kind of link
-    wiki, tree = Path(sys.argv[1]), Path(sys.argv[2])
-    tag = release_tag(tree)
-    pages = {p.stem: p for p in wiki.glob("*.md")}
-    page_anchors = {name: anchors(p) for name, p in pages.items()}
-    problems = 0
-    for name, page in sorted(pages.items()):
-        text = page.read_text()
-        for target in LINK.findall(text):
-            if target.startswith(("http://", "https://")):
-                issue = check_repo(target, tree, tag) if target.startswith(REPO) else None
-            elif target.startswith("#"):
-                issue = None if target[1:] in page_anchors[name] else f"anchor not found: {target}"
-            elif target.startswith("mailto:"):
-                issue = None
-            else:
-                base, _, frag = target.partition("#")
-                if base in pages:
-                    issue = (f"anchor not found: {base}#{frag}"
-                             if frag and frag not in page_anchors[base] else None)
-                elif (wiki / base).is_file():  # a file of the wiki, such as a guide's PDF
-                    issue = None
-                else:
-                    issue = f"no such page or file: {base}"
-            if issue:
-                problems += 1
-                print(f"{name}: {issue}")
-        for target in IMAGE.findall(text):
-            if not (wiki / target).exists():
-                problems += 1
-                print(f"{name}: missing image {target}")
-        for match in sorted(set(PLAN.findall(text))):
-            print(f"{name}: mentions {match!r}")
-    print(f"{len(pages)} pages, {problems} problems")
+def check_link(  # noqa: PLR0911  one return per kind of target
+    root: Path, page: str, target: str, page_anchors: dict[str, set[str]], images: set[str]
+) -> str | None:
+    if target.startswith(REPO) and re.match(r"(blob|tree)/v\d", target.removeprefix(REPO)):
+        return f"pinned to a tag, write it relative (../path): {target}"
+    if target.startswith(("http://", "https://", "mailto:")):
+        return None
+    if target.startswith("#"):
+        return None if target[1:] in page_anchors[page] else f"no such anchor: {target}"
+    if target.startswith("../"):
+        return check_repo_path(root, target)
+    if target.startswith("images/"):
+        return None if target.removeprefix("images/") in images else f"no such image: {target}"
+    if target in PDFS:
+        return None
+    name, _, frag = target.partition("#")
+    if name.endswith(".md") and name[:-3] in page_anchors:
+        if frag and frag not in page_anchors[name[:-3]]:
+            return f"no such anchor: {target}"
+        return None
+    return f"no such page or target: {target}"
+
+
+def check(root: Path) -> list[str]:
+    """Every problem of the pages in root/wiki, as 'Page: problem'."""
+    wiki = root / "wiki"
+    texts = {p.stem: p.read_text() for p in sorted(wiki.glob("*.md"))}
+    page_anchors = {name: anchors(text) for name, text in texts.items()}
+    drawn = drawn_names(wiki)
+    made = {p.name for p in (wiki / "images").glob("*") if p.is_file()}
+    problems = [f"wiki/images/{name}: has the name of a drawn diagram"
+                for name in sorted(made & drawn)]  # fmt: skip
+    # Git ignores PNGs and PDFs under wiki/ (generated files are never kept): only SVGs are.
+    problems += [f"wiki/images/{name}: not an SVG; images in wiki/images/ are SVGs"
+                 for name in sorted(made) if not name.endswith(".svg")]  # fmt: skip
+    images = drawn | made
+    for name, text in texts.items():
+        prose = FENCE.sub("", text)
+        for match in LINK.finditer(prose):
+            target = match.group(1) or match.group(2)
+            if issue := check_link(root, name, target, page_anchors, images):
+                problems.append(f"{name}: {issue}")
+        for target in TITLED.findall(prose):
+            problems.append(f"{name}: a link with a title, write it without: {target}")
+        for target in IMAGE.findall(prose):
+            if target.removeprefix("images/") not in images or not target.startswith("images/"):
+                problems.append(f"{name}: no such image: {target}")
+    return problems
+
+
+def main() -> None:
+    root = Path(sys.argv[1])
+    problems = check(root)
+    for problem in problems:
+        print(problem)
+    if "--mentions" in sys.argv[2:]:
+        for page in sorted((root / "wiki").glob("*.md")):
+            for match in sorted(set(PLAN.findall(page.read_text()))):
+                print(f"{page.stem}: mentions {match!r}")
+    pages = len(list((root / "wiki").glob("*.md")))
+    print(f"wiki-lint: {pages} pages, {len(problems)} problems")
+    sys.exit(1 if problems else 0)
 
 
 if __name__ == "__main__":

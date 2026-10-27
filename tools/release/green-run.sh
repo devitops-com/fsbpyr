@@ -11,8 +11,8 @@
 # progress is followed with follow-run.sh, as release.sh follows the tag's run.
 # A commit that changes only documentation has no run (full-suite.yml leaves such pushes out):
 # the newest earlier commit of main that has one stands for it when nothing but documentation
-# (*.md files, docs/) changed since (CONTRIBUTING.md, "Documentation-only changes"); its run's
-# URL is printed. Needs the history (git).
+# (*.md files, docs/, wiki/) changed since (CONTRIBUTING.md, "Documentation-only changes"); its
+# run's URL is printed. Needs the history (git).
 # Exit 1: no run for that commit, a failed one, or one that fails while watched. The reason
 # goes to stderr, the URL to stdout. Needs gh, authenticated (GH_TOKEN in CI).
 set -euo pipefail
@@ -49,7 +49,7 @@ first_not_docs() {
     files="$(git diff --name-only "$1" "$commit")" || { echo "(git diff $1 failed)"; return 0; }
     while IFS= read -r file; do
         case "$file" in
-            ''|*.md|docs/*) ;;
+            ''|*.md|docs/*|wiki/*) ;;
             *) echo "$file"; return 0 ;;
         esac
     done <<<"$files"
