@@ -42,7 +42,7 @@ else
 WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm check check-c release-prep release release-check clean
+.PHONY: help bootstrap build install uninstall test test-ci test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm check check-c release-prep release release-check wiki-pdf clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -257,6 +257,19 @@ release: ## Tag main's tested HEAD and push the tag; CI builds, attests and publ
 # cgroup; it changes nothing outside them but uv's cache.
 release-check: ## Check the published release (VERSION=X.Y.Z, default the latest): assets, attestations, EL8 stubs, installer, update
 	@$(SCRATCHENV) $(CONTAINED) bash tools/release/check-release.sh$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
+
+# --- Wiki ---
+
+# PDF copies of the wiki's User Guide and Developer Guide, made from a checkout of the wiki and
+# written into it, to be committed there (tools/wiki-pdf/Makefile says how). WIKI is that
+# checkout; the default is where `git clone https://github.com/devitops-com/fsbpyr.wiki.git`
+# next to this one puts it. Needs pandoc 3 and LuaLaTeX: a missing piece is named
+# (tools/wiki-pdf/check-toolchain.sh), nothing is installed for you.
+WIKI ?= ../fsbpyr.wiki
+
+wiki-pdf: ## Build the wiki's two guides as PDFs into the wiki checkout WIKI (default ../fsbpyr.wiki)
+	@test -f '$(WIKI)/_Sidebar.md' || { echo "make wiki-pdf: $(WIKI) is no checkout of the fsbpyr wiki: git clone https://github.com/devitops-com/fsbpyr.wiki.git, or set WIKI" >&2; exit 2; }
+	$(MAKE) -C '$(WIKI)' -f '$(CURDIR)/tools/wiki-pdf/Makefile' BUILD='$(CURDIR)/dist/wiki-pdf'
 
 clean: ## Remove dist/
 	rm -rf dist

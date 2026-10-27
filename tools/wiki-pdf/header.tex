@@ -1,0 +1,151 @@
+% LaTeX header for the PDF guides made from the wiki.
+% Included by `make wiki-pdf` through pandoc -H.
+%
+% Fonts are NOT set here but through the pandoc variables mainfont/sansfont/monofont in the
+% Makefile of this directory. fontspec would otherwise load its default font first, and the
+% run stops before \setmainfont takes effect.
+%
+% check-toolchain.sh names the packages this needs.
+
+% --- Header and footer ------------------------------------------------------
+% The right-hand header names the guide; \DocTitle is set by the title page
+% (titlepage.tex, title-<guide>.tex).
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\footnotesize\nouppercase{\leftmark}}
+\fancyhead[R]{\footnotesize\DocTitle}
+\fancyfoot[R]{\footnotesize\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\setlength{\headheight}{14pt}
+\fancypagestyle{plain}{%
+  \fancyhf{}\fancyfoot[R]{\footnotesize\thepage}\renewcommand{\headrulewidth}{0pt}}
+
+% --- Code blocks ------------------------------------------------------------
+% fvextra wraps over-long lines. The wiki's console blocks quote error messages of several
+% hundred characters; they wrap at the margin instead of running off the page.
+\usepackage{etoolbox}
+\usepackage{fvextra}
+% Font size of code blocks.
+%
+% The value does not apply directly: monofont is loaded scaled through the pandoc variable
+% monofontoptions (Scale=0.78), so the given size is multiplied by 0.78. 10 pt at Scale 0.78
+% gives 7.8 pt, the same size as code in running text.
+%
+% Upper bound: a line of 99 characters takes about 0.602 em per character in DejaVu Sans
+% Mono, so 99 x 0.602 x 7.8 pt = 465 pt. The text block is 483 pt wide. Longer lines wrap.
+\newcommand{\codesize}{\fontsize{10}{12}\selectfont}
+\fvset{fontsize=\codesize,xleftmargin=2mm}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}%
+  {breaklines,breakanywhere,fontsize=\codesize,commandchars=\\\{\}}
+\DefineVerbatimEnvironment{verbatim}{Verbatim}%
+  {breaklines,breakanywhere,fontsize=\codesize}
+
+% Code blocks without a language (program output, files without a fitting lexer) are set by
+% pandoc as plain verbatim, those with a language in the grey box `Shaded`. Side by side
+% that looks like two kinds of listing. So the same box here too. \AtBeginEnvironment does
+% not work: the box has to enclose the block.
+\BeforeBeginEnvironment{verbatim}{\begin{Shaded}}
+\AfterEndEnvironment{verbatim}{\end{Shaded}}
+% pandoc defines Shaded only for a document with a highlighted block; without one, an empty
+% box keeps the two lines above working.
+\AtBeginDocument{\ifcsname Shaded\endcsname\else\newenvironment{Shaded}{}{}\fi}
+
+% --- Tables -----------------------------------------------------------------
+% Font size: tables.lua computes the column widths from the content (Markdown separator rows
+% `|---|---|` give pandoc no widths), and with that \small fits.
+\AtBeginEnvironment{longtable}{\small\setlength{\extrarowheight}{1.5pt}}
+\AtBeginEnvironment{tabular}{\small}
+\renewcommand{\arraystretch}{1.18}
+
+% The table packages are loaded here, not left to pandoc's template header: that loads them
+% only if a Table element is still in the document after the filters. tables.lua sets short
+% tables as raw LaTeX blocks, and in a document without a long table \real would stay
+% undefined -- the run then stops in the middle of the first table.
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{calc}
+
+% booktabs rules somewhat stronger; at \small the defaults look thin.
+\usepackage{booktabs}
+\setlength{\heavyrulewidth}{0.9pt}
+\setlength{\lightrulewidth}{0.45pt}
+\setlength{\aboverulesep}{2.5pt}
+\setlength{\belowrulesep}{2.5pt}
+
+% --- Figures ----------------------------------------------------------------
+% A diagram belongs to the text at exactly the place where it stands. As a float it wanders
+% across pages and then stands next to text about something else.
+% \restylefloat is required: the float package understands the placement H only for floats it
+% has restyled itself. Without these lines the run stops with "Missing number, treated as
+% zero" at the first \begin{table}[H].
+% The order matters: \floatstyle applies to the FOLLOWING \restylefloat. Without plaintop the
+% float package puts a table caption below the table wherever \caption stands -- and then
+% the captions of short tables stand below, those of long tables (longtable, no float) above.
+\usepackage{float}
+\floatstyle{plain}
+\restylefloat{figure}
+\floatstyle{plaintop}
+\restylefloat{table}
+\floatplacement{figure}{H}
+\floatplacement{table}{H}
+\usepackage{graphicx}
+% pandoc's template scales an image down to the text height at most; with the caption below
+% it a tall diagram then overruns the page. 80% leaves room for a caption of several lines.
+\makeatletter
+\def\maxheight{\ifdim\Gin@nat@height>0.8\textheight 0.8\textheight\else\Gin@nat@height\fi}
+\makeatother
+
+% --- Captions ---------------------------------------------------------------
+% Figures are numbered: the list of figures at the end of the document (wiki.lua) refers to
+% them.
+\usepackage[font=small,labelfont=bf,labelsep=colon,skip=5pt]{caption}
+\captionsetup[table]{position=top}
+\captionsetup[figure]{position=bottom}
+
+% --- Notes (block quotes of the Markdown sources) ---------------------------
+% mdframed instead of a construction of our own: it breaks across pages and accepts a
+% longtable inside -- both are needed.
+\usepackage{mdframed}
+\usepackage{xcolor}
+\definecolor{notebg}{HTML}{F5F5F3}
+\definecolor{noteline}{HTML}{6E6E6E}
+\renewenvironment{quote}%
+  {\begin{mdframed}[backgroundcolor=notebg,linecolor=noteline,%
+     linewidth=1.6pt,topline=false,bottomline=false,rightline=false,%
+     innerleftmargin=7pt,innerrightmargin=7pt,%
+     innertopmargin=7pt,innerbottommargin=7pt,%
+     skipabove=8pt,skipbelow=8pt,nobreak=false]}%
+  {\end{mdframed}}
+
+% --- Web links --------------------------------------------------------------
+% Most links of the wiki lead into the repository, written as short labels, not as
+% addresses. A black label cannot be told from running text -- the reader would not see that
+% it is clickable. So a colour of their own, for web links only; cross-references within the
+% document stay black (linkcolor in the Makefile of this directory).
+% \AtBeginDocument, because hyperref is loaded after this header.
+\definecolor{weblink}{HTML}{1F3864}
+\AtBeginDocument{\hypersetup{urlcolor=weblink}}
+
+% --- Table of contents ------------------------------------------------------
+% The Developer Guide runs past page 100 and to subsection 12.10: KOMA's default widths for
+% page numbers and subsection numbers are too narrow for that, and the numbers run into the
+% margin or the title.
+\makeatletter
+\renewcommand*{\@pnumwidth}{2.2em}
+\makeatother
+\RedeclareSectionCommand[tocnumwidth=3em]{subsection}
+
+% --- Page breaks ------------------------------------------------------------
+% Every wiki page begins on a new page. A page's H1 is a \section (wiki.lua keeps it at level
+% 1), so this line applies to it.
+\let\origsection\section
+\renewcommand{\section}{\clearpage\origsection}
+
+\clubpenalty=10000
+\widowpenalty=10000
+\raggedbottom
+
+% Long identifiers in code and long URLs can still leave a line overfull in justified text;
+% a little extra stretch keeps them out of the margin.
+\emergencystretch=2em
