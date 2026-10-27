@@ -27,6 +27,7 @@ ASSET = release_stub_asset(PYTHON, host_target().name, BASELINE)
 SUMS = release_stub_sums(BASELINE)
 PIN = pins.pin_for(PYTHON, registry.host_triple())
 EXPECTED = registry.runtime_id(PIN, baseline=BASELINE)
+CACHED = f"{ASSET}-{EXPECTED}"  # a cached stub is named after the runtime id it carries
 
 
 def make_stub(identity: str | None = EXPECTED, filler: bytes = b"") -> bytes:
@@ -86,7 +87,7 @@ def test_a_placed_file_wins_over_the_cache_and_the_release(
     placed = make_stub(filler=b"placed")
     (tmp_path / "bin" / ASSET).write_bytes(placed)
     (tmp_path / "cache" / "downloads").mkdir(parents=True)
-    (tmp_path / "cache" / "downloads" / f"{ASSET}-{TAG}").write_bytes(make_stub(filler=b"cached"))
+    (tmp_path / "cache" / "downloads" / CACHED).write_bytes(make_stub(filler=b"cached"))
     publish(releases, make_stub(filler=b"released"))
 
     assert get(tmp_path) == placed
@@ -123,7 +124,7 @@ def test_a_damaged_placed_xz_file_is_an_error(releases: FakeReleases, tmp_path: 
 def test_the_cache_wins_over_the_release(releases: FakeReleases, tmp_path: Path) -> None:
     kept = make_stub(filler=b"cached")
     (tmp_path / "cache" / "downloads").mkdir(parents=True)
-    (tmp_path / "cache" / "downloads" / f"{ASSET}-{TAG}").write_bytes(kept)
+    (tmp_path / "cache" / "downloads" / CACHED).write_bytes(kept)
     publish(releases, make_stub(filler=b"released"))
 
     assert get(tmp_path) == kept
@@ -139,8 +140,8 @@ def test_a_download_is_verified_and_kept_for_offline_use(
     assert get(tmp_path) == data
 
     assert releases.requests == [f"/{COMPANION}/{SUMS}", f"/{COMPANION}/{ASSET}.xz"]
-    assert cached(tmp_path) == [f"{ASSET}-{TAG}"]  # whole, no temporary file left
-    assert (tmp_path / "cache" / "downloads" / f"{ASSET}-{TAG}").read_bytes() == data
+    assert cached(tmp_path) == [CACHED]  # whole, no temporary file left
+    assert (tmp_path / "cache" / "downloads" / CACHED).read_bytes() == data
     releases.close()  # no network from here on
     assert get(tmp_path) == data
 
@@ -222,16 +223,27 @@ def test_a_downloaded_stub_of_another_python_is_refused_and_not_kept(
     assert cached(tmp_path) == []
 
 
+def test_a_cached_stub_is_reused_by_the_next_release_when_its_runtime_id_is_unchanged(
+    releases: FakeReleases, tmp_path: Path
+) -> None:
+    publish(releases, make_stub(filler=b"d" * 100))
+    first = get(tmp_path)
+    releases.close()  # no network from here on
+
+    assert stubs.stub_for(PYTHON, BASELINE, "v1.3.0", tmp_path / "cache") == first
+    assert cached(tmp_path) == [CACHED]
+
+
 def test_a_cached_stub_that_is_not_ours_is_fetched_again(
     releases: FakeReleases, tmp_path: Path
 ) -> None:
     (tmp_path / "cache" / "downloads").mkdir(parents=True)
-    (tmp_path / "cache" / "downloads" / f"{ASSET}-{TAG}").write_bytes(make_stub(None))
+    (tmp_path / "cache" / "downloads" / CACHED).write_bytes(make_stub(None))
     data = make_stub(filler=b"fresh")
     publish(releases, data)
 
     assert get(tmp_path) == data
-    assert (tmp_path / "cache" / "downloads" / f"{ASSET}-{TAG}").read_bytes() == data
+    assert (tmp_path / "cache" / "downloads" / CACHED).read_bytes() == data
 
 
 def test_an_unterminated_identity_is_no_identity() -> None:
@@ -396,7 +408,7 @@ def test_select_runtime_of_a_developer_executable_asks_the_cache(
 
 
 def test_a_cached_stubs_name_is_not_one_the_cache_collector_removes() -> None:
-    assert not collect.NAMES[collect.DOWNLOADS].fullmatch(f"{ASSET}-{TAG}")
+    assert not collect.NAMES[collect.DOWNLOADS].fullmatch(CACHED)
 
 
 def test_only_the_default_runtime_error_points_at_the_release_binary(tmp_path: Path) -> None:

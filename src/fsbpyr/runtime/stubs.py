@@ -10,8 +10,9 @@ The stub comes from, in this order: a file the user placed beside the fsbpyr exe
 machines without GitHub), the tool's cache, a download from the companion release, verified
 against the SHA-256 it publishes and kept in the cache. Whichever it is, the stub must carry the
 runtime id this fsbpyr computes for its own launcher sources, pinned Python and sysroot (main.c,
-stub.py) and is refused otherwise, so a stub of another release or Python never goes into an app. A
-developer build has no release to fetch from: it uses the cache's runtime (``fsbpyr runtime
+stub.py) and is refused otherwise, so a stub of another release or Python never goes into an app. The cache
+names a stub by that id, not by the release, so an update that leaves it unchanged reuses the
+download. A developer build has no release to fetch from: it uses the cache's runtime (``fsbpyr runtime
 build --glibc 2.28``)."""
 
 import contextlib
@@ -163,7 +164,7 @@ def stub_for(python: str, baseline: str, tag: str, cache: Path | None = None) ->
         return _checked(placed[1], placed[0], expected, asset, tag, release=release)
     directory = registry.secure_directory(cache or registry.cache_root()) / "downloads"
     directory.mkdir(mode=0o700, exist_ok=True)
-    final = directory / f"{asset}-{tag}"
+    final = directory / f"{asset}-{expected}"  # the id decides: an unchanged stub is reused
     if final.is_file() and stub_identity(final.read_bytes()) == expected:
         return final.read_bytes()
     final.unlink(missing_ok=True)  # not the stub (edited, damaged): again
