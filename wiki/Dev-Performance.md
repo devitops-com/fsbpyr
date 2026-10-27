@@ -8,7 +8,7 @@ large files, the launcher's cache sync, building a runtime, known effects, a com
 PyInstaller, pex and PyApp, and where to look when a start gets slower. Every number comes from
 [docs/performance.md](../docs/performance.md)
 or [docs/executable-parts.md](../docs/executable-parts.md)
-at v0.27.0 and is given with the fsbpyr version or commit it was measured with. The mechanisms measured
+at v@VERSION@ and is given with the fsbpyr version or commit it was measured with. The mechanisms measured
 here are described on [Dev-Launcher](Dev-Launcher.md), [Dev-Executable-Format](Dev-Executable-Format.md)
 and [Dev-Security](Dev-Security.md).
 
@@ -19,7 +19,8 @@ and [Dev-Security](Dev-Security.md).
   apps with the default stub; none was measured for an app built with `--glibc 2.28`.
 - Warm: the executable is in the page cache and its natives are already extracted. A first
   start after a reboot also reads the whole file from disk; see [Cold start](#cold-start-0200).
-- Each figure is the median (p50) of 31 to 200 runs started with `subprocess` from Python.
+- Each figure is the median (p50) of 31 to 200 runs started from Python, with `os.posix_spawn`
+  ([`spikes/bench.py`](../spikes/bench.py)) or, where a section says so, with `subprocess.run`.
   Variants that are compared are run interleaved, so that a drift of the CPU clock hits both.
   Runs of 100 ms and more vary by about ±1.5 ms between rounds; repeat before trusting a
   difference of a few milliseconds.
@@ -42,7 +43,8 @@ belong to the release each section names; the dates of those releases' tagged co
 the repository's tags: 0.4.0, 0.5.0 and 0.6.0 on 2026-10-08; 0.7.0, 0.8.0, 0.9.0, 0.9.1 and
 0.10.0 on 2026-10-09; 0.14.0, 0.15.0 and 0.15.1 on 2026-10-10; 0.19.0 on 2026-10-14; 0.20.0 on
 2026-10-18; 0.21.0 on 2026-10-21; 0.23.0 on 2026-10-22; 0.24.0 on 2026-10-23; 0.25.0 on
-2026-10-25. No number was measured with 0.26.0 or 0.27.0 (tagged 2026-10-26 and 2026-10-27).
+2026-10-25. No number was measured with 0.26.0, 0.27.0 or 0.28.0 (tagged 2026-10-26, 2026-10-27
+and 2026-10-27).
 "Phase 2" and "Phase 6" in the first table are stages of the implementation plan and carry no
 release number.
 
@@ -84,7 +86,7 @@ session in which bare CPython started 0.11 to 0.14 ms slower than in 0.24.0's).
   costs 0.03 to 0.08 ms in 0.25.0: the app with `FSBPYR_MAX_INSTANCES=0`, interleaved with the
   other variants, started that much faster.
 
-The start of v0.27.0 also does work that no row above includes. The launcher looks up
+Since 0.26.0 the start also does work that no row above includes. The launcher looks up
 `PYTHONUNBUFFERED` (`main` in
 [`launcher/main.c`](../src/fsbpyr/launcher/main.c))
 and `_fsbpyr.info()` reads `AT_EXECFN`; `run` in
@@ -393,10 +395,10 @@ SHA-256 of its stored bytes.
   the trailer's digest.
 
 What the measured commit lacks: fsbpyr's boot and runtime modules were 11 there (256 → 94 KiB
-with their sources) and are 15 in v0.27.0 (`_fsbpyr_boot` and the 14 modules of `_fsbpyr_rt`,
+with their sources) and are 15 in v0.28.0 (`_fsbpyr_boot` and the 14 modules of `_fsbpyr_rt`,
 its `__init__` included, counted from the tag's tree; `commands`, `links`, `restart` and
 `service` are the four the commit did not have), and the launcher sources changed after it
-(v0.27.0's stub records the runtime id it was linked as, and reads `PYTHONUNBUFFERED` and
+(v0.28.0's stub records the runtime id it was linked as, and reads `PYTHONUNBUFFERED` and
 `AT_EXECFN`). Those rows were not measured again; the payload layout and the standard library
 rows are unchanged.
 
@@ -426,7 +428,7 @@ The size of that stub was not measured.
 Of the later runs' 620 ms, about 60 ms check 12,151 cached files (about 120 ms one at a time;
 with size checks only, 560 ms); about 95 ms more go to walking their records in Python. Since
 0.9.0 the launcher does both: see [The cache sync in the launcher](#the-cache-sync-in-the-launcher-090).
-At v0.27.0 extracted files are still not synced to disk (`restore` in `launcher/cache.c`): one
+At v0.28.0 extracted files are still not synced to disk (`restore` in `launcher/cache.c`): one
 a crash left incomplete fails its digest and is written again.
 
 ### The three compression methods (0.8.0)
@@ -668,7 +670,7 @@ helper threads. A standalone program checking the 12,139 files the same way, wit
 
 Mapping a large file still won in 0.9.0: its pages fault in on the hashing threads, in
 parallel. Since 0.9.1 large files are read leaf by leaf instead (above). The constants of
-v0.27.0, in `launcher/cache.c`: up to 1024 files per pass (`CHECK_BATCH`), files up to 64 KiB
+v0.28.0, in `launcher/cache.c`: up to 1024 files per pass (`CHECK_BATCH`), files up to 64 KiB
 read into a 16 MiB buffer (`SMALL_FILE`, `BATCH_BUFFER`), at most 64 larger ones held open and
 read leaf by leaf (`HELD_FILES`).
 
@@ -743,7 +745,8 @@ without linking: it takes the stub its companion release publishes.
   64 ms on the 8 performance cores, 59 ms with `OPENBLAS_NUM_THREADS=1`. While those threads
   occupy every core, a thread that sleeps and is woken may land on an efficiency core and stay
   there: joining the hashing threads cost `heavy np` +38–41 ms; spinning on non-blocking joins
-  (for at most 2 ms, then a normal join; `SPIN_NS` in `launcher/parallel.c`) +4–5 ms.
+  (for at most 2 ms, then a normal join; `SPIN_NS` in `launcher/parallel.c`) +4–7 ms (D32;
+  +4–5 ms in 0.7.0's runs, +4 to 7 in the comment above `fsb_parallel` in `parallel.c`).
 - **Whatever the run loads is hashed.** The cache check grows with the natives a run imports,
   about 0.1–0.3 ms per MB on this machine; the integrity check with the executable's size.
 - **The builder's CPython compiles the app's modules.** A build by the installed `fsbpyr` (its
@@ -880,8 +883,8 @@ removes it at exit: 35.0 MB in 2 files for `hello` (`libpython3.14.so.1.0` and
 2. `FSBPYR_IMPORTTIME=1 app ...`: CPython's import-time table, per module (the launcher sets
    `config.import_time`).
 3. Compare with the tables above: the no-op app isolates the launcher (its instance slot
-   apart: `FSBPYR_MAX_INSTANCES=0` turns it off; the boot code's per-start checks of v0.27.0
-   are not apart, see [Starting a no-op app](#starting-a-no-op-app)) and the integrity check, `heavy json` the
+   apart: `FSBPYR_MAX_INSTANCES=0` turns it off; the boot code's per-start checks of 0.26.0
+   and later are not apart, see [Starting a no-op app](#starting-a-no-op-app)) and the integrity check, `heavy json` the
    payload imports, `heavy np` and `heavy onnx` the cache check and native loading, aiagent a
    large pure-Python import tree.
 4. Compare the app's start with `python3 -I -S -c pass`, interleaved, as under

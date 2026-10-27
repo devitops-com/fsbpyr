@@ -14,17 +14,17 @@ and every option, using the `pandas-csv` corpus app built in [Building an app](U
 ```console
 $ fsbpyr inspect dist/corpus-pandas-csv
 app        corpus-pandas-csv 1.0.0
-built with fsbpyr 0.27.0-bdc2e0ed
-python     3.14.9, glibc >= 2.34
+built with fsbpyr 0.28.0-b9b1144d
+python     3.14.10, glibc >= 2.34
 uv         0.13.6
 size       65.1 MB, 5 distributions
 compressed zstd 9, native files zstd 9
-digest     e25687d785a30180c72294861f95bb6ab7a89096366fb18d662d020cdf8eedb6
+digest     75131ac9434c9710b7b3c53533ad14fa6a472a561c652b38f67c45e7b2744182
 toolchain  clang version 23.1.3
            clang version 23.1.3 (https://github.com/llvm/llvm-project 0d261d1ca552c95a8f007e061c787ac7132fbcbc)
            GCC: (Debian 12.2.0-14+deb12u1) 12.2.0
            Linker: LLD 23.1.3 (https://github.com/llvm/llvm-project 0d261d1ca552c95a8f007e061c787ac7132fbcbc)
-components expat expat_2.9.0; libmpdec 4.0.0; openssl OpenSSL 3.5.9 29 Sep 2026; sqlite 3.53.1; zlib 1.3.2
+components expat expat_2.9.0; libmpdec 4.0.0; openssl OpenSSL 3.5.9 29 Sep 2026; sqlite 3.53.1; zlib 1.3.2; zstd 1.5.7
 lock       uv.lock sha256:9f05a943323fe8894ecc0d60ffcb166e02ea7fdeacfaa9fecc44189ffb9abbac
 extras     (none)
 fs pkgs    babel, botocore, certifi, litellm, matplotlib, torch
@@ -51,19 +51,19 @@ modules: 5 top-level names in 5 distributions
 standard library and fsbpyr: 187 top-level names
   __future__  ...
 stored bytes (without the trailer):
-  stub                                   20,939,049
-  zero padding to the 64 KiB boundary        32,471
+  stub                                   20,997,993
+  zero padding to the 64 KiB boundary        39,063
   payload header                                208
-  index and string tables                   564,860
-  blob alignment padding                      8,129
-  standard library and boot modules       6,748,362
+  index and string tables                   564,884
+  blob alignment padding                      8,167
+  standard library and boot modules       6,752,812
   distribution              code      sources    resources      natives
   corpus-pandas-csv          575           81          165            0
   numpy                3,773,956    1,736,336      939,171   10,938,359
   pandas               9,752,976    3,964,555      122,171    5,165,346
   python-dateutil        125,426       64,121      156,106            0
   six                     18,007        8,762          671            0
-  total                                  65,059,863
+  total                                  65,129,911
 ```
 
 | Line | Meaning |
@@ -108,11 +108,11 @@ than `glibc >= 2.28`, even where its launcher uses only older symbol versions.
 ```console
 $ fsbpyr inspect --verify dist/corpus-pandas-csv
 ...
-digest     e25687d785a30180c72294861f95bb6ab7a89096366fb18d662d020cdf8eedb6 verified
-sha256     b449ca5fd22d06c1907d1ab7ed22e699b74828cefc97f96def2d26d0703332fb
+digest     75131ac9434c9710b7b3c53533ad14fa6a472a561c652b38f67c45e7b2744182 verified
+sha256     6b68dbc82308fe1a31fcf8bb97bf6b388557893b171977997be3e592c5e400e1
 ...
 $ sha256sum dist/corpus-pandas-csv
-b449ca5fd22d06c1907d1ab7ed22e699b74828cefc97f96def2d26d0703332fb  dist/corpus-pandas-csv
+6b68dbc82308fe1a31fcf8bb97bf6b388557893b171977997be3e592c5e400e1  dist/corpus-pandas-csv
 ```
 
 `digest` is fsbpyr's own, checked at every start. `sha256` is the plain hash that `sha256sum`
@@ -121,7 +121,7 @@ stays fast.
 
 ### `--json`
 
-For scripts. The top-level keys in 0.27.0:
+For scripts. The top-level keys in 0.28.0:
 
 ```
 all_modules  app  build_info  built_with  digest  digest_covers  distributions  entry
@@ -135,7 +135,7 @@ target, and its `entry` is the table of `name=target` lines. `glibc_baseline` is
 app built the default way and `2.28` for one built with `--glibc 2.28`. With `--files` there is also
 `files`, the list `--files` prints.
 
-`schema` is the number of the JSON format, 1 in 0.27.0. `build_info` holds the build information recorded in
+`schema` is the number of the JSON format, 1 in 0.28.0. `build_info` holds the build information recorded in
 the file (project, lock, settings, runtime, git commit and more), described in
 [Executable format](Dev-Executable-Format.md). For example, the glibc check from
 [Building an app](User-Building.md#--strict):
@@ -164,8 +164,7 @@ files: 2484
 Every executable statically links third-party libraries (OpenSSL, libffi, libedit, ncurses,
 expat, mpdecimal, SQLite, zlib, liblzma, zstd, bzip2, libuuid and the HACL\* code of the hash
 modules) and holds fsbpyr's launcher and boot modules. Their licence texts travel inside the
-executable, except zstd's in an executable for Python 3.12 or 3.13 in 0.27.0 ([#56](https://github.com/devitops-com/fsbpyr/issues/56)). `--licenses`
-prints them, then the notices each distribution ships:
+executable. `--licenses` prints them, then the notices each distribution ships:
 
 ```console
 $ fsbpyr inspect --licenses dist/corpus-pandas-csv | grep '^==== '

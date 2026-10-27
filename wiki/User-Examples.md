@@ -8,11 +8,10 @@ and errors. This page shows how to try a corpus app yourself, walks through six 
 app to the use case it stands for, and lists the examples of scripts, several commands and
 other locks that the other pages take from fsbpyr's test fixtures and end-to-end tests.
 
-All outputs on this page and the other User Guide pages come from fsbpyr 0.27.0 (the released
-`fsbpyr-3.14-x86_64-linux-gnu`) with uv 0.13.6 on x86-64 Linux, on 2026-10-27. That uv is not
-the 0.13.5 the release was built with, so every build also printed the warning that says so;
-the outputs leave it out ([Building](User-Building.md#a-first-build) shows it). Paths are
-shortened to `...`.
+All outputs on this page and the other User Guide pages come from fsbpyr 0.28.0 (the released
+`fsbpyr-3.14-x86_64-linux-gnu`) with uv 0.13.6, the uv the release was built with, on x86-64
+Linux, on 2026-10-27, unless they say otherwise. Paths are shortened to `...`, and `...` alone
+stands for lines left out.
 
 ## Trying a corpus app
 
@@ -20,7 +19,7 @@ Each app is a complete project: `pyproject.toml`, `uv.lock`, `src/`, and `comman
 commands the test runs). Copy one out of a checkout and build it:
 
 ```sh
-git clone --depth 1 --branch v0.27.0 https://github.com/devitops-com/fsbpyr.git
+git clone --depth 1 --branch v@VERSION@ https://github.com/devitops-com/fsbpyr.git
 cp -r fsbpyr/tests/corpus/pandas-csv . && cd pandas-csv
 fsbpyr build --python 3.14
 cat commands.toml        # what to run: here argv = ["work/sales.csv"]
@@ -48,7 +47,7 @@ def main() -> None:
 It needs no `[tool.fsbpyr]` table. The build and its output are on
 [Building an app](User-Building.md#a-first-build), and its `inspect` output on
 [Inspecting](User-Inspecting.md#the-summary). It is also the example for the `--strict`,
-`--no-source` (65.1 MB → 59.2 MB) and `--smoke-args` options, and for `FSBPYR_TRACE`.
+`--no-source` (65.1 MB → 59.3 MB) and `--smoke-args` options, and for `FSBPYR_TRACE`.
 
 ## 2. A web app with templates: `flask-jinja`
 
@@ -104,7 +103,7 @@ fsbpyr selftest: all natives load (196 extensions)
 ```
 
 The build error without the setting is on
-[Settings: allow-system-libs](User-Settings.md#allow-system-libs). This app is 449.5 MB: xgboost
+[Settings: allow-system-libs](User-Settings.md#allow-system-libs). This app is 449.6 MB: xgboost
 depends on `nvidia-nccl-cu13`, NVIDIA's NCCL library, and the build warns that NCCL's Python code
 names a library that no extension module loads.
 
@@ -117,7 +116,7 @@ httptools, websockets) on 127.0.0.1 and talks to it over TCP. No settings:
 ```console
 $ fsbpyr build --python 3.14
 ...
-fsbpyr: built .../fastapi/dist/corpus-fastapi (40.0 MB, entry corpus_fastapi.cli:main, glibc >= 2.34)
+fsbpyr: built .../fastapi/dist/corpus-fastapi (40.1 MB, entry corpus_fastapi.cli:main, glibc >= 2.34)
 fsbpyr: target needs: glibc >= 2.34; libgcc_s.so.1 (GCC_4.2.0)
 $ dist/corpus-fastapi 2>/dev/null
 hello {'message': 'hello Ada'}
@@ -146,7 +145,7 @@ fails:
 ```console
 $ fsbpyr build --python 3.14 -o dist/no-setting
 ...
-fsbpyr: smoke-testing .../black/dist/.no-setting.w1t9bwe3.tmp
+fsbpyr: smoke-testing .../black/dist/.no-setting.2w4xifae.tmp
 fsbpyr: error: smoke test of the new .../black/dist/no-setting failed (exit 1):
 Traceback (most recent call last):
   ...
@@ -163,7 +162,7 @@ package and the option, `--fs-package blib2to3`; the corpus app sets it as
 ```console
 $ dist/corpus-black --version
 corpus-black, 26.10.1 (compiled: yes)
-Python (CPython) 3.14.9
+Python (CPython) 3.14.10
 $ printf 'def f( a,b ):\n  return {"a":a}\n' | dist/corpus-black -q -
 def f(a, b):
     return {"a": a}
@@ -184,7 +183,7 @@ settings each app needs, and the risk it covers, are on
 | Developer tools and libraries with native parts | `black`, `gnureadline`, `lxml`, `pillow`, `pytest-plugin`, `setuptools-vendor` | 5 of 6 |
 
 On Python 3.15 (and, for `tensorflow`, on 3.14), apps whose lock needs a package without a
-usable wheel for that Python are skipped ([Building: Python 3.15](User-Building.md#which-python)).
+usable wheel for that Python are not run ([Building: Python 3.15](User-Building.md#which-python)).
 
 ## Examples beyond the corpus
 

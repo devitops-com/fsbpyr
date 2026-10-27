@@ -2,7 +2,7 @@
 
 This page is the reference for the Python modules directly under
 [`src/fsbpyr/`](../src/fsbpyr) in fsbpyr
-v0.27.0: the command line, the pipeline that turns a project, a directory of scripts or a single
+v@VERSION@: the command line, the pipeline that turns a project, a directory of scripts or a single
 script into an executable, and the commands that read executables or keep the tool up to date. It
 starts with what `fsbpyr build` does, step by step, with the module and function behind each step
 and the point where each kind of input takes its own path. Then it describes every module,
@@ -60,13 +60,13 @@ decides which of five kinds of input it is, and the kind decides how the project
 where the commands come from and which lock sources count. The letters A to E name the kinds in
 the steps and in the second diagram.
 
-![How Project.load decides the kind of input: a file that is a *.py file or has a python shebang is D, one script, any other file is refused; a directory with a pyproject.toml that holds tool settings only, or with neither pyproject.toml nor setup.py nor setup.cfg, is C, a directory of scripts, when it has Python files, else E, a tool binary, when it has a lock source, else NoPythonFiles; a setup.cfg alone is refused; a pyproject.toml that a build system packages, or a setup.py, is A, a project with a build system; a pyproject.toml with a project table that no build system packages is B, a project without a build system.](images/build-inputs.svg)
+![How Project.load decides the kind of input: a file that is a *.py file or has a python or uv run shebang is D, one script, any other file is refused; a directory with a pyproject.toml that holds tool settings only, or with neither pyproject.toml nor setup.py nor setup.cfg, is C, a directory of scripts, when it has Python files, else E, a tool binary, when it has a lock source, else NoPythonFiles; a setup.cfg alone is refused; a pyproject.toml that a build system packages, or a setup.py, is A, a project with a build system; a pyproject.toml with a project table that no build system packages is B, a project without a build system.](images/build-inputs.svg)
 
 | | Input | The project's wheel | Commands | Dependencies, strongest first | Output by default |
 |---|---|---|---|---|---|
 | A | A project with a build system: a `pyproject.toml` that a build system packages, or a `setup.py` | `uv build`, out of tree | the console scripts and the wheel's `#!python` legacy scripts; with none, the only top-level `__main__` package or module with a main guard | `--requirements`, `uv.lock` (the project's or its uv workspace's), `pylock.toml`, `requirements.txt`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, else unlocked | `dist/<command>`; with several commands, `dist/<project name>` and a link per command |
 | B | A project without a build system: `[project]` and no `[build-system]`, or Poetry's `package-mode = false` or PDM's `distribution = false` (a Poetry 1 `[tool.poetry]` with no `[project]` too); a uv workspace root is A | written by fsbpyr: the project's `*.py` files under `_fsbpyr_scripts/` | `[project.scripts]`, else the files with a main guard | as A | as A |
-| C | A directory of scripts: no `pyproject.toml` (or one of tool settings only), no `setup.py` or `setup.cfg`, and Python files | written by fsbpyr: the `*.py` files and the extensionless files whose first line is a python shebang | each file with a main guard or a python shebang | `--requirements`, `pylock.toml`, `requirements.txt`, `Pipfile.lock`; else the commands' PEP 723 blocks (unlocked); else pins read from the scripts' venv | `dist/<command>`; with several, `dist/<directory name>` as a project name (`My_Tools` gives `my-tools`) and a link per command |
+| C | A directory of scripts: no `pyproject.toml` (or one of tool settings only), no `setup.py` or `setup.cfg`, and Python files | written by fsbpyr: the `*.py` files and the extensionless files whose first line is a python or `uv run` shebang | each file with a main guard or such a shebang | `--requirements`, `pylock.toml`, `requirements.txt`, `Pipfile.lock`; else the commands' PEP 723 blocks (unlocked); else pins read from the scripts' venv | `dist/<command>`; with several, `dist/<directory name>` as a project name (`My_Tools` gives `my-tools`) and a link per command |
 | D | One script: PROJECT is a `*.py` file, or an extensionless file whose first line is a python or `uv run` shebang | written by fsbpyr: the script and the files of its directory that it imports, transitively | the script, named after its stem | `--requirements`, `<script>.lock`; else its PEP 723 block (unlocked); else pins read from the venv | `dist/<stem>` in the script's directory |
 | E | A tool binary: as C, but with no Python file and a lock source: `--requirements` (or `requirements` in `[tool.fsbpyr]`), `pylock.toml`, `requirements.txt` or `Pipfile.lock` | written by fsbpyr: metadata only | the console and gui scripts of the tools the lock names | the lock source that makes it E | as C, named after the project: the directory's name, or `<name>-tools` |
 
@@ -101,7 +101,10 @@ takes that branch, only for those kinds. The italic lines in the diagram say wha
    the Python the lock asks for. [`config.load_config`](../src/fsbpyr/config.py#L168)
    merges the `[tool.fsbpyr]` table (of `pyproject.toml`, of a `pyproject.toml` of settings, or
    of a script's PEP 723 block) with the options into a `BuildConfig`; options win. Its `glibc`
-   is the baseline of the steps below: `--glibc`, else `glibc` in the table, else 2.34.
+   is the baseline of the steps below: `--glibc`, else `glibc` in the table, else 2.34. When
+   the table names `requirements` and the option does not, `build_command` loads the project
+   again with that file, so that the lock source, and with it the Python a `Pipfile.lock` asks
+   for, is the one the build installs.
 3. [`pyversion.resolve`](../src/fsbpyr/pyversion.py#L89)
    picks the Python. When it is not this fsbpyr's, `dispatch.run` runs the matching fsbpyr with
    the same command line, `--glibc` included, and its exit status is this command's
@@ -136,7 +139,8 @@ takes that branch, only for those kinds. The italic lines in the diagram say wha
    running fsbpyr executable when its Python and its glibc baseline match, else the one
    `fsbpyr runtime build` put in the cache. For glibc 2.28 a released executable pairs its own
    standard library with the stub of its release linked against the EL8 sysroot
-   (`runtime.stubs.paired`, [below](#building-for-glibc-228)). `Project.check_python` then tests
+   (`runtime.stubs.paired`, [below](#building-for-glibc-228)); with `--offline` that stub must
+   be placed or cached. `Project.check_python` then tests
    `requires-python` against the runtime's full version, and `uv_mismatch` warns when uv is not
    the uv that built this fsbpyr executable.
 9. [`Project.lock_source`](../src/fsbpyr/project.py#L212)
@@ -202,8 +206,12 @@ takes that branch, only for those kinds. The italic lines in the diagram say wha
     commands named after the project (`closure.command_table`, which checks every command name
     with `check_command_names`), or the inferred `__main__` package or guarded module. The
     output is `-o`, or `dist/<app name>` in the project directory (the script's directory for D).
-    For a table of commands, `links.check_links` refuses a regular file or directory where a
-    command's link is to go. The output's directory is created.
+    When the output is a symlink the executable is written through it, unless an earlier build
+    of the project made that link for one of several commands: then the executable replaces the
+    link (`_output_path`, `links.is_earlier_link`). For a table of commands,
+    `links.check_links` refuses a regular file or directory where a command's link is to go,
+    unless it is the executable an earlier build of the project wrote for that one command. The
+    output's directory is created.
 
 **Content**, with a `payload.spill.Spill` beside the output that holds compressed bytes
 
@@ -212,7 +220,8 @@ takes that branch, only for those kinds. The italic lines in the diagram say wha
     modules are compiled to canonical bytecode by `compiler` and `bytecode`, files are compressed,
     and the native libraries' dependencies are resolved by `natives` and `elf`. For the project's
     own files it also reports the warnings compiling emits, and for the scripts (B, C, D and
-    legacy scripts) the files they read next to their `__file__`.
+    legacy scripts) the files they read next to their `__file__`, in the main guard too for the
+    modules the executable runs as `__main__`.
 16. The warnings are gathered: the walk's, the classifier's, `best_compression_unused` and
     `helper_interpreter_hints`.
     [`glibc_report`](../src/fsbpyr/build.py#L147)
@@ -250,7 +259,8 @@ takes that branch, only for those kinds. The italic lines in the diagram say wha
 21. [`payload.writer.commit`](../src/fsbpyr/payload/writer.py#L617)
     renames the new file over the output and syncs the directory. For a table of commands,
     [`links.make_links`](../src/fsbpyr/links.py#L67)
-    then puts a relative symlink per command beside the output. `build_command` prints the
+    then puts a relative symlink per command beside the output, in place of a symlink or of the
+    executable an earlier build of the project wrote for that command. `build_command` prints the
     warnings, a line `fsbpyr: built PATH (SIZE MB, entry ENTRY, glibc >= X.Y)` (`N commands` in
     place of the entry for a table), the commands and each link, `fsbpyr: target needs: ...` when
     there is one, and for B to E how to deploy the executable and its links on a host
@@ -273,14 +283,17 @@ runs the fsbpyr of the same release built for that Python, with the command line
 given, and its exit status becomes this command's. The variant then does the whole build itself,
 from step 1. `dispatch.variant` takes it from the tool's cache, or fetches the release asset
 first and refuses it when it needs a newer glibc than the host has; a developer build never
-fetches one. The version comes from a project's `requires-python` as much as from a single
+fetches one, and neither does `--offline`, which stops with a `DispatchError` when the variant
+is not cached. The version comes from a project's `requires-python` as much as from a single
 script's PEP 723 block or a `Pipfile.lock`, so a script can be handed on as a project can.
 `--glibc` travels with the command line, and the variant reads `glibc` in `[tool.fsbpyr]` as
 this fsbpyr does, so a glibc 2.28 build takes the stub that goes with the variant's Python.
+`dispatch.run` tells the variant where this fsbpyr is (`FSBPYR_DISPATCHED_BY`), and the variant
+looks for a placed stub beside it first, where the user put it.
 `load_config` checks the table before the Python is chosen: an unknown `glibc` there stops the
 build before any variant is fetched.
 
-![How fsbpyr build chooses: config.load_config checks the glibc setting and pyversion.resolve chooses X.Y; if it is this fsbpyr's Python, build.build runs in this process; a developer build stops with DispatchError and the make command to build the variant; a release looks for downloads/fsbpyr-X.Y-TARGET-vA.B.C in the cache, fetches the release's fsbpyr-X.Y-TARGET.xz into it when it is missing, verifies it and checks its glibc against the host's, and dispatch.run runs it with the same arguments, --glibc included; for glibc 2.28 the variant takes the EL8 stub for its own Python.](images/build-dispatch.svg)
+![How fsbpyr build chooses: config.load_config checks the glibc setting and pyversion.resolve chooses X.Y; if it is this fsbpyr's Python, build.build runs in this process; a developer build stops with DispatchError and the make command to build the variant; a release looks for downloads/fsbpyr-X.Y-TARGET-vA.B.C in the cache, stops with DispatchError when it is missing and the build is --offline, else fetches the release's fsbpyr-X.Y-TARGET.xz into it when it is missing, verifies it and checks its glibc against the host's, and dispatch.run runs it with the same arguments, --glibc included, and FSBPYR_DISPATCHED_BY naming this fsbpyr's paths; for glibc 2.28 the variant takes the EL8 stub for its own Python, looking beside this fsbpyr first.](images/build-dispatch.svg)
 
 ### Building for glibc 2.28
 
@@ -307,29 +320,37 @@ gives it the stub of its own release for its Python and target, the asset
 takes from the first of these that has it:
 
 1. A file of that name, or with `.xz` (unpacked in-process), placed beside the fsbpyr
-   executable: beside the path it was run by (looked up on `PATH` when it was run by name), then
-   beside its real path. This is for machines without GitHub.
-2. The tool's cache: `downloads/fsbpyr-stub-X.Y-TARGET-glibc2.28-vA.B.C`.
+   executable (`runtime.stubs.own_paths`): for a variant that `dispatch.run` started, first
+   beside the fsbpyr that handed the build to it (`FSBPYR_DISPATCHED_BY`); then beside the path
+   it was run by (looked up on `PATH` when it was run by name), then beside its real path. This
+   is for machines without GitHub.
+2. The tool's cache: `downloads/fsbpyr-stub-X.Y-TARGET-glibc2.28-<runtime id>`, named after the
+   runtime id the stub must carry, so a stub that an update leaves unchanged is not downloaded
+   again.
 3. The companion release `el8-vA.B.C` of the release `vA.B.C` (`vcs.release_stub_tag`), under the
    download URL a variant is fetched from (`$FSBPYR_RELEASE_DOWNLOADS`, see
    [`dispatch`](#dispatch)): first its `SHA256SUMS-glibc2.28` (`vcs.release_stub_sums`, read with
    `selfupdate.download_text`), then the stub's `.xz`, unpacked with `selfupdate.unpack`. A stub
-   whose SHA-256 is not the one listed is refused and not kept.
+   whose SHA-256 is not the one listed is refused and not kept. With `--offline` nothing is
+   downloaded: a stub that is neither placed nor cached is a `StubError` that says to place the
+   asset beside the fsbpyr executable or to build once without `--offline`.
 
 Wherever it comes from, the stub must carry the runtime id this fsbpyr computes for itself
 (`registry.runtime_id`): `cp<XY>-<target triple>-` and 12 hex digits of a SHA-256 over the
-launcher's sources and compile and link flags (`runtime.stub.launcher_digest`), the pinned
-python-build-standalone archive of that Python and target, the EL8 sysroot's identity and the
-runtime layout version. The launcher records its runtime id when it is linked, and
+launcher's sources and its compile and link flags for the target (`runtime.stub.launcher_digest`),
+the pinned python-build-standalone archive of that Python and target, the EL8 sysroot's identity
+and the runtime layout version. The launcher records its runtime id when it is linked, and
 `runtime.stub.stub_identity` reads it. A stub with another runtime id (another Python or target,
 or a release whose launcher, pins or sysroot differ), or a file that is no stub, is refused
 (`StubError`, a `RuntimeCacheError`) with the asset and the release to take instead. The id names
 no release: two releases with the same launcher, pins and sysroot compute the same id, so the
-EL8 stub of an earlier release such as that passes the check. A cached file that fails the
-check is removed and fetched again. A downloaded stub that passes is written into the cache whole
-or not at all. When the companion release does not exist or has no stub for this Python, the
-error says to place the stub beside the executable or to use a release that has one; any other
-failure to fetch it says how to build without the network. The paired runtime keeps the
+EL8 stub of an earlier release such as that passes the check, and is found in the cache under
+the same name. A cached file that fails the check is removed and fetched again. A downloaded
+stub that passes is written into the cache whole or not at all. When the companion release does
+not exist or has no stub for this Python, the error says to place the stub beside the fsbpyr
+executable (for a variant, the one that handed the build to it) or to use a release that has
+one; any other failure to fetch it, a download cut short among them, says how to build without
+the network. The paired runtime keeps the
 executable's standard library, Python version and component versions, and takes the stub, the
 EL8 runtime id and `runtime_inputs` naming the EL8 sysroot, which `assemble` writes into
 build_info.
@@ -339,8 +360,8 @@ they use the runtime `fsbpyr runtime build --glibc 2.28` put in the cache (the s
 against the EL8 sysroot, and the standard library), and stop with a `RuntimeCacheError` that
 names that command when there is none. The runtime side is on
 [runtime modules](Dev-Runtime-Modules.md); `fsbpyr inspect` shows the baseline
-([`inspection`](#inspection)), and `fsbpyr self update` warns about stubs placed beside the
-executable ([`selfupdate`](#selfupdate)).
+([`inspection`](#inspection)), and `fsbpyr self update` names the placed stubs that the new
+release does not publish ([`selfupdate`](#selfupdate)).
 
 ## Command line and dispatch
 
@@ -376,13 +397,13 @@ on standard error.
 | Function | What it does |
 |---|---|
 | `cli` | The group; plain `fsbpyr` prints the help and exits 0. |
-| `build_command` | `fsbpyr build [PROJECT]`: PROJECT is a directory or a script file. Loads the project and the configuration, resolves the Python, hands the build to `dispatch.run` or runs `build.build`, and prints the result: warnings, the built line, the commands and their links, what the target needs and, for a build without a build system, the deploy lines. |
+| `build_command` | `fsbpyr build [PROJECT]`: PROJECT is a directory or a script file. Loads the project and the configuration (and the project again when only the settings name the `requirements` file), resolves the Python, hands the build to `dispatch.run` or runs `build.build`, and prints the result: warnings, the built line, the commands and their links, what the target needs and, for a build without a build system, the deploy lines. |
 | `inspect_command` | `fsbpyr inspect`: `inspection.read` and its text or JSON form; `--licenses` prints `licensing`'s notices instead. |
 | `runtime_group` | The `fsbpyr runtime` group. |
 | `runtime_build` | `fsbpyr runtime build`: `runtime.registry.build_runtime` for `--python` and `--glibc` (the sysroot the stub is linked against: Debian 12's for 2.34, the default, or Rocky Linux 8.10's for 2.28), with `--clang`. |
 | `runtime_list` | `fsbpyr runtime list`: the embedded runtime and the cached ones, one per line, each with its Python and its glibc. |
 | `cache_group` | The `fsbpyr cache` group. |
-| `cache_gc` | `fsbpyr cache gc`: collects the tool's cache, then every app cache found; exit 1 if anything could not be removed. |
+| `cache_gc` | `fsbpyr cache gc`: collects the tool's cache, then every app cache found; exit 1 if anything could not be removed, or when the caches cannot be found (no home directory). |
 | `self_group` | The `fsbpyr self` group. |
 | `self_update` | `fsbpyr self update`: `selfupdate.update`. |
 | `completion` | Prints click's completion script for bash, zsh or fish; the scripts call fsbpyr back with `_FSBPYR_COMPLETE` set. |
@@ -408,6 +429,11 @@ Rules it enforces:
   collection is due (`runtime.collect.collect_when_due`). No home directory, a cache it may not
   write and a read-only file system are ignored; other failures are printed and never stop the
   command.
+- A cache location that needs the home directory when there is none (`HOME` unset, empty or
+  relative, and no absolute home in the passwd entry) is a `RuntimeCacheError`: `build`,
+  `runtime build`, `runtime list` and `cache gc` print `fsbpyr: error: cannot find the home
+  directory; set HOME, XDG_CACHE_HOME or FSBPYR_CACHE_DIR` and exit 1. With `FSBPYR_CACHE_DIR`
+  set, `cache gc` collects that cache without a home directory.
 - `build_command` reports the build modules' errors and `OSError` as `fsbpyr: error: ...` with exit
   1, after the warnings carried as notes. `main` reports click usage errors with click's exit
   status, an interrupt (SIGINT, or SIGTERM, which it turns into `KeyboardInterrupt`) with exit 130,
@@ -433,13 +459,18 @@ fsbpyr's own release, the asset `fsbpyr-X.Y-TARGET`, is fetched the way `fsbpyr 
 fetches: the `.xz` is unpacked in-process with lzma (`selfupdate.unpack`) and verified in-process
 (`inspection.read(verify=True)`) before anything runs it. It is kept in the tool's cache as
 `downloads/fsbpyr-X.Y-TARGET-vA.B.C` and run with the same arguments, so once cached it needs no
-network. A developer build never fetches a released variant, which would mix released code into a
-development build: it stops and says how to build the variant from the checkout
-(`make build PYTHON=X.Y`). The variant gets the command line as it was given, `--glibc`
-included, so a glibc 2.28 build for another Python pairs the variant's standard library with the
-EL8 stub for that Python ([Building for glibc 2.28](#building-for-glibc-228)). `runtime.stubs`
-takes `DOWNLOADS_VARIABLE` and `DEFAULT_DOWNLOADS` from this module: the stubs' companion
-releases are under the same download URL as the variants.
+network; with `--offline` it is never fetched. A developer build never fetches a released variant,
+which would mix released code into a development build: it stops and says how to build the
+variant from the checkout (`make build PYTHON=X.Y`). The variant gets the command line as it was
+given, `--glibc` and `--offline` included, so a glibc 2.28 build for another Python pairs the
+variant's standard library with the EL8 stub for that Python
+([Building for glibc 2.28](#building-for-glibc-228)). The variant also gets
+`FSBPYR_DISPATCHED_BY` (`DISPATCHED_BY_VARIABLE`): this fsbpyr's own paths
+(`runtime.stubs.own_paths`), joined with `os.pathsep`, beside which the variant looks for a
+placed stub before its own places. It only adds directories to look in: a stub found there must
+still carry the runtime id. `runtime.stubs` takes `DOWNLOADS_VARIABLE`, `DEFAULT_DOWNLOADS` and
+`DISPATCHED_BY_VARIABLE` from this module: the stubs' companion releases are under the same
+download URL as the variants.
 
 | Class | What it represents |
 |---|---|
@@ -447,8 +478,8 @@ releases are under the same download URL as the variants.
 
 | Function | What it does |
 |---|---|
-| `variant(python, log)` | The path of this release's executable for `python`: from the cache, else fetched into it. |
-| `run(python, args, log)` | Runs that executable with `args` and returns its exit status. |
+| `variant(python, log, *, offline)` | The path of this release's executable for `python`: from the cache, else fetched into it; with `offline`, never fetched. |
+| `run(python, args, log, *, offline)` | Runs that executable with `args` and `FSBPYR_DISPATCHED_BY` set, and returns its exit status. |
 
 Rules it enforces:
 
@@ -463,8 +494,11 @@ Rules it enforces:
   renames it, so the cached file appears whole or not at all. A failed download, verification or
   glibc check raises `DispatchError` naming the asset and the release; the temporary file is
   removed.
+- With `--offline`, a variant that is not in the cache raises `DispatchError` naming the asset and
+  the release and saying to run the build once without `--offline`; nothing is downloaded.
 
-- Imports: `inspection`, `selfupdate`, `targets`, `vcs`, `runtime.registry`.
+- Imports: `inspection`, `selfupdate`, `targets`, `vcs`, `runtime.registry`, `runtime.stubs`
+  (lazy).
 - Imported by: `cli` (lazy), `runtime.stubs`.
 
 ## Build driver
@@ -490,7 +524,7 @@ on the same Python as the fsbpyr that builds it.
 |---|---|
 | `BuildError` | The executable could not be produced, or failed its smoke test. |
 | `StrictError` | A `BuildError` for `--strict`: the build has warnings that count; the message lists them. |
-| `BuildResult` | What `build` returns: output path, app name, entry point, size, warnings, the glibc the app needs, the "target needs" line, the commands of a table, the links made, and whether the project had no build system. |
+| `BuildResult` | What `build` returns: output path, app name, entry point, size, warnings, the glibc the app needs, the "target needs" line, the commands of a table, the links made, whether the project had no build system, and the project's name, by which the links tell an earlier output of the project. |
 
 | Function | What it does |
 |---|---|
@@ -521,22 +555,28 @@ on the same Python as the fsbpyr that builds it.
 Private helpers with logic of their own: `_build` (steps 4 to 19), `_provenance` (`lock`, `dists`
 and `settings` through `manifest`, and the log line naming distributions built from sdists),
 `_installed_project` (the project's distribution, and its extras when they are dynamic),
-`_converted_lock_warnings`, `_unresolved_warning` and `_removed_hint` (the text of a skipped
-command), `_checked_commands`, `_commands_to_link`, `_make_output_dir`, `_check_entry_module` and
-`_glibc_needs`.
+`_converted_lock_warnings`, `_unresolved_warning`, `_removed_hint` and `_freeze_command` (the text
+of a skipped command), `_checked_commands`, `_output_path` (the path the executable is written
+to, through a link or in its place), `_commands_to_link`, `_make_output_dir`,
+`_check_entry_module` and `_glibc_needs`.
 
 Rules it enforces:
 
 - uv is required before anything slow happens (D26).
 - `--strict` fails after every warning is collected and before anything is written; the venv
-  rung's warning and a skipped command fail it as soon as they are found. Seven kinds of warning
-  are `Uncounted`: the uv mismatch, git's error messages (`vcs.git_state`), the helper interpreter
-  note, the hint that `requirements/` holds requirements files, the note that a `Pipfile.lock`
-  takes packages from another index, and two of `classify`'s guesses (shared libraries no
-  extension loads that Python code names, and executables among the resources).
+  rung's warning and a skipped command fail it as soon as they are found. Eight kinds of warning
+  are `Uncounted` (the list is in `classify.Uncounted`'s docstring): the uv mismatch, git's error
+  messages (`vcs.git_state`), the helper interpreter note, the hint that `requirements/` holds
+  requirements files, the note that a `Pipfile.lock` takes packages from another index, and three
+  of `classify`'s guesses (the `--hints` guess that packages read files next to `__file__`,
+  shared libraries no extension loads that Python code names, and executables among the
+  resources). A script's read next to its `__file__` counts.
 - A command whose imports nothing resolves is skipped with a warning that shows up to three
   `file:line` places (in the project's own file names). It says where to declare the module,
-  gives the `uv pip freeze` command when the project directory holds a `.venv`, and for a
+  gives the `uv pip freeze --python <venv>/bin/python` command when there is a venv that
+  dependency inference reads (`venvdeps.find_venv`: `.venv`, `venv` or `env` with a
+  `pyvenv.cfg` in the project directory, else `$VIRTUAL_ENV`; named relative to the project
+  directory when it lies inside it), and for a
   standard library module that the build's Python no longer has (`importcheck.REMOVED_IN`)
   names the newest Python fsbpyr builds for that still has it (`--python 3.12` for one removed
   in 3.13), or says that the script needs porting and, for `imp`, `distutils`, `asyncore`,
@@ -564,6 +604,12 @@ Rules it enforces:
 - The new executable replaces the output only after the smoke test (at once with `--no-smoke`); on
   any failure or interrupt it is deleted, and the output directories the build created are
   removed while empty. The links of a table are made after the commit.
+- An output path that is a symlink is written through, unless it is a link an earlier build of
+  the same project made for one of several commands (`links.is_earlier_link`): a build of one
+  command replaces that link with its executable and leaves the earlier executable and its
+  other links as they were. A table's link replaces a symlink, or the executable an earlier
+  build of the same project wrote for that one command; any other file stops the build
+  ([`links`](#links)).
 - `release_asset` is recorded only when the project is fsbpyr itself.
 
 - Imports: `assemble`, `bytecode`, `classify`, `closure`, `config`, `elf`, `entry`, `foreign`,
@@ -777,9 +823,10 @@ Entry inference for a project with no console scripts: a top-level package with 
 
 Rules: only module-level `if` statements count, and a file that does not parse has no guard.
 `source_has_candidate` looks through every directory, whatever the layout, except hidden ones,
-`build`, `dist`, `node_modules`, `__pycache__` and virtual environments (a `pyvenv.cfg`), and
-never counts `setup.py`. `installed_candidates` takes only names that are identifiers and never
-the module `__main__`.
+those named in `SKIPPED_DIRECTORIES` (`build`, `dist`, `node_modules`, `__pycache__` and
+`site-packages`, which the file walk of [`loose`](#loose) skips too) and virtual environments (a
+`pyvenv.cfg`), and never counts `setup.py`. `installed_candidates` takes only names that are
+identifiers and never the module `__main__`.
 
 - Imports: nothing from fsbpyr.
 - Imported by: `build`, `closure`, `loose`.
@@ -793,24 +840,29 @@ name, and the lines the build prints on how to deploy them. `COMMAND_NAME` is th
 command name follows, `[A-Za-z0-9][A-Za-z0-9_.+-]*`: a file name and a word on a command line.
 The table of commands the links serve, and the check of each name against `COMMAND_NAME`, are
 made in [`closure`](#closure) (`command_table`, `check_command_names`); `build` takes the names
-for the links from that table.
+for the links from that table. A build that goes from one command to several, or back, replaces
+its own earlier output: the module tells an earlier output of the project by reading its payload.
 
 | Class | What it represents |
 |---|---|
-| `LinkError` | A command's name is taken by a file that is not a link. |
+| `LinkError` | A command's name is taken by a file that is neither a link nor an earlier output of the project. |
 
 | Function | What it does |
 |---|---|
 | `link_paths(binary, commands)` | Where the links go: beside `binary`, one per command; a command named like the binary needs none. |
-| `check_links(binary, commands)` | Fails naming the first link path that a file or a directory holds. |
-| `make_links(binary, commands)` | Links each command to the binary's name. |
+| `is_earlier_link(path, project)` | Whether `path` is a link an earlier build of `project` made for one of several commands: a symlink to a bare name whose target is no link but an earlier output of the project. `build._output_path` replaces such a link rather than write through it. |
+| `check_links(binary, commands, project)` | Fails naming the first link path that a file or a directory holds, unless it is an earlier output of `project` for that command. |
+| `make_links(binary, commands, project)` | Links each command to the binary's name. |
 | `deploy_recipe(binary, commands)` | The lines that say how to install the build on a host: `install -m 755`, a `ln -sf` per command, `FSBPYR_INSTALL_LINKS` as the alternative, and that a line running `python3 $DEST/x.py` must run the link instead. |
 
 Rules: a link names the binary by its name alone, so the directory can move. Each link is made
-as a temporary link `.<name>.<8 hex>.tmp` and renamed into place, which replaces a symlink and
-never a file; the check runs again just before the rename.
+as a temporary link `.<name>.<8 hex>.tmp` and renamed into place, which replaces a symlink or an
+earlier output of the project and never another file; the check runs again just before the
+rename. An earlier output (`_earlier_output`) is a regular file that is an fsbpyr executable (its
+trailer and payload parse) whose app name is the file's name and whose build_info records the
+same project name; a file that cannot be read as one is not.
 
-- Imports: nothing from fsbpyr.
+- Imports: `payload.format`, `payload.reader`.
 - Imported by: `build`, `cli` (lazy), `closure`, `loose`.
 
 ### `loose`
@@ -852,14 +904,14 @@ What it reads:
   one is the project's command, named like the project; several are one command each, named after
   the file, `main.py` and `__main__.py` after the project.
 - **C**: the `*.py` files and the extensionless files whose first 512 bytes start with a python
-  shebang; names that start with a dot are skipped. A file or directory whose name is no Python
-  name is stored under the name `script_stem` makes, in the same place (`check_disk.py`,
-  `_10_backup.py`, `sub_dir/`). Each file with a main guard or a python shebang is a command named
-  after the file (hyphens kept, `main` and `__main__` after the directory); a name that is no
-  `COMMAND_NAME` is a warning, and the file stays a module. The dependencies are the union of the
-  commands' PEP 723 `dependencies` (each once) unless a lock source declares them, and
-  `requires-python` is the intersection of theirs; a `[tool.fsbpyr]` table in a block is ignored
-  with a warning.
+  or `uv run` shebang (`python_shebang`); names that start with a dot are skipped. A file or
+  directory whose name is no Python name is stored under the name `script_stem` makes, in the
+  same place (`check_disk.py`, `_10_backup.py`, `sub_dir/`). Each file with a main guard or such
+  a shebang is a command named after the file (hyphens kept, `main` and `__main__` after the
+  directory); a name that is no `COMMAND_NAME` is a warning, and the file stays a module. The
+  dependencies are the union of the commands' PEP 723 `dependencies` (each once) unless a lock
+  source declares them, and `requires-python` is the intersection of theirs; a `[tool.fsbpyr]`
+  table in a block is ignored with a warning.
 - **D**: the script, stored under its module name, and the files of its directory that it reaches
   by static imports (`importcheck.local_closure`); the rest of the directory is not read. The
   command is the file's stem, which must be a `COMMAND_NAME`; the dependencies and
@@ -893,8 +945,8 @@ Rules it enforces:
   `py3-none-any` and the `WHEEL` file names `fsbpyr` as generator.
 
 - Imports: `entry`, `importcheck` (lazy), `links`, `poetry1`, `project`, `vcs`.
-- Imported by: `build`, `classify`, `closure`, `importcheck`, `legacy`, `project` (lazy),
-  `staging`, `syspath`.
+- Imported by: `build`, `classify`, `closure`, `compiler`, `importcheck`, `legacy`, `project`
+  (lazy), `staging`, `syspath`.
 
 ### `legacy`
 
@@ -1346,7 +1398,7 @@ The private class `_Collector` holds the classification's state and does the wor
 |---|---|
 | `module_name(rel)` | Dotted name and is-package flag of a `.py` path, if importable; a module file's stem may hold hyphens or start with a digit, as `importlib.import_module` reaches it. |
 | `extension_name(rel, suffixes)` | Dotted name, is-package flag and suffix rank of an extension module file; the stem may start with a digit but never holds a hyphen. |
-| `classify(dists, *, extension_suffixes, include_source, ..., project, origins)` | The whole classification; with a spill, no file's bytes stay in memory. `project` is the project's distribution, `origins` the project file of each stored script path (C and D). |
+| `classify(dists, *, extension_suffixes, include_source, ..., project, origins, entrypoint)` | The whole classification; with a spill, no file's bytes stay in memory. `project` is the project's distribution, `origins` the project file of each stored script path (C and D), `entrypoint` the app's entry point, which names the modules that run as `__main__`. |
 
 Constants: `INSTALLER_FILES` are dist-info files that installers write (`INSTALLER`, `REQUESTED`,
 `direct_url.json`, `uv_cache.json`, `RECORD.jws`, `RECORD.p7s`), left out because they embed paths,
@@ -1385,13 +1437,17 @@ Rules it enforces:
 - A `NativeError` from `natives.closures` becomes `ClassifyError`.
 - Hints: for the files under `_fsbpyr_scripts/` (the scripts of B, C and D, and legacy scripts),
   always, each read next to `__file__` (from `scan`), as a warning to deploy that file beside the
-  executable, where the script's `__file__` points; with
-  `--hints`, packages that read files next to `__file__`, except in `tests`/`test` directories;
-  always, as `Uncounted` warnings, shared libraries no extension loads that packaged Python code
-  names, and ELF executables among the resources outside fs-packages.
+  executable, where the script's `__file__` points. A main guard counts only in the modules the
+  executable runs as `__main__` (`_mains`: each target of the entry point that names a module,
+  not `module:function`, below the scripts root; a package by its `__main__.py`), and a call that
+  starts `sys.executable` is no read, since the sibling it runs comes from the payload. With
+  `--hints`, as an `Uncounted` warning, packages that read files next to `__file__`, except in
+  `tests`/`test` directories and below `_fsbpyr_scripts/`; always, as `Uncounted` warnings,
+  shared libraries no extension loads that packaged Python code names, and ELF executables among
+  the resources outside fs-packages.
 
-- Imports: `closure`, `compiler`, `elf`, `loose`, `natives`, `payload.format`, `payload.spec`,
-  `payload.spill`.
+- Imports: `closure`, `compiler`, `elf`, `loose`, `natives`, `boot._fsbpyr_rt.commands`,
+  `payload.format`, `payload.spec`, `payload.spill`.
 - Imported by: `build`, `cli` (lazy).
 
 ### `scan`
@@ -1408,14 +1464,16 @@ libraries a module opens by a literal name with ctypes or cffi.
 
 | Function | What it does |
 |---|---|
-| `file_relative_reads(source, filename)` | Line numbers of reads relative to `__file__`. |
-| `file_relative_existence_checks(source, filename)` | Line numbers of existence checks on such paths, a low-confidence result (`os.path.exists` answers False rather than failing). The build does not call it; its unit test does. |
+| `file_relative_reads(source, filename, *, script, main)` | Line numbers of reads relative to `__file__`. `main`: the module runs as `__main__`, so its main guard counts; `script`: a module of the scripts root, whose call that starts `sys.executable` reads nothing. |
 | `loaded_libraries(source, filename)` | Library names opened by a literal: `CDLL("libmagic.so.1")` gives the name, `find_library("magic")` gives `libmagic`; a path is left out. |
 
 Rules: a module without any of the marker strings is skipped without parsing; one that does not
-parse gives no result; calls inside a top-level `if __name__ == "__main__":` block are ignored;
-names assigned from a tainted expression are followed for at most 5 passes; jinja2's
-`PackageLoader` is flagged by the call alone.
+parse gives no result; calls inside a top-level `if __name__ == "__main__":` block are ignored
+unless `main`; with `script`, a `subprocess.run`, `Popen`, `call`, `check_call`, `check_output`
+or `os.exec*` call whose program is `sys.executable` (its first argument or `args=`, or the first
+element of a list or tuple there) is not a read, since it runs a sibling from the payload, while
+the same call in a package is; names assigned from a tainted expression are followed for at most
+5 passes; jinja2's `PackageLoader` is flagged by the call alone.
 
 - Imports: nothing from fsbpyr.
 - Imported by: `compiler`.
@@ -1502,7 +1560,7 @@ memory-mapped file, so a large library is never read whole.
 | `is_elf(data)` | Whether the data starts with the ELF magic. |
 | `is_foreign(head)` | Whether an ELF object is for another machine, or 32-bit, or big-endian; False when the header is too short to tell. |
 | `is_executable(data)` | Whether an object is a program: `ET_EXEC`, or position-independent with a `PT_INTERP`. |
-| `section(data, name)` | The content of the named section (`inspection` reads the stub's `.comment`). |
+| `section(data, name)` | The content of the named section (`inspection` reads the stub's `.comment`, `runtime.pbs` the C strings of zstd's `zstd_common.o` for its version). |
 | `dynamic_info(data)` | The `DynamicInfo` of an object. |
 | `needed_versions(data)` | The (library, version) pairs of `DT_VERNEED`. |
 | `glibc_requirement(data)` | The newest glibc an object needs; `GLIBC_2.2.5` counts as 2.2, and `GLIBC_ABI_DT_RELR` as 2.36. |
@@ -1517,7 +1575,7 @@ Entry counts, name lengths and search-path lengths have fixed limits (`_MAX_ENTR
 cannot multiply the work.
 
 - Imports: `targets`.
-- Imported by: `build`, `classify`, `inspection`, `natives`, `system`.
+- Imported by: `build`, `classify`, `inspection`, `natives`, `system`, `runtime.pbs`.
 
 ### `system`
 
@@ -1565,14 +1623,14 @@ one with a single usable CPU, compiles in its own process.
 | Class | What it represents |
 |---|---|
 | `Compiled` | A module's code blob and source blob, their content digests, the lines that read next to `__file__`, the libraries it opens by name, the warnings compiling emitted; or the syntax error's message and line. |
-| `Job` | One module to compile: its (distribution, path) key, file, relative path and whether its reads next to `__file__` are wanted. |
+| `Job` | One module to compile: its (distribution, path) key, file, relative path, whether its reads next to `__file__` are wanted, and whether it runs as `__main__`, so that its main guard runs. |
 | `Compiler` | The jobs compiled ahead on workers; `get` returns them in order, `compress` compresses a file on a worker, `close` stops the pool. |
 
 | Function | What it does |
 |---|---|
 | `compile_module(source, rel)` | Canonical bytecode: `compile(..., optimize=0, dont_inherit=True)` then `bytecode.dumps`, independent of the build interpreter's `-O` (D15). |
 | `compile_warned(source, rel)` | `compile_module`'s bytecode and the `SyntaxWarning`s and `DeprecationWarning`s compiling emitted, each as (line, `Category: message`). |
-| `compiled(data, rel, level, include_source, hints)` | A `Compiled` for one module: code blob, source blob unless sources are left out, the warnings, and the `scan` results when asked. |
+| `compiled(data, rel, level, include_source, hints, main)` | A `Compiled` for one module: code blob, source blob unless sources are left out, the warnings, and the `scan` results when asked (`main` for a module that runs as `__main__`; a module below `loose.ROOT` is scanned as a script). |
 | `worker_pool()` | Up to 8 worker processes: forked when the process runs one thread, else started by a fork server. |
 | `compressed(data, level)` | A file's zstd blob and content digest. |
 
@@ -1584,7 +1642,7 @@ and one it asks for that was not ahead is compiled in the build's own process. W
 the main module is imported again, so a program that builds from several threads must keep its
 main module free of side effects.
 
-- Imports: `bytecode`, `scan`, `payload.format`, `payload.spec`.
+- Imports: `bytecode`, `loose`, `scan`, `payload.format`, `payload.spec`.
 - Imported by: `classify`, `runtime.stdlib`.
 
 ### `bytecode`
@@ -1698,7 +1756,7 @@ version may have none (D46).
 | `release_asset(python, target)` | The asset name without `.xz`, `fsbpyr-3.12-x86_64-linux-gnu`. |
 | `release_stub_asset(python, target, glibc)` | The companion release's asset (without `.xz`) of the stub linked for the baseline `glibc` that goes with the fsbpyr of `python` on `target`, the launcher alone: `fsbpyr-stub-3.12-x86_64-linux-gnu-glibc2.28`. |
 | `release_stub_sums(glibc)` | The companion release's asset that lists the SHA-256 of each stub of the baseline as `sha256sum` does, over the unpacked stubs: `SHA256SUMS-glibc2.28`. |
-| `release_stub_tag(glibc, tag)` | The tag of the companion release that holds the stubs of release `tag` for the baseline: `el8-v0.27.0` for `v0.27.0`; `ValueError` for a baseline without one (2.34). |
+| `release_stub_tag(glibc, tag)` | The tag of the companion release that holds the stubs of release `tag` for the baseline: `el8-v@VERSION@` for `v@VERSION@`; `ValueError` for a baseline without one (2.34). |
 | `release_asset_record(project, python, target)` | build_info's `release_asset`, only when the project is fsbpyr. |
 
 Rules: git runs with `LC_ALL=C`, a 10-second timeout, and without the `GIT_DIR`-style variables a
@@ -1740,7 +1798,7 @@ temporary file beside the output for the caller to test and commit.
 | `boot_modules()` | `_fsbpyr_boot` (flagged STARTUP, filename `<frozen _fsbpyr_boot>`) and every module of `_fsbpyr_rt`, compiled to canonical bytecode with their sources. |
 | `generation_id(runtime_tag, files)` | The native cache generation: SHA-256 of the runtime tag and the path, content digest and mode of every extractable file (D10). |
 | `resources_id(files)` | The same over every payload file, 32 hex digits: the name of the tree where resources extracted on demand live (D27). |
-| `stub_digest(stub)` | SHA-256 of the stub with its zero padding to the payload alignment: the same in every executable built by the same fsbpyr release. |
+| `stub_digest(stub)` | SHA-256 of the stub with its zero padding to the payload alignment: the same in every executable that has the same stub. It identifies the stub, not a release: releases that link it from the same inputs (the launcher sources and flags, the PBS pin, the sysroot and the layout version) with the same toolchain share it. |
 | `runtime_module_names(runtime)` | The modules found before the payload's: the runtime's, the boot modules, CPython's built-in and frozen modules, and `_fsbpyr`. `build` also gives their top-level names to the import check. |
 | `build_executable(runtime, app, out)` | `build_temporary` and `commit` in one call (the end-to-end tests use it). |
 | `build_temporary(runtime, app, out)` | The executable, written beside `out`; returns the temporary path. |
@@ -1902,15 +1960,20 @@ Rules it enforces:
 - The man page and completions (`share/man/man1/fsbpyr.1` and the bash, zsh and fish completion
   files) are rewritten only if they exist under the prefix, and only when the executable is in a
   `bin` directory; otherwise a warning says how to write them.
-- After an update, a warning names the glibc 2.28 stubs placed beside the executable (files
-  `fsbpyr-stub-*-glibc*` in the directory of its real path) as the old release's, and says to
-  place the new release's stubs there, or to remove these and let `--glibc` download them; the
-  files themselves are left alone. The warning also says that `--glibc` will refuse them, which
-  holds only when the new release computes another runtime id: the id covers the launcher, the
-  pins and the sysroot, not the release, so with those unchanged the old stubs pass the check
-  ([Building for glibc 2.28](#building-for-glibc-228)).
+- A download cut short (`http.client.IncompleteRead`, or any other `http.client.HTTPException`)
+  is an `UpdateError` like any other failed download, in `latest_release`, `unpack` and
+  `download_text`, and so in `dispatch` and `runtime.stubs`, which download through them.
+- After an update, a warning names the glibc 2.28 stubs placed where `--glibc` looks for them
+  (files `fsbpyr-stub-X.Y-TARGET-glibcA.B`, or with `.xz`, beside the path fsbpyr was run by and
+  beside its real path) that the new release refuses: those whose SHA-256 is not in the
+  `SHA256SUMS-glibc2.28` of its companion release (`runtime.stubs.refused_after_update`). It says
+  to place the new release's stubs next to them, or to remove these and let `--glibc` download
+  them. When that file cannot be read (no companion release yet, no network, a download cut
+  short), it names every placed stub and says that `--glibc` refuses them if the new release's
+  runtime id differs ([Building for glibc 2.28](#building-for-glibc-228)). The files themselves
+  are left alone.
 
-- Imports: `inspection`, `targets`, `vcs`.
+- Imports: `inspection`, `targets`, `vcs`, `runtime.stubs` (lazy).
 - Imported by: `cli` (lazy), `dispatch`, `runtime.stubs`.
 
 ### `manpage`
@@ -1925,8 +1988,10 @@ executable link its commands into a directory, among the variables), and the exa
 passes in. EXIT STATUS lists 0, 1, 2 (usage error), 130 (interrupted) and 70, which a built
 executable, not `fsbpyr`, exits with when it refuses to start; that row names a failed integrity
 check, a start with privileges changed (set-uid or set-gid to another user or group, or file
-capabilities), a start of itself as a Python interpreter without `--interpreter-reexec`, and as
-many copies running as `FSBPYR_MAX_INSTANCES` allows.
+capabilities), a start of itself as a Python interpreter unless it was built with
+`--interpreter-reexec` or `--no-interpreter-reexec`, a refused cache directory (owned by another
+user, or others may write to it), and as many copies running as one user may run at once
+(`FSBPYR_MAX_INSTANCES`).
 
 | Function | What it does |
 |---|---|
@@ -1948,7 +2013,7 @@ between the Python versions fsbpyr runs on, and two text helpers for messages.
 
 [`src/fsbpyr/__init__.py`](../src/fsbpyr/__init__.py)
 
-The package. It holds only `__version__` (`"0.27.0"`), the release number: `assemble` writes it
+The package. It holds only `__version__` (`"@VERSION@"`), the release number: `assemble` writes it
 into build_info as `fsbpyr` and the man page puts it in its header. The version with the commit,
 which `fsbpyr --version` prints, comes from `vcs.own_version`.
 

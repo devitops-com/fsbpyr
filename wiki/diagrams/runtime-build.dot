@@ -22,7 +22,7 @@ digraph runtime_build {
   stub [label="stub.build_stub\nclang -flto=full, lld"];
   stdlib [label="stdlib.fragment\ncompiled by PBS's python"];
   notices [label="notices.files\nlicence texts"];
-  ask [label="pbs: extension suffixes,\ncomponent versions"];
+  ask [label="pbs: extension suffixes,\ncomponent versions\n(zstd's from libzstd.a)"];
   save [label="Runtime.save\nstaging dir, rename"];
 
   // on disk

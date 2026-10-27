@@ -34,10 +34,11 @@ and `Dist` objects, whose bytes are `Blob`s. Three sources fill it, all on
 `writer.write_temporary`, which writes the executable under a temporary name beside the output.
 `build.build` smoke-tests that file (unless `--no-smoke`) and then calls `writer.commit`, which
 renames it over the output; for an executable with several commands, `build` then makes the
-command links beside it (`links.make_links`, [Build modules](Dev-Build-Modules.md)), which the
-payload modules have no part in. Afterwards `reader.Executable` reads the file for
-`fsbpyr inspect` (with `sizes` and `licensing`), for the runtime registry, and for the tests'
-pure-Python stand-in of the launcher's `_fsbpyr` module.
+command links beside it (`links.make_links`, [Build modules](Dev-Build-Modules.md)); of the
+payload modules only `reader.Executable` takes part in that, when `links` checks whether a file
+at a link's path is the executable an earlier build of the project wrote. Afterwards
+`reader.Executable` reads the file for `fsbpyr inspect` (with `sizes` and `licensing`), for the
+runtime registry, and for the tests' pure-Python stand-in of the launcher's `_fsbpyr` module.
 
 ## How the Python code maps onto the format
 
@@ -150,8 +151,8 @@ digest is defined here (`extractable`) and enforced by the writer and the reader
 
 Imports: `fsbpyr.compat` (top).
 Imported by: `fsbpyr.assemble`, `fsbpyr.build`, `fsbpyr.classify`, `fsbpyr.cli`,
-`fsbpyr.compiler`, `fsbpyr.inspection`, `fsbpyr.licensing`, `fsbpyr.payload.convert`,
-`fsbpyr.payload.reader`, `fsbpyr.payload.spec`, `fsbpyr.payload.spill`,
+`fsbpyr.compiler`, `fsbpyr.inspection`, `fsbpyr.licensing`, `fsbpyr.links`,
+`fsbpyr.payload.convert`, `fsbpyr.payload.reader`, `fsbpyr.payload.spec`, `fsbpyr.payload.spill`,
 `fsbpyr.payload.writer`, `fsbpyr.runtime.notices`, `fsbpyr.runtime.registry`,
 `fsbpyr.runtime.stdlib`, `fsbpyr.sizes`.
 
@@ -374,7 +375,7 @@ Rules it enforces (the reader's part of the validation rules in docs/format.md):
   output exactly the recorded size, with nothing after the frame or stream.
 
 Imports: `fsbpyr.compat`, `fsbpyr.payload.format` (both top).
-Imported by: `fsbpyr.inspection`, `fsbpyr.licensing`, `fsbpyr.payload.convert`,
+Imported by: `fsbpyr.inspection`, `fsbpyr.licensing`, `fsbpyr.links`, `fsbpyr.payload.convert`,
 `fsbpyr.runtime.registry`, `fsbpyr.sizes`.
 
 ### `convert`

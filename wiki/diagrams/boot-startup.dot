@@ -27,7 +27,7 @@ digraph boot_startup {
   d_gc [shape=diamond label="FSBPYR_GC=1\nor background?"];
   gc [label="native.collect\n(app cache)"];
   d_nat [shape=diamond label="FSBPYR_SELFTEST\n= natives?"];
-  natives [label="selftest.natives"];
+  natives [label="selftest.natives\n(a refused cache\ndirectory: exit 70)"];
   d_self [shape=diamond label="FSBPYR_SELFTEST\nset?"];
   selftest [label="check every command's\ntarget, print selftest ok"];
 

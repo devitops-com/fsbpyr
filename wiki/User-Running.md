@@ -35,10 +35,10 @@ empty cache and then again (the columns are the trace's keys):
 
 | Run | `extracted` | `decompressed_bytes` | `stored_bytes` | `integrity_ns` |
 |---|---|---|---|---|
-| first | 57 files | 77,021,875 | 22,465,859 | 6,125,008 (6.1 ms) |
-| second | 0 files | 18,458,502 | 6,959,611 | 5,136,828 (5.1 ms) |
+| first | 57 files | 77,023,578 | 22,466,605 | 4,917,785 (4.9 ms) |
+| second | 0 files | 18,460,205 | 6,960,357 | 3,159,106 (3.2 ms) |
 
-(One run each on a 24-core x86-64 machine with the file in the page cache, fsbpyr 0.27.0, while other builds ran. The
+(One run each on a 24-core x86-64 machine with the file in the page cache, fsbpyr 0.28.0. The
 project's own measurements, release by release, are in [Performance](Dev-Performance.md).)
 
 ## Integrity
@@ -122,9 +122,9 @@ the keys `decompressed_bytes`, `extracted` (the files extracted in this run), `i
 `modules`, `reads` and `stored_bytes`:
 
 ```console
-$ FSBPYR_TRACE=1 dist/pandas-csv work/sales.csv 2>trace.txt >/dev/null
+$ FSBPYR_TRACE=1 dist/corpus-pandas-csv work/sales.csv 2>trace.txt >/dev/null
 $ cut -c1-120 trace.txt
-fsbpyr-trace {"decompressed_bytes": 77067848, "extracted": ["numpy/_core/_multiarray_umath.cpython-314-x86_64-linux-gnu
+fsbpyr-trace {"decompressed_bytes": 77023578, "extracted": ["numpy/_core/_multiarray_umath.cpython-314-x86_64-linux-gnu.
 ```
 
 ## Under systemd, in a container, from cron
@@ -168,13 +168,15 @@ For each library that is missing it prints a line such as
 `fsbpyr selftest: missing libstdc++.so.6 (needed by <extension>, ...)` or
 ``missing version `GLIBCXX_3.4.32' of libstdc++.so.6 (needed by ...)``, and exits 1 if there
 are any. It checks only what extensions load at startup: libraries they open later by name
-(`dlopen`) are not seen.
+(`dlopen`) are not seen. A cache directory that is refused ([above](#the-cache)) ends the check
+as it ends a run: with the one line `fsbpyr: cannot start <executable>: refusing cache directory
+<path>: ...` and exit 70.
 
 `FSBPYR_SELFTEST=1` checks only that the entry point imports (and, for an executable of
 several commands, every command; a script is only found, not imported):
 
 ```console
-$ FSBPYR_SELFTEST=1 dist/pandas-csv
+$ FSBPYR_SELFTEST=1 dist/corpus-pandas-csv
 fsbpyr selftest ok: corpus-pandas-csv
 ```
 
@@ -205,7 +207,8 @@ An executable exits 70 without running the app when:
 - as many copies of the app run already as the instance limit allows (`FSBPYR_MAX_INSTANCES`,
   [above](#environment-variables)): an app that keeps starting itself, by whatever route, stops
   there;
-- the cache directory is refused ([above](#the-cache)), when the app first extracts a file into it;
+- the cache directory is refused ([above](#the-cache)), when the app first extracts a file into it
+  (also under `FSBPYR_SELFTEST=natives`);
 - the app started a copy of itself as a Python interpreter (`sys.executable -m ...`) and the
   build left `interpreter-reexec` unset, the default ([Settings](User-Settings.md#interpreter-reexec));
   with `interpreter-reexec = false` the copy runs the app instead. A script that starts one of

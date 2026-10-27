@@ -78,7 +78,7 @@ Options go through the pipe like this:
 curl -LsSf https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh | sh -s -- --python 3.13
 ```
 
-A tag's own copy installs that version: `https://github.com/devitops-com/fsbpyr/releases/download/v0.27.0/install.sh`.
+A tag's own copy installs that version: `https://github.com/devitops-com/fsbpyr/releases/download/v@VERSION@/install.sh`.
 
 The shell the installer ran from does not see the change: the installer prints the `source`
 line that puts the directory on its `PATH` (`source $HOME/.local/bin/env`). Until you run it or
@@ -145,7 +145,7 @@ update does not check the attestation; `gh attestation verify` still does.
 
 ```console
 $ fsbpyr --version
-0.27.0-bdc2e0ed
+0.28.0-b9b1144d
 ```
 
 A build from an untagged commit prints `untagged-<commit>`. What changed in each release is in

@@ -13,7 +13,7 @@ Repository: <https://github.com/devitops-com/fsbpyr>
 | [`src/fsbpyr/`](../src/fsbpyr) | the Python package: build side ([Build modules](Dev-Build-Modules.md)), [`payload/`](Dev-Payload-Modules.md), [`runtime/`](Dev-Runtime-Modules.md), [`boot/`](Dev-Boot-Modules.md) |
 | [`src/fsbpyr/launcher/`](../src/fsbpyr/launcher) | the C launcher ([Launcher](Dev-Launcher.md)) |
 | [`stubs/_fsbpyr.pyi`](../stubs/_fsbpyr.pyi) | the type stub for `_fsbpyr`, the built-in module that `launcher/module.c` implements for the boot code |
-| [`tests/`](../tests) | unit, integration and end-to-end tests, C probes, the fuzzer, fixtures and the corpus ([Testing](Dev-Testing.md)) |
+| [`tests/`](../tests) | unit, integration and end-to-end tests, C probes, the fuzzer, fixtures, the corpus and the support code the tests share, among it what they need from the machine (`tests/support/requires.py`, which `make test-prereqs` runs) ([Testing](Dev-Testing.md)) |
 | [`docs/`](../docs) | design documents, below |
 | [`tools/`](../tools) | `bootstrap.sh` (`make bootstrap`), `check-c.py` (`make check-c`), `test-setup.sh`, `portability-apps.sh`, `vm-smoke.py` with its pinned kernels and root file systems `vm-pins.toml` (`make test-vm`, [Testing](Dev-Testing.md)), and the watchers for new upstream and toolchain releases |
 | [`tools/release/`](../tools/release) | the release scripts (`check-release.sh` checks a published release as its users get it), the pinned uv (`uv.version`) and LLVM (`llvm23`), the installer template `install.sh.in`, the SBOM generator; `el8-stub.py` takes the EL8 stub out of a runtime built with `--glibc 2.28`, checks that it needs no glibc symbol above 2.28 and carries the expected runtime id, and writes it under its release asset name |
@@ -44,9 +44,9 @@ Repository: <https://github.com/devitops-com/fsbpyr>
 
 | File | Contents |
 |---|---|
-| [`README.md`](../README.md) | the repository's front page for users, with a quickstart that `tests/e2e/test_build.py` runs ([Testing](Dev-Testing.md#the-readmes-quickstart-as-a-test)) |
+| [`README.md`](../README.md) | the repository's front page for users, with a quickstart that `tests/e2e/test_build.py` runs ([Testing](Dev-Testing.md#the-readmes-quickstart-as-a-test)) and links to this wiki |
 | [`CHANGELOG.md`](../CHANGELOG.md) | changes per release, with **Breaking:** marks |
-| [`CONTRIBUTING.md`](../CONTRIBUTING.md) | how to contribute and run the tests, the test tiers, and the CI and release flow |
+| [`CONTRIBUTING.md`](../CONTRIBUTING.md) | building from source, how to contribute and run the tests, the test tiers and what the tests need, the CI and release flow, and verifying a release |
 | [`SECURITY.md`](../SECURITY.md) | how to report a vulnerability ([Security](Dev-Security.md)) |
 | [`LICENSE`](../LICENSE) | MIT, with a runtime exception for the launcher and boot modules |
 
@@ -71,6 +71,7 @@ executables. How users verify a download is in
 | `make check` | ruff and mypy |
 | `make check-c` | clang's static analyser over the launcher (informational) |
 | `make test-ci`, `make test`, `make test-corpus`, `make test-container`, `make test-portability` | the test tiers ([Testing](Dev-Testing.md)) |
+| `make test-prereqs` | list the tools and environment conditions the full test suite needs that this machine lacks ([Testing](Dev-Testing.md#when-the-machine-lacks-something)) |
 | `make test-vm` | aarch64 apps in a QEMU virtual machine with EL8's 64K-page kernel ([Testing](Dev-Testing.md)) |
 | `make test-el8`, `make test-el8-stub`, `make test-el8-portability` | the EL8 test mode: the tests that run the stub with the glibc 2.28 runtime, and the portability matrix with apps built for glibc 2.28 ([Testing](Dev-Testing.md)) |
 | `make release-prep`, `make release`, `make release-check` | the release process (`CONTRIBUTING.md`) |
