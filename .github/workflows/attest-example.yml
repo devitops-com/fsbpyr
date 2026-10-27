@@ -2,8 +2,9 @@ name: Attest example
 
 # An example for app builders: build an app with fsbpyr and attach a GitHub provenance
 # attestation to it (README, "Attesting and verifying your app"). Manual runs only; it builds
-# tests/fixtures/projects/hello. It has its own write permissions and uses no cache, so
-# nothing it builds can be poisoned by another run; the other workflows stay read-only.
+# tests/fixtures/projects/hello, checks the attestation as whoever downloads the app would, and
+# keeps the app as the run's artifact `hello`. It has its own write permissions and uses no
+# cache, so nothing it builds can be poisoned by another run; the other workflows stay read-only.
 
 on: workflow_dispatch
 
@@ -30,7 +31,9 @@ jobs:
           # The runner user cannot write /usr/local/bin, so uv goes into a user directory on PATH.
           curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$HOME/.local/bin" UV_NO_MODIFY_PATH=1 sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          gh release download --repo devitops-com/fsbpyr --pattern fsbpyr --dir "$RUNNER_TEMP"
+          # the latest release's fsbpyr on this runner's Python and target
+          gh release download --repo devitops-com/fsbpyr --pattern fsbpyr-3.14-x86_64-linux-gnu \
+            --output "$RUNNER_TEMP/fsbpyr"
           chmod +x "$RUNNER_TEMP/fsbpyr"
           gh attestation verify "$RUNNER_TEMP/fsbpyr" --repo devitops-com/fsbpyr \
             --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml
@@ -45,3 +48,17 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ runner.temp }}/hello
+
+      # What whoever downloads the app runs (README).
+      - name: Verify the attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify "$RUNNER_TEMP/hello" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/attest-example.yml"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hello
+          path: ${{ runner.temp }}/hello
+          if-no-files-found: error
