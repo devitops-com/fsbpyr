@@ -374,13 +374,18 @@ def cache_group() -> None:
                      "every app cache")  # fmt: skip
 def cache_gc() -> int:
     """``fsbpyr cache gc``: the tool's cache, then every app cache found (D38); 1 if anything
-    could not be removed."""
+    could not be removed, or the caches cannot be found (no home directory)."""
     from .boot._fsbpyr_rt import gc  # noqa: PLC0415  keep --version fast
     from .runtime import collect, registry  # noqa: PLC0415
 
-    tool = registry.cache_root()
+    try:
+        tool = registry.cache_root()
+        apps = collect.app_caches()
+    except registry.RuntimeCacheError as exc:
+        print(f"fsbpyr: error: {exc}", file=sys.stderr)
+        return 1
     runs = [(tool, functools.partial(collect.collect_tool, tool))]
-    runs += [(root, functools.partial(gc.collect, str(root))) for root in collect.app_caches()]
+    runs += [(root, functools.partial(gc.collect, str(root))) for root in apps]
     failed = False
     for root, run in runs:
         try:

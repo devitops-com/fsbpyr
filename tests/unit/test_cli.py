@@ -79,7 +79,8 @@ def test_other_commands_never_run_git(
 
 
 @pytest.mark.parametrize("home", [None, "", "relative"])
-@pytest.mark.parametrize("argv", [["runtime", "list"], ["runtime", "build"], ["build", "."]])
+@pytest.mark.parametrize("argv", [["runtime", "list"], ["runtime", "build"], ["build", "."],
+                                  ["cache", "gc"]])  # fmt: skip
 def test_no_usable_home_is_a_one_line_error(
     argv: list[str], home: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
