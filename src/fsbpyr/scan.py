@@ -4,9 +4,7 @@ In an executable a module's ``__file__`` points into the payload's virtual tree,
 reads fail unless the package is FS_REQUIRED. This is a heuristic over the AST: a call that
 reads the file system, runs a program, loads a library or data file, or a pathlib read
 method, whose argument or receiver mentions ``__file__`` or ``__path__`` (also of another
-module, ``X.__file__``) directly or through a name assigned from it. Existence checks are a
-separate, low-confidence result: ``os.path.exists`` on such a path does not fail, it answers
-False.
+module, ``X.__file__``) directly or through a name assigned from it.
 """
 
 import ast
@@ -25,10 +23,6 @@ _READ_METHODS = frozenset({"open", "read_text", "read_bytes", "iterdir", "glob",
 _PATH_ARGUMENT_METHODS = frozenset({"dlopen", "read"})
 # jinja2's loader is flagged by the call: its arguments are plain strings (package and folder).
 _LOADER_CALLS = frozenset({"PackageLoader", "jinja2.PackageLoader"})
-_EXISTENCE_CALLS = frozenset({
-    "os.path.exists", "os.path.isfile", "os.path.isdir", "os.path.lexists", "os.access",
-})  # fmt: skip
-_EXISTENCE_METHODS = frozenset({"exists", "is_file", "is_dir"})
 # Calls that open a library by name (the first argument, or ``name=``): ctypes, cffi's dlopen.
 _LOAD_CALLS = frozenset({
     "ctypes.CDLL", "CDLL", "ctypes.PyDLL", "PyDLL", "ctypes.cdll.LoadLibrary", "cdll.LoadLibrary",
@@ -90,17 +84,6 @@ def _reads(call: ast.Call, tainted: set[str]) -> bool:
     return func.attr in _READ_METHODS and _mentions(func.value, tainted)
 
 
-def _checks_existence(call: ast.Call, tainted: set[str]) -> bool:
-    func = call.func
-    if _dotted(func) in _EXISTENCE_CALLS:
-        return _arguments_mention(call, tainted)
-    return (
-        isinstance(func, ast.Attribute)
-        and func.attr in _EXISTENCE_METHODS
-        and _mentions(func.value, tainted)
-    )
-
-
 def _main_guarded(tree: ast.Module) -> list[range]:
     """Lines of top-level ``if __name__ == "__main__":`` blocks, which never run on import."""
     return [
@@ -140,11 +123,6 @@ def file_relative_reads(source: bytes, filename: str, *, skip_main_guard: bool =
     """Line numbers of reads relative to ``__file__`` in one module (empty if it does not parse).
     A package's main-guard code never runs on import, so it is skipped; a script's runs."""
     return _flagged_lines(source, filename, _reads, skip_main_guard=skip_main_guard)
-
-
-def file_relative_existence_checks(source: bytes, filename: str) -> list[int]:
-    """Line numbers of existence checks on paths relative to ``__file__``: low confidence."""
-    return _flagged_lines(source, filename, _checks_existence)
 
 
 def _literal_argument(call: ast.Call) -> str | None:

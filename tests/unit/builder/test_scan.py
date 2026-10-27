@@ -2,7 +2,7 @@
 
 import pytest
 
-from fsbpyr.scan import file_relative_existence_checks, file_relative_reads, loaded_libraries
+from fsbpyr.scan import file_relative_reads, loaded_libraries
 
 
 @pytest.mark.parametrize(
@@ -65,19 +65,6 @@ def test_a_scripts_main_guard_read_is_found_when_asked() -> None:
 
     assert file_relative_reads(source, "m.py", skip_main_guard=False) == [2]
     assert file_relative_reads(source, "m.py") == []
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        "import os\nHERE = os.path.dirname(__file__)\nok = os.path.exists(HERE)\n",
-        "from pathlib import Path\nok = (Path(__file__).parent / 'x').is_file()\n",
-    ],
-    ids=["os-path", "pathlib"],
-)
-def test_existence_checks_are_a_separate_result(source: str) -> None:
-    assert file_relative_existence_checks(source.encode(), "m.py") == [source.count("\n")]
-    assert file_relative_reads(source.encode(), "m.py") == []
 
 
 @pytest.mark.parametrize(

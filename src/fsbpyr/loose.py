@@ -41,7 +41,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
-from .entry import _SKIPPED_DIRECTORIES, has_main_guard
+from .entry import SKIPPED_DIRECTORIES, has_main_guard
 from .links import COMMAND_NAME
 from .poetry1 import project_table
 from .project import ProjectError, is_unpackaged, settings_only
@@ -50,7 +50,6 @@ from .vcs import work_tree_files
 ROOT = "_fsbpyr_scripts"  # the wheel's top-level directory; a module is ``_fsbpyr_scripts.<path>``
 MODULE_GROUP = "fsbpyr_scripts"  # entry_points.txt: commands that run a module as __main__
 DEFAULT_VERSION = "0"  # a project without a static version
-_SKIPPED = _SKIPPED_DIRECTORIES | {"site-packages"}
 _TEST_DIRECTORIES = frozenset({"test", "tests"})  # not commands
 _MAIN_STEMS = frozenset({"main", "__main__"})  # take the project's name as a command
 _MODE = 0o100644 << 16  # a regular file, rw-r--r--
@@ -435,7 +434,7 @@ def _pruned(directory: Path, parts: list[str], venvs: dict[str, bool]) -> bool:
     """Whether a file's directories (names, from the project) are not the project's: hidden,
     build output, dependencies or a virtual environment."""
     for index, part in enumerate(parts):
-        if part.startswith(".") or part in _SKIPPED:
+        if part.startswith(".") or part in SKIPPED_DIRECTORIES:
             return True
         prefix = "/".join(parts[: index + 1])
         if prefix not in venvs:
@@ -449,7 +448,7 @@ def _walk(directory: Path) -> list[str]:
     """Every file below ``directory`` without following links to directories."""
     found = []
     for base, dirs, files in os.walk(directory):
-        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _SKIPPED]
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in SKIPPED_DIRECTORIES]
         found += [Path(base, name).relative_to(directory).as_posix() for name in files]
     return found
 
