@@ -10,6 +10,16 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Changed
+- **The test suite has no timing budgets.** The startup budget test
+  (`test_startup_is_within_budget_of_bare_cpython`, 1.5x bare CPython) and the wall-clock bound
+  of the canonicalizer's nested-set test are removed, the detached-collector test no longer
+  measures how long the launcher took, and Hypothesis runs without its 200 ms per-example
+  deadline locally, as it already did in CI. The startup budget failed on a loaded runner (1.8x on
+  a 4-core GitHub runner against 1.21-1.24x locally), and a wall-clock bound fails a slow machine,
+  not a wrong result. Startup is measured, not gated: `docs/performance.md` still records the
+  measurements.
+
 ### Fixed
 - **A refused cache directory is a refused start.** With `FSBPYR_CACHE_DIR` (or the default
   cache) in a directory that another user owns or others may write to, an app with native code

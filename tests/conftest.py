@@ -60,7 +60,10 @@ EL8_MODE = TEST_GLIBC != pins.DEFAULT_BASELINE
 # The corpus projects (TST-3) carry test files of their own, which their built apps run
 collect_ignore_glob = ["corpus/*"]
 # Hypothesis in CI (GitHub sets CI): the same examples every run, so a failure there repeats
-# and a red run is never a new example's luck. The default profile stays random locally.
+# and a red run is never a new example's luck. The default profile stays random locally. Neither
+# has a per-example deadline: a time limit fails a slow or loaded machine, not a wrong example.
+settings.register_profile("default", deadline=None)
+settings.load_profile("default")
 settings.register_profile("ci", derandomize=True, deadline=None)
 if os.environ.get("CI"):
     settings.load_profile("ci")

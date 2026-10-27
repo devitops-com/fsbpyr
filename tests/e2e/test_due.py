@@ -71,11 +71,13 @@ def _reports(out: Path, within: float = 15) -> list[dict[str, str]]:
 def test_a_due_run_starts_detached_at_idle_priority(probe: Path, tmp_path: Path) -> None:
     root = _cache(tmp_path / "cache", stamp=2 * DAY)
     out = tmp_path / "report"
-    started = time.monotonic()
+    release = tmp_path / "release"
 
-    kept = _start(probe, out, FSBPYR_CACHE_DIR=str(root), PROBE_SLEEP="3").stdout.strip()
+    kept = _start(probe, out, FSBPYR_CACHE_DIR=str(root), PROBE_RELEASE=str(release)).stdout.strip()
 
-    assert time.monotonic() - started < 2.5  # our pipes are not the collector's: no wait
+    # The call came back while the collector was still waiting: the launcher did not wait for it,
+    # and the collector holds none of our pipes (it would hold the call, until _start's timeout).
+    release.touch()
     (report,) = _reports(out)
     assert report["fds"] == "0 1 2" and kept not in report["fds"].split()
     assert [report[str(fd)] for fd in range(3)] == ["/dev/null"] * 3

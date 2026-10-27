@@ -8,12 +8,10 @@ import random
 import shutil
 import signal
 import stat
-import statistics
 import struct
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 import pytest
@@ -346,42 +344,6 @@ def test_startup_never_touches_the_stdlib_on_disk(build_app: BuildApp, tmp_path:
     ]
     assert offending == []
     assert len(paths) < 40, paths
-
-
-def _p50(argv: list[str], runs: int = 60) -> float:
-    for _ in range(5):
-        subprocess.run(argv, check=True, capture_output=True)
-    samples = []
-    for _ in range(runs):
-        start = time.perf_counter()
-        subprocess.run(argv, check=True, capture_output=True)
-        samples.append(time.perf_counter() - start)
-    return statistics.median(samples)
-
-
-def _integrity_p50(app: Path, runs: int = 15) -> float:
-    """Seconds the launcher spent checking its file (D31), as FSBPYR_TRACE reports it."""
-    samples = []
-    for _ in range(runs):
-        stderr = _run(app, FSBPYR_TRACE="1").stderr
-        trace = json.loads(stderr.rpartition("fsbpyr-trace ")[2])
-        samples.append(trace["integrity_ns"] / 1e9)
-    return float(statistics.median(samples))
-
-
-def test_startup_is_within_budget_of_bare_cpython(build_app: BuildApp) -> None:
-    """The whole-file check costs what hashing the file costs (D31, about 20 MB for the stub);
-    everything else stays within 50% of a bare CPython start (docs/performance.md)."""
-    app = build_app({"noop.py": "def main():\n    return 0\n"}, "noop:main")
-
-    baseline = _p50([sys.executable, "-I", "-S", "-c", "pass"])
-    measured = _p50([str(app)])
-    integrity = _integrity_p50(app)
-
-    assert 0 < integrity < measured
-    assert measured - integrity <= 1.5 * baseline, (
-        f"app {measured * 1e3:.2f} ms ({integrity * 1e3:.2f} ms integrity check) "
-        f"vs {baseline * 1e3:.2f} ms")  # fmt: skip
 
 
 @pytest.mark.sanitized
