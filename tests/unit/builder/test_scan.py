@@ -2,7 +2,7 @@
 
 import pytest
 
-from fsbpyr.scan import file_relative_existence_checks, file_relative_reads, loaded_libraries
+from fsbpyr.scan import file_relative_reads, loaded_libraries
 
 
 @pytest.mark.parametrize(
@@ -60,17 +60,42 @@ def test_other_code_is_not_reported(source: str) -> None:
     assert file_relative_reads(source.encode(), "m.py") == []
 
 
-@pytest.mark.parametrize(
-    "source",
-    [
-        "import os\nHERE = os.path.dirname(__file__)\nok = os.path.exists(HERE)\n",
-        "from pathlib import Path\nok = (Path(__file__).parent / 'x').is_file()\n",
-    ],
-    ids=["os-path", "pathlib"],
-)
-def test_existence_checks_are_a_separate_result(source: str) -> None:
-    assert file_relative_existence_checks(source.encode(), "m.py") == [source.count("\n")]
-    assert file_relative_reads(source.encode(), "m.py") == []
+def test_a_commands_main_guard_read_is_found_when_asked() -> None:
+    source = b"if __name__ == '__main__':\n    open(__file__).read()\n"
+
+    assert file_relative_reads(source, "m.py", script=True, main=True) == [2]
+    assert file_relative_reads(source, "m.py", script=True) == []  # imported: never runs
+    assert file_relative_reads(source, "m.py") == []
+
+
+SPAWNS = [
+    "import os, subprocess, sys\nsubprocess.run([sys.executable, os.path.join(os.path.dirname("
+    "__file__), 's.py')])\n",
+    "import os, subprocess, sys\nsubprocess.Popen((sys.executable, os.path.dirname(__file__)))\n",
+    "import os, sys\nos.execv(sys.executable, [sys.executable, os.path.dirname(__file__)])\n",
+    "import os, subprocess, sys\nhere = os.path.dirname(__file__)\n"
+    "if __name__ == '__main__':\n    subprocess.run(args=[sys.executable, here + '/s.py'])\n",
+]
+
+
+@pytest.mark.parametrize("source", SPAWNS, ids=["run", "popen", "execv", "guarded-keyword"])
+def test_a_script_starting_a_sibling_with_its_interpreter_reads_nothing(source: str) -> None:
+    assert file_relative_reads(source.encode(), "m.py", script=True) == []
+
+
+@pytest.mark.parametrize("source", SPAWNS[:3], ids=["run", "popen", "execv"])
+def test_a_package_starting_a_helper_with_its_interpreter_is_still_reported(source: str) -> None:
+    assert file_relative_reads(source.encode(), "m.py") == [2]
+
+
+def test_a_script_still_reports_other_reads_next_to_file_beside_a_spawn() -> None:
+    source = (
+        b"import os, subprocess, sys\nhere = os.path.dirname(__file__)\n"
+        b"subprocess.run([sys.executable, here + '/s.py'])\n"
+        b"subprocess.run(['tool', here + '/s.py'])\nopen(here + '/c.conf')\n"
+    )
+
+    assert file_relative_reads(source, "m.py", script=True) == [4, 5]
 
 
 @pytest.mark.parametrize(

@@ -2,7 +2,6 @@
 their names, files whose names are no Python names, and the dependencies the files declare."""
 
 import os
-import shutil
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
@@ -16,9 +15,11 @@ from fsbpyr.links import deploy_recipe
 from fsbpyr.loose import Package, directory_name, inline_metadata, python_shebang
 from fsbpyr.project import LockSource, Project, ProjectError
 
+from ...support import requires
+
 GUARD = 'if __name__ == "__main__":\n    print("hi")\n'
 SHEBANG = "#!/usr/bin/env python3\n"
-git = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+git = requires.tools("git")
 
 
 def _dir(root: Path, files: Mapping[str, str]) -> Path:
@@ -227,7 +228,7 @@ def test_git_decides_what_is_packaged_and_an_untracked_secret_is_not(tmp_path: P
         ".env": "K=1\n",
     })  # fmt: skip
     env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
-    git_exe = str(shutil.which("git"))
+    git_exe = requires.tool("git")
     subprocess.run([git_exe, "init", "-q", str(ops)], check=True, env=env)
     subprocess.run([git_exe, "-C", str(ops), "add", "a.py"], check=True, env=env)
 
@@ -246,7 +247,7 @@ def test_a_work_tree_with_nothing_tracked_packages_nothing_rather_than_everythin
 ) -> None:
     ops = _dir(tmp_path / "ops", {"a.py": GUARD, "secrets.py": "KEY = 'x'\n"})
     env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
-    subprocess.run([str(shutil.which("git")), "init", "-q", str(ops)], check=True, env=env)
+    subprocess.run([requires.tool("git"), "init", "-q", str(ops)], check=True, env=env)
 
     with pytest.raises(ProjectError, match="no Python files"):
         Package.load(ops)
@@ -607,6 +608,7 @@ def test_an_unresolved_import_names_the_project_file_not_the_stored_module(
         "check-disk.py": "import requests\nimport cgi\n" + GUARD, "ok.py": GUARD,
         "10-backup": SHEBANG + "import yaml\n"})  # fmt: skip
     (ops / ".venv").mkdir()
+    (ops / ".venv" / "pyvenv.cfg").write_text("")
     monkeypatch.setattr("fsbpyr.build.runtime_module_names", lambda _: frozenset())
     (tmp_path / "site").mkdir()
     warnings: list[str] = []

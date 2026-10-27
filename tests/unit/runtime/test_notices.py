@@ -52,6 +52,42 @@ def test_zstd_and_hacl_texts_are_supplied_where_pbs_ships_none(tmp_path: Path) -
     assert "LICENSE.zlib-ng.txt" not in result.texts  # libz.a is classic zlib
 
 
+def _python_dist(root: Path, python: str) -> pbs.PbsDist:
+    """_ssl built in, and _zstd where ``python`` has it: PBS lists LICENSE.zstd.txt only for
+    _zstd, which 3.12 and 3.13 do not have."""
+    zstd = python in ("3.14", "3.15")
+    (root / "licenses").mkdir()
+    (root / "inittab.c").write_text('{"_ssl", PyInit__ssl}' + (', {"_zstd", PyInit__zstd}'
+                                                                 if zstd else ""))
+    extension = {"_ssl": [{"license_paths": ["licenses/LICENSE.openssl-3.txt"], "objs": [],
+                           "links": []}]}  # fmt: skip
+    if zstd:
+        extension["_zstd"] = [{"license_paths": ["licenses/LICENSE.zstd.txt"], "objs": [],
+                               "links": []}]  # fmt: skip
+    return pbs.PbsDist(root, {
+        "license_path": "licenses/LICENSE.cpython.txt",
+        "build_info": {"inittab_source": "inittab.c", "extensions": extension},
+    })  # fmt: skip
+
+
+@pytest.mark.parametrize("python", ["3.12", "3.13", "3.14", "3.15"])
+def test_the_launchers_zstd_text_is_included_for_every_python(tmp_path: Path, python: str) -> None:
+    result = notices.collect(_python_dist(tmp_path, python))
+
+    assert b"Zstandard" in result.texts["LICENSE.zstd.txt"]
+
+
+@pytest.mark.parametrize("python", ["3.12", "3.13", "3.14", "3.15"])
+def test_the_zstd_text_pbs_ships_is_used_for_every_python(tmp_path: Path, python: str) -> None:
+    # PBS ships it from 20261020 on, also where it lists it for no module
+    dist = _python_dist(tmp_path, python)
+    (tmp_path / "licenses" / "LICENSE.zstd.txt").write_text("text of LICENSE.zstd.txt")
+
+    result = notices.collect(dist)
+
+    assert result.texts["LICENSE.zstd.txt"] == b"text of LICENSE.zstd.txt"
+
+
 def test_zlib_ngs_text_is_left_out_also_when_pbs_ships_it(tmp_path: Path) -> None:
     # PBS ships it from 20261020 on, but libz.a is still classic zlib (LICENSE.zlib.txt)
     result = notices.collect(_dist(tmp_path, {"LICENSE.cpython.txt", "LICENSE.zlib.txt",

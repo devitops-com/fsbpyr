@@ -194,7 +194,7 @@ def helper(boot: ModuleType, monkeypatch: pytest.MonkeyPatch) -> list[list[str]]
         ([EXE, "-m", "word"], True),  # sys.executable -m: D44
         (["/x/other", "-m", "word"], True),
         (["/y/tool", "-m", "word"], True),  # not a command name, not the executable's
-        ([EXE, "alpha", "-m", "word"], True),  # the dispatcher form keeps D44
+        ([EXE, "alpha", "-m", "word"], True),  # the dispatcher form is asked, and is no helper
     ],
 )
 def test_a_link_started_with_dash_m_is_not_a_helper_interpreter(

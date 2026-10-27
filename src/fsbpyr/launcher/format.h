@@ -1,4 +1,5 @@
-/* fsbpyr executable format v5 — C mirror of src/fsbpyr/payload/format.py (spec: docs/format.md).
+/* fsbpyr executable format — C mirror of src/fsbpyr/payload/format.py, described in
+ * docs/format.md.
  *
  * All integers are little-endian. Records are read with memcpy, never by casting pointers into
  * the mapping, so alignment of the mapped data never matters. tests/integration/

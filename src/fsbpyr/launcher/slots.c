@@ -96,7 +96,7 @@ void fsb_hold_slot(uint64_t dev, uint64_t ino, const char *const dirs[], size_t 
     if (collection != NULL && strcmp(collection, "background") == 0) exit(0);
     fprintf(stderr,
             "fsbpyr: refusing to start: %u copies of this app are running already, as many as "
-            "this machine allows at once (does the app keep starting itself?); if it needs more, "
+            "this user may run at once (does the app keep starting itself?); if it needs more, "
             "set FSBPYR_MAX_INSTANCES to a higher number\n",
             limit);
     exit(REFUSED);

@@ -126,13 +126,16 @@ def test_a_missing_directory_is_an_error_before_any_link(tools: Path, tmp_path: 
     assert not (tmp_path / "absent").exists()
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root writes to a directory without permission")
 def test_a_directory_without_write_permission_is_an_error(tools: Path, tmp_path: Path) -> None:
     target = tmp_path / "bin"
     target.mkdir(mode=0o500)
 
     result = _run(tools, tmp_path, target)
 
+    if os.geteuid() == 0:  # root writes to it all the same
+        assert result.returncode == 0, result.stderr
+        assert len(list(target.iterdir())) == 4
+        return
     assert result.returncode == 1 and f"cannot write to {target}" in result.stderr
     assert not list(target.iterdir())
 

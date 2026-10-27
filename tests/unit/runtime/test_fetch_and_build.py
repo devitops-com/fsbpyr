@@ -188,31 +188,35 @@ def test_pin_lookup() -> None:
 @pytest.mark.parametrize(
     ("triple", "python", "version", "sha256"),
     [
-        ("x86_64", "3.12", "3.12.15",
-         "5c992267780cef4c168bc07dba54f125ec1a2b9383a47946fc805f81a4712119"),
-        ("x86_64", "3.13", "3.13.17",
-         "344eec7e761e7b3dccce0ce2d91a3e70d40f8ff5d3ce7d907d979c23e8451fc7"),
-        ("x86_64", "3.14", "3.14.9",
-         "92f6abbce0283ed317873615396b5c43ccdcdf13ae9c7d68c9a07651df527528"),
-        ("aarch64", "3.12", "3.12.15",
-         "d40b4b72653d830884ac3ae432cf6b761a63b4c9b65d0d8f9241ddbd03c9c020"),
-        ("aarch64", "3.13", "3.13.17",
-         "6464bea3d1b41ebcb238ebdbb32332e9c01871d4ad14e7e66ca6aca18d5135fb"),
-        ("aarch64", "3.14", "3.14.9",
-         "f5726037fbea57a8d83ddb6bbe26242eeb96928fb396da2f6d9dbf3641aaff61"),
+        ("x86_64", "3.12", "3.12.16",
+         "789924432efcaaf05fec4bd3e4d8798733326c2ac0540eda33e84913c37a231e"),
+        ("x86_64", "3.13", "3.13.18",
+         "f003449a05408c2e4b184f2a7abd1ea277081ff1a9100289075243ab5ed81207"),
+        ("x86_64", "3.14", "3.14.10",
+         "4a2823d5deacb631e21b3c8387a1ec9be57e1b0ed37b7770e2e71cfe7b94eb94"),
+        ("x86_64", "3.15", "3.15.2",
+         "3488eafeae3c25a44895df9fd52a9be1f2fa11a45cb0580279e03c2bce5339b4"),
+        ("aarch64", "3.12", "3.12.16",
+         "983593f8a9de59f8e25972b41851161a8ad139bb25b01766fbfa69979a15521d"),
+        ("aarch64", "3.13", "3.13.18",
+         "069e9ae72f35f8ac743e1dad224417b07a3728971bc8333fe08b78e4c24bee12"),
+        ("aarch64", "3.14", "3.14.10",
+         "2c2b62b6e02a1717b408c30d49a8bf293b280b2b4a22bb948f9b85ecc1f5ce54"),
+        ("aarch64", "3.15", "3.15.2",
+         "b3fc351d2271f6c0b3c6d2b423043771dfcb5267053512b8aebba195dad110e9"),
     ],
 )  # fmt: skip
-def test_every_version_is_pinned_to_release_20261021(
+def test_every_version_is_pinned_to_release_20261026(
     triple: str, python: str, version: str, sha256: str
 ) -> None:
     pin = pin_for(python, f"{triple}-unknown-linux-gnu")
 
     assert (pin.version, pin.release, pin.flavor, pin.sha256) == (
-        version, "20261021", "pgo+lto-full", sha256,
+        version, "20261026", "pgo+lto-full", sha256,
     )  # fmt: skip
     assert pin.url == (
-        "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/"
-        f"cpython-{version}%2B20261021-{triple}-unknown-linux-gnu-pgo%2Blto-full.tar.zst"
+        "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/"
+        f"cpython-{version}%2B20261026-{triple}-unknown-linux-gnu-pgo%2Blto-full.tar.zst"
     )
 
 
@@ -246,7 +250,8 @@ def test_build_runtime_orchestrates_and_caches(
 
     monkeypatch.setattr(pbs, "fetch", fetch)
     components = {"openssl": "OpenSSL 3.5.9 29 Sep 2026", "sqlite": "3.53.1"}
-    monkeypatch.setattr(pbs, "component_versions", lambda interpreter: components)
+    monkeypatch.setattr(pbs, "component_versions", lambda interpreter: dict(components))
+    monkeypatch.setattr(pbs, "zstd_version", lambda dist: "1.5.7")
     suffixes = (".cpython-314-x86_64-linux-gnu.so", ".abi3.so", ".so")
     monkeypatch.setattr(pbs, "extension_suffixes", lambda interpreter: suffixes)
     monkeypatch.setattr(registry, "find_toolchain", lambda major, explicit: Toolchain(
@@ -295,7 +300,7 @@ def test_build_runtime_orchestrates_and_caches(
     other = next(b for b in pins.BASELINES if b != baseline)  # never mixed with the other
     with pytest.raises(registry.RuntimeCacheError, match=r"no runtime for Python 3\.14"):
         registry.find_runtime("3.14", cache=tmp_path, baseline=other)
-    assert runtime.components == components
+    assert runtime.components == {**components, "zstd": "1.5.7"}  # the launcher's libzstd.a
     assert runtime.extension_suffixes == suffixes  # the interpreter's, not PYTHON.json's [".so"]
     assert runtime.inputs == {
         "pbs": {"release": pin.release, "name": pin.name, "sha256": pin.sha256},
@@ -387,7 +392,14 @@ def test_the_sanitized_runtime_has_an_identity_of_its_own() -> None:
     sanitized = registry.runtime_id(pin, sanitize=True)
 
     assert sanitized != registry.runtime_id(pin) and sanitized.endswith("-sanitized")
-    assert stub.launcher_digest(sanitize=True) != stub.launcher_digest()
+    assert stub.launcher_digest(pin.triple, sanitize=True) != stub.launcher_digest(pin.triple)
+
+
+def test_the_runtime_id_hashes_the_link_flags_of_its_target() -> None:
+    """aarch64 links with a flag of its own (the Cortex-A53 erratum fix)."""
+    aarch64 = stub.launcher_digest("aarch64-unknown-linux-gnu")
+
+    assert aarch64 != stub.launcher_digest("x86_64-unknown-linux-gnu")
 
 
 def test_component_versions_come_from_running_the_interpreter() -> None:
@@ -395,6 +407,40 @@ def test_component_versions_come_from_running_the_interpreter() -> None:
 
     assert set(found) == {"expat", "libmpdec", "openssl", "sqlite", "zlib"}
     assert found["openssl"].startswith("OpenSSL ") and all(found.values())
+
+
+def _ar(members: dict[str, bytes]) -> bytes:
+    """A GNU ar archive of ``members``, as libzstd.a is."""
+    out = b"!<arch>\n"
+    for name, data in members.items():
+        header = f"{name + '/':<16}{0:<12}{0:<6}{0:<6}{100644:<8}{len(data):<10}`\n"
+        out += header.encode() + data + (b"\n" if len(data) % 2 else b"")
+    return out
+
+
+def _libzstd(tmp_path: Path, members: dict[str, bytes] | None) -> pbs.PbsDist:
+    if members is not None:
+        (tmp_path / "build" / "lib").mkdir(parents=True)
+        (tmp_path / "build" / "lib" / "libzstd.a").write_bytes(_ar(members))
+    return pbs.PbsDist(tmp_path, {})
+
+
+def test_zstd_version_is_the_string_libzstd_returns(tmp_path: Path) -> None:
+    common = b"\0ZSTD_versionString\0" + b"\0001.5.7\0" + b"junk 9.9\0"
+    dist = _libzstd(tmp_path, {"pool.o": b"\0002.0.0\0", "zstd_common.o": common})
+
+    assert pbs.zstd_version(dist) == "1.5.7"
+
+
+def test_zstd_version_is_unknown_rather_than_guessed(tmp_path: Path) -> None:
+    assert pbs.zstd_version(_libzstd(tmp_path / "none", None)) is None
+    assert pbs.zstd_version(_libzstd(tmp_path / "nomember", {"pool.o": b"\0001.5.7\0"})) is None
+    assert pbs.zstd_version(_libzstd(tmp_path / "noversion", {"zstd_common.o": b"\0x\0"})) is None
+    two = {"zstd_common.o": b"\0001.5.7\0" + b"\0001.5.8\0"}
+    assert pbs.zstd_version(_libzstd(tmp_path / "two", two)) is None
+    broken = _libzstd(tmp_path / "broken", {})
+    (broken.root / "build" / "lib" / "libzstd.a").write_bytes(b"\0001.5.7\0")  # no ar archive
+    assert pbs.zstd_version(broken) is None
 
 
 def test_component_versions_name_an_interpreter_that_fails(tmp_path: Path) -> None:

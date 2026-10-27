@@ -42,7 +42,7 @@ else
 WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm check check-c release-prep release release-check clean
+.PHONY: help bootstrap build install uninstall test test-ci test-prereqs test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm check check-c release-prep release release-check clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -50,8 +50,9 @@ help: ## Show this help
 
 # --- Setup ---
 
-# Debian trixie: the runtime, fsbpyr built from source, `make install`, with the uv, Python
-# and clang/lld 22 you installed (a missing one is named; nothing is installed for you).
+# Debian trixie: the runtime (linked with the clang/lld 23 it fetches), fsbpyr built from
+# source, `make install`, with the uv, Python, curl and zstd you installed (a missing one is
+# named; nothing is installed for you).
 # Anywhere else the build runs in a Debian trixie podman container (podman is yours to
 # install) and the install on this host. See tools/bootstrap.sh.
 bootstrap: ## From source to an installed fsbpyr: runtime, build, install (PYTHON=3.X: that variant's three stages, no install)
@@ -152,26 +153,35 @@ test-ci: ## Run the core of the test suite
 		tests/e2e/test_file_overlay.py tests/e2e/test_pipfile_lock.py \
 		-k "not (sanitized and not release)" --cov --cov-report=term --cov-report=xml
 
+# Nothing in the suite skips: a test whose tool or environment is missing fails, naming it.
+# This lists what the full suite lacks here, all at once (CONTRIBUTING.md, Running the tests).
+test-prereqs: ## List the tools and environment conditions the full test suite needs that this machine lacks
+	$(TESTENV) $(UVRUN) python -m tests.support.requires
+
 # Everything but the portability tests (`podman run` inside podman) and the corpus, in the
 # Containerfile's `test` stage: Debian trixie as `tester`, with the packages and users
 # tools/test-setup.sh adds.
-# A copy of the checkout is the suite's; FSBPYR_TESTS_REQUIRE_ALL=container fails any skip
-# outside the allowlist in tests/conftest.py. Two volumes keep what a run would fetch again:
-# uv's cache and Pythons, and the runtime's pinned downloads (FSBPYR_TEST_DOWNLOADS). Needs
-# podman, which is yours to install; --network pasta:-4 is bootstrap's, for the same reason.
-# TMPDIR is a tmpfs: a symlink target of 4,000 bytes (test_cache_root.py) fails on the
-# container's overlay file system with "File name too long", and the builds are big.
+# A copy of the checkout is the suite's. The stage has no podman, so the tests that need one
+# (-m "not podman") are left out; every other test runs, and fails where the container lacks
+# what it needs. Two volumes keep what a run would fetch again: uv's cache and Pythons, and
+# the runtime's pinned downloads (FSBPYR_TEST_DOWNLOADS). Needs podman, which is yours to
+# install; --network pasta:-4 is bootstrap's, for the same reason. --privileged, as in
+# full-suite.yml: `unshare --pid --mount-proc` (test_pid1) needs it in a container; in a
+# rootless podman it adds no privilege on the host. TMPDIR is a tmpfs that allows exec and
+# set-id bits (podman's default is nosuid): a symlink target of 4,000 bytes (test_cache_root.py)
+# fails on the container's overlay file system with "File name too long", the set-id tests
+# need the bits, and the builds are big.
 test-container: ## Run the whole suite but the portability tests and the corpus in a Debian trixie container (podman; PYTHON=3.X)
 	podman build --target test -t fsbpyr-test -f Containerfile .
 	podman run --rm --network pasta:-4 -v "$(CURDIR)":/checkout:ro,Z \
 		-v fsbpyr-test-cache:/home/tester/.cache -v fsbpyr-test-downloads:/home/tester/downloads \
-		--tmpfs /var/tmp:mode=1777 -e TMPDIR=/var/tmp \
-		-e FSBPYR_TEST_DOWNLOADS=/home/tester/downloads -e FSBPYR_TESTS_REQUIRE_ALL=container \
+		--privileged --pids-limit 8192 --tmpfs /var/tmp:mode=1777,exec,suid -e TMPDIR=/var/tmp \
+		-e FSBPYR_TEST_DOWNLOADS=/home/tester/downloads \
 		fsbpyr-test bash -c 'tar -C /checkout --exclude="./.venv*" --exclude=./dist -cf - . | tar -xf - \
-			&& uv python install $(if $(filter command line,$(origin PYTHON)),$(PYTHON),"$$(cat .python-version)") \
+			&& uv python install "$$(cat .python-version)" 3.12 3.13 3.14 3.15 \
 			&& clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" \
-			&& $(UVRUN) pytest -n $(JOBS) --dist loadfile --ignore=tests/e2e/test_portability.py \
-				--ignore=tests/e2e/test_corpus.py'
+			&& $(UVRUN) pytest -n $(JOBS) --dist loadfile -m "not podman" \
+				--ignore=tests/e2e/test_portability.py --ignore=tests/e2e/test_corpus.py'
 
 # The real-world corpus (tests/corpus, TST-3), as full-suite.yml's corpus job runs it: each app
 # in one of JOBS processes. It needs the network (gigabytes of wheels on a first run, kept in
@@ -181,11 +191,11 @@ test-corpus: ## Run the real-world corpus in JOBS processes (PYTHON=3.X; network
 
 # The portability matrix (tests/e2e/test_portability.py): 12 images pulled and run with podman,
 # on $(BIN)'s builds of the fixtures (tools/portability-apps.sh); needs llvm-objdump.
-# FSBPYR_TESTS_REQUIRE_ALL=portability fails any skip. Run `make build` first.
+# Run `make build` first.
 test-portability: ## Run the portability matrix on 12 distributions (podman, dist/fsbpyr)
 	rm -rf dist/portability-apps
 	tools/portability-apps.sh $(BIN) dist/portability-apps $(PYTHON_MINOR)
-	$(TESTENV) FSBPYR_PORTABILITY_APPS="$(CURDIR)/dist/portability-apps" FSBPYR_TESTS_REQUIRE_ALL=portability \
+	$(TESTENV) FSBPYR_PORTABILITY_APPS="$(CURDIR)/dist/portability-apps" \
 		$(UVRUN) pytest tests/e2e/test_portability.py
 
 # The EL8 test mode (FSBPYR_TEST_GLIBC=2.28, tests/support/baseline.py): the tests that build and
@@ -205,7 +215,7 @@ EL8_TESTS := tests/e2e/test_runtime_app.py tests/e2e/test_imports.py tests/e2e/t
 	tests/unit/test_test_modes.py
 
 test-el8-stub: ## Run the stub-dependent tests with the glibc 2.28 (EL8) stub, and tests/e2e/test_el8.py, in JOBS processes (PYTHON=3.X)
-	$(TESTENV) $(CONTAINED) env FSBPYR_TEST_GLIBC=2.28 $(UVRUN) pytest -n $(JOBS) --dist loadfile $(EL8_TESTS)
+	$(TESTENV) $(CONTAINED) env FSBPYR_TEST_GLIBC=2.28 $(UVRUN) pytest -n $(JOBS) --dist loadfile -m "not podman" $(EL8_TESTS)
 	$(TESTENV) $(CONTAINED) $(UVRUN) pytest tests/e2e/test_el8.py
 
 # The portability matrix (podman) with apps built `--glibc 2.28`: the 12 images and, only in this
@@ -213,7 +223,7 @@ test-el8-stub: ## Run the stub-dependent tests with the glibc 2.28 (EL8) stub, a
 # without FSBPYR_PORTABILITY_APPS); el8.yml builds them with tools/portability-apps.sh instead,
 # with the release's fsbpyr and the stub it has just linked.
 test-el8-portability: ## Run the portability matrix with apps built for glibc 2.28, on the 12 distributions and rockylinux:8, almalinux:8 (podman; PYTHON=3.X)
-	$(TESTENV) $(CONTAINED) env FSBPYR_TEST_GLIBC=2.28 FSBPYR_TESTS_REQUIRE_ALL=portability \
+	$(TESTENV) $(CONTAINED) env FSBPYR_TEST_GLIBC=2.28 \
 		$(UVRUN) pytest tests/e2e/test_portability.py
 
 test-el8: test-el8-stub test-el8-portability ## Run the EL8 (glibc 2.28) test mode and its portability matrix: what el8.yml runs, without the corpus subset and the VM

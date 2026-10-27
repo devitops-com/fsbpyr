@@ -1,12 +1,11 @@
 """The packages without a wheel for a Python fsbpyr supports (no-wheels.txt): what needs one is
-skipped on that Python, with a reason tests/conftest.py expects."""
+not run on that Python. A parametrized test is not given the case (``missing``); any other is
+marked ``needs``, and tests/conftest.py deselects it there."""
 
 from pathlib import Path
 
 import pytest
 from packaging.utils import canonicalize_name
-
-REASON = "no wheel for Python"
 
 
 def _read(path: Path) -> dict[str, frozenset[str]]:
@@ -27,7 +26,7 @@ def missing(package: str, python: str) -> bool:
     return canonicalize_name(package) in NO_WHEELS.get(python, frozenset())
 
 
-def skip_without(package: str, python: str) -> None:
-    """Skips the test when ``package`` has no wheel for ``python`` (X.Y)."""
-    if missing(package, python):
-        pytest.skip(f"{REASON} {python}: {package}")
+def needs(package: str, python: str | None = None) -> pytest.MarkDecorator:
+    """Marks a test as needing a wheel of ``package`` for ``python`` (X.Y; default the tests'
+    Python): tests/conftest.py deselects it where ``missing`` says there is none."""
+    return pytest.mark.needs_wheel(package, python=python)

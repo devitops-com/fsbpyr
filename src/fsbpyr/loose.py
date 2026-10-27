@@ -14,9 +14,11 @@ UC6): its Python files are the ``*.py`` files and the extensionless files whose 
 python or ``uv run`` shebang; every file with a main guard or such a shebang is a command, named
 after the file. A file or directory whose name is no Python name (``check-disk``, ``sub-dir/``)
 is stored under a mangled name in the same place (``check_disk.py``, ``sub_dir/``) and still
-runs as ``__main__``; its ``__file__`` is that path inside the executable, and the boot's path
-hook maps the entry ``<exe>/_fsbpyr_scripts/sub-dir`` to ``sub_dir`` by the same rule. Dependencies
-come from requirements.txt or pylock.toml, else from the union of the commands' PEP 723 blocks.
+runs as ``__main__``; its ``__file__`` is that path next to the executable (D24,
+``_fsbpyr_boot.py``), and the boot's path hook maps the entry ``<exe>/_fsbpyr_scripts/sub-dir``
+to ``sub_dir`` by the same rule. Dependencies come from a lock or requirements file
+(``--requirements``, pylock.toml, requirements.txt, Pipfile.lock), else from the union of the
+commands' PEP 723 blocks, else from the versions the scripts' venv holds (``venvdeps``).
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
-from .entry import _SKIPPED_DIRECTORIES, has_main_guard
+from .entry import SKIPPED_DIRECTORIES, has_main_guard
 from .links import COMMAND_NAME
 from .poetry1 import project_table
 from .project import ProjectError, is_unpackaged, settings_only
@@ -50,7 +52,6 @@ from .vcs import work_tree_files
 ROOT = "_fsbpyr_scripts"  # the wheel's top-level directory; a module is ``_fsbpyr_scripts.<path>``
 MODULE_GROUP = "fsbpyr_scripts"  # entry_points.txt: commands that run a module as __main__
 DEFAULT_VERSION = "0"  # a project without a static version
-_SKIPPED = _SKIPPED_DIRECTORIES | {"site-packages"}
 _TEST_DIRECTORIES = frozenset({"test", "tests"})  # not commands
 _MAIN_STEMS = frozenset({"main", "__main__"})  # take the project's name as a command
 _MODE = 0o100644 << 16  # a regular file, rw-r--r--
@@ -435,7 +436,7 @@ def _pruned(directory: Path, parts: list[str], venvs: dict[str, bool]) -> bool:
     """Whether a file's directories (names, from the project) are not the project's: hidden,
     build output, dependencies or a virtual environment."""
     for index, part in enumerate(parts):
-        if part.startswith(".") or part in _SKIPPED:
+        if part.startswith(".") or part in SKIPPED_DIRECTORIES:
             return True
         prefix = "/".join(parts[: index + 1])
         if prefix not in venvs:
@@ -449,7 +450,7 @@ def _walk(directory: Path) -> list[str]:
     """Every file below ``directory`` without following links to directories."""
     found = []
     for base, dirs, files in os.walk(directory):
-        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _SKIPPED]
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in SKIPPED_DIRECTORIES]
         found += [Path(base, name).relative_to(directory).as_posix() for name in files]
     return found
 

@@ -4,20 +4,22 @@ In an executable a module's ``__file__`` points into the payload's virtual tree,
 reads fail unless the package is FS_REQUIRED. This is a heuristic over the AST: a call that
 reads the file system, runs a program, loads a library or data file, or a pathlib read
 method, whose argument or receiver mentions ``__file__`` or ``__path__`` (also of another
-module, ``X.__file__``) directly or through a name assigned from it. Existence checks are a
-separate, low-confidence result: ``os.path.exists`` on such a path does not fail, it answers
-False.
+module, ``X.__file__``) directly or through a name assigned from it.
 """
 
 import ast
-from collections.abc import Callable
 
-_READ_CALLS = frozenset({
-    "open", "io.open", "codecs.open", "os.listdir", "os.scandir", "os.walk", "glob.glob",
-    "glob.iglob", "ctypes.CDLL", "CDLL", "ctypes.cdll.LoadLibrary", "cdll.LoadLibrary",
+# Calls that start a program; with ``sys.executable`` as the program, a script's sibling is run
+# from the payload (D44), not read from beside the binary.
+_SPAWN_CALLS = frozenset({
     "subprocess.run", "subprocess.Popen", "subprocess.call", "subprocess.check_call",
     "subprocess.check_output", "os.execv", "os.execve", "os.execvp", "os.execvpe", "os.execl",
-    "os.execle", "os.execlp", "os.execlpe", "np.load", "numpy.load",
+    "os.execle", "os.execlp", "os.execlpe",
+})  # fmt: skip
+_READ_CALLS = _SPAWN_CALLS | frozenset({
+    "open", "io.open", "codecs.open", "os.listdir", "os.scandir", "os.walk", "glob.glob",
+    "glob.iglob", "ctypes.CDLL", "CDLL", "ctypes.cdll.LoadLibrary", "cdll.LoadLibrary",
+    "np.load", "numpy.load",
 })  # fmt: skip
 _READ_METHODS = frozenset({"open", "read_text", "read_bytes", "iterdir", "glob", "rglob"})
 # Methods of any receiver that read a path given as an argument: cffi's ffi.dlopen(path),
@@ -25,10 +27,6 @@ _READ_METHODS = frozenset({"open", "read_text", "read_bytes", "iterdir", "glob",
 _PATH_ARGUMENT_METHODS = frozenset({"dlopen", "read"})
 # jinja2's loader is flagged by the call: its arguments are plain strings (package and folder).
 _LOADER_CALLS = frozenset({"PackageLoader", "jinja2.PackageLoader"})
-_EXISTENCE_CALLS = frozenset({
-    "os.path.exists", "os.path.isfile", "os.path.isdir", "os.path.lexists", "os.access",
-})  # fmt: skip
-_EXISTENCE_METHODS = frozenset({"exists", "is_file", "is_dir"})
 # Calls that open a library by name (the first argument, or ``name=``): ctypes, cffi's dlopen.
 _LOAD_CALLS = frozenset({
     "ctypes.CDLL", "CDLL", "ctypes.PyDLL", "PyDLL", "ctypes.cdll.LoadLibrary", "cdll.LoadLibrary",
@@ -90,15 +88,16 @@ def _reads(call: ast.Call, tainted: set[str]) -> bool:
     return func.attr in _READ_METHODS and _mentions(func.value, tainted)
 
 
-def _checks_existence(call: ast.Call, tainted: set[str]) -> bool:
-    func = call.func
-    if _dotted(func) in _EXISTENCE_CALLS:
-        return _arguments_mention(call, tainted)
-    return (
-        isinstance(func, ast.Attribute)
-        and func.attr in _EXISTENCE_METHODS
-        and _mentions(func.value, tainted)
-    )
+def _runs_own_interpreter(call: ast.Call) -> bool:
+    """Whether a spawn call runs ``sys.executable``: the first element of the argument list
+    (a list or tuple literal), or for ``os.exec*`` the program argument."""
+    if _dotted(call.func) not in _SPAWN_CALLS:
+        return False
+    first = call.args[0] if call.args else next((k.value for k in call.keywords
+                                                 if k.arg == "args"), None)  # fmt: skip
+    if isinstance(first, ast.List | ast.Tuple):
+        first = first.elts[0] if first.elts else None
+    return first is not None and _dotted(first) == "sys.executable"
 
 
 def _main_guarded(tree: ast.Module) -> list[range]:
@@ -116,29 +115,27 @@ def _main_guarded(tree: ast.Module) -> list[range]:
     ]
 
 
-def _flagged_lines(
-    source: bytes, filename: str, test: Callable[[ast.Call, set[str]], bool]
+def file_relative_reads(
+    source: bytes, filename: str, *, script: bool = False, main: bool = False
 ) -> list[int]:
+    """Line numbers of reads relative to ``__file__`` in one module (empty if it does not parse).
+    A main guard runs only in a module that runs as ``__main__`` (``main``: a command); an
+    imported module's has none. A module of the scripts root (``script``) calls a sibling with
+    ``sys.executable``: the sibling runs from the payload, no read."""
     if not any(marker in source for marker in _MARKERS):
         return []
     try:
         tree = ast.parse(source, filename)
     except (SyntaxError, ValueError):
         return []
-    tainted, guarded = _tainted_names(tree), _main_guarded(tree)
+    tainted = _tainted_names(tree)
+    guarded = [] if main else _main_guarded(tree)
     calls = (node for node in ast.walk(tree) if isinstance(node, ast.Call))
-    lines = {call.lineno for call in calls if test(call, tainted)}
+    lines = {
+        call.lineno for call in calls
+        if _reads(call, tainted) and not (script and _runs_own_interpreter(call))
+    }
     return sorted(line for line in lines if not any(line in block for block in guarded))
-
-
-def file_relative_reads(source: bytes, filename: str) -> list[int]:
-    """Line numbers of reads relative to ``__file__`` in one module (empty if it does not parse)."""
-    return _flagged_lines(source, filename, _reads)
-
-
-def file_relative_existence_checks(source: bytes, filename: str) -> list[int]:
-    """Line numbers of existence checks on paths relative to ``__file__``: low confidence."""
-    return _flagged_lines(source, filename, _checks_existence)
 
 
 def _literal_argument(call: ast.Call) -> str | None:

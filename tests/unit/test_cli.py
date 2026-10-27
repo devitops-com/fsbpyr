@@ -14,6 +14,7 @@ import pytest
 import fsbpyr
 from fsbpyr.build import BuildResult
 from fsbpyr.cli import cli, main
+from fsbpyr.project import Project
 from fsbpyr.runtime import pins, registry
 from fsbpyr.runtime.toolchain import ToolchainError
 from fsbpyr.vcs import git_state, version_string
@@ -76,6 +77,44 @@ def test_other_commands_never_run_git(
     monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path))
 
     assert main(["runtime", "list"]) == 0
+
+
+@pytest.mark.parametrize("home", [None, "", "relative"])
+@pytest.mark.parametrize("argv", [["runtime", "list"], ["runtime", "build"], ["build", "."],
+                                  ["cache", "gc"]])  # fmt: skip
+def test_no_usable_home_is_a_one_line_error(
+    argv: list[str], home: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "app.py").write_text("if __name__ == '__main__':\n    pass\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FSBPYR_CACHE_DIR", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    if home is None:
+        monkeypatch.delenv("HOME", raising=False)
+    else:
+        monkeypatch.setenv("HOME", home)
+    monkeypatch.setattr("pwd.getpwuid", lambda uid: types.SimpleNamespace(pw_dir="nowhere"))
+
+    assert main(argv) == 1
+
+    err = capsys.readouterr().err
+    assert err.startswith("fsbpyr: error: cannot find the home directory")
+    assert err.count("\n") == 1 and "Traceback" not in err
+
+
+def test_cache_gc_without_a_home_collects_the_cache_dir_it_is_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """FSBPYR_CACHE_DIR, the remedy the error names, works for gc too: no ~/.cache is read."""
+    monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.delenv("HOME", raising=False)
+    monkeypatch.setattr("pwd.getpwuid", lambda uid: types.SimpleNamespace(pw_dir="nowhere"))
+
+    assert main(["cache", "gc"]) == 0
+    assert "cannot find the home directory" not in capsys.readouterr().err
 
 
 def test_main_without_command_prints_the_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -354,3 +393,110 @@ def test_a_build_of_one_command_says_one_command(
 
     assert main(["build", str(tmp_path)]) == 0
     assert ", 1 command)" in capsys.readouterr().out
+
+
+def test_the_output_is_handed_on_as_given_not_through_its_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """build._output_path decides whether a link is written through: one that an earlier build
+    of several commands made is replaced instead (#74)."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "a").symlink_to("app")
+    handed: list[object] = []
+
+    def build(project: Path, config: types.SimpleNamespace, **kwargs: object) -> None:
+        handed.append(config.output)
+        raise OSError("stop here")
+
+    monkeypatch.setattr("fsbpyr.build.build", build)
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["build", str(tmp_path), "-o", "dist/a"]) == 1
+    assert capsys.readouterr().err == "fsbpyr: error: stop here\n"
+    assert handed == [tmp_path / "dist" / "a"]
+
+
+def _handed(handed: list[str], chosen: str) -> int:
+    handed.append(chosen)
+    return 0
+
+
+def _pipfile_lock_project(directory: Path, settings: str) -> None:
+    (directory / "main.py").write_text("if __name__ == '__main__':\n    pass\n")
+    (directory / "Pipfile.lock").write_text(json.dumps({
+        "_meta": {"hash": {"sha256": "x"}, "pipfile-spec": 6,
+                  "requires": {"python_version": "3.12"}, "sources": []},
+        "default": {}, "develop": {}}))  # fmt: skip
+    (directory / "pyproject.toml").write_text(settings)
+    (directory / "reqs.txt").write_text("")
+
+
+@pytest.mark.version_rule  # the test session builds for its own Python otherwise
+def test_the_python_comes_from_the_lock_source_that_the_settings_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Pipfile.lock asks for 3.12, but `requirements` in [tool.fsbpyr] makes reqs.txt the lock
+    source, which the build installs."""
+    _pipfile_lock_project(tmp_path, '[tool.fsbpyr]\nrequirements = "reqs.txt"\n')
+    handed: list[str] = []
+    built: list[str | None] = []
+
+    def build(project: Path, config: object, **kwargs: object) -> None:
+        built.append(config.requirements)  # type: ignore[attr-defined]
+        raise OSError("stop here")
+
+    monkeypatch.setattr("fsbpyr.cli.DEFAULT_PYTHON", "3.14")  # the Pipfile.lock asks for 3.12
+    monkeypatch.setattr("fsbpyr.build.build", build)
+    monkeypatch.setattr("fsbpyr.dispatch.run", lambda chosen, *args: _handed(handed, chosen))
+
+    main(["build", str(tmp_path)])
+
+    assert (handed, built) == ([], ["reqs.txt"])  # this fsbpyr builds, from reqs.txt
+
+
+@pytest.mark.version_rule  # the test session builds for its own Python otherwise
+def test_a_pipfile_lock_that_is_the_lock_source_still_picks_the_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _pipfile_lock_project(tmp_path, "[tool.fsbpyr]\n")
+    handed: list[str] = []
+    monkeypatch.setattr("fsbpyr.cli.DEFAULT_PYTHON", "3.14")
+    monkeypatch.setattr("fsbpyr.build.build", lambda *args, **kwargs: pytest.fail("built"))
+    monkeypatch.setattr("fsbpyr.dispatch.run",
+                        lambda chosen, *args, **kwargs: _handed(handed, chosen))
+
+    main(["build", str(tmp_path)])
+
+    assert handed == ["3.12"]
+
+
+@pytest.mark.parametrize(("settings", "argv", "loads"), [
+    ("", [], [None]),
+    ("", ["--requirements", "reqs.txt"], ["reqs.txt"]),
+    ('requirements = "reqs.txt"\n', [], [None, "reqs.txt"]),
+])  # fmt: skip
+def test_the_project_is_loaded_again_only_when_the_settings_name_the_lock_source(
+    settings: str, argv: list[str], loads: list[str | None], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A load of a directory of scripts parses each of its Python files."""
+    (tmp_path / "main.py").write_text("if __name__ == '__main__':\n    pass\n")
+    (tmp_path / "reqs.txt").write_text("")
+    (tmp_path / "pyproject.toml").write_text(f"[tool.fsbpyr]\n{settings}")
+    loaded: list[str | None] = []
+    load = Project.load
+
+    def counted(directory: Path, requirements: str | None = None) -> Project:
+        loaded.append(requirements)
+        return load(directory, requirements)
+
+    def build(project: Path, config: object, **kwargs: object) -> None:
+        raise OSError("stop here")
+
+    monkeypatch.setattr(Project, "load", counted)
+    monkeypatch.setattr("fsbpyr.build.build", build)
+
+    assert main(["build", str(tmp_path), *argv]) == 1
+    assert capsys.readouterr().err == "fsbpyr: error: stop here\n"  # the build was reached
+    assert loaded == loads

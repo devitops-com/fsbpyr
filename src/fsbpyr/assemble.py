@@ -81,8 +81,9 @@ def resources_id(files: tuple[File, ...]) -> str:
 def stub_digest(stub: bytes) -> str:
     """SHA-256 of the bytes before the payload: the stub and its zero padding. Identical in
     every executable that has the same stub, however it was handed on (the raw stub of a
-    source build, the padded prefix of a self-hosted one), so it links an app to the fsbpyr
-    release that built it."""
+    source build, the padded prefix of a self-hosted one). It identifies the stub, not a release:
+    releases that link it from the same inputs (the launcher sources and flags, the PBS pin, the
+    sysroot and the layout version) with the same toolchain share it."""
     padding = bytes(align(len(stub), PAYLOAD_ALIGN) - len(stub))
     return hashlib.sha256(stub + padding).hexdigest()
 

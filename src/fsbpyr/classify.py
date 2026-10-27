@@ -9,6 +9,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 
+from .boot._fsbpyr_rt.commands import parse
 from .closure import InstalledDist
 from .compiler import Compiled, Compiler, Job, compiled, compressed
 from .elf import ElfError, glibc_requirement, is_elf, is_executable, is_foreign
@@ -96,7 +97,18 @@ class ClassifyError(RuntimeError):
 
 
 class Uncounted(str):
-    """A warning that ``--strict`` does not count: a guess that only fs-packages silences."""
+    """A warning that ``--strict`` does not count: one about the build host, advice beside a
+    warning that counts, or a guess about the packages. Every kind:
+
+    - the uv that differs from the one that built this fsbpyr, and git errors (the host);
+    - the note on ``Pipfile.lock`` packages from other indexes (the host's uv);
+    - the advice about ``requirements/*.txt`` when there is no ``requirements.txt`` (beside
+      the unlocked build, which counts);
+    - packages that may start helper interpreters through ``sys.executable``;
+    - the ``--hints`` guess that packages read files next to ``__file__``;
+    - shared objects no extension module loads but a package's Python code names;
+    - executables in packages.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +232,7 @@ class _Collector:
         self.suffixes = extension_suffixes
         self.include_source = include_source
         self.hints = hints  # guesses (reads next to __file__): only when asked for
+        self.mains: frozenset[str] = frozenset()  # scripts-root files that run as __main__
         self.modules: dict[str, Module] = {}
         self.files: dict[str, File] = {}
         self.owners: dict[str, str] = {}  # path -> dist
@@ -416,9 +429,10 @@ class _Collector:
         return self.origins.get(rel, rel.removeprefix(f"{ROOT}/"))
 
     def _compiled(self, dist: InstalledDist, rel: str, path: Path, hints: bool) -> Compiled:
+        main = rel in self.mains
         if self.compiler is not None:
-            return self.compiler.get((dist.name, rel), path, rel, hints)
-        return compiled(path.read_bytes(), rel, self.level, self.include_source, hints)
+            return self.compiler.get((dist.name, rel), path, rel, hints, main)
+        return compiled(path.read_bytes(), rel, self.level, self.include_source, hints, main)
 
     def module_jobs(self, dists: list[InstalledDist]) -> list[Job]:
         """The modules add_dist will compile, in the order it reaches them (add_dist and
@@ -436,7 +450,8 @@ class _Collector:
                 if path.stat().st_size > _IN_MEMORY:
                     continue
                 tests = _TEST_DIRECTORIES.intersection(rel.split("/")[:-1])
-                jobs.append(Job((dist.name, rel), path, rel, self._reads_wanted(rel) and not tests))
+                hints = self._reads_wanted(rel) and not tests
+                jobs.append(Job((dist.name, rel), path, rel, hints, rel in self.mains))
         return jobs
 
     def _prevails(self, name: str, rank: tuple[int, bool, int], dist: str) -> bool:
@@ -602,8 +617,8 @@ class _Collector:
         )  # fmt: skip
         first: dict[str, str] = {}
         for _, rel, line in self.reads:
-            if rel.startswith(self.fs_directories):
-                continue
+            if rel.startswith(self.fs_directories) or rel.startswith(f"{ROOT}/"):
+                continue  # fs-packages does not apply to the scripts root (_hint_script_reads)
             package = next(
                 (name for directory, name in packages if rel.startswith(directory)), None
             )
@@ -611,10 +626,10 @@ class _Collector:
                 first.setdefault(package, f"{rel}:{line}")
         if first:
             listed = ", ".join(f"{name} ({where})" for name, where in sorted(first.items()))
-            self.warnings.append(
+            self.warnings.append(Uncounted(
                 "these packages read files next to __file__ (a heuristic); add one to "
                 f"fs-packages only if it fails at run time: {listed}"
-            )
+            ))
 
     def _hint_unused_natives(self) -> None:
         unused: dict[str, list[str]] = {}
@@ -720,6 +735,18 @@ class _Collector:
         return list(found.values())
 
 
+def _mains(entrypoint: str) -> frozenset[str]:
+    """The files below the scripts root that run as ``__main__``: the targets of the entry point
+    (each command of a table, the one command or the module --entry names) that name a module
+    (``pkg.mod``, not ``pkg.mod:function``), a package by its ``__main__.py``."""
+    mains = set()
+    for target in parse(entrypoint).values() if "\n" in entrypoint else [entrypoint]:
+        path, colon, _ = target.replace(".", "/").partition(":")
+        if not colon and path.startswith(f"{ROOT}/"):
+            mains |= {f"{path}.py", f"{path}/__main__.py"}
+    return frozenset(mains)
+
+
 def classify(  # noqa: PLR0913  the build options, keyword-only
     dists: list[InstalledDist],
     *,
@@ -734,14 +761,17 @@ def classify(  # noqa: PLR0913  the build options, keyword-only
     runtime_modules: frozenset[str] = frozenset(),
     project: str | None = None,
     origins: Mapping[str, str] | None = None,
+    entrypoint: str = "",
 ) -> Content:
     """With ``spill``, no file's bytes stay in memory: they are compressed into it, the
     largest a piece at a time from their files (D38); the files must outlive the build.
-    A module in ``runtime_modules`` is kept as a file, unless ``project`` installs it."""
+    A module in ``runtime_modules`` is kept as a file, unless ``project`` installs it. Of the
+    scripts root, only the modules ``entrypoint`` runs as ``__main__`` run their main guard."""
     collector = _Collector(extension_suffixes, include_source, hints=hints, level=level,
                            xz_natives=xz_natives, spill=spill, runtime_modules=runtime_modules,
                            project=project, origins=origins)  # fmt: skip
     collector.read_pth_files(dists)
+    collector.mains = _mains(entrypoint)
     collector.compiler = Compiler(collector.module_jobs(dists), level=level,
                                   include_source=include_source)  # fmt: skip
     try:

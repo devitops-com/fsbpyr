@@ -4,7 +4,6 @@
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import tomllib
@@ -22,6 +21,7 @@ from fsbpyr.natives import system_libraries
 from fsbpyr.payload.format import FORMAT_VERSION
 from fsbpyr.project import Project
 
+from ..support import requires
 from ..support.readme import quickstart
 
 ROOT = Path(__file__).parents[2]
@@ -153,10 +153,11 @@ def test_bash_completes_through_the_script(
 ) -> None:
     """The real round trip: bash runs the script's function as complete -F does (command, word,
     previous word), and the function runs fsbpyr from PATH."""
-    bash = shutil.which("bash")
+    bash = requires.tool("bash")
     command = Path(sys.executable).with_name("fsbpyr")
-    if bash is None or not command.is_file():
-        pytest.skip("needs bash and the fsbpyr console script next to the interpreter")
+    if not command.is_file():
+        requires.unmet("the fsbpyr console script is not next to the interpreter",
+                       "run the tests through `uv run` or `make test`, in the project environment")
     (tmp_path / "pyproject.toml").write_text(PYPROJECT)
     main(["completion", "bash"])
     (tmp_path / "fsbpyr.bash").write_text(capsys.readouterr().out)
@@ -198,9 +199,7 @@ def test_man_page_ends_with_the_examples(capsys: pytest.CaptureFixture[str]) -> 
 
 
 def test_example_command_lines_are_never_hyphenated(capsys: pytest.CaptureFixture[str]) -> None:
-    groff = shutil.which("groff")
-    if groff is None:
-        pytest.skip("needs groff")
+    groff = requires.tool("groff")
     main(["man"])
 
     plain = [groff, "-man", "-Tascii", "-P-cbou", "-rLL=80n"]  # no bold, colour or overstrike
@@ -286,9 +285,7 @@ def test_man_page_sets_code_in_bold(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_man_page_is_clean_roff(capsys: pytest.CaptureFixture[str]) -> None:
-    groff = shutil.which("groff")
-    if groff is None:
-        pytest.skip("needs groff")
+    groff = requires.tool("groff")
     main(["man"])
 
     result = subprocess.run([groff, "-man", "-Tutf8", "-ww", "-z"], input=capsys.readouterr().out,

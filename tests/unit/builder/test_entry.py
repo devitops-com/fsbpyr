@@ -49,6 +49,13 @@ def test_the_source_tree_has_a_candidate_only_for_a_main_file_or_a_guard(tmp_pat
     assert source_has_candidate(tmp_path)
 
 
+def test_a_site_packages_directory_holds_no_candidate(tmp_path: Path) -> None:
+    (tmp_path / "site-packages" / "tool").mkdir(parents=True)
+    (tmp_path / "site-packages" / "tool" / "__main__.py").write_text("print(1)\n")
+
+    assert not source_has_candidate(tmp_path)
+
+
 def test_a_bom_and_a_coding_cookie_do_not_hide_the_guard() -> None:
     guard = 'if __name__ == "__main__":\n    pass\n'
 

@@ -30,7 +30,7 @@ from fsbpyr.runtime.stub import stub_identity
 from fsbpyr.targets import host_target
 from fsbpyr.vcs import release_stub_asset, release_stub_sums, release_stub_tag
 
-from ..support import contain
+from ..support import contain, requires
 from ..support.releases import FakeReleases
 
 pytestmark = pytest.mark.slow
@@ -245,8 +245,7 @@ def test_the_projects_own_extension_is_rebuilt_against_the_el8_sysroot(
     """cext's extension binds __isoc23_strtol (GLIBC_2.38) when the host builds it; with
     --glibc 2.28 it is built again against Rocky Linux 8.10's glibc, and needs no more than 2.28.
     The build gets a uv cache of its own, as test_build's version of this test does."""
-    if shutil.which("cc") is None:
-        pytest.skip("no C compiler")
+    requires.tool("cc")
     project = tmp_path / "cext"
     shutil.copytree(FIXTURES / "cext", project)
     monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "uv-cache"))
@@ -298,7 +297,9 @@ def test_a_release_builds_for_el8_with_its_stdlib_and_the_downloaded_stub(
 
     assert releases.requests == [f"/{COMPANION}/{SUMS}", f"/{COMPANION}/{ASSET}.xz"]
     assert out.read_bytes() == built["hello"].read_bytes()
-    assert (tmp_path / "cache" / "downloads" / f"{ASSET}-{TAG}").is_file()
+    expected = registry.runtime_id(pins.pin_for(TARGET_PYTHON, host_target().triple),
+                                   baseline=BASELINE)  # fmt: skip
+    assert (tmp_path / "cache" / "downloads" / f"{ASSET}-{expected}").is_file()  # not by tag
 
 
 def _tagged_copy(directory: Path) -> Path:
@@ -322,8 +323,7 @@ def release_fsbpyr(
     tmp_path_factory: pytest.TempPathFactory, runtime: registry.Runtime
 ) -> Path:
     """fsbpyr built from the tagged copy: an executable that reports itself as release 1.2.0."""
-    if shutil.which("git") is None:
-        pytest.skip("needs git")
+    requires.tool("git")
     copy = _tagged_copy(tmp_path_factory.mktemp("release-src"))
     out = tmp_path_factory.mktemp("release-bin") / "fsbpyr"
     _build(copy, out)

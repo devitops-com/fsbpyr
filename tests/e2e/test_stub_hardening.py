@@ -5,7 +5,6 @@ clang.
 """
 
 import re
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -14,13 +13,9 @@ import pytest
 from fsbpyr.natives import glibc_libraries
 from fsbpyr.runtime.registry import Runtime
 
-READELF = shutil.which("readelf")
-OBJDUMP = shutil.which("objdump")
+from ..support import requires
 
-pytestmark = [
-    pytest.mark.slow,
-    pytest.mark.skipif(not (READELF and OBJDUMP), reason="binutils not installed"),
-]
+pytestmark = [pytest.mark.slow, requires.tools("readelf", "objdump")]
 
 
 def _tool(*command: str | Path) -> str:
@@ -38,8 +33,7 @@ def stub_path(runtime: Runtime, tmp_path_factory: pytest.TempPathFactory) -> Pat
 
 @pytest.fixture(scope="module")
 def headers(stub_path: Path) -> str:
-    assert READELF
-    return _tool(READELF, "-lW", "-dW", stub_path)
+    return _tool(requires.tool("readelf"), "-lW", "-dW", stub_path)
 
 
 def test_stub_is_position_independent(headers: str) -> None:
@@ -71,6 +65,4 @@ def test_stub_stack_is_not_executable(headers: str) -> None:
 
 
 def test_stub_uses_stack_protector(stub_path: Path) -> None:
-    assert OBJDUMP
-
-    assert "__stack_chk_fail" in _tool(OBJDUMP, "-T", stub_path)
+    assert "__stack_chk_fail" in _tool(requires.tool("objdump"), "-T", stub_path)

@@ -17,7 +17,7 @@ from fsbpyr.payload.spec import Blob, File, Module
 from fsbpyr.runtime import pbs, pins, registry, stub
 from fsbpyr.runtime.toolchain import ToolchainError, find_toolchain
 
-from ..support import baseline, corpus, downloads
+from ..support import baseline, corpus, downloads, requires
 
 type BuildApp = Callable[[dict[str, str], str], Path]
 
@@ -69,7 +69,7 @@ def _session_runtime(glibc: str, *, sanitize: bool) -> registry.Runtime:
                                           baseline=glibc)  # fmt: skip
         downloads.build_kept_runtime(TARGET_PYTHON, kept, sanitize=sanitize, baseline=glibc)
     except ToolchainError as exc:  # pragma: no cover - depends on the host
-        pytest.skip(f"cannot build a runtime here: {exc}")
+        pytest.fail(f"missing tool: {exc}; {requires.FIX}", pytrace=False)
     downloads.seed_runtime(TARGET_PYTHON, kept, registry.cache_root(), sanitize=sanitize,
                            baseline=glibc)  # fmt: skip
     return registry.find_runtime(TARGET_PYTHON, sanitize=sanitize, baseline=glibc)

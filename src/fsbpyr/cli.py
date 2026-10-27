@@ -72,8 +72,8 @@ def cli(ctx: click.Context) -> None:
     "build",
     help="build a single-file executable from a project\n\nPROJECT is the project's directory "
     "(default: the current one); a directory of Python files with no `pyproject.toml` or "
-    "`setup.py` is built from them, one command per file with a main guard or a python "
-    "shebang. A single Python file (`*.py`, or a python or `uv run --script` shebang) builds "
+    "`setup.py` is built from them, one command per file with a main guard or a python or "
+    "`uv run` shebang. A single Python file (`*.py`, or such a shebang) builds "
     "with the files it imports from its directory, and nothing else of it; its PEP 723 "
     "block gives the dependencies, `requires-python` and `[tool.fsbpyr]`, and a "
     "`<file>.lock` from `uv lock --script` locks them. Options given here win over "
@@ -146,7 +146,10 @@ def cli(ctx: click.Context) -> None:
 @click.option("--strict/--no-strict", default=None,
               help="fail the build, leaving the output as it was, on any warning about the app "
                    "and on an unlocked build; requirements files must pin and hash every "
-                   "line")  # fmt: skip
+                   "line. Not counted: the build host's uv and git, the notes on `requirements/` "
+                   "files and `Pipfile.lock` indexes, and the guesses about packages (helper "
+                   "interpreters, files read next to `__file__`, shared objects, "
+                   "executables)")  # fmt: skip
 @click.option("-v", "--verbose", is_flag=True,
               help="print each uv command and let uv's error output through")  # fmt: skip
 def build_command(  # noqa: PLR0913  click passes every option by name
@@ -204,7 +207,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
             python=python,
             glibc=glibc,
             entry=entry,
-            output=output.resolve() if output else None,
+            output=output.absolute() if output else None,  # a link: build._output_path
             requirements=requirements,
             extras=extras or None,
             allowed_system_libs=allowed_system_libs or None,
@@ -219,10 +222,13 @@ def build_command(  # noqa: PLR0913  click passes every option by name
             best_compression=best_compression,
             interpreter_reexec=interpreter_reexec,
         )
+        loaded = (loaded if config.requirements == requirements  # the settings may name the
+                  else Project.load(project, config.requirements))  # lock source  # fmt: skip
         chosen = resolve(loaded, config.python, own=DEFAULT_PYTHON).version
         if chosen != DEFAULT_PYTHON:  # another fsbpyr builds it, given this command line
             args = click.get_current_context().obj  # main() put it there
-            return run(chosen, args, lambda message: print(f"fsbpyr: {message}"))
+            return run(chosen, args, lambda message: print(f"fsbpyr: {message}"),
+                       offline=config.offline)
         result = build(project, config, verbose=verbose,
                        log=lambda message: print(f"fsbpyr: {message}"))
     except errors as exc:
@@ -374,13 +380,18 @@ def cache_group() -> None:
                      "every app cache")  # fmt: skip
 def cache_gc() -> int:
     """``fsbpyr cache gc``: the tool's cache, then every app cache found (D38); 1 if anything
-    could not be removed."""
+    could not be removed, or the caches cannot be found (no home directory)."""
     from .boot._fsbpyr_rt import gc  # noqa: PLC0415  keep --version fast
     from .runtime import collect, registry  # noqa: PLC0415
 
-    tool = registry.cache_root()
+    try:
+        tool = registry.cache_root()
+        apps = collect.app_caches()
+    except registry.RuntimeCacheError as exc:
+        print(f"fsbpyr: error: {exc}", file=sys.stderr)
+        return 1
     runs = [(tool, functools.partial(collect.collect_tool, tool))]
-    runs += [(root, functools.partial(gc.collect, str(root))) for root in collect.app_caches()]
+    runs += [(root, functools.partial(gc.collect, str(root))) for root in apps]
     failed = False
     for root, run in runs:
         try:
@@ -472,7 +483,7 @@ EXAMPLES = (
      "The same report as JSON, with every module listed."),
     ("fsbpyr runtime build",
      "Build the runtime that fsbpyr needs when it runs from a checkout or a wheel: once, with "
-     "clang and lld 22 or newer."),
+     "clang and lld 23 or newer."),
     ("fsbpyr cache gc",
      "Collect fsbpyr's own cache and every app cache now, rather than when the next "
      "collection is due."),
@@ -511,8 +522,10 @@ def _unsupported_python() -> bool:
 
 
 def _collect_when_due() -> None:
-    """The tool's cache, collected at a command's start once a day (D38); a failure is reported
-    and never stops the command."""
+    """The tool's cache, collected at the start of ``build``, ``inspect``, ``runtime build`` and
+    ``runtime list`` once a day, or once an hour when its file system has less than 10% free
+    (D38); a failure never stops the command, and is reported unless it is a missing home
+    directory, a cache this user may not write or a read-only file system."""
     from .runtime import collect, registry  # noqa: PLC0415  keep --version fast
 
     try:

@@ -448,8 +448,10 @@ else
             -o "$work/el8/apps/hello") >"$work/el8.log" 2>&1; then
         ok "$DEFAULT: builds hello with --glibc 2.28"
         if [ "$placed" -eq 0 ]; then
+            # the only stub in this fresh cache: named by the tag up to 0.27.0, then by the
+            # runtime id it carries
             xz --decompress --stdout "$el8_dir/$stub.xz" \
-                | cmp -s - "$work/cache/downloads/$stub-$TAG" \
+                | cmp -s - "$work/cache/downloads/$stub-"* \
                 && ok "the stub it fetched is $COMPANION's $stub" \
                 || fail "the stub it fetched is not $COMPANION's $stub"
         fi

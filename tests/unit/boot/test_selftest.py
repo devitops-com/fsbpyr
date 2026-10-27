@@ -17,7 +17,7 @@ from fsbpyr.payload.format import FileKind, ModuleKind
 from fsbpyr.payload.spec import Blob, File, Module
 
 from .conftest import FAKE_RUNTIME
-from .test_native import CONTENT, EXT, LIB, SUFFIX
+from .test_native import CONTENT, EXT, LIB, SUFFIX, _Exited, _refusing_sync
 
 OTHER = f"fast/_other{SUFFIX}"
 MISSING_LIBRARY = "\tlibfoo.so.1 => not found\n"
@@ -138,3 +138,19 @@ def test_a_loader_that_cannot_run_fails_the_check(
 
     assert exit_.value.code == 1
     assert "cannot run" in capsys.readouterr().err
+
+
+def test_a_refused_cache_directory_ends_the_check_as_it_ends_a_run(
+    selftest: types.ModuleType, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    native = importlib.import_module("_fsbpyr_rt.native")
+    refused = "refusing cache directory /shared: other users may write to it"
+    _refusing_sync(monkeypatch, native, refused)
+    loader = _loader(monkeypatch, {EXT: FOUND, OTHER: FOUND})
+
+    with pytest.raises(_Exited) as ended:
+        selftest.natives(loader)
+
+    assert ended.value.args == (70,)
+    executable = native._fsbpyr.info()["executable"]
+    assert capfd.readouterr() == ("", f"fsbpyr: cannot start {executable}: {refused}\n")

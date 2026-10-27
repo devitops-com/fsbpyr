@@ -107,12 +107,12 @@ run by hand gets no such protection. When a run fails or differs:
   saying what failed without it. The session summary lists every app that needed a setting.
 - **fsbpyr fails where no setting helps:** set `known-failure` in `commands.toml` to one line
   saying what fails, with a comment above it on the cause as far as it is known. The test
-  then expects the failure (a strict xfail) and goes red once fsbpyr is fixed. When it fails
+  then asserts that the app still fails and goes red once fsbpyr is fixed. When it fails
   on some Pythons only, make it a table: `known-failure = {reason = "...", pythons = ["3.14",
   "3.15"]}`.
 
 A package without a wheel for fsbpyr's baseline (manylinux_2_34) on some Python goes into
-`tests/support/no-wheels.txt` (a line `3.15 <package> ...`); the app is then skipped there.
+`tests/support/no-wheels.txt` (a line `3.15 <package> ...`); the app is then not run there.
 `tests/unit/test_corpus_locks.py` reads every app's lock for each Python and both machines,
 and fails where it finds a package without a wheel and the list names none of the app's, so
 no app is built from an sdist by surprise. A pure-Python package that publishes an sdist only

@@ -180,8 +180,8 @@ def _ignore(_: str) -> None:
 def fragment(
     dist: PbsDist, *, warn: Callable[[str], None] = _ignore
 ) -> tuple[tuple[Module, ...], tuple[File, ...]]:
-    """Stdlib modules (STARTUP ones uncompressed), sources and resources as payload specs; the
-    compiler's warnings, and each module that does not compile, go to ``warn``."""
+    """Stdlib modules (code zstd-compressed, STARTUP ones too), sources and resources as payload
+    specs; the compiler's warnings, and each module that does not compile, go to ``warn``."""
     tree = collect(dist.stdlib)
     startup = set(startup_names(dist.interpreter))
     # Frozen-style names (like CPython's own frozen modules): linecache never stats a relative path.

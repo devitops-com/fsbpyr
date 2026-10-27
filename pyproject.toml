@@ -1,6 +1,6 @@
 [project]
 name = "fsbpyr"
-version = "0.27.0"
+version = "0.28.0"
 description = "Fast single-binary Python CLI runtime and packager"
 authors = [{ name = "Kresimir Sparavec", email = "ksparavec@devitops.com" }]
 license = "LicenseRef-fsbpyr-MIT-with-runtime-exception"
@@ -34,10 +34,15 @@ testpaths = ["tests"]
 addopts = ["--strict-markers", "--strict-config", "-ra"]
 # a run builds gigabytes of executables: keep only what failed tests left (/tmp is often tmpfs)
 tmp_path_retention_policy = "failed"
+# an empty parametrization is a collection error, never a hidden skip
+empty_parameter_set_mark = "fail_at_collect"
 markers = [
     "slow: takes more than a few seconds",
     "sanitized: also runs with the ASan/UBSan launcher (D38)",
     "version_rule: runs the Python version rule as it is (other tests build for the Python they run on)",
+    "requires_tools: fails without these tools on PATH (tests/support/requires.py: requires.tools)",
+    "needs_wheel: deselected where no-wheels.txt lists no wheel of the package (tests/support/wheels.py)",
+    "podman: requires podman (set by requires.tools); -m 'not podman' leaves it out where there is none",
 ]
 
 [tool.coverage.run]

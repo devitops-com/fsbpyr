@@ -66,6 +66,18 @@ def test_other_command_lines_belong_to_the_app(reexec: ModuleType, argv: list[st
     assert reexec.child_command(argv) is None
 
 
+@pytest.mark.parametrize("setting", [ON, OFF, UNSET])
+def test_the_dispatcher_form_runs_the_command_whatever_the_setting(
+    reexec: ModuleType, child: ModuleType, setting: str
+) -> None:
+    """``exe COMMAND -m word``: the first argument is the command's name, so the start is no
+    helper interpreter and ``-m word`` are that command's arguments (also not refused)."""
+    argv = [EXE, "acme-db", "-m", "word"]
+
+    assert reexec.child_command(argv) is None
+    assert reexec.run_child(argv, setting, PREFIX) is False
+
+
 @pytest.mark.parametrize(
     ("argv", "expected"),
     [

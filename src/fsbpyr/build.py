@@ -35,7 +35,7 @@ from .entry import source_has_candidate
 from .foreign import stale as foreign_stale
 from .importcheck import REMOVED_IN, Unresolved, check_command, top_level_names
 from .legacy import attach as attach_legacy_scripts
-from .links import LinkError, check_links, make_links
+from .links import LinkError, check_links, is_earlier_link, make_links
 from .loose import Package
 from .manifest import SCHEMA, LockError, built_here, dist_records, inferred_lock, lock_record
 from .natives import opened
@@ -99,6 +99,7 @@ class BuildResult:
     commands: tuple[str, ...] = ()  # the names of a multi-command executable, else empty
     links: tuple[Path, ...] = ()  # beside the output, one per command not named like it
     loose: bool = False  # built from the project's Python files, with no build system
+    project: str = ""  # the project's name, which an earlier output of it is known by
 
 
 def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
@@ -118,12 +119,22 @@ def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
 _DEFAULT_GLIBC = (2, 34)  # pins.DEFAULT_BASELINE as a version
 
 
-def _commands_to_link(entrypoint: str, output: Path) -> tuple[str, ...]:
+def _output_path(path: Path, project: str) -> Path:
+    """The path to write: absolute, and where it is a link, the file it points to, except for a
+    link an earlier build of ``project`` made for one of several commands, which this build of
+    one command replaces."""
+    path = path.absolute()
+    if is_earlier_link(path, project):
+        return path.parent.resolve() / path.name
+    return path.resolve()
+
+
+def _commands_to_link(entrypoint: str, output: Path, project: str) -> tuple[str, ...]:
     """The names of a multi-command executable's commands (none for a single command), checked
     against what the output's directory holds."""
     commands = tuple(parse(entrypoint)) if "\n" in entrypoint else ()
     try:
-        check_links(output, commands)
+        check_links(output, commands, project)
     except LinkError as exc:
         raise BuildError(str(exc)) from exc
     return commands
@@ -391,9 +402,7 @@ def check_hashed_requirements(project: Project, config: BuildConfig) -> None:
 
 
 def check_strict(warnings: Iterable[str]) -> None:
-    """Raise StrictError for the warnings that count. The uv mismatch and git errors describe
-    the build host, and the ctypes guess is silenced only by fs-packages, which changes how
-    the app runs: none of them counts (they are Uncounted)."""
+    """Raise StrictError for the warnings that count; the Uncounted ones (see there) do not."""
     counted = [warning for warning in warnings if not isinstance(warning, Uncounted)]
     if counted:
         raise StrictError(f"--strict: the build has {plural(len(counted), 'warning')}; "
@@ -454,8 +463,8 @@ def load_package(project: Project, config: BuildConfig, warnings: list[str]) -> 
     warnings += package.warnings
     if config.entry is None and not package.commands and project.bare:
         raise ProjectError(f"{project.directory} has no Python file with an if __name__ == "
-                           "'__main__' guard or a python shebang; choose one with --entry "
-                           "(a command name or _fsbpyr_scripts.module[:attr])")  # fmt: skip
+                           "'__main__' guard or a python or `uv run` shebang; choose one with "
+                           "--entry (a command name or _fsbpyr_scripts.module[:attr])")  # fmt: skip
     if config.entry is None and not package.commands:
         raise ProjectError(f"{package.name} has no [project.scripts] and no Python file with an "
                            "if __name__ == '__main__' guard; choose one with --entry (a "
@@ -482,6 +491,16 @@ def _removed_hint(name: str) -> str:
     return f"{text}; no Python fsbpyr builds for has it, so the script needs porting{port}"
 
 
+def _shown(project: Project, venv: Path) -> str:
+    """The venv as the user knows it: relative to the project's directory when inside it."""
+    return str(venv.relative_to(project.directory) if venv.is_relative_to(project.directory)
+               else venv)  # fmt: skip
+
+
+def _freeze_command(project: Project, venv: Path) -> str:
+    return f"uv pip freeze --python {_shown(project, venv)}/bin/python"
+
+
 def _unresolved_warning(
     command: str, problems: list[Unresolved], project: Project, python: tuple[int, int]
 ) -> str:
@@ -500,15 +519,16 @@ def _unresolved_warning(
             where = "the dependencies of the script's '# /// script' block"
         hints += [f"declare it in {where} (a project's own file is found next to the script "
                   "that imports it)"]
-        if (project.directory / ".venv").is_dir():
-            command = "uv pip freeze --python .venv/bin/python"
+        if (venv := find_venv(project.directory)) is not None:
+            command = _freeze_command(project, venv)
             then = ("lists what it holds; put what the script needs in its block's dependencies"
                     if project.script is not None else
                     "writes what it holds, and the build reads requirements.txt")
             redirect = "" if project.script is not None else " > requirements.txt"
-            why = ("a .venv supplies pins only when nothing declares a dependency and it holds "
-                   "a distribution that provides the import" if project.bare
-                   else "a .venv is not read for undeclared dependencies")  # fmt: skip
+            why = ("a virtual environment supplies pins only when nothing declares a dependency "
+                   "and it holds a distribution that provides the import" if project.bare
+                   else "a virtual environment is not read for undeclared dependencies"
+                   )  # fmt: skip
             hints[-1:] = [f"{why}; `{command}{redirect}` {then}"]
     return f"{text}. {'. '.join(hints)}"
 
@@ -525,9 +545,10 @@ def _checked_commands(package: Package, config: BuildConfig) -> dict[str, str]:
 def infer_dependencies(
     package: Package, project: Project, config: BuildConfig, runtime: Runtime, warnings: list[str]
 ) -> tuple[Package, Inferred | None]:
-    """Rung 3 of the dependency ladder (venvdeps.py): a project without a build system whose
-    commands import what the runtime lacks, and that declares no dependency, gets the versions
-    its venv holds of the distributions that provide those imports, pinned in its wheel. The
+    """Rung 3 of the dependency ladder (venvdeps.py): a directory of scripts or a single script
+    (``project.bare``; a ``[project]`` without a build system never reads a venv) whose commands
+    import what the runtime lacks, and that declares no dependency, gets the versions its venv
+    holds of the distributions that provide those imports, pinned in its wheel. The
     pins are installed fresh, nothing is copied. A warning names the venv and the command that
     declares the dependencies; --strict fails on it, before anything is staged."""
     if (venv := find_venv(project.directory)) is None:
@@ -539,9 +560,8 @@ def infer_dependencies(
     found = infer(venv, modules, marker_environment(runtime.python_version)) if modules else None
     if found is None:
         return package, None
-    shown = (venv.relative_to(project.directory) if venv.is_relative_to(project.directory)
-             else venv)  # fmt: skip
-    command = f"uv pip freeze --python {shown}/bin/python"
+    shown = _shown(project, venv)
+    command = _freeze_command(project, venv)
     declare = (f"`{command}` lists them for the '# /// script' block's dependencies"
                if project.script is not None else f"`{command} > requirements.txt` declares them")
     listed = ", ".join(found.pins[:5]) + (" ..." if len(found.pins) > 5 else "")
@@ -677,7 +697,7 @@ def build(
         written.clear()
         if result.commands:
             try:
-                links = tuple(make_links(result.output, result.commands))
+                links = tuple(make_links(result.output, result.commands, result.project))
             except LinkError as exc:
                 raise BuildError(str(exc)) from exc
             result = dataclasses.replace(result, links=links)
@@ -730,7 +750,7 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
     uv = find_uv()  # before anything slow: a build cannot go far without it (D26)
     uv_used = uv_version(uv)
     warnings += python_warnings(project, config)
-    runtime = select_runtime(TARGET_PYTHON, baseline=config.glibc)
+    runtime = select_runtime(TARGET_PYTHON, baseline=config.glibc, offline=config.offline)
     project.check_python(runtime.python_version)
     warnings += uv_mismatch(builder=builder_uv(), current=uv_used)
     source = project.lock_source(config.requirements)
@@ -774,9 +794,9 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
         app_name, entrypoint = resolve_entry(tool_dist or dist, config.entry, log, omit=(
             check_script_imports(package, project, config, index.site, runtime, warnings=warnings)
             if package is not None and tool_dist is None else ()))  # fmt: skip
-        output = (config.output or project.directory / "dist" / app_name).resolve()
+        output = _output_path(config.output or project.directory / "dist" / app_name, dist.name)
         check_output(output)
-        commands = _commands_to_link(entrypoint, output)
+        commands = _commands_to_link(entrypoint, output, dist.name)
         _make_output_dir(output.parent, made)
         log(f"collecting {plural(len(index.dists), 'distribution')}")
         level = config.zstd_level
@@ -794,6 +814,7 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
                 runtime_modules=runtime_module_names(runtime),
                 project=dist.name,
                 origins=package.origins if package is not None else {},
+                entrypoint=entrypoint,
             )
             warnings += walk.warnings
             # a directory of scripts has no dependencies of its own: the file declares them all
@@ -854,5 +875,5 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
             written.append(build_temporary(runtime, app, output))
     return BuildResult(
         output, app_name, entrypoint, written[0].stat().st_size, tuple(warnings), glibc,
-        target_needs(libraries, glibc), commands, loose=project.loose,
+        target_needs(libraries, glibc), commands, loose=project.loose, project=dist.name,
     )  # fmt: skip

@@ -138,6 +138,34 @@ def test_a_cached_variant_is_not_fetched_again_and_works_offline(
     assert releases.requests == [PATH]
 
 
+def test_offline_runs_a_cached_variant_without_the_network(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path
+) -> None:
+    releases.files[PATH] = lzma.compress(_release(tmp_path))
+    assert main(["build", str(project)]) == 0
+    releases.close()
+
+    assert main(["build", str(project), "--offline"]) == 0
+
+    assert ran.commands[1][1:] == ["build", str(project), "--offline"]
+    assert releases.requests == [PATH]
+
+
+def test_offline_does_not_fetch_a_variant_and_says_how_to_get_it(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    releases.files[PATH] = lzma.compress(_release(tmp_path))
+
+    assert main(["build", str(project), "--offline"]) == 1
+
+    err = capsys.readouterr().err
+    assert f"needs {ASSET} of release v1.2.0" in err and "--offline" in err
+    assert "without --offline" in err
+    assert releases.requests == [] and ran.commands == []
+    assert not (tmp_path / "cache" / "downloads").exists() or _cached(tmp_path) == []
+
+
 def test_glibc_reaches_the_variant_from_the_command_line_and_from_the_project(
     releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path
 ) -> None:
@@ -302,3 +330,25 @@ def test_a_cached_variants_name_is_not_one_the_cache_collector_removes() -> None
         for target in TARGETS:
             name = f"{release_asset(version, target.name)}-v1.2.0"
             assert not collect.NAMES[collect.DOWNLOADS].fullmatch(name)
+
+
+def test_the_variant_is_told_where_the_dispatcher_is(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[dict[str, str]] = []
+
+    def run(
+        command: list[str], *, env: dict[str, str], **_: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        seen.append(env)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(dispatch, "variant", lambda *_a, **_k: tmp_path / "variant")
+    monkeypatch.setattr("fsbpyr.runtime.stubs.own_paths",
+                        lambda: [tmp_path / "link", tmp_path / "real"])
+    monkeypatch.setattr(subprocess, "run", run)
+
+    assert dispatch.run(OTHER, ["build"]) == 0
+
+    expected = os.pathsep.join([str(tmp_path / "link"), str(tmp_path / "real")])
+    assert seen[0][dispatch.DISPATCHED_BY_VARIABLE] == expected

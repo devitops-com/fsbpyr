@@ -301,7 +301,8 @@ jobs:
   # for every Python) in the suite job's setup of full-suite.yml
   # (privileged container, the user `tester`, /var/tmp a tmpfs), minus podman and the coverage
   # and fuzzing: the tests link the glibc 2.28 runtime themselves, with the same recipe as the
-  # stub job. FSBPYR_TESTS_REQUIRE_ALL=el8: no skip is expected but podman's (tests/conftest.py).
+  # stub job. Nothing skips: the Makefile leaves out the tests that need podman (-m "not podman"),
+  # which this container lacks.
   tests:
     name: tests (${{ matrix.target }}, Python ${{ matrix.python }})
     needs: plan
@@ -375,7 +376,7 @@ jobs:
       # make fetches clang/lld 23 and builds the runtimes itself. TESTTMP=/var/tmp: the tmpfs.
       - name: make test-el8-stub
         run: |
-          as-tester FSBPYR_UV_VERSION="$FSBPYR_UV_VERSION" FSBPYR_TESTS_REQUIRE_ALL=el8 JOBS=4 \
+          as-tester FSBPYR_UV_VERSION="$FSBPYR_UV_VERSION" JOBS=4 \
             TESTTMP=/var/tmp PYTEST_ADDOPTS="--durations=30" make test-el8-stub $MAKE_ARGS
 
   # The portability matrix with apps built for glibc 2.28. On the runner host, as full-suite.yml's
@@ -451,11 +452,9 @@ jobs:
           uv python install "$(cat .python-version)" "$MATRIX_PYTHON"
           tools/portability-apps.sh "dist/$ASSET" "$RUNNER_TEMP/apps" "$MATRIX_PYTHON" 2.28
 
-      # FSBPYR_TESTS_REQUIRE_ALL=portability: no skip is expected.
       - name: The portability tests
         run: |
           FSBPYR_TEST_GLIBC=2.28 FSBPYR_PORTABILITY_APPS="$RUNNER_TEMP/apps" \
-            FSBPYR_TESTS_REQUIRE_ALL=portability \
             uv run --locked pytest tests/e2e/test_portability.py -rf --tb=short \
               --junitxml=portability.xml
 
@@ -533,12 +532,12 @@ jobs:
             as-tester uv python install "$MATRIX_PYTHON"
           fi
 
-      # FSBPYR_TESTS_REQUIRE_ALL=full: an app may only be skipped for a package without a wheel
-      # on this Python and machine (at manylinux_2_28 in this mode).
+      # An app whose lock needs a package without a wheel on this Python and machine (at
+      # manylinux_2_28 in this mode) is not part of the run.
       - name: make test-corpus (glibc 2.28)
         run: |
           as-tester FSBPYR_TEST_GLIBC=2.28 FSBPYR_CORPUS_APPS="$CORPUS_APPS" \
-            FSBPYR_TESTS_REQUIRE_ALL=full JOBS=4 \
+            JOBS=4 \
             PYTEST_ADDOPTS="--durations=30 --junitxml=corpus.xml" make test-corpus $MAKE_ARGS
 
       - name: Upload the report
@@ -720,18 +719,22 @@ jobs:
           echo "::error::$COMPANION is published with other stubs, and a published release is immutable: these stubs need a new version"
           exit 1
 
-      # `gh release create` uses a tag el8-vX.Y.Z that exists (pushed by hand, or left by a release
-      # that was deleted) and ignores --target: a tag on another commit than the tag's is found
-      # here, not after the publication, which is immutable.
-      - name: Is the companion tag free
+      # The tag el8-vX.Y.Z is pushed by `make release` with vX.Y.Z (tools/release/release.sh):
+      # GitHub refuses a GitHub Actions token a release or tag whose target is a commit that adds
+      # or changes a workflow file, as a release's merge commit often does (HTTP 403, v0.27.0),
+      # so the release is made on the existing tag without a target, as release.yml makes its
+      # own. The tag must be on the tag's commit, checked here and not after the publication,
+      # which is immutable.
+      - name: The companion tag
         if: steps.published.outputs.new == 'true'
         run: |
-          if gh api "repos/$GH_REPO/git/ref/tags/$COMPANION" > /dev/null 2> "$RUNNER_TEMP/ref.err"; then
-            [ "$(gh api "repos/$GH_REPO/commits/$COMPANION" --jq .sha)" = "$GITHUB_SHA" ] \
-              || { echo "::error::the tag $COMPANION exists on another commit than $TAG's (${GITHUB_SHA:0:8}); delete it or move it to that commit, then dispatch el8.yml on the tag ref again"; exit 1; }
-          else
+          if ! gh api "repos/$GH_REPO/git/ref/tags/$COMPANION" > /dev/null 2> "$RUNNER_TEMP/ref.err"; then
             grep -q "Not Found" "$RUNNER_TEMP/ref.err" || { cat "$RUNNER_TEMP/ref.err"; exit 1; }
+            echo "::error::the tag $COMPANION does not exist: make release pushes it with $TAG; push it on $TAG's commit (git push hub $TAG^{commit}:refs/tags/$COMPANION), then dispatch el8.yml on the tag ref again"
+            exit 1
           fi
+          [ "$(gh api "repos/$GH_REPO/commits/$COMPANION" --jq .sha)" = "$GITHUB_SHA" ] \
+            || { echo "::error::the tag $COMPANION exists on another commit than $TAG's (${GITHUB_SHA:0:8}); delete it or move it to that commit, then dispatch el8.yml on the tag ref again"; exit 1; }
 
       # Verify with: gh attestation verify fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz \
       #   --repo devitops-com/fsbpyr \
@@ -746,9 +749,9 @@ jobs:
             dist/fsbpyr-stub-*.xz
             dist/SHA256SUMS-glibc2.28
 
-      # The draft's tag el8-vX.Y.Z is made on $GITHUB_SHA when it is published: the commit of
-      # the tag vX.Y.Z, for a pushed tag and for a dispatch on the tag's ref alike (the next
-      # step compares them). --latest=false on both calls: publishing a draft makes it the
+      # The draft takes the existing tag el8-vX.Y.Z (--verify-tag: never one made here, see
+      # above), on the commit of the tag vX.Y.Z (the next step compares them again).
+      # --latest=false on both calls: publishing a draft makes it the
       # latest release unless told otherwise, which `fsbpyr self update`, install.sh and
       # check-release.sh read as vX.Y.Z, and an immutable release cannot be corrected.
       - name: Publish the companion release
@@ -763,7 +766,7 @@ jobs:
 
           Verify with: gh attestation verify fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz --repo $GH_REPO --signer-workflow $GH_REPO/.github/workflows/el8.yml --source-ref refs/tags/$TAG
           EOF
-          gh release create "$COMPANION" --draft --latest=false --target "$GITHUB_SHA" \
+          gh release create "$COMPANION" --verify-tag --draft --latest=false \
             --title "EL8 stubs for $TAG" --notes-file notes.md \
             dist/fsbpyr-stub-*.xz dist/SHA256SUMS-glibc2.28
           gh release edit "$COMPANION" --draft=false --latest=false

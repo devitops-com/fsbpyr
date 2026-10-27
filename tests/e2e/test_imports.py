@@ -1,7 +1,6 @@
 """Phase 3 exit criteria on a real executable: import system, resources, metadata, contract."""
 
 import json
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -12,7 +11,7 @@ from fsbpyr.assemble import build_executable
 from fsbpyr.payload.reader import Executable
 from fsbpyr.runtime.registry import Runtime
 
-from ..support import contract
+from ..support import contract, requires
 from ..support.apps import demo_app
 from ..support.standin import StandIn
 
@@ -61,7 +60,7 @@ def test_c_module_and_standin_honour_the_same_contract(demo: Path) -> None:
     assert read and all(expected["streams"][blob][0][3] == read[blob] for blob in read)  # D38
 
 
-@pytest.mark.skipif(shutil.which("strace") is None, reason="needs strace")
+@requires.tools("strace")
 def test_extracted_files_are_never_synced_to_disk(demo: Path, tmp_path: Path) -> None:
     """D34: every process checks a cached file against its digest before it uses it and
     replaces it if it differs, so a file a crash left incomplete is repaired; syncing each file

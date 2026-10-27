@@ -3,6 +3,11 @@
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from fsbpyr.runtime import pbs, pins, registry
 
 from ..support import downloads
 
@@ -87,3 +92,28 @@ def test_pruning_a_runtime_spares_the_other_glibc_baselines(tmp_path: Path) -> N
     downloads.prune_runtimes(tmp_path, f"cp314-{triple}-ffffffffffff", "2.28")
 
     assert not el8.exists() and default.exists()
+
+
+def test_a_pbs_distribution_comes_from_the_kept_cache_and_its_archive_is_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pin = SimpleNamespace(name="cpython-x", sha256=PINNED["a.tar.zst"])
+    fetched: list[Path] = []
+
+    def fake_fetch(given: object, cache: Path) -> str:
+        assert given is pin
+        (cache / "downloads").mkdir(parents=True, exist_ok=True)
+        (cache / "downloads" / f"{pin.name}.tar.zst").write_bytes(b"archive")
+        fetched.append(cache)
+        return "distribution"
+
+    monkeypatch.setattr(pins, "pin_for", lambda python, triple: pin)
+    monkeypatch.setattr(registry, "host_triple", lambda: "x86_64-unknown-linux-gnu")
+    monkeypatch.setattr(pbs, "fetch", fake_fetch)
+    monkeypatch.setenv("FSBPYR_TEST_DOWNLOADS", str(tmp_path / "keep"))
+
+    distribution: object = downloads.pbs_distribution("3.14")
+
+    assert distribution == "distribution"
+    assert fetched == [tmp_path / "keep" / "cache"]
+    assert (tmp_path / "keep" / "cpython-x.tar.zst").read_bytes() == b"archive"

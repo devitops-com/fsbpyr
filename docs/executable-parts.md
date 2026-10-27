@@ -36,9 +36,12 @@ file. The layout itself is described in [format.md](format.md).
   modules, with their sources), not only the modules it imports; what is `hello`'s own is
   about 100 KiB, mostly its tables.
 - **A second stub exists per Python and target.** An app built with `--glibc 2.28` (D46)
-  carries the stub linked against the EL8 sysroot; the standard library, the boot code and the
-  layout of the tables are the same bytes in both, so the stub, its padding and the header's
-  runtime fields are what differ. The 26.41 MiB figure above is for the default stub.
+  carries the stub linked against the EL8 sysroot; the standard library and the boot code are the
+  same bytes in both and the tables list the same records, so what differs is the stub, its
+  padding and the build information (`runtime`, `runtime_inputs.sysroot`, `stub_sha256`,
+  `glibc_baseline` and `glibc`), with the string, section and blob offsets that its length moves;
+  the header's runtime fields (`python_hexversion`, `bytecode_magic`) are the same. The 26.41 MiB
+  figure above is for the default stub.
 - **The same content is not always the same bytes.** Modules and files under 64 KiB are packed
   into blocks of 64 KiB (code) and 256 KiB (the rest) in the order of their paths (D30), so a
   third-party module stored next to a standard-library one in path order shares its block.

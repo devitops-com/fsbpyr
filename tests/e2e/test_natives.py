@@ -1,7 +1,8 @@
 """Phase 5 exit criteria: native extensions from real wheels (fixture ``heavy``: numpy, orjson,
 cryptography, pydantic, onnxruntime), the lazy native cache, self-healing and concurrency.
 
-Needs the cached runtime and, on the first run, network access for the fixture's wheels.
+Needs the cached runtime and, on the first run, network access for the fixture's wheels. It is
+not run on a Python that onnxruntime has no wheel for (tests/support/no-wheels.txt).
 """
 
 import json
@@ -14,7 +15,6 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.boot._fsbpyr_rt import gc
-from fsbpyr.build import TARGET_PYTHON
 from fsbpyr.cli import main
 from fsbpyr.payload.format import NATIVE_KINDS, Codec
 from fsbpyr.payload.reader import Executable
@@ -24,7 +24,7 @@ from ..support import wheels
 from ..support.differential import assert_same, make_venv
 from ..support.stderr import NO_HOSTNAME, ONNX_HOST, TRACE_LINE, noise
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, wheels.needs("onnxruntime")]
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "projects" / "heavy"
 HEAVY_DISTS = {"numpy", "orjson", "cryptography", "cffi", "pydantic", "pydantic-core"}
@@ -47,7 +47,6 @@ def _build(project: Path, out: Path) -> Path:  # named like the console script (
 
 @pytest.fixture(scope="module")
 def project(tmp_path_factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
-    wheels.skip_without("onnxruntime", TARGET_PYTHON)
     copy = tmp_path_factory.mktemp("heavy") / "heavy"
     shutil.copytree(FIXTURE, copy)
     return copy

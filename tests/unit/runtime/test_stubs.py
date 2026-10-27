@@ -3,8 +3,10 @@ from (a file placed beside the executable, the cache, a download from the compan
 the tag served by a fake server on localhost), that it is proven to be this fsbpyr's own, and
 what is said when there is none."""
 
+import functools
 import hashlib
 import lzma
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -13,6 +15,7 @@ import pytest
 from fsbpyr import dispatch
 from fsbpyr.runtime import collect, pins, registry, stubs
 from fsbpyr.runtime.stub import IDENTITY_MARKER, stub_identity
+from fsbpyr.runtime.stubs import own_paths as real_own_paths
 from fsbpyr.targets import host_target
 from fsbpyr.vcs import release_stub_asset, release_stub_sums, release_stub_tag
 
@@ -27,6 +30,7 @@ ASSET = release_stub_asset(PYTHON, host_target().name, BASELINE)
 SUMS = release_stub_sums(BASELINE)
 PIN = pins.pin_for(PYTHON, registry.host_triple())
 EXPECTED = registry.runtime_id(PIN, baseline=BASELINE)
+CACHED = f"{ASSET}-{EXPECTED}"  # a cached stub is named after the runtime id it carries
 
 
 def make_stub(identity: str | None = EXPECTED, filler: bytes = b"") -> bytes:
@@ -86,7 +90,7 @@ def test_a_placed_file_wins_over_the_cache_and_the_release(
     placed = make_stub(filler=b"placed")
     (tmp_path / "bin" / ASSET).write_bytes(placed)
     (tmp_path / "cache" / "downloads").mkdir(parents=True)
-    (tmp_path / "cache" / "downloads" / f"{ASSET}-{TAG}").write_bytes(make_stub(filler=b"cached"))
+    (tmp_path / "cache" / "downloads" / CACHED).write_bytes(make_stub(filler=b"cached"))
     publish(releases, make_stub(filler=b"released"))
 
     assert get(tmp_path) == placed
@@ -123,7 +127,7 @@ def test_a_damaged_placed_xz_file_is_an_error(releases: FakeReleases, tmp_path: 
 def test_the_cache_wins_over_the_release(releases: FakeReleases, tmp_path: Path) -> None:
     kept = make_stub(filler=b"cached")
     (tmp_path / "cache" / "downloads").mkdir(parents=True)
-    (tmp_path / "cache" / "downloads" / f"{ASSET}-{TAG}").write_bytes(kept)
+    (tmp_path / "cache" / "downloads" / CACHED).write_bytes(kept)
     publish(releases, make_stub(filler=b"released"))
 
     assert get(tmp_path) == kept
@@ -139,8 +143,8 @@ def test_a_download_is_verified_and_kept_for_offline_use(
     assert get(tmp_path) == data
 
     assert releases.requests == [f"/{COMPANION}/{SUMS}", f"/{COMPANION}/{ASSET}.xz"]
-    assert cached(tmp_path) == [f"{ASSET}-{TAG}"]  # whole, no temporary file left
-    assert (tmp_path / "cache" / "downloads" / f"{ASSET}-{TAG}").read_bytes() == data
+    assert cached(tmp_path) == [CACHED]  # whole, no temporary file left
+    assert (tmp_path / "cache" / "downloads" / CACHED).read_bytes() == data
     releases.close()  # no network from here on
     assert get(tmp_path) == data
 
@@ -222,16 +226,27 @@ def test_a_downloaded_stub_of_another_python_is_refused_and_not_kept(
     assert cached(tmp_path) == []
 
 
+def test_a_cached_stub_is_reused_by_the_next_release_when_its_runtime_id_is_unchanged(
+    releases: FakeReleases, tmp_path: Path
+) -> None:
+    publish(releases, make_stub(filler=b"d" * 100))
+    first = get(tmp_path)
+    releases.close()  # no network from here on
+
+    assert stubs.stub_for(PYTHON, BASELINE, "v1.3.0", tmp_path / "cache") == first
+    assert cached(tmp_path) == [CACHED]
+
+
 def test_a_cached_stub_that_is_not_ours_is_fetched_again(
     releases: FakeReleases, tmp_path: Path
 ) -> None:
     (tmp_path / "cache" / "downloads").mkdir(parents=True)
-    (tmp_path / "cache" / "downloads" / f"{ASSET}-{TAG}").write_bytes(make_stub(None))
+    (tmp_path / "cache" / "downloads" / CACHED).write_bytes(make_stub(None))
     data = make_stub(filler=b"fresh")
     publish(releases, data)
 
     assert get(tmp_path) == data
-    assert (tmp_path / "cache" / "downloads" / f"{ASSET}-{TAG}").read_bytes() == data
+    assert (tmp_path / "cache" / "downloads" / CACHED).read_bytes() == data
 
 
 def test_an_unterminated_identity_is_no_identity() -> None:
@@ -313,6 +328,52 @@ def test_a_server_that_cannot_be_reached_is_not_called_a_release_without_stubs(
     assert f"place {ASSET} next to {tmp_path / 'bin' / 'fsbpyr'}" in message
 
 
+# --- offline ----------------------------------------------------------------------------------
+
+
+def test_offline_downloads_nothing_and_says_where_to_place_the_stub(
+    releases: FakeReleases, tmp_path: Path
+) -> None:
+    publish(releases, make_stub())
+
+    with pytest.raises(stubs.StubError) as error:
+        stubs.stub_for(PYTHON, BASELINE, TAG, tmp_path / "cache", offline=True)
+
+    message = str(error.value)
+    assert "--offline" in message and "not placed or cached" in message
+    assert f"place {ASSET} (or {ASSET}.xz) next to {tmp_path / 'bin' / 'fsbpyr'}" in message
+    assert "without --offline" in message
+    assert releases.requests == [] and cached(tmp_path) == []
+
+
+def test_offline_uses_a_placed_or_a_cached_stub(releases: FakeReleases, tmp_path: Path) -> None:
+    (tmp_path / "cache" / "downloads").mkdir(parents=True)
+    (tmp_path / "cache" / "downloads" / CACHED).write_bytes(make_stub(filler=b"cached"))
+
+    assert stubs.stub_for(PYTHON, BASELINE, TAG, tmp_path / "cache", offline=True) == make_stub(
+        filler=b"cached")
+
+    (tmp_path / "bin" / ASSET).write_bytes(make_stub(filler=b"placed"))
+
+    assert stubs.stub_for(PYTHON, BASELINE, TAG, tmp_path / "cache", offline=True) == make_stub(
+        filler=b"placed")
+    assert releases.requests == []
+
+
+def test_select_runtime_passes_offline_on_to_the_stub(
+    releases: FakeReleases, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    own = _runtime(python_version="3.14.9")
+    monkeypatch.setattr(registry, "running_executable", lambda: Path("/proc/self/exe"))
+    monkeypatch.setattr(registry.Runtime, "from_executable", classmethod(lambda cls, path: own))
+    publish(releases, make_stub())
+
+    with pytest.raises(stubs.StubError, match="--offline"):
+        registry.select_runtime("3.14", tmp_path / "cache", BASELINE, offline=True)
+
+    assert releases.requests == []
+
+
 # --- the executable's own paths ---------------------------------------------------------------
 
 
@@ -333,6 +394,69 @@ def test_own_paths_look_a_bare_name_up_on_path(
     monkeypatch.setenv("PATH", str(tool.parent))
 
     assert stubs.own_paths("fsbpyr", "/opt/real")[0] == tool
+
+
+# --- a dispatched variant looks where the dispatching fsbpyr looks ----------------------------
+
+def _variant_in_the_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The variant's view: it was run from the cache; returns the dispatcher's directory."""
+    variant = tmp_path / "cache" / "downloads" / "fsbpyr-3.13-v1.2.0"
+    monkeypatch.setattr(stubs, "own_paths", functools.partial(real_own_paths, str(variant),
+                                                              str(variant)))
+    return tmp_path / "bin"
+
+
+def test_own_paths_add_the_dispatchers_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    one, two = tmp_path / "one" / "fsbpyr", tmp_path / "two" / "fsbpyr"
+    monkeypatch.setenv(dispatch.DISPATCHED_BY_VARIABLE, f"{one}{os.pathsep}{two}")
+
+    assert real_own_paths("/c/variant", "/c/variant") == [one, two, Path("/c/variant")]
+
+
+@pytest.mark.parametrize("value", ["", os.pathsep, f"{os.pathsep}{os.pathsep}", "relative/fsbpyr"])
+def test_own_paths_ignore_an_empty_or_relative_dispatcher_value(
+    value: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(dispatch.DISPATCHED_BY_VARIABLE, value)
+
+    assert real_own_paths("/c/variant", "/c/variant") == [Path("/c/variant")]
+
+
+def test_a_variant_finds_the_stub_placed_beside_the_dispatcher(
+    releases: FakeReleases, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    beside = _variant_in_the_cache(tmp_path, monkeypatch)
+    monkeypatch.setenv(dispatch.DISPATCHED_BY_VARIABLE, str(beside / "fsbpyr"))
+    (beside / ASSET).write_bytes(make_stub())
+
+    assert get(tmp_path) == make_stub()
+    assert releases.requests == []
+
+
+def test_a_stub_beside_the_dispatcher_still_has_to_carry_the_runtime_id(
+    releases: FakeReleases, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    beside = _variant_in_the_cache(tmp_path, monkeypatch)
+    monkeypatch.setenv(dispatch.DISPATCHED_BY_VARIABLE, str(beside / "fsbpyr"))
+    (beside / ASSET).write_bytes(make_stub("cp314-x86_64-unknown-linux-gnu-000000000000"))
+
+    with pytest.raises(stubs.StubError, match=f"expects {EXPECTED}"):
+        get(tmp_path)
+
+
+def test_a_variant_names_the_place_beside_the_dispatcher_not_the_cache(
+    releases: FakeReleases, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    beside = _variant_in_the_cache(tmp_path, monkeypatch)
+    monkeypatch.setenv(dispatch.DISPATCHED_BY_VARIABLE, str(beside / "fsbpyr"))
+
+    with pytest.raises(stubs.StubError) as error:
+        stubs.stub_for(PYTHON, BASELINE, TAG, tmp_path / "cache", offline=True)
+
+    assert f"next to {beside / 'fsbpyr'}" in str(error.value)
+    assert "downloads" not in str(error.value)
 
 
 # --- pairing with the executable's own runtime ------------------------------------------------
@@ -396,7 +520,7 @@ def test_select_runtime_of_a_developer_executable_asks_the_cache(
 
 
 def test_a_cached_stubs_name_is_not_one_the_cache_collector_removes() -> None:
-    assert not collect.NAMES[collect.DOWNLOADS].fullmatch(f"{ASSET}-{TAG}")
+    assert not collect.NAMES[collect.DOWNLOADS].fullmatch(CACHED)
 
 
 def test_only_the_default_runtime_error_points_at_the_release_binary(tmp_path: Path) -> None:

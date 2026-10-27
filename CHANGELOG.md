@@ -10,6 +10,184 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-27
+
+### Changed
+- **The test suite has no skips.** A test whose tool is missing (a C compiler, `uv`, `unshare`,
+  `podman`, `llvm-objdump`, `groff`, `git`, `strace`, `zstd`, `wget`, `busybox`, `make`) or whose
+  environment is not as it needs (a normal user, a supplementary group, user namespaces,
+  set-id bits, a directory of another user, 10% free disk) now fails with one line that names
+  what to install or change and points at CONTRIBUTING.md; `make test-prereqs` lists everything
+  a machine lacks at once. A case that does not apply to the Python, target or mode is not
+  generated, deselected (`-m "not podman"` where there is no podman, packages without a wheel in
+  `tests/support/no-wheels.txt`) or asserts its own behaviour. A skip or xfail by any means fails
+  the run. `FSBPYR_TESTS_REQUIRE_ALL` and its allowlists are removed, from the tests, the
+  Makefile and the workflows. `make test-container` runs with `--privileged`, the Pythons 3.12 to
+  3.15 and a `/var/tmp` that allows set-id bits, so that it leaves out nothing but the tests
+  that need podman.
+- **The runtime is python-build-standalone 20261026's: CPython 3.12.16, 3.13.18, 3.14.10 and
+  3.15.2**, on x86-64 and aarch64, still LLVM 23.1.3 bitcode linked with LLVM's clang and lld
+  23.1.3. An executable gets the new CPython when it is rebuilt with this fsbpyr; a source
+  checkout's Python is 3.14.10 (`.python-version`). Every runtime id changes (the pins, the
+  launcher and runtime layout 10), so cached runtimes are built again, and this release's EL8
+  stubs are new ones. PBS 20261026 still has SQLite 3.53.1, with CVE-2026-11822 and CVE-2026-11824
+  (FTS5, fixed in SQLite 3.53.2), and zlib 1.3.2, with CVE-2026-85091: the next runtime update
+  follows the first PBS release that fixes them. (#52)
+- **The release is built with uv 0.13.6 (was 0.13.5).** `tools/release/uv.version` and the
+  Containerfile name it, with the SHA-256 of uv's release tarball for x86-64 and aarch64; the
+  Debian trixie image is unchanged. (#51)
+
+### Fixed
+- **The EL8 workflow can publish the companion release.** GitHub refuses a workflow's token a
+  release or tag whose target is a commit that adds or changes a workflow file, as v0.27.0's
+  merge commit did, so `el8.yml` could not create `el8-v0.27.0` (HTTP 403, also with the tag
+  already pushed, since it named the commit as the target). `make release` now pushes the tag
+  `el8-vX.Y.Z` with `vX.Y.Z`, on the same commit, and `el8.yml` creates the release on that tag
+  (`--verify-tag`, no target), as `release.yml` creates its own; it fails early, with the
+  command to push the tag, when it is missing. `el8-v0.27.0` was published by hand from the
+  stubs el8.yml built and attested on the v0.27.0 tag. (#75)
+- **aarch64 executables are linked with the Cortex-A53 erratum 843419 fix.** On a Cortex-A53
+  (Raspberry Pi 3 and Zero 2, many other boards), an `adrp` in one of a 4 KiB page's last two
+  instruction slots, followed by certain loads or stores, can compute a wrong address. PBS links
+  its own aarch64 builds with lld's `--fix-cortex-a53-843419` since 20261026, but fsbpyr links the
+  stub itself from PBS's bitcode, so the stub's link now passes the flag; it is part of the
+  aarch64 runtime id.
+- **A command script's reads next to its `__file__` inside `if __name__ == "__main__":` are
+  reported.** For a project without a build system, a directory of scripts or a single script, the
+  build warned about a script's reads next to its `__file__` at module level and in functions, but
+  skipped its main guard, where a script does most of its work, so the app failed at run time with
+  `FileNotFoundError` instead. The build now also warns about those reads in the main guard of
+  each module the executable runs as `__main__`: its commands, or the module `--entry` names;
+  `--strict` counts them, as it counts the others. The main guard of every other module never runs
+  and is still skipped: a script's local-import siblings, the modules of a `[project]` that its
+  `[project.scripts]` do not name, the commands that `--entry COMMAND` leaves out, a module whose
+  command calls a function in it (`tool:main`), and packages; their other reads are reported as
+  before. A script that starts a sibling command, `subprocess.run([sys.executable,
+  os.path.join(here, "sibling.py")])` or an `os.exec*` of `sys.executable`, is not reported: the
+  sibling runs from the payload, so the advice to deploy that file beside the binary was wrong.
+  `--hints` no longer advises `--fs-package` for the packages among such a project's own files,
+  which are read next to the executable. (#57)
+- **`--strict` no longer counts the `--hints` file-read guess.** `these packages read files next
+  to __file__ (a heuristic)` is a guess about the packages, like the other uncounted ones, so a
+  `--hints --strict` build no longer fails on it. The `--strict` help and man page now say what is
+  not counted: the build host's uv and git, the notes on `requirements/` files and `Pipfile.lock`
+  indexes, and the guesses about packages (helper interpreters, files read next to `__file__`,
+  shared objects, executables). (#60)
+- **A `__main__.py` under a `site-packages` directory no longer delays the missing-entry error.**
+  A packaged project with no console script, no `__main__.py` and no guarded module fails before
+  uv stages anything. That check walked into `site-packages` directories (installed packages, not
+  the project's), which the file walk of a project without a build system skips, so such a project
+  was staged first and failed only afterwards. Both walks now skip the same directories. (#71)
+- **The Python of a build comes from the lock source the build installs.** A `Pipfile.lock` beside
+  a `requirements` setting in `[tool.fsbpyr]` chose the Python (its
+  `_meta.requires.python_version`), although the build installed the requirements file the setting
+  names. The Python is now chosen from the lock source `requirements` names, whether it comes from
+  the settings or from `--requirements`, which already worked. (#58)
+- **The `uv pip freeze` hint names the virtual environment the build reads.** When a command is
+  skipped for an unresolved import, the hint used to appear only when there was a `.venv` beside
+  the scripts, and it always named `.venv/bin/python`. It now names the environment the dependency
+  inference reads: `.venv`, `venv` or `env` beside the scripts, else `$VIRTUAL_ENV`, by its
+  absolute path. Each needs a `pyvenv.cfg`, so a `.venv` without one no longer gets the hint.
+  (#68)
+- **A build that goes from one command to several, or back, replaces its own earlier output.**
+  Going to several, it stopped with `cannot link command 'a': .../dist/a exists and is not a
+  symlink` when it found the executable that an earlier build of one command had written there (a
+  script added to a directory of scripts, or a skipped command's dependency declared); the link
+  now replaces a file that is an fsbpyr executable of that command whose build information names
+  the same project, and any other file still stops the build. Going back to one command (a script
+  removed or skipped, or `--entry` naming one of the project's scripts), it wrote its executable
+  through the earlier build's link over `dist/<project>`, so the other commands' links ran it too;
+  it now replaces its own link with the executable and leaves `dist/<project>` and the other links
+  as they were (they run the earlier build until you remove them). A link of your own at the
+  output path is still written through. (#74)
+- **Executables for Python 3.12 and 3.13 carry zstd's licence text, and the SBOM lists zstd.** The
+  launcher links zstd whatever the Python, but PBS lists `LICENSE.zstd.txt` only for the `_zstd`
+  module, which 3.12 and 3.13 lack, so `fsbpyr inspect --licenses` showed no zstd text for their
+  executables. Every runtime now carries it: PBS's own text, or fsbpyr's copy where PBS ships
+  none. The runtime's recorded components (`runtime_components` in `build_info`) and so the SBOM
+  also left zstd out; its version is now read from the archive itself (the string
+  `ZSTD_versionString()` returns), `fsbpyr inspect` shows it among the components, and the SBOM
+  gives it NVD's CPE, `cpe:2.3:a:facebook:zstandard:<version>`. If the archive holds no single
+  version string, the component is left out rather than guessed. (#56)
+- **A missing home directory is reported as an error.** When the cache location needs the home
+  directory and there is none (`HOME` unset, empty or relative, and a passwd entry without an
+  absolute home), `fsbpyr build`, `runtime build`, `runtime list` and `cache gc` print the one
+  line `fsbpyr: error: cannot find the home directory; set HOME, XDG_CACHE_HOME or
+  FSBPYR_CACHE_DIR` and exit 1. They used to print the internal-error traceback, which asked for a
+  bug report. With `FSBPYR_CACHE_DIR` set, `cache gc` collects that cache and needs no home
+  directory. (#59)
+- **`FSBPYR_SELFTEST=natives` reports a refused cache directory as the app does.** With a cache
+  directory that another user owns or others may write to, the native check of an app with native
+  code now ends with the one line `fsbpyr: cannot start <executable>: refusing cache directory
+  <path>: ...` and exit 70, as a run does since 0.27.0. It used to end with a traceback and exit
+  1. (#79)
+- **A downloaded EL8 stub is reused after an update when it has not changed.** The cache named the
+  glibc 2.28 stub after the release tag, so the first `--glibc 2.28` build after every update
+  downloaded it again, even when the stub was the same (0.26.0's and 0.27.0's are), and a build
+  host without the network could not build for EL8 until someone placed the stub. The cache now
+  names the stub after the runtime id it must carry, which decides whether it is accepted. An
+  entry cached by an earlier version is not found and costs one more download. (#77)
+- **`fsbpyr build --offline` downloads nothing.** It still downloaded the glibc 2.28 stub when
+  none was placed or cached, and the fsbpyr of another Python for a project that needs one. With
+  `--offline` a build now uses only a placed or cached stub and an fsbpyr of the other Python that
+  is already cached. Otherwise it fails and says what to do: place the stub (its name and where),
+  or run the build once without `--offline`. (#78)
+- **`fsbpyr build --glibc 2.28` for a project on another Python uses the stub placed beside
+  fsbpyr.** For such a project, fsbpyr runs the fsbpyr of that Python from its cache, and that
+  fsbpyr looked for a placed `fsbpyr-stub-3.X-<target>-glibc2.28` only beside itself in the cache.
+  A stub placed beside the fsbpyr that was run, where the docs and the error messages say to put
+  it, was ignored: the build downloaded the stub, or failed without the network, with `--offline`
+  or without a companion release, and named the cache directory as the place for the stub. It now
+  looks first beside the fsbpyr that handed the build to it, and its messages name that place. A
+  stub found there is accepted only if it carries the runtime id the build expects.
+- **`fsbpyr self update` names only the placed EL8 stubs that `--glibc` refuses.** It used to name
+  every `fsbpyr-stub-*-glibc*` file beside the executable as the old release's, including a stub
+  that had not changed and that `--glibc` accepts. It also missed the stubs beside the path fsbpyr
+  was run by (a symlink), which `--glibc` reads too. It now looks where `--glibc` looks and names
+  only the stubs whose SHA-256 is not in the `SHA256SUMS-glibc2.28` of the new release's
+  companion. When it cannot read that file (no companion yet, no network, a download cut short),
+  it names them all and says that `--glibc` refuses them if the runtime id changed. (#76)
+- **A download cut short is an error, not a traceback.** When a connection closed before the end
+  of a body (`http.client.IncompleteRead`), `fsbpyr self update`, a build that fetches the fsbpyr
+  of another Python and a `--glibc 2.28` build that fetches its stub ended in the internal-error
+  traceback that asks for a bug report. They now report the failed download like any other.
+- **`fsbpyr man` names clang and lld 23.** Its example for `fsbpyr runtime build` said clang and
+  lld 22 or newer; the runtime is linked with 23 or newer. The Containerfile's image no longer
+  installs Debian's clang-22, lld-22 and libclang-rt-22-dev, which nothing in it used; its `test`
+  stage installs libc6-dev and libstdc++-14-dev itself, which the tests' C programs build against
+  and which used to come in with clang-22. (#66)
+- **An app at its instance limit says the limit is per user.** The refusal said the copies running
+  were `as many as this machine allows at once`, but the limit counts one user's copies. It now
+  says `as many as this user may run at once`, and docs/compatibility.md quotes the new text.
+  (#67)
+- **fsbpyr's messages and help name `uv run` shebangs.** Any `uv run` shebang, with or without
+  `--script`, makes a file a script, as a python shebang does. The error for a file that is not a
+  Python script, the error for a directory without a command, and the help of `fsbpyr build` (and
+  the man page rendered from it) said `uv run --script` or a python shebang only. (#69)
+- **The man page, `docs/compatibility.md` and `docs/performance.md` say what the code does.** The
+  man page's exit 70 now also names a refused cache directory; it no longer says an app built with
+  `--no-interpreter-reexec` is refused as a helper interpreter, and `FSBPYR_MAX_INSTANCES` counts
+  the copies one user runs. In `docs/compatibility.md`, the dispatcher form `acme acme-db -m word`
+  runs that command and is not refused; Ansible's modules on the implicit `localhost` end with
+  `unknown command '.../AnsiballZ_x.py'`, not exit 70 (set `ansible_python_interpreter` to a real
+  interpreter); and a cache on a `noexec` mount raises `_fsbpyr.CacheError`. In
+  `docs/performance.md`, the start checks came with 0.26.0, not "0.25.0 (unreleased)", and
+  spinning on non-blocking joins costs +4-7 ms; `spikes/bench.py` starts its runs with
+  `os.posix_spawn`, and the rows that say so used `subprocess.run`. (#61, #62, #67, #70, #81)
+- **The format, security and executable-parts docs match the code.** `docs/format.md` names
+  `src/fsbpyr/payload/format.py` as the format's one reference, and says how the cache writes a
+  file (a new one unnamed, `O_TMPFILE`, and linked into place; a replacement, or a file that
+  cannot be linked, under a scratch name and renamed), which directory a script gets on
+  `sys.path`, when a `Pipfile.lock` `file` entry gives an `artifact_sha256`, the whole blob order,
+  the backslash in the path rule and which validation rules the launcher leaves to the integrity
+  digest. The runtime id names the stub's inputs, which several releases may share, not a release:
+  the launcher sources and their flags, the PBS pin, the sysroot and the layout version.
+  `docs/security.md` limits the stub id check to the stubs a build is handed (the EL8 ones today),
+  cites D5 for project code on the build host and names the `module:function` command whose module
+  the smoke test imports, and no longer says the dispatcher form `exe B -m word` is refused: it
+  runs command `B`. `docs/executable-parts.md` names the build information, not the header, as
+  what differs in an app built with `--glibc 2.28`. (#61, #63, #64, #65, #80, #81)
+
 ## [0.27.0] - 2026-10-27
 
 ### Changed

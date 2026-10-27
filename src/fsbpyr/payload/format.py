@@ -1,4 +1,4 @@
-"""Binary layout of the fsbpyr executable format, version 7 (normative spec: docs/format.md)."""
+"""Binary layout of the fsbpyr executable format, version 7 (described in docs/format.md)."""
 
 from __future__ import annotations
 

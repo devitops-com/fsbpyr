@@ -106,7 +106,9 @@ default Python's runtime with the pinned clang.
 
 ## Running the tests
 
-`make check` runs the static checks (ruff and mypy), `make test-ci` the core of the suite,
+Nothing in the test suite skips: a test either runs or fails, naming the tool or the setting
+it lacks. Install everything under "What the tests need" below before you run them, and run
+`make test-prereqs` to see what this machine still lacks, all at once. `make check` runs the static checks (ruff and mypy), `make test-ci` the core of the suite,
 `make test` all of it but the corpus, and `make test-corpus` the corpus. `make check-c` runs
 clang's static analyzer over the launcher's C sources; it is informational (full-suite.yml runs
 it with `continue-on-error`) and exits 1 when the analyzer has findings. Every target that
@@ -114,10 +116,9 @@ checks or tests but `make test-vm` takes `PYTHON=3.X` (3.12 to 3.15, on the comm
 to run on that Python's variant. The end-to-end tests
 use a cached runtime or build one, which needs clang and lld 23 or newer: the `make` targets
 put LLVM's clang and lld 23 that `tools/release/llvm23` pins first on PATH (fetched once, see
-[Building from source](#building-from-source)); run directly, pytest skips them without a
-clang 23 on PATH. `make test-ci` also fails when branch coverage falls below `fail_under` in
-`pyproject.toml`. That value comes from a run with the end-to-end tests, so a run where they
-skip can fail on coverage alone.
+[Building from source](#building-from-source)); run directly, they fail without a clang 23 on
+PATH. `make test-ci` also fails when branch coverage falls below `fail_under` in
+`pyproject.toml`.
 
 The tiers, from fastest to most complete:
 
@@ -128,10 +129,6 @@ The tiers, from fastest to most complete:
   projects, several commands, projects without a build system, directories of scripts, single
   scripts, install links, services as PID 1 with unbuffered output, the `__file__` overlay and
   Pipfile.lock projects), with the coverage check.
-  `FSBPYR_TESTS_REQUIRE_ALL` names one of four lists in `tests/conftest.py`: `container`, `full`
-  (full-suite.yml's suite and corpus jobs), `el8` (el8.yml's tests job: `full`'s skips and "needs
-  podman") and `portability` (the portability runs: only "no wheel for Python " and, outside the
-  EL8 mode, "no glibc 2.28 apps"). A skip the list does not name fails the run.
 - The full suite in CI (`.github/workflows/full-suite.yml`): every test and check there is, so
   that a release (`.github/workflows/release.yml`) only builds and publishes. The release build
   (`.github/workflows/build.yml`) with its smoke test and an independent rebuild compared byte
@@ -141,18 +138,18 @@ The tiers, from fastest to most complete:
   portability tests; and the page-size smoke test (below). It runs on every push to main that
   changes more than documentation (a merge; pull requests start no CI), weekly and on request,
   once per target (x86-64 on `ubuntu-24.04`, aarch64 on `ubuntu-24.04-arm`) and Python, with
-  `FSBPYR_TESTS_REQUIRE_ALL=full` (only the `full` list's skips: the test that 3.12 skips by
-  version and an app with no wheel for the Python), and `make release` and the publish job
-  require a green run, aarch64 jobs included, for the commit a release is made from. The fuzzer
-  runs for 600 s (`FSBPYR_FUZZ_SECONDS`) when `src/fsbpyr/launcher` or `tests/fuzz` changed
-  since the last tag and on the weekly run, else for 30 s; the corpus it finds
+  every tool and setting the tests need present (nothing skips), and `make release` and the
+  publish job require a green run, aarch64 jobs included, for the commit a release is made
+  from. The fuzzer runs for 600 s (`FSBPYR_FUZZ_SECONDS`) when `src/fsbpyr/launcher` or
+  `tests/fuzz` changed since the last tag and on the weekly run, else for 30 s; the corpus it finds
   (`FSBPYR_FUZZ_CORPUS`) is kept in the Actions cache. The launcher programs the tests build
   are instrumented for llvm-cov (`FSBPYR_LLVM_COV_DIR`), and the run's summary shows the
   report; it is informational. A run takes about 40 minutes (37 to 40 in October 2026); the
   job's limit is 60 minutes.
 - `make test`: everything but the corpus, on your machine, in 8 processes (`JOBS=` to change
-  it; about 2.5 minutes on 24 cores). The tests that need what it lacks skip: root's own
-  directories, a second user, a supplementary group, strace, groff, podman.
+  it; about 2.5 minutes on 24 cores). A test whose tool or environment is missing fails,
+  naming it: root's own directories, a second user, a supplementary group, strace, groff,
+  podman and the rest of "What the tests need".
 - `make test-corpus`: the corpus (`tests/corpus`: 65 applications, each built and compared with
   its venv; `PYTHON=3.X` for another Python), in 8 processes. It needs the network (gigabytes
   of wheels on a first run, kept in uv's cache) and up to a few gigabytes of temporary space
@@ -164,12 +161,13 @@ The tiers, from fastest to most complete:
   the host; uv's cache and Pythons and the runtime's pinned downloads (CPython and the
   sysroot's packages, `FSBPYR_TEST_DOWNLOADS`) stay in two podman volumes, so a second run does
   not fetch them again: the summary's "runtime downloads" section says `seeded` or `fetched`
-  for each. It runs with `FSBPYR_TESTS_REQUIRE_ALL=container`, so a skip that the `container`
-  list in `tests/conftest.py` does not name fails it. Its expected skips are that list's: "needs
-  podman", for the tests that map a second range of user ids with `podman unshare` (the stage
-  has no podman), and the few that need another Python, a mount that allows set-id bits or a
-  tool the stage lacks. It copies the checkout (without `.venv` and `dist`) into the container,
-  so run it from a checkout with its `.git` directory, not a linked worktree.
+  for each. The stage has no podman, so it runs with `-m "not podman"`, which leaves out the
+  tests that map a second range of user ids with `podman unshare`; every other test runs.
+  The container is `--privileged` (as in full-suite.yml, for `unshare --pid`; in a rootless
+  podman that adds nothing on the host), has the Pythons 3.12 to 3.15 installed with uv and a
+  `/var/tmp` tmpfs that allows exec and set-id bits. It copies the checkout (without `.venv` and
+  `dist`) into the container, so run it from a checkout with its `.git` directory, not a
+  linked worktree.
 - Portability (`make test-portability`, `tests/e2e/test_portability.py`; `podman run` on 12
   distributions, 11 on aarch64 where `archlinux:latest` has no image): needs podman and
   llvm-objdump on the host and a `make build` first (it tests that executable's builds of the
@@ -217,7 +215,9 @@ The tiers, from fastest to most complete:
   does (reproducible: the release asset's bytes) for the portability and VM jobs. Only the
   `publish` job, after every other job passed and the release of the tag exists (it waits up to
   an hour for `release.yml` to publish it), writes: it creates the companion release `el8-vX.Y.Z`
-  as a draft on the tag's commit, uploads the eight `fsbpyr-stub-3.X-<target>-glibc2.28.xz` and
+  as a draft on the tag `el8-vX.Y.Z`, which `make release` pushed with `vX.Y.Z` on the same
+  commit (GitHub refuses the workflow's token a release or tag whose target is a commit that
+  changes a workflow file, as a release's merge often does), uploads the eight `fsbpyr-stub-3.X-<target>-glibc2.28.xz` and
   `SHA256SUMS-glibc2.28` to it, attests them and publishes it (it becomes immutable) with
   `--latest=false`, so that `releases/latest` keeps pointing at `vX.Y.Z`. It does not touch the
   release `vX.Y.Z`: an immutable release accepts no later upload, which is why the stubs are not
@@ -235,6 +235,56 @@ The tiers, from fastest to most complete:
   (the EL8 and default runtimes linked from cached downloads) and `make test-el8` about 3
   minutes once the runtimes and images are cached; how long the jobs take on a runner is not yet
   measured (each is meant to stay near 20 minutes).
+
+### What the tests need
+
+Install these before you run the whole suite; a subset needs only what its tests use, and a
+test that lacks something fails with a line that names the Debian package or the setting.
+`tools/test-setup.sh` installs most of it in the Containerfile's `test` stage and in the
+full-suite container, and `make test-prereqs` lists what this machine lacks.
+
+Tools (Debian package in parentheses; on Debian trixie `apt-get install git make gcc binutils
+llvm-22 strace groff-base zstd tar xz-utils curl wget openssl dash bash busybox util-linux
+coreutils podman uidmap passt` installs all of them but uv and LLVM 23):
+
+- `git` (git) and `make` (make);
+- `uv` at the version `tools/release/uv.version` names (not packaged), with the Pythons 3.12 to
+  3.15 it runs the tests on: `uv python install 3.12 3.13 3.14 3.15` (the tests never let uv
+  download one);
+- clang and lld 23 (not packaged): the `make` targets put LLVM 23 first on PATH; run directly,
+  put fsbpyr's own (`bash tools/bootstrap.sh --llvm23`) there;
+- `cc` (gcc), `readelf` and `objdump` (binutils), `llvm-objdump` (llvm-22, or LLVM 23's own);
+- `strace` (strace) and `groff` (groff-base);
+- `zstd` (zstd), `tar` (tar), `xz` (xz-utils), `curl` (curl), `wget` (wget) and `openssl`
+  (openssl);
+- `dash` (dash), `bash` (bash) and `busybox` (busybox), which install.sh's tests run it under;
+- `unshare` and `prlimit` (util-linux), and `ls` (coreutils);
+- `podman` (podman, with uidmap and passt), rootless: your user needs ranges in `/etc/subuid`
+  and `/etc/subgid`.
+
+The environment:
+
+- a normal user, not root: root ignores file modes and owns `/usr`, and the ownership tests
+  need a user (a few tests assert root's own behaviour and run as either);
+- at least one supplementary group (`tools/test-setup.sh` makes the group `testers`);
+- user namespaces for unprivileged users: `unshare -r true` works (on Ubuntu,
+  `kernel.apparmor_restrict_unprivileged_userns=0`);
+- `no_new_privs` unset, and `TMPDIR` (`make`: `TESTTMP`, default `~/tmp`) on a file system that
+  allows set-id bits (not `nosuid`; `/tmp` is often a `nosuid` tmpfs);
+- a file system there that takes 999-byte symlink targets (a tmpfs or a disk; not a container's
+  overlay), with at least 10% of it free;
+- a directory in `/tmp` that root owns (`sudo mkdir -m 755 /tmp/fsbpyr-test-root-owned`), and
+  a searchable directory of another user that is not root under `/var/lib`, `/etc`,
+  `/var/spool` or `/home` (`/var/lib/fsbpyr-other`; `tools/test-setup.sh` makes both);
+- a glibc host, and the network (python-build-standalone, the sysroot's packages and wheels
+  are fetched once and kept).
+
+A case that does not apply to the Python, the target or the mode is not part of the run: its
+test is not generated or is left out (`-m "not podman"` in the stub-only environments, the
+packages without a wheel in `tests/support/no-wheels.txt`), or it asserts the behaviour of that
+case. The one place where tests fail by design is user-mode QEMU (arm64 checks on an x86-64
+host): `/proc` shows the emulator, so
+`tests/unit/boot/test_mp.py::test_children_of_any_other_program_are_refused` fails there. That is a limitation of the emulation, not a skip.
 
 ## Documentation-only changes
 
@@ -341,8 +391,8 @@ releases from 0.19.0 to 0.27.0, the README.md of the tag describes how to verify
 
 Each executable also has an SBOM, `<asset>.cdx.json` (CycloneDX 1.6, made by
 `tools/release/sbom.py` from `fsbpyr inspect --verify --json`). It lists the executable with its
-SHA-256, fsbpyr, CPython, the libraries the runtime links statically (OpenSSL, SQLite, expat and
-zlib with the CPEs that vulnerability scanners match them by, and libmpdec) and the
+SHA-256, fsbpyr, CPython, the libraries the runtime links statically (OpenSSL, SQLite, expat,
+zlib and zstd with the CPEs that vulnerability scanners match them by, and libmpdec) and the
 distributions from an index with their SHA-256. `release.yml` attests it to its executable:
 
 ```

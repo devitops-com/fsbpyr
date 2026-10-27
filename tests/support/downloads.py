@@ -39,6 +39,20 @@ def fill(python: str, kept: Path) -> None:
             pbs.download(url, sha256, kept / name)
 
 
+def pbs_distribution(python: str) -> pbs.PbsDist:
+    """``python``'s pinned PBS distribution, extracted: from the kept downloads when they hold
+    the archive, else fetched (and kept). In the cache of ``kept``, or the real one."""
+    named = os.environ.get("FSBPYR_TEST_DOWNLOADS")
+    kept = Path(named) if named else None
+    cache = registry.secure_directory(kept / "cache") if kept else registry.cache_root()
+    pin = pins.pin_for(python, registry.host_triple())
+    files = {f"{pin.name}.tar.zst": pin.sha256}
+    seed(files, kept, cache)
+    dist = pbs.fetch(pin, cache)
+    keep(files, kept, cache)
+    return dist
+
+
 def build_kept_runtime(
     python: str, kept: Path, *, sanitize: bool, baseline: str = pins.DEFAULT_BASELINE
 ) -> None:

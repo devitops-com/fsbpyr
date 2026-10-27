@@ -217,15 +217,26 @@ def test_resources_traversal(boot: ModuleType) -> None:
     assert cast(Any, table).read_text(encoding="ascii", errors="strict") == '{"k": 1}'
 
 
-@pytest.mark.skipif(sys.version_info < (3, 13), reason="3.12's takes one resource name")
 def test_functional_resources_api(boot: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "pkg", _load(boot, "pkg"))
 
-    # the functional API takes several path parts from 3.13 on
-    assert importlib.resources.read_text(  # type: ignore[misc]
-        "pkg", "data", "table.json", encoding="utf-8"
-    ) == ('{"k": 1}')
-    assert importlib.resources.is_resource("pkg", "data", "table.json")  # type: ignore[call-arg]
+    if sys.version_info < (3, 13):  # the functional API takes one resource name
+        with pytest.raises(TypeError):
+            importlib.resources.read_text(  # type: ignore[misc]
+                "pkg", "data", "table.json", encoding="utf-8"
+            )
+        with pytest.raises(TypeError):
+            importlib.resources.is_resource("pkg", "data", "table.json")  # type: ignore[call-arg]
+        assert importlib.resources.read_text("pkg", "cli.py", encoding="utf-8") == (
+            "def main():\n    return 'cli'\n"
+        )
+        assert importlib.resources.is_resource("pkg", "cli.py")
+        assert not importlib.resources.is_resource("pkg", "data")  # a directory
+    else:  # and several path parts from 3.13 on
+        assert importlib.resources.read_text(  # type: ignore[misc]
+            "pkg", "data", "table.json", encoding="utf-8"
+        ) == ('{"k": 1}')
+        assert importlib.resources.is_resource("pkg", "data", "table.json")  # type: ignore[call-arg]
 
 
 def test_resources_missing_and_escaping_paths(boot: ModuleType) -> None:

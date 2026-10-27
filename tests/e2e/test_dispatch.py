@@ -3,12 +3,11 @@ running fsbpyr builds through that fsbpyr's dispatch to the variant of its own r
 
 The variant is a real one, fsbpyr built from this checkout on another Python (a few minutes,
 once per run) and served by a fake release server on localhost, never GitHub. It needs that
-Python installed with uv and its runtime in the tool's cache (`fsbpyr runtime build --python
-X.Y`)."""
+Python installed with uv (`uv python install X.Y`); its runtime is built into the tool's cache
+when the cache has none."""
 
 import lzma
 import os
-import shutil
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -23,14 +22,13 @@ from fsbpyr.runtime import registry
 from fsbpyr.targets import host_target
 from fsbpyr.vcs import release_asset
 
-from ..support import downloads
+from ..support import downloads, requires
 from ..support.releases import FakeReleases
 from .conftest import DOWNLOADS_VARIABLE
 
 pytestmark = [pytest.mark.slow, pytest.mark.version_rule]
 
 ROOT = Path(__file__).parents[2]
-UV = shutil.which("uv")
 OTHER = next(version for version in reversed(supported()) if version != TARGET_PYTHON)
 PATH = f"/v1.2.0/{release_asset(OTHER, host_target().name)}.xz"
 BUILD_TIMEOUT_S = 1800
@@ -39,14 +37,11 @@ BUILD_TIMEOUT_S = 1800
 @pytest.fixture(scope="module")
 def variant(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """fsbpyr, built from this checkout by an fsbpyr running on the other Python."""
-    if UV is None:
-        pytest.skip("needs uv")
-    found = subprocess.run([UV, "python", "find", "--no-python-downloads", OTHER],
-                           capture_output=True, check=False)  # fmt: skip
-    if found.returncode != 0:
-        pytest.skip(f"needs Python {OTHER} installed with uv")
+    uv = requires.tool("uv")
+    requires.uv_python(OTHER)
     # the session's private cache has no runtime of the other Python: the kept one has, built
-    # there once by that Python's fsbpyr (tests/support/downloads.py), else the real cache
+    # there once by that Python's fsbpyr (tests/support/downloads.py), else the real cache,
+    # where one that is missing is built now
     kept = os.environ.get(DOWNLOADS_VARIABLE)
     cache = Path(kept) / "cache" if kept else registry.cache_home() / "fsbpyr"
     work = tmp_path_factory.mktemp("variant")
@@ -55,11 +50,9 @@ def variant(tmp_path_factory: pytest.TempPathFactory) -> Path:
     try:
         registry.find_runtime(OTHER, cache)
     except registry.RuntimeCacheError:
-        if not kept:
-            pytest.skip(f"needs the Python {OTHER} runtime in the cache (fsbpyr runtime build)")
-        _build_runtime(env, cache)
+        _build_runtime(uv, env, cache)
     out = work / "fsbpyr"
-    command = [UV, "run", "--project", str(ROOT), "--python", OTHER, "--locked", "fsbpyr",
+    command = [uv, "run", "--project", str(ROOT), "--python", OTHER, "--locked", "fsbpyr",
                "build", str(ROOT), "--python", OTHER, "-o", str(out)]  # fmt: skip
     done = subprocess.run(command, env=env, cwd=ROOT, capture_output=True, text=True,
                           timeout=BUILD_TIMEOUT_S, check=False)  # fmt: skip
@@ -67,11 +60,10 @@ def variant(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return out
 
 
-def _build_runtime(env: dict[str, str], cache: Path) -> None:
+def _build_runtime(uv: str, env: dict[str, str], cache: Path) -> None:
     """The other Python's runtime, built into ``cache`` by fsbpyr running on that Python (one
     fsbpyr builds its own Python's runtime, as CI does); the runtime it replaces goes."""
-    assert UV is not None
-    command = [UV, "run", "--project", str(ROOT), "--python", OTHER, "--locked", "fsbpyr",
+    command = [uv, "run", "--project", str(ROOT), "--python", OTHER, "--locked", "fsbpyr",
                "runtime", "build", "--python", OTHER]  # fmt: skip
     done = subprocess.run(command, env=env, cwd=ROOT, capture_output=True, text=True,
                           timeout=BUILD_TIMEOUT_S, check=False)  # fmt: skip

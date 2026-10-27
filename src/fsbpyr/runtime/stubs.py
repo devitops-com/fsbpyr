@@ -9,22 +9,25 @@ frames and modules do not depend on the sysroot, so the executable's own are pai
 The stub comes from, in this order: a file the user placed beside the fsbpyr executable (for
 machines without GitHub), the tool's cache, a download from the companion release, verified
 against the SHA-256 it publishes and kept in the cache. Whichever it is, the stub must carry the
-runtime id this fsbpyr computes for its own launcher sources, pinned Python and sysroot (main.c,
-stub.py) and is refused otherwise, so a stub of another release or Python never goes into an app. A
-developer build has no release to fetch from: it uses the cache's runtime (``fsbpyr runtime
-build --glibc 2.28``)."""
+runtime id this fsbpyr computes (main.c, stub.py): a digest of the launcher sources and their
+compile and link flags, the Python pin, the sysroot and the layout version. It is refused
+otherwise, so a stub built from other inputs never goes into an app; several releases may share
+the inputs, and their stubs are interchangeable. The cache names a stub by that id, not by the
+release, so an update that leaves it unchanged reuses the download. A developer build has no
+release to fetch from: it uses the cache's runtime (``fsbpyr runtime build --glibc 2.28``)."""
 
 import contextlib
 import dataclasses
 import hashlib
 import lzma
 import os
+import re
 import shutil
 import sys
 import tempfile
 from pathlib import Path
 
-from ..dispatch import DEFAULT_DOWNLOADS, DOWNLOADS_VARIABLE
+from ..dispatch import DEFAULT_DOWNLOADS, DISPATCHED_BY_VARIABLE, DOWNLOADS_VARIABLE
 from ..selfupdate import REPO, NotFound, UpdateError, download_text, release_numbers, unpack
 from ..targets import host_target
 from ..vcs import own_version, release_stub_asset, release_stub_sums, release_stub_tag
@@ -32,6 +35,8 @@ from . import pins, registry
 from .stub import stub_identity
 
 RELEASES = f"https://github.com/{REPO}/releases"
+_PLACED_STUBS = "fsbpyr-stub-*-glibc*"  # what a user places beside the executable
+_PLACED_NAME = re.compile(r"fsbpyr-stub-\d+\.\d+-[\w-]+-glibc(\d+\.\d+)(\.xz)?")
 _PLACED_SUFFIXES = ("", ".xz")  # the asset as it is, or as the release compresses it
 _SHA256_HEX = 64
 _MAX_STUB = 256 * 1024 * 1024  # a stub is a few MB; a larger one is no stub (or a bomb)
@@ -49,11 +54,15 @@ def own_tag() -> str | None:
 
 def own_paths(argv0: str | None = None, real: str | None = None) -> list[Path]:
     """Where this executable is: the path it was run by (looked up on PATH when run by name;
-    links kept, so a file placed beside a link is found) and, if it differs, its real path."""
+    links kept, so a file placed beside a link is found) and, if it differs, its real path. A
+    variant run by ``dispatch.run`` first has the paths of the fsbpyr that dispatched to it,
+    where the user places stubs (absolute entries only)."""
     argv0 = sys.argv[0] if argv0 is None else argv0
     ran = argv0 if "/" in argv0 else shutil.which(argv0)
     found: list[Path] = []
-    for path in (ran, os.path.realpath("/proc/self/exe") if real is None else real):
+    dispatched = os.environ.get(DISPATCHED_BY_VARIABLE, "").split(os.pathsep)
+    for path in (*(entry for entry in dispatched if entry.startswith("/")), ran,
+                 os.path.realpath("/proc/self/exe") if real is None else real):
         if path and (absolute := Path(os.path.abspath(path))) not in found:
             found.append(absolute)
     return found
@@ -65,6 +74,13 @@ def _no_stubs(tag: str, release: str, baseline: str, asset: str, beside: Path) -
         f"for this Python: EL8 stubs are published separately and not for every release; "
         f"place {asset} (or {asset}.xz) next to {beside}, or use a release that has them: "
         f"{RELEASES}"
+    )
+
+
+def _offline(asset: str, beside: Path) -> StubError:
+    return StubError(
+        f"--offline: the {asset} is not placed or cached, and nothing is downloaded; place "
+        f"{asset} (or {asset}.xz) next to {beside}, or build once without --offline to cache it"
     )
 
 
@@ -102,6 +118,43 @@ def _placed(paths: list[Path], asset: str) -> tuple[Path, bytes] | None:
                 raise StubError(f"{path} is larger than {_MAX_STUB >> 20} MB: no stub")
             return path, data
     return None
+
+
+def _digest(path: Path) -> str | None:
+    """The SHA-256 of the stub in the placed file ``path`` (unpacked when ``.xz``); None when
+    it cannot be read."""
+    try:
+        data = path.read_bytes()
+        if path.suffix == ".xz":
+            data = lzma.LZMADecompressor().decompress(data, _MAX_STUB + 1)
+    except (OSError, lzma.LZMAError, EOFError):
+        return None
+    return hashlib.sha256(data).hexdigest()
+
+
+def refused_after_update(tag: str, paths: list[Path]) -> tuple[list[Path], bool]:
+    """The stubs placed beside ``paths`` (as ``own_paths``) that the fsbpyr of release ``tag``
+    would refuse, and whether that is known. The new fsbpyr's runtime id cannot be computed
+    here, so a stub is current when the SHA-256 the companion release publishes lists it; with
+    no companion or no network all placed stubs are returned, unknown."""
+    directories = dict.fromkeys(path.parent for path in paths)
+    placed = {found: match[1] for directory in directories
+              for found in sorted(directory.glob(_PLACED_STUBS))
+              if found.is_file() and (match := _PLACED_NAME.fullmatch(found.name))}  # fmt: skip
+    base = os.environ.get(DOWNLOADS_VARIABLE) or DEFAULT_DOWNLOADS
+    listed: dict[str, set[str]] = {}
+    refused: list[Path] = []
+    for path, baseline in placed.items():
+        try:
+            if baseline not in listed:
+                sums = download_text(f"{base}/{release_stub_tag(baseline, tag)}/"
+                                     f"{release_stub_sums(baseline)}")
+                listed[baseline] = {line.partition(" ")[0].lower() for line in sums.splitlines()}
+        except (UpdateError, ValueError):  # unreadable: unknown
+            return list(placed), False
+        if _digest(path) not in listed[baseline]:
+            refused.append(path)
+    return refused, True
 
 
 def _published(base: str, release: str, baseline: str, asset: str) -> str:
@@ -148,10 +201,12 @@ def _keep(data: bytes, final: Path) -> None:
             new.unlink()
 
 
-def stub_for(python: str, baseline: str, tag: str, cache: Path | None = None) -> bytes:
+def stub_for(
+    python: str, baseline: str, tag: str, cache: Path | None = None, *, offline: bool = False
+) -> bytes:
     """The stub of release ``tag`` for ``python`` and ``baseline``, with this fsbpyr's runtime
     id: placed beside the executable, else kept in the cache, else downloaded (and kept) from
-    the companion release of the tag."""
+    the companion release of the tag; ``offline`` downloads nothing."""
     pin = pins.pin_for(python, registry.host_triple())
     expected = registry.runtime_id(pin, baseline=baseline)
     asset = release_stub_asset(python, host_target().name, baseline)
@@ -163,10 +218,12 @@ def stub_for(python: str, baseline: str, tag: str, cache: Path | None = None) ->
         return _checked(placed[1], placed[0], expected, asset, tag, release=release)
     directory = registry.secure_directory(cache or registry.cache_root()) / "downloads"
     directory.mkdir(mode=0o700, exist_ok=True)
-    final = directory / f"{asset}-{tag}"
+    final = directory / f"{asset}-{expected}"  # the id decides: an unchanged stub is reused
     if final.is_file() and stub_identity(final.read_bytes()) == expected:
         return final.read_bytes()
     final.unlink(missing_ok=True)  # not the stub (edited, damaged): again
+    if offline:
+        raise _offline(asset, beside)
     base = os.environ.get(DOWNLOADS_VARIABLE) or DEFAULT_DOWNLOADS
     try:
         data = _download(directory, base, release, baseline, asset)
@@ -184,7 +241,7 @@ def stub_for(python: str, baseline: str, tag: str, cache: Path | None = None) ->
 
 
 def paired(
-    own: registry.Runtime, baseline: str, cache: Path | None = None
+    own: registry.Runtime, baseline: str, cache: Path | None = None, *, offline: bool = False
 ) -> registry.Runtime | None:
     """``own``'s stdlib with the stub of its release for ``baseline``; None for a developer
     build, which has the cache's runtimes only."""
@@ -193,7 +250,7 @@ def paired(
         return None
     python = own.python_version.rpartition(".")[0]
     pin = pins.pin_for(python, registry.host_triple())
-    stub = stub_for(python, baseline, tag, cache)
+    stub = stub_for(python, baseline, tag, cache, offline=offline)
     return dataclasses.replace(
         own, runtime_id=registry.runtime_id(pin, baseline=baseline), stub=stub, toolchain={},
         inputs=registry.runtime_inputs(pin, baseline), baseline=baseline,

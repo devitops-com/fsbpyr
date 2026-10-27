@@ -19,6 +19,11 @@ from .targets import host_target
 from .vcs import own_version, release_asset
 
 DOWNLOADS_VARIABLE = "FSBPYR_RELEASE_DOWNLOADS"  # the releases' download URL; tests serve their own
+# Set by `run` for the variant: the dispatching fsbpyr's own paths (``stubs.own_paths``), joined
+# with os.pathsep. The variant's stubs are looked for beside them too, since the user places
+# them beside the fsbpyr they ran, not in the cache. It only adds directories to look in: a
+# stub found there still has to carry the runtime id (``stubs._checked``).
+DISPATCHED_BY_VARIABLE = "FSBPYR_DISPATCHED_BY"
 DEFAULT_DOWNLOADS = f"https://github.com/{REPO}/releases/download"
 _MODE = 0o755
 
@@ -65,8 +70,9 @@ def _fetch(python: str, tag: str, final: Path) -> None:
             new.unlink()
 
 
-def variant(python: str, log: Callable[[str], None] = print) -> Path:
-    """The executable of this release that runs on ``python``: from the cache, else fetched."""
+def variant(python: str, log: Callable[[str], None] = print, *, offline: bool = False) -> Path:
+    """The executable of this release that runs on ``python``: from the cache, else fetched
+    (``offline``: never fetched)."""
     tag = _own_tag(python)
     root = secure_directory(cache_root())
     directory = root / "downloads"
@@ -74,17 +80,28 @@ def variant(python: str, log: Callable[[str], None] = print) -> Path:
     asset = release_asset(python, host_target().name)
     final = directory / f"{asset}-{tag}"
     if not final.is_file():
+        if offline:
+            raise DispatchError(
+                f"this project builds with Python {python}, which needs {asset} of release "
+                f"{tag}; it is not in the cache and --offline fetches nothing: run the build "
+                "once without --offline"
+            )
         log(f"fetching {asset} of release {tag}")
         _fetch(python, tag, final)
     return final
 
 
-def run(python: str, args: Sequence[str], log: Callable[[str], None] = print) -> int:
+def run(
+    python: str, args: Sequence[str], log: Callable[[str], None] = print, *, offline: bool = False
+) -> int:
     """Run the variant for ``python`` with ``args`` (this command line, as given); its exit
     status."""
-    executable = variant(python, log)
+    executable = variant(python, log, offline=offline)
     log(f"the project builds with Python {python}: running {executable}")
+    from .runtime import stubs  # noqa: PLC0415  stubs.py needs this module
+
+    env = {**os.environ, DISPATCHED_BY_VARIABLE: os.pathsep.join(map(str, stubs.own_paths()))}
     try:
-        return subprocess.run([str(executable), *args], check=False).returncode  # noqa: S603
+        return subprocess.run([str(executable), *args], check=False, env=env).returncode  # noqa: S603
     except OSError as exc:
         raise DispatchError(f"cannot run {executable}: {exc}") from exc

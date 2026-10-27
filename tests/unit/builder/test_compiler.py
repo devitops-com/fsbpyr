@@ -173,3 +173,35 @@ def test_workers_carry_the_warnings_back(tmp_path: Path) -> None:
 
     assert pool._pool is not None
     assert all(r.warnings and r.warnings[0][0] == 1 for r in got)
+
+
+GUARDED = b"if __name__ == '__main__':\n    open(__file__).read()\n"
+
+
+def test_only_a_command_of_the_scripts_root_reports_its_main_guard_reads() -> None:
+    rel = "_fsbpyr_scripts/m.py"
+
+    assert compiled(GUARDED, rel, 9, True, True, True).reads == (2,)
+    assert compiled(GUARDED, rel, 9, True, True, False).reads == ()  # a sibling, only imported
+    assert compiled(GUARDED, "pkg/m.py", 9, True, True, False).reads == ()
+
+
+@pytest.mark.usefixtures("pooled")
+def test_workers_scan_the_main_guard_of_the_commands_only(tmp_path: Path) -> None:
+    root = tmp_path / "site"
+    package = root / "_fsbpyr_scripts"
+    package.mkdir(parents=True)
+    for name in ("tool", "helper", "other"):
+        (package / f"{name}.py").write_bytes(GUARDED)
+    info = root / "ops-0.dist-info"
+    info.mkdir()
+    (info / "METADATA").write_text("Metadata-Version: 2.4\nName: ops\nVersion: 0\n")
+    rows = [f"_fsbpyr_scripts/{name}.py,," for name in ("tool", "helper", "other")]
+    (info / "RECORD").write_text("\n".join([*rows, f"{info.name}/METADATA,,"]) + "\n")
+    dists = list(SiteIndex.scan(root).dists.values())
+
+    content = classify(dists, extension_suffixes=(".so",), include_source=True, project="ops",
+                       entrypoint="_fsbpyr_scripts.tool")  # fmt: skip
+
+    reads = [w.partition(": ")[0] for w in content.warnings if "reads a file next" in w]
+    assert reads == ["tool.py:2"]
