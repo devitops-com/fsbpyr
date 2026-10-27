@@ -1,6 +1,7 @@
 """fsbpyr self update, against a fake GitHub served from localhost: nothing reaches the net."""
 
 import hashlib
+import http.client
 import json
 import lzma
 import os
@@ -17,6 +18,7 @@ import pytest
 from fsbpyr import dispatch, selfupdate
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.cli import main
+from fsbpyr.runtime import stubs
 from fsbpyr.targets import target_named
 
 from ..support.releases import FakeReleases
@@ -437,6 +439,24 @@ def test_without_a_companion_the_warning_is_conditional(
     assert str(stub) in err
     assert "if the runtime id of v1.2.0 differs" in err and "names the stub to place" in err
     assert "will refuse them;" not in err
+
+
+def test_a_sums_read_cut_short_is_an_unknown_not_a_traceback(
+    github: FakeGitHub, installed: Path, tmp_path: Path, companion: FakeReleases,
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stub = installed.parent / STUB
+    stub.write_bytes(b"some stub")
+
+    def cut_short(url: str, limit: int = 0) -> str:
+        raise http.client.IncompleteRead(b"partial")
+
+    monkeypatch.setattr(stubs, "download_text", cut_short)
+
+    _update(github, tmp_path)  # the update itself succeeded: exit status 0
+
+    err = capsys.readouterr().err
+    assert str(stub) in err and "if the runtime id of v1.2.0 differs" in err
 
 
 def test_without_stubs_placed_the_companion_is_not_asked(
