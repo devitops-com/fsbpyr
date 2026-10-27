@@ -10,6 +10,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-10-27
+
 ### Changed
 - **The test suite has no skips.** A test whose tool is missing (a C compiler, `uv`, `unshare`,
   `podman`, `llvm-objdump`, `groff`, `git`, `strace`, `zstd`, `wget`, `busybox`, `make`) or whose
