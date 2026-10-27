@@ -9,19 +9,17 @@ module, ``X.__file__``) directly or through a name assigned from it.
 
 import ast
 
-_READ_CALLS = frozenset({
-    "open", "io.open", "codecs.open", "os.listdir", "os.scandir", "os.walk", "glob.glob",
-    "glob.iglob", "ctypes.CDLL", "CDLL", "ctypes.cdll.LoadLibrary", "cdll.LoadLibrary",
-    "subprocess.run", "subprocess.Popen", "subprocess.call", "subprocess.check_call",
-    "subprocess.check_output", "os.execv", "os.execve", "os.execvp", "os.execvpe", "os.execl",
-    "os.execle", "os.execlp", "os.execlpe", "np.load", "numpy.load",
-})  # fmt: skip
 # Calls that start a program; with ``sys.executable`` as the program, a script's sibling is run
 # from the payload (D44), not read from beside the binary.
 _SPAWN_CALLS = frozenset({
     "subprocess.run", "subprocess.Popen", "subprocess.call", "subprocess.check_call",
     "subprocess.check_output", "os.execv", "os.execve", "os.execvp", "os.execvpe", "os.execl",
     "os.execle", "os.execlp", "os.execlpe",
+})  # fmt: skip
+_READ_CALLS = _SPAWN_CALLS | frozenset({
+    "open", "io.open", "codecs.open", "os.listdir", "os.scandir", "os.walk", "glob.glob",
+    "glob.iglob", "ctypes.CDLL", "CDLL", "ctypes.cdll.LoadLibrary", "cdll.LoadLibrary",
+    "np.load", "numpy.load",
 })  # fmt: skip
 _READ_METHODS = frozenset({"open", "read_text", "read_bytes", "iterdir", "glob", "rglob"})
 # Methods of any receiver that read a path given as an argument: cffi's ffi.dlopen(path),
