@@ -99,6 +99,7 @@ class BuildResult:
     commands: tuple[str, ...] = ()  # the names of a multi-command executable, else empty
     links: tuple[Path, ...] = ()  # beside the output, one per command not named like it
     loose: bool = False  # built from the project's Python files, with no build system
+    project: str = ""  # the project's name, which an earlier output of it is known by
 
 
 def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
@@ -118,12 +119,12 @@ def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
 _DEFAULT_GLIBC = (2, 34)  # pins.DEFAULT_BASELINE as a version
 
 
-def _commands_to_link(entrypoint: str, output: Path) -> tuple[str, ...]:
+def _commands_to_link(entrypoint: str, output: Path, project: str) -> tuple[str, ...]:
     """The names of a multi-command executable's commands (none for a single command), checked
     against what the output's directory holds."""
     commands = tuple(parse(entrypoint)) if "\n" in entrypoint else ()
     try:
-        check_links(output, commands)
+        check_links(output, commands, project)
     except LinkError as exc:
         raise BuildError(str(exc)) from exc
     return commands
@@ -685,7 +686,7 @@ def build(
         written.clear()
         if result.commands:
             try:
-                links = tuple(make_links(result.output, result.commands))
+                links = tuple(make_links(result.output, result.commands, result.project))
             except LinkError as exc:
                 raise BuildError(str(exc)) from exc
             result = dataclasses.replace(result, links=links)
@@ -784,7 +785,7 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
             if package is not None and tool_dist is None else ()))  # fmt: skip
         output = (config.output or project.directory / "dist" / app_name).resolve()
         check_output(output)
-        commands = _commands_to_link(entrypoint, output)
+        commands = _commands_to_link(entrypoint, output, dist.name)
         _make_output_dir(output.parent, made)
         log(f"collecting {plural(len(index.dists), 'distribution')}")
         level = config.zstd_level
@@ -862,5 +863,5 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
             written.append(build_temporary(runtime, app, output))
     return BuildResult(
         output, app_name, entrypoint, written[0].stat().st_size, tuple(warnings), glibc,
-        target_needs(libraries, glibc), commands, loose=project.loose,
+        target_needs(libraries, glibc), commands, loose=project.loose, project=dist.name,
     )  # fmt: skip

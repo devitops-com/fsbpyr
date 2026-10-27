@@ -334,6 +334,38 @@ def test_an_undeclared_import_skips_its_command_and_an_optional_one_does_not(
     assert _run(dist / "optional", tmp_path).stdout == "optional None\n"
 
 
+def test_a_directory_going_from_one_command_to_several_replaces_its_own_earlier_output(
+    tmp_path: Path, runtime: Runtime
+) -> None:
+    directory = _write(tmp_path / "ops", {"a.py": "if __name__ == '__main__':\n    print('a')\n"})
+    assert _build(directory) == 0
+    dist = directory / "dist"
+    assert [path.name for path in dist.iterdir()] == ["a"] and not (dist / "a").is_symlink()
+
+    (directory / "b.py").write_text("if __name__ == '__main__':\n    print('b')\n")
+    assert _build(directory) == 0
+
+    assert sorted(path.name for path in dist.iterdir()) == ["a", "b", "ops"]
+    assert os.readlink(dist / "a") == "ops" and (dist / "ops").is_file()
+    assert _run(dist / "a", tmp_path).stdout == "a\n"
+    assert _run(dist / "b", tmp_path).stdout == "b\n"
+
+
+def test_a_foreign_file_at_a_commands_link_still_stops_the_build(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = _write(tmp_path / "ops", {
+        "a.py": "if __name__ == '__main__':\n    print('a')\n",
+        "b.py": "if __name__ == '__main__':\n    print('b')\n",
+        "dist/a": "mine",
+    })  # fmt: skip
+
+    assert _build(directory) == 1
+
+    assert "cannot link command 'a'" in capsys.readouterr().err
+    assert (directory / "dist" / "a").read_text() == "mine"
+
+
 def test_strict_fails_on_a_skipped_command_and_writes_nothing(
     tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
 ) -> None:
