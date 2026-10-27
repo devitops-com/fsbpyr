@@ -105,7 +105,7 @@ def test_openssl_and_sqlite_carry_cpes_with_the_recorded_versions() -> None:
     assert _component(bom, "expat")["cpe"] == (
         "cpe:2.3:a:libexpat_project:libexpat:2.7.3:*:*:*:*:*:*:*")
     assert _component(bom, "expat")["version"] == "2.7.3"
-    assert _component(bom, "zstd")["cpe"] == "cpe:2.3:a:facebook:zstd:1.5.7:*:*:*:*:*:*:*"
+    assert _component(bom, "zstd")["cpe"] == "cpe:2.3:a:facebook:zstandard:1.5.7:*:*:*:*:*:*:*"
     libmpdec = _component(bom, "libmpdec")  # NVD has no mpdecimal product
     assert libmpdec["version"] == "4.0.1" and "cpe" not in libmpdec
 

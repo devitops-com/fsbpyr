@@ -391,8 +391,8 @@ releases from 0.19.0 to 0.27.0, the README.md of the tag describes how to verify
 
 Each executable also has an SBOM, `<asset>.cdx.json` (CycloneDX 1.6, made by
 `tools/release/sbom.py` from `fsbpyr inspect --verify --json`). It lists the executable with its
-SHA-256, fsbpyr, CPython, the libraries the runtime links statically (OpenSSL, SQLite, expat and
-zlib with the CPEs that vulnerability scanners match them by, and libmpdec) and the
+SHA-256, fsbpyr, CPython, the libraries the runtime links statically (OpenSSL, SQLite, expat,
+zlib and zstd with the CPEs that vulnerability scanners match them by, and libmpdec) and the
 distributions from an index with their SHA-256. `release.yml` attests it to its executable:
 
 ```

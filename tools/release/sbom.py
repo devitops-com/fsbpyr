@@ -10,7 +10,8 @@ the executable's SHA-256. It lists the executable (with that SHA-256), fsbpyr, C
 libraries the runtime links statically (build_info's runtime_components) and the Python
 distributions from an index. The C libraries carry a CPE, which is what vulnerability
 scanners match them by; the vendor and product names are NVD's (checked against its CPE
-dictionary on 2026-10-22). NVD has no mpdecimal product, so libmpdec is listed without one.
+dictionary on 2026-10-22, and zstd's, facebook:zstandard, on 2026-10-27). NVD has no mpdecimal
+product, so libmpdec is listed without one.
 Standard library only: the release jobs run it with whatever Python they have.
 """
 
@@ -31,7 +32,7 @@ CPES = {
     "openssl": ("openssl", "openssl"),
     "sqlite": ("sqlite", "sqlite"),
     "zlib": ("zlib", "zlib"),
-    "zstd": ("facebook", "zstd"),
+    "zstd": ("facebook", "zstandard"),
 }
 # dist sources that name a package on an index (a git or local one has no purl)
 INDEXED = ("registry", "built-from-sdist")
