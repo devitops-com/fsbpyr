@@ -6,6 +6,7 @@ import importlib.machinery
 import io
 import json
 import re
+import struct
 import sys
 import time
 import urllib.error
@@ -25,6 +26,7 @@ from fsbpyr.payload.spec import Blob, File, Module
 from fsbpyr.runtime import notices, pbs, pins, registry, stdlib, stub, sysroot
 from fsbpyr.runtime.pins import PbsPin, pin_for
 from fsbpyr.runtime.toolchain import Toolchain
+from fsbpyr.targets import host_target
 
 
 def _archive(files: dict[str, bytes]) -> bytes:
@@ -425,18 +427,43 @@ def _libzstd(tmp_path: Path, members: dict[str, bytes] | None) -> pbs.PbsDist:
     return pbs.PbsDist(tmp_path, {})
 
 
+def _object(strings: bytes, machine: int | None = None) -> bytes:
+    """An ELF64 relocatable object laid out as libzstd's zstd_common.o is on aarch64: its code,
+    then its C strings with no NUL between them, then the compiler's ``.comment``."""
+    sections = [(b".text", 1, b"\xfd{\xc1\xa8\x00\x00\x00\x14"), (b".rodata.str1.1", 1, strings),
+                (b".comment", 1, b"\0clang version 23.1.3\0")]  # fmt: skip
+    names = b"\0" + b"".join(name + b"\0" for name, _, _ in sections) + b".shstrtab\0"
+    body, headers = b"", [bytes(64)]
+    for name, kind, data in [*sections, (b".shstrtab", 3, names)]:
+        headers.append(struct.pack("<IIQQQQIIQQ", names.index(name + b"\0"), kind, 0, 0,
+                                   64 + len(body), len(data), 0, 0, 1, 0))  # fmt: skip
+        body += data
+    body += bytes(-len(body) % 8)
+    machine = host_target().elf_machine if machine is None else machine
+    header = b"\x7fELF" + bytes([2, 1, 1]) + bytes(9) + struct.pack(
+        "<HHIQQQIHHHHHH", 1, machine, 1, 0, 0, 64 + len(body), 0, 64, 0, 0, 64, len(headers),
+        len(headers) - 1)  # fmt: skip
+    return header + body + b"".join(headers)
+
+
 def test_zstd_version_is_the_string_libzstd_returns(tmp_path: Path) -> None:
-    common = b"\0ZSTD_versionString\0" + b"\0001.5.7\0" + b"junk 9.9\0"
-    dist = _libzstd(tmp_path, {"pool.o": b"\0002.0.0\0", "zstd_common.o": common})
+    """Every aarch64 archive of PBS 20261026: a scan for a NUL-bounded version found nothing."""
+    common = _object(b"1.5.7\0")
+    dist = _libzstd(tmp_path, {"pool.o": _object(b"2.0.0\0"), "zstd_common.o": common})
 
     assert pbs.zstd_version(dist) == "1.5.7"
 
 
 def test_zstd_version_is_unknown_rather_than_guessed(tmp_path: Path) -> None:
     assert pbs.zstd_version(_libzstd(tmp_path / "none", None)) is None
-    assert pbs.zstd_version(_libzstd(tmp_path / "nomember", {"pool.o": b"\0001.5.7\0"})) is None
-    assert pbs.zstd_version(_libzstd(tmp_path / "noversion", {"zstd_common.o": b"\0x\0"})) is None
-    two = {"zstd_common.o": b"\0001.5.7\0" + b"\0001.5.8\0"}
+    nomember = {"pool.o": _object(b"1.5.7\0")}
+    assert pbs.zstd_version(_libzstd(tmp_path / "nomember", nomember)) is None
+    assert pbs.zstd_version(_libzstd(tmp_path / "noelf", {"zstd_common.o": b"\0001.5.7\0"})) is None
+    foreign = {"zstd_common.o": _object(b"1.5.7\0", machine=0xFFFF)}
+    assert pbs.zstd_version(_libzstd(tmp_path / "foreign", foreign)) is None
+    noversion = {"zstd_common.o": _object(b"ZSTD_versionString\0")}
+    assert pbs.zstd_version(_libzstd(tmp_path / "noversion", noversion)) is None
+    two = {"zstd_common.o": _object(b"1.5.7\0" + b"1.5.8\0")}
     assert pbs.zstd_version(_libzstd(tmp_path / "two", two)) is None
     broken = _libzstd(tmp_path / "broken", {})
     (broken.root / "build" / "lib" / "libzstd.a").write_bytes(b"\0001.5.7\0")  # no ar archive
