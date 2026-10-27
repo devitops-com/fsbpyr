@@ -2,10 +2,12 @@
 #
 # test-setup.sh — what the full test suite needs beyond a bootstrap build. Run as root: by
 # the Containerfile's `test` stage, and by the full-suite workflow on its Debian trixie
-# container. The packages of bootstrap (git, make, curl, zstd) are already there.
+# container. Bootstrap's git, make and curl are already there.
 #
-#   - libclang-rt-22-dev and llvm-22: Debian's compiler-rt and llvm-objdump (the runtime, the
-#     ASan/UBSan launcher and llvm-cov use LLVM 23's own, tools/release/llvm23);
+#   - llvm-22: Debian's llvm-objdump (the runtime, the ASan/UBSan launcher and llvm-cov use
+#     LLVM 23's own, tools/release/llvm23);
+#   - libc6-dev and libstdc++-14-dev: the headers and libraries the tests' C programs build
+#     against, with gcc or LLVM 23's clang (libFuzzer is C++);
 #   - gcc, strace, groff-base, zstd, xz-utils, wget and busybox: tests that fail without them;
 #   - a user `tester` (uid 1000) in one supplementary group (testers), the user the suite runs
 #     as: the ownership tests need a user that is not root and has a group besides its own;
@@ -17,7 +19,7 @@ set -euo pipefail
 
 apt-get update -q
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-    libclang-rt-22-dev llvm-22 gcc strace groff-base zstd xz-utils wget busybox openssl
+    llvm-22 libc6-dev libstdc++-14-dev gcc strace groff-base zstd xz-utils wget busybox openssl
 rm -rf /var/lib/apt/lists/*
 
 groupadd --gid 2000 testers

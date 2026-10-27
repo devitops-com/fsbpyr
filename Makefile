@@ -51,8 +51,8 @@ help: ## Show this help
 # --- Setup ---
 
 # Debian trixie: the runtime (linked with the clang/lld 23 it fetches), fsbpyr built from
-# source, `make install`, with the uv and Python you installed (a missing one is named; nothing
-# is installed for you).
+# source, `make install`, with the uv, Python, curl and zstd you installed (a missing one is
+# named; nothing is installed for you).
 # Anywhere else the build runs in a Debian trixie podman container (podman is yours to
 # install) and the install on this host. See tools/bootstrap.sh.
 bootstrap: ## From source to an installed fsbpyr: runtime, build, install (PYTHON=3.X: that variant's three stages, no install)
