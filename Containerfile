@@ -6,9 +6,9 @@ FROM docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce
 
 # Everything but uv, Python and clang/lld 23 from Debian's own packages. The runtime links with
 # LLVM's clang/lld 23, which bootstrap.sh fetches with curl and unpacks with zstd
-# (tools/release/llvm23); trixie's clang, lld and compiler-rt 22 are not used for it.
+# (tools/release/llvm23); trixie's clang, lld and compiler-rt 22 are not installed.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl git make clang-22 lld-22 libclang-rt-22-dev zstd \
+    && apt-get install -y --no-install-recommends ca-certificates curl git make zstd \
     && rm -rf /var/lib/apt/lists/*
 
 # uv of the container's architecture (TARGETARCH: amd64 or arm64; `podman build --arch arm64`),

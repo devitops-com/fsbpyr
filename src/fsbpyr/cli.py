@@ -472,7 +472,7 @@ EXAMPLES = (
      "The same report as JSON, with every module listed."),
     ("fsbpyr runtime build",
      "Build the runtime that fsbpyr needs when it runs from a checkout or a wheel: once, with "
-     "clang and lld 22 or newer."),
+     "clang and lld 23 or newer."),
     ("fsbpyr cache gc",
      "Collect fsbpyr's own cache and every app cache now, rather than when the next "
      "collection is due."),

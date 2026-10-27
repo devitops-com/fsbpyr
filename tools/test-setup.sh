@@ -2,7 +2,7 @@
 #
 # test-setup.sh — what the full test suite needs beyond a bootstrap build. Run as root: by
 # the Containerfile's `test` stage, and by the full-suite workflow on its Debian trixie
-# container. The packages of bootstrap (git, make, curl, clang-22, lld-22) are already there.
+# container. The packages of bootstrap (git, make, curl, zstd) are already there.
 #
 #   - libclang-rt-22-dev and llvm-22: Debian's compiler-rt and llvm-objdump (the runtime, the
 #     ASan/UBSan launcher and llvm-cov use LLVM 23's own, tools/release/llvm23);
