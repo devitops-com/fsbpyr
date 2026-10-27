@@ -53,9 +53,15 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - **A failed smoke test shows whole lines.** The tail of the new executable's error output that
   the build prints starts at a line boundary, with a note of how many earlier lines were left out,
   instead of in the middle of a line. The same holds for the tails of `uv` and launcher link
-  errors, and of a failing compile worker or interpreter query.
+  errors, and of a failing compile worker or interpreter query. (#41)
 - **One is one.** The build says `collecting 1 distribution`, `1 command` and `the 1 distribution
-  a lock source names`, not the plural.
+  a lock source names`, not the plural. (#45)
+- **The attestation example works, and is checked.** `.github/workflows/attest-example.yml`
+  downloaded the release asset `fsbpyr`, which releases have not had since 0.22.0; it now takes
+  the latest release's `fsbpyr-3.14-x86_64-linux-gnu`, runs `gh attestation verify` on the app it
+  attested, as the README tells whoever downloads it, and keeps the app as the run's artifact.
+  The README no longer says this is untested: `gh attestation verify` accepted the downloaded
+  app, whose attested SHA-256 is the `sha256` that `fsbpyr inspect --verify` prints. (#46)
 - **A VM boot that hangs shows how far it got.** `tools/vm-smoke.py` (`make test-vm`, the
   `vm-smoke` job) boots with kernel messages from the first line on (`earlycon`, no `quiet`), so
   a boot that never reaches `/init` leaves its last messages in the report instead of an empty

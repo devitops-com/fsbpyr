@@ -996,9 +996,11 @@ gh attestation verify myapp --repo ORG/REPO \
 
 The attestation names the file's plain SHA-256, which `fsbpyr inspect --verify myapp` prints
 as `sha256` (the `digest` line is fsbpyr's own, checked at every start). A complete workflow
-is [.github/workflows/attest-example.yml](.github/workflows/attest-example.yml); it runs on
-manual dispatch only. That the example's attestation is accepted by `gh attestation verify`
-has not been tested yet.
+is [.github/workflows/attest-example.yml](.github/workflows/attest-example.yml): on manual
+dispatch it builds an app, attests it, checks the attestation with `gh attestation verify` as
+above, and keeps the app as the run's artifact `hello`. Downloaded from its run of 2026-10-27,
+the app passed `gh attestation verify`, and its attested SHA-256 is the `sha256` that
+`fsbpyr inspect --verify` prints.
 
 ## At run time
 
