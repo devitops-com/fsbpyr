@@ -10,7 +10,8 @@ the boot code, and keep the old rows.
   CPUs 8–23; SHA-NI and AVX2), Linux 6.12 (Debian 13).
 - Warm: the executable is in the page cache and its natives are already extracted. A first
   start after a reboot also reads the whole file from disk; see "Cold start (0.20.0)".
-- Each figure is the median (p50) of 31 to 200 runs started with `os.posix_spawn` from Python (`spikes/bench.py`).
+- Each figure is the median (p50) of 31 to 200 runs started from Python, with `os.posix_spawn`
+  (`spikes/bench.py`) or, where a section says so, with `subprocess.run`.
   Variants that are compared are run interleaved, so that a drift of the CPU clock hits both.
   Runs of 100 ms and more vary by about ±1.5 ms between rounds; repeat before trusting a
   difference of a few milliseconds.
@@ -591,7 +592,7 @@ sysroot (D46); its time and peak memory were not measured.
   64 ms on the 8 performance cores, 59 ms with `OPENBLAS_NUM_THREADS=1`. While those threads
   occupy every core, a thread that sleeps and is woken may land on an efficiency core and stay
   there: joining the hashing threads cost `heavy np` +38–41 ms; spinning on non-blocking joins
-  (for at most 2 ms, then a normal join) +4–7 ms (D32; +4–5 ms in these runs, +4 to 7 in the
+  (for at most 2 ms, then a normal join) +4–7 ms (D32; +4–5 ms in 0.7.0's runs, +4 to 7 in the
   comment above `fsb_parallel` in `parallel.c`).
 - **Whatever the run loads is hashed.** The cache check grows with the natives a run imports,
   about 0.1–0.3 ms per MB on this machine; the integrity check with the executable's size.
