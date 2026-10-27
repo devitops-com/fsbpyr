@@ -297,7 +297,9 @@ def test_a_release_builds_for_el8_with_its_stdlib_and_the_downloaded_stub(
 
     assert releases.requests == [f"/{COMPANION}/{SUMS}", f"/{COMPANION}/{ASSET}.xz"]
     assert out.read_bytes() == built["hello"].read_bytes()
-    assert (tmp_path / "cache" / "downloads" / f"{ASSET}-{TAG}").is_file()
+    expected = registry.runtime_id(pins.pin_for(TARGET_PYTHON, host_target().triple),
+                                   baseline=BASELINE)  # fmt: skip
+    assert (tmp_path / "cache" / "downloads" / f"{ASSET}-{expected}").is_file()  # not by tag
 
 
 def _tagged_copy(directory: Path) -> Path:
