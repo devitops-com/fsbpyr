@@ -8,8 +8,8 @@ the session's temporary directory, trusted by nothing but these tests). curl and
 pointed at it with CURL_CA_BUNDLE and WGETRC, the installer at the server with its test-only
 FSBPYR_INSTALLER_BASE_URL. HOME and every install directory are under ``tmp_path``, and PATH
 holds only the tools the installer needs, so a test can leave one out (xz, curl, gh) or fake one
-(uname, ldd, gh). Every test runs under dash,
-bash and busybox sh.
+(uname, ldd, gh). Every test that runs the installer runs under dash, bash and busybox sh; the
+generator and template tests do not.
 """
 
 from __future__ import annotations

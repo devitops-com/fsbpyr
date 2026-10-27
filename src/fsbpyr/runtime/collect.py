@@ -5,7 +5,8 @@ than 10% free: every one not in use), go, under the rules of the app caches' col
 trash and removed. What a killed process left while it worked (an extraction or a runtime's
 staging directory, a partial download) goes after a day. Only a root with the marker is
 collected: hold() writes it into one that holds nothing but our names. ``fsbpyr cache gc`` runs
-it, and every app cache it finds; ``fsbpyr`` checks it at its start, at most once a day."""
+it, and every app cache it finds; ``fsbpyr build``, ``inspect``, ``runtime build`` and
+``runtime list`` check it at their start, at most once a day."""
 
 import functools
 import os

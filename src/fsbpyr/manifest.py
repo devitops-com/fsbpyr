@@ -217,7 +217,9 @@ def dist_record(
 ) -> dict[str, object]:
     """One entry of build_info's ``dists``: name, version, source and the hash of the
     artifact the lock names for it (none for ``local`` ones, which the lock has no hash for).
-    ``project`` is the app's own distribution, built by `uv build` at staging."""
+    ``project`` is the app's own distribution, built by `uv build` at staging, or written by
+    fsbpyr itself for a project without a build system (a directory of scripts, a single script,
+    a tool binary)."""
     record: dict[str, object] = {"name": dist.name, "version": dist.version}
     locked = _locked(dist, packages)
     if dist.name == project or (locked is not None and locked.kind == LOCAL):
