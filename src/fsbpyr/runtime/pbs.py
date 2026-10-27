@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .. import elf
 from ..compat import tarfile
 from ..text import tail_lines
 from . import ar
@@ -27,7 +28,8 @@ _LLVM_BITCODE = re.compile(r"llvm-bitcode:(\d+)\.")
 _CHUNK = 1 << 20
 _LIBZSTD = "build/lib/libzstd.a"
 _ZSTD_VERSION_MEMBER = "zstd_common.o"  # holds the string ZSTD_versionString() returns
-_ZSTD_VERSION = re.compile(rb"\0(\d+\.\d+\.\d+)\0")
+_ZSTD_STRINGS = ".rodata.str1.1"  # the object's C strings, NUL-terminated
+_ZSTD_VERSION = re.compile(rb"\d+\.\d+\.\d+")
 _ERROR_TAIL = 500
 
 
@@ -176,13 +178,16 @@ def component_versions(interpreter: Path) -> dict[str, str]:
 
 def zstd_version(dist: PbsDist) -> str | None:
     """The version of the ``libzstd.a`` the launcher links (every Python's, 3.12 and 3.13 too,
-    which have no ``_zstd`` to ask), read from the one string its ``zstd_common.o`` holds; None
-    when there is no readable archive, no such member or not exactly one version in it."""
+    which have no ``_zstd`` to ask): the one version string among the C strings of its
+    ``zstd_common.o``. Not a scan of the whole object: on aarch64 the string section follows
+    the code with no NUL before it, and ``.comment`` holds the compiler's version. None when
+    there is no readable archive, no such member or not exactly one version in it."""
     try:
         members = dict(ar.read(dist.root / _LIBZSTD))
-    except (OSError, ar.ArError):
+        strings = elf.section(members.get(_ZSTD_VERSION_MEMBER, b""), _ZSTD_STRINGS) or b""
+    except (OSError, ar.ArError, elf.ElfError):
         return None
-    found = set(_ZSTD_VERSION.findall(members.get(_ZSTD_VERSION_MEMBER, b"")))
+    found = {string for string in strings.split(b"\0") if _ZSTD_VERSION.fullmatch(string)}
     return found.pop().decode() if len(found) == 1 else None
 
 

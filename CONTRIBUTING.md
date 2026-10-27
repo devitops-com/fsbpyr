@@ -128,13 +128,16 @@ The tiers, from fastest to most complete:
   `test_pid1`, `test_unbuffered`, `test_file_overlay` and `test_pipfile_lock`: real builds of
   projects, several commands, projects without a build system, directories of scripts, single
   scripts, install links, services as PID 1 with unbuffered output, the `__file__` overlay and
-  Pipfile.lock projects), with the coverage check.
+  Pipfile.lock projects), in 8 processes (`JOBS=` to change it), with the coverage check.
 - The full suite in CI (`.github/workflows/full-suite.yml`): every test and check there is, so
   that a release (`.github/workflows/release.yml`) only builds and publishes. The release build
   (`.github/workflows/build.yml`) with its smoke test and an independent rebuild compared byte
   for byte; everything but the portability tests and the corpus, as the user `tester` in a
   privileged Debian trixie container with rootless podman, so the root-only,
-  supplementary-group and `podman unshare` tests run; the corpus, in a job of its own; the
+  supplementary-group and `podman unshare` tests run, in 4 processes (the cores of GitHub's
+  runners for public repositories), each test file in one of them, with the kept downloads
+  (`FSBPYR_TEST_DOWNLOADS`), so that the runtimes are built once before the workers start, as
+  in `make test`; the corpus, in a job of its own; the
   portability tests; and the page-size smoke test (below). It runs on every push to main that
   changes more than documentation (a merge; pull requests start no CI), weekly and on request,
   once per target (x86-64 on `ubuntu-24.04`, aarch64 on `ubuntu-24.04-arm`) and Python, with
@@ -144,8 +147,8 @@ The tiers, from fastest to most complete:
   `tests/fuzz` changed since the last tag and on the weekly run, else for 30 s; the corpus it finds
   (`FSBPYR_FUZZ_CORPUS`) is kept in the Actions cache. The launcher programs the tests build
   are instrumented for llvm-cov (`FSBPYR_LLVM_COV_DIR`), and the run's summary shows the
-  report; it is informational. A run takes about 40 minutes (37 to 40 in October 2026); the
-  job's limit is 60 minutes.
+  report; it is informational. A run took 37 to 40 minutes in October 2026, while each suite
+  job ran its tests in one process; the job's limit is 60 minutes.
 - `make test`: everything but the corpus, on your machine, in 8 processes (`JOBS=` to change
   it; about 2.5 minutes on 24 cores). A test whose tool or environment is missing fails,
   naming it: root's own directories, a second user, a supplementary group, strace, groff,
