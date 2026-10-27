@@ -222,7 +222,8 @@ def build_command(  # noqa: PLR0913  click passes every option by name
             best_compression=best_compression,
             interpreter_reexec=interpreter_reexec,
         )
-        loaded = Project.load(project, config.requirements)  # the settings may name the lock source
+        loaded = (loaded if config.requirements == requirements  # the settings may name the
+                  else Project.load(project, config.requirements))  # lock source  # fmt: skip
         chosen = resolve(loaded, config.python, own=DEFAULT_PYTHON).version
         if chosen != DEFAULT_PYTHON:  # another fsbpyr builds it, given this command line
             args = click.get_current_context().obj  # main() put it there

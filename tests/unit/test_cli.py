@@ -427,7 +427,8 @@ def test_a_pipfile_lock_that_is_the_lock_source_still_picks_the_python(
     handed: list[str] = []
     monkeypatch.setattr("fsbpyr.cli.DEFAULT_PYTHON", "3.14")
     monkeypatch.setattr("fsbpyr.build.build", lambda *args, **kwargs: pytest.fail("built"))
-    monkeypatch.setattr("fsbpyr.dispatch.run", lambda chosen, *args: _handed(handed, chosen))
+    monkeypatch.setattr("fsbpyr.dispatch.run",
+                        lambda chosen, *args, **kwargs: _handed(handed, chosen))
 
     main(["build", str(tmp_path)])
 
