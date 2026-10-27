@@ -117,7 +117,11 @@ def _main_guarded(tree: ast.Module) -> list[range]:
 
 
 def _flagged_lines(
-    source: bytes, filename: str, test: Callable[[ast.Call, set[str]], bool]
+    source: bytes,
+    filename: str,
+    test: Callable[[ast.Call, set[str]], bool],
+    *,
+    skip_main_guard: bool = True,
 ) -> list[int]:
     if not any(marker in source for marker in _MARKERS):
         return []
@@ -125,15 +129,17 @@ def _flagged_lines(
         tree = ast.parse(source, filename)
     except (SyntaxError, ValueError):
         return []
-    tainted, guarded = _tainted_names(tree), _main_guarded(tree)
+    tainted = _tainted_names(tree)
+    guarded = _main_guarded(tree) if skip_main_guard else []
     calls = (node for node in ast.walk(tree) if isinstance(node, ast.Call))
     lines = {call.lineno for call in calls if test(call, tainted)}
     return sorted(line for line in lines if not any(line in block for block in guarded))
 
 
-def file_relative_reads(source: bytes, filename: str) -> list[int]:
-    """Line numbers of reads relative to ``__file__`` in one module (empty if it does not parse)."""
-    return _flagged_lines(source, filename, _reads)
+def file_relative_reads(source: bytes, filename: str, *, skip_main_guard: bool = True) -> list[int]:
+    """Line numbers of reads relative to ``__file__`` in one module (empty if it does not parse).
+    A package's main-guard code never runs on import, so it is skipped; a script's runs."""
+    return _flagged_lines(source, filename, _reads, skip_main_guard=skip_main_guard)
 
 
 def file_relative_existence_checks(source: bytes, filename: str) -> list[int]:

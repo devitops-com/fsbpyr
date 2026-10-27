@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import bytecode
+from .loose import ROOT
 from .payload.format import THREADS, pooled_thread, tree_digest
 from .payload.spec import ZSTD_LEVEL, Blob
 from .scan import file_relative_reads, loaded_libraries
@@ -68,7 +69,9 @@ def compiled(data: bytes, rel: str, level: int, include_source: bool, hints: boo
     except SyntaxError as exc:
         return Compiled(None, error=(exc.msg, exc.lineno))
     source = Blob.zstd(data, level=level) if include_source else None
-    reads = tuple(file_relative_reads(data, rel)) if hints else ()
+    # a script's main-guard code runs; a package's never does on import
+    skip_guard = not rel.startswith(f"{ROOT}/")
+    reads = tuple(file_relative_reads(data, rel, skip_main_guard=skip_guard)) if hints else ()
     libraries = tuple(loaded_libraries(data, rel)) if hints else ()
     return Compiled(Blob.code(code, level=level), tree_digest(code), source,
                     tree_digest(data) if include_source else b"", reads, libraries,

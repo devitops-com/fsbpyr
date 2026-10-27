@@ -60,6 +60,13 @@ def test_other_code_is_not_reported(source: str) -> None:
     assert file_relative_reads(source.encode(), "m.py") == []
 
 
+def test_a_scripts_main_guard_read_is_found_when_asked() -> None:
+    source = b"if __name__ == '__main__':\n    open(__file__).read()\n"
+
+    assert file_relative_reads(source, "m.py", skip_main_guard=False) == [2]
+    assert file_relative_reads(source, "m.py") == []
+
+
 @pytest.mark.parametrize(
     "source",
     [

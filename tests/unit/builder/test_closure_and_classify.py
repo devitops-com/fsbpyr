@@ -835,9 +835,22 @@ def test_reads_next_to_file_in_the_scripts_root_are_always_reported_by_project_f
                        origins={"_fsbpyr_scripts/check_disk.py": "check-disk"})  # fmt: skip
 
     reads = [w for w in content.warnings if "next to its own __file__" in w]
-    assert [w.partition(": ")[0] for w in reads] == ["check-disk:2", "sub/plain.py:2"]
+    assert [w.partition(": ")[0] for w in reads] == ["check-disk:2", "guarded.py:2",
+                                                     "sub/plain.py:2"]  # main guard included
     assert "read next to the executable" in reads[0] and "beside the binary" in reads[0]
     assert not [w for w in content.warnings if "these packages read files" in w]  # no --hints
+
+
+def test_a_packages_read_in_the_main_guard_is_not_reported(site: Path) -> None:
+    _dist(site, "datapkg", "1.0", {"datapkg/__init__.py": b"",
+                                   "datapkg/cli.py":
+                                       b"if __name__ == '__main__':\n    open(__file__)\n"})
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["datapkg"]], extension_suffixes=SUFFIXES,
+                       include_source=True, hints=True)  # fmt: skip
+
+    assert not [w for w in content.warnings if "__file__" in w]  # never runs on import
 
 
 def test_shared_objects_python_code_names_are_reported(site: Path) -> None:
