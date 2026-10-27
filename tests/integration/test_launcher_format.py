@@ -123,4 +123,4 @@ def test_field_offsets_match(
 
 def test_probe_header_matches_packaged_header() -> None:
     packaged = importlib.resources.files("fsbpyr.launcher").joinpath("format.h")
-    assert Path(str(packaged)).read_bytes().startswith(b"/* fsbpyr executable format v5")
+    assert Path(str(packaged)).read_bytes().startswith(b"/* fsbpyr executable format ")

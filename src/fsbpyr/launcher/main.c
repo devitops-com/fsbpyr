@@ -28,8 +28,9 @@
 
 /* The runtime id this stub was linked as (stub.py passes it). A build that is handed a stub it
  * did not link, an EL8 one, reads this string out of the file (stub.stub_identity) to prove it
- * is the stub of its own launcher sources, Python and target. Kept by `used` through LTO and
- * stripping; nothing reads it at run time. */
+ * was linked from the inputs the build computes: the launcher sources and flags, the Python pin,
+ * the sysroot and the layout version (several releases may share them). Kept by `used` through
+ * LTO and stripping; nothing reads it at run time. */
 __attribute__((used)) static const char identity[] = "fsbpyr-stub-identity=" FSBPYR_RUNTIME_ID;
 
 #define EXIT_CORRUPT 70 /* EX_SOFTWARE */

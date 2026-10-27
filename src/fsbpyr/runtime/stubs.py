@@ -9,11 +9,12 @@ frames and modules do not depend on the sysroot, so the executable's own are pai
 The stub comes from, in this order: a file the user placed beside the fsbpyr executable (for
 machines without GitHub), the tool's cache, a download from the companion release, verified
 against the SHA-256 it publishes and kept in the cache. Whichever it is, the stub must carry the
-runtime id this fsbpyr computes for its own launcher sources, pinned Python and sysroot (main.c,
-stub.py) and is refused otherwise, so a stub of another release or Python never goes into an
-app. The cache names a stub by that id, not by the release, so an update that leaves it unchanged
-reuses the download. A developer build has no release to fetch from: it uses the cache's runtime
-(``fsbpyr runtime build --glibc 2.28``)."""
+runtime id this fsbpyr computes (main.c, stub.py): a digest of the launcher sources and their
+compile and link flags, the Python pin, the sysroot and the layout version. It is refused
+otherwise, so a stub built from other inputs never goes into an app; several releases may share
+the inputs, and their stubs are interchangeable. The cache names a stub by that id, not by the
+release, so an update that leaves it unchanged reuses the download. A developer build has no
+release to fetch from: it uses the cache's runtime (``fsbpyr runtime build --glibc 2.28``)."""
 
 import contextlib
 import dataclasses

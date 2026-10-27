@@ -37,8 +37,9 @@ file. The layout itself is described in [format.md](format.md).
   about 100 KiB, mostly its tables.
 - **A second stub exists per Python and target.** An app built with `--glibc 2.28` (D46)
   carries the stub linked against the EL8 sysroot; the standard library, the boot code and the
-  layout of the tables are the same bytes in both, so the stub, its padding and the header's
-  runtime fields are what differ. The 26.41 MiB figure above is for the default stub.
+  layout of the tables are the same bytes in both, so what differs is the stub, its padding and
+  the build information (`runtime`, `runtime_inputs.sysroot`, `stub_sha256`, `glibc_baseline`
+  and `glibc`); the header's runtime fields (`python_hexversion`, `bytecode_magic`) are the same. The 26.41 MiB figure above is for the default stub.
 - **The same content is not always the same bytes.** Modules and files under 64 KiB are packed
   into blocks of 64 KiB (code) and 256 KiB (the rest) in the order of their paths (D30), so a
   third-party module stored next to a standard-library one in path order shares its block.
