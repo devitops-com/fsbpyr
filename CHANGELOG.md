@@ -50,17 +50,21 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   its own aarch64 builds with lld's `--fix-cortex-a53-843419` since 20261026, but fsbpyr links the
   stub itself from PBS's bitcode, so the stub's link now passes the flag; it is part of the
   aarch64 runtime id.
-- **A script's reads next to its `__file__` inside `if __name__ == "__main__":` are reported.**
-  For a project without a build system, a directory of scripts or a single script, the build now
-  warns about each read next to a script's `__file__` wherever it is in the script, not only at
-  module level, so that the file can be deployed beside the executable instead of the app failing
-  at run time with `FileNotFoundError`; `--strict` counts it, as it counts one at module level.
-  Packages still skip their main-guard code, which never runs on import. A script that starts a
-  sibling command, `subprocess.run([sys.executable, os.path.join(here, "sibling.py")])` or an
-  `os.exec*` of `sys.executable`, is not reported: the sibling runs from the payload, so the
-  advice to deploy that file beside the binary was wrong. `--hints` no longer advises
-  `--fs-package` for the packages among such a project's own files, which are read next to the
-  executable. (#57)
+- **A command script's reads next to its `__file__` inside `if __name__ == "__main__":` are
+  reported.** For a project without a build system, a directory of scripts or a single script, the
+  build warned about a script's reads next to its `__file__` at module level and in functions, but
+  skipped its main guard, where a script does most of its work, so the app failed at run time with
+  `FileNotFoundError` instead. The build now also warns about those reads in the main guard of
+  each module the executable runs as `__main__`: its commands, or the module `--entry` names;
+  `--strict` counts them, as it counts the others. The main guard of every other module never runs
+  and is still skipped: a script's local-import siblings, the modules of a `[project]` that its
+  `[project.scripts]` do not name, the commands that `--entry COMMAND` leaves out, a module whose
+  command calls a function in it (`tool:main`), and packages; their other reads are reported as
+  before. A script that starts a sibling command, `subprocess.run([sys.executable,
+  os.path.join(here, "sibling.py")])` or an `os.exec*` of `sys.executable`, is not reported: the
+  sibling runs from the payload, so the advice to deploy that file beside the binary was wrong.
+  `--hints` no longer advises `--fs-package` for the packages among such a project's own files,
+  which are read next to the executable. (#57)
 - **`--strict` no longer counts the `--hints` file-read guess.** `these packages read files next
   to __file__ (a heuristic)` is a guess about the packages, like the other uncounted ones, so a
   `--hints --strict` build no longer fails on it. The `--strict` help and man page now say what is
