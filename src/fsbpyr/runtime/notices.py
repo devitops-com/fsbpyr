@@ -12,8 +12,9 @@ from .pbs import PbsDist, PbsError
 
 NOTICE_DIR = "_fsbpyr_licenses"  # in the stdlib fragment, so in every app
 FSBPYR_NOTICE = "LICENSE.fsbpyr.txt"
-# Listed by PYTHON.json, shipped by no PBS archive before 20261020; the launcher's own zstd and
-# the HACL* code in the hash modules are supplied (a text PBS ships is used instead). zlib-ng is
+# Listed by PYTHON.json, shipped by no PBS archive before 20261020; the launcher's own zstd (PBS
+# lists its text only for _zstd, which 3.12 and 3.13 lack) and the HACL* code in the hash modules
+# are supplied (a text PBS ships is used instead). zlib-ng is
 # listed for zlib and binascii, but libz.a is classic zlib (LICENSE.zlib.txt), so its text is
 # left out, shipped or not.
 _SUPPLIED = {"LICENSE.zstd.txt": ("fsbpyr.launcher", "vendor/zstd/LICENSE"),
@@ -73,6 +74,8 @@ def collect(dist: PbsDist) -> Notices:
             unshipped.add(name)
             if name in _SUPPLIED:
                 texts[name] = _supplied(name)
+    if "LICENSE.zstd.txt" not in texts:  # the launcher links zstd whatever the Python
+        texts["LICENSE.zstd.txt"] = _supplied("LICENSE.zstd.txt")
     if hacl:
         texts["LICENSE.hacl.txt"] = _supplied("LICENSE.hacl.txt")
     return Notices(texts, frozenset(unshipped))
