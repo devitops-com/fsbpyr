@@ -274,8 +274,8 @@ The environment:
   `kernel.apparmor_restrict_unprivileged_userns=0`);
 - `no_new_privs` unset, and `TMPDIR` (`make`: `TESTTMP`, default `~/tmp`) on a file system that
   allows set-id bits (not `nosuid`; `/tmp` is often a `nosuid` tmpfs);
-- a file system there that takes 999-byte symlink targets (a tmpfs or a disk; not a container's
-  overlay), with at least 10% of it free;
+- a file system there that takes 999-byte symlink targets (ext4, XFS or a tmpfs), with at least
+  10% of it free;
 - a directory in `/tmp` that root owns (`sudo mkdir -m 755 /tmp/fsbpyr-test-root-owned`), and
   a searchable directory of another user that is not root under `/var/lib`, `/etc`,
   `/var/spool` or `/home` (`/var/lib/fsbpyr-other`; `tools/test-setup.sh` makes both);
