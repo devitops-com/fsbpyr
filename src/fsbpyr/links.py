@@ -43,6 +43,17 @@ def _earlier_output(path: Path, project: str) -> bool:
         return False
 
 
+def is_earlier_link(path: Path, project: str) -> bool:
+    """Whether ``path`` is a link an earlier build of ``project`` made: a symlink to a bare name,
+    the earlier multi-command executable beside it (see ``_earlier_output``). A link to anything
+    else is the user's."""
+    if not path.is_symlink():
+        return False
+    target = os.readlink(path)
+    return (os.sep not in target and not (path.parent / target).is_symlink()
+            and _earlier_output(path.parent / target, project))  # fmt: skip
+
+
 def check_links(binary: Path, commands: Iterable[str], project: str | None = None) -> None:
     """Fail naming the first link path held by a file or directory (a symlink is replaced, and
     so is an earlier output of ``project``: see ``_earlier_output``)."""

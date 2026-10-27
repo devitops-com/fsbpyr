@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.boot._fsbpyr_rt.commands import parse
-from fsbpyr.build import check_before_staging
+from fsbpyr.build import _output_path, check_before_staging
 from fsbpyr.closure import ClosureError, InstalledDist, command_table, resolve_entry
 from fsbpyr.config import BuildConfig
-from fsbpyr.links import LinkError, check_links, link_paths, make_links
+from fsbpyr.links import LinkError, check_links, is_earlier_link, link_paths, make_links
 from fsbpyr.payload.writer import write_executable
 from fsbpyr.project import Project, ProjectError
 
@@ -144,6 +144,42 @@ def test_anything_but_an_earlier_output_of_the_project_is_still_refused(
 
     assert taken.is_dir() if before is None else taken.read_bytes() == before
     assert not (tmp_path / "b").exists()
+
+
+def test_a_link_to_the_earlier_multi_command_output_is_the_builds_own(tmp_path: Path) -> None:
+    _earlier_output(tmp_path / "ops")
+    (tmp_path / "a").symlink_to("ops")
+
+    assert is_earlier_link(tmp_path / "a", "ops")
+    assert _output_path(tmp_path / "a", "ops") == tmp_path / "a"  # the link, not what it names
+
+
+@pytest.mark.parametrize("kind", ["other-project", "other-directory", "text", "regular", "chain"])
+def test_any_other_link_is_followed_as_before(tmp_path: Path, kind: str) -> None:
+    (tmp_path / "sub").mkdir()
+    taken = tmp_path / "a"
+    if kind == "other-project":
+        _earlier_output(tmp_path / "ops", project="elsewhere")
+        taken.symlink_to("ops")
+        target = tmp_path / "ops"
+    elif kind == "other-directory":
+        _earlier_output(tmp_path / "sub" / "ops")
+        taken.symlink_to("sub/ops")
+        target = tmp_path / "sub" / "ops"
+    elif kind == "text":
+        (tmp_path / "ops").write_text("mine")
+        taken.symlink_to("ops")
+        target = tmp_path / "ops"
+    elif kind == "chain":
+        _earlier_output(tmp_path / "real")
+        (tmp_path / "ops").symlink_to("real")
+        taken.symlink_to("ops")
+        target = tmp_path / "real"
+    else:
+        taken.write_text("mine")
+        target = taken
+
+    assert _output_path(taken, "ops") == target.resolve()
 
 
 def test_links_follow_the_output_name_not_the_project_name(tmp_path: Path) -> None:

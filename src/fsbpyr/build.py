@@ -35,7 +35,7 @@ from .entry import source_has_candidate
 from .foreign import stale as foreign_stale
 from .importcheck import REMOVED_IN, Unresolved, check_command, top_level_names
 from .legacy import attach as attach_legacy_scripts
-from .links import LinkError, check_links, make_links
+from .links import LinkError, check_links, is_earlier_link, make_links
 from .loose import Package
 from .manifest import SCHEMA, LockError, built_here, dist_records, inferred_lock, lock_record
 from .natives import opened
@@ -117,6 +117,16 @@ def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
 
 
 _DEFAULT_GLIBC = (2, 34)  # pins.DEFAULT_BASELINE as a version
+
+
+def _output_path(path: Path, project: str) -> Path:
+    """The path to write: absolute, and where it is a link, the file it points to, except for a
+    link an earlier build of ``project`` made for one of several commands, which this build of
+    one command replaces."""
+    path = path.absolute()
+    if is_earlier_link(path, project):
+        return path.parent.resolve() / path.name
+    return path.resolve()
 
 
 def _commands_to_link(entrypoint: str, output: Path, project: str) -> tuple[str, ...]:
@@ -784,7 +794,7 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
         app_name, entrypoint = resolve_entry(tool_dist or dist, config.entry, log, omit=(
             check_script_imports(package, project, config, index.site, runtime, warnings=warnings)
             if package is not None and tool_dist is None else ()))  # fmt: skip
-        output = (config.output or project.directory / "dist" / app_name).resolve()
+        output = _output_path(config.output or project.directory / "dist" / app_name, dist.name)
         check_output(output)
         commands = _commands_to_link(entrypoint, output, dist.name)
         _make_output_dir(output.parent, made)

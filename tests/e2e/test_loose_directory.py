@@ -352,6 +352,25 @@ def test_a_directory_going_from_one_command_to_several_replaces_its_own_earlier_
     assert _run(dist / "b", tmp_path).stdout == "b\n"
 
 
+def test_a_directory_going_back_to_one_command_replaces_the_link_not_its_target(
+    tmp_path: Path, runtime: Runtime
+) -> None:
+    directory = _write(tmp_path / "ops", {
+        "a.py": "if __name__ == '__main__':\n    print('a')\n",
+        "b.py": "if __name__ == '__main__':\n    print('b')\n",
+    })  # fmt: skip
+    assert _build(directory) == 0
+    dist = directory / "dist"
+    assert os.readlink(dist / "a") == "ops"
+    several = (dist / "ops").read_bytes()
+
+    (directory / "b.py").unlink()
+    assert _build(directory) == 0
+
+    assert not (dist / "a").is_symlink() and (dist / "ops").read_bytes() == several
+    assert _run(dist / "a", tmp_path).stdout == "a\n"
+
+
 def test_a_foreign_file_at_a_commands_link_still_stops_the_build(
     tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
 ) -> None:
