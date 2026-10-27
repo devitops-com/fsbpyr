@@ -85,7 +85,7 @@ each of these distributions with podman and runs every check there. CI does so f
 (3.12 to 3.15) and each target (x86-64 and aarch64, on a runner of its architecture); on
 aarch64 every image but `archlinux:latest` (no arm64 variant) runs. On 3.15 `heavy` is not
 built (onnxruntime has no wheel) and the `compat` checks of packages without a usable wheel
-are skipped ([Building](https://github.com/devitops-com/fsbpyr/wiki/User-Building#which-python) in the wiki).
+are not run ([Building](https://github.com/devitops-com/fsbpyr/wiki/User-Building#which-python) in the wiki).
 
 | Distribution | glibc |
 |---|---|
@@ -158,7 +158,7 @@ and each target (x86-64 and aarch64); `make test-corpus` runs it locally. A rele
 no tests: it publishes a commit whose run passed. Each app is a project in
 `tests/corpus/<name>` with its own `uv.lock`; the test runs its commands in a venv and in the
 built executable, each run with an empty home directory of its own, and compares exit code,
-stdout and stderr ([tests/corpus/README.md](../tests/corpus/README.md)). An app is skipped on a
+stdout and stderr ([tests/corpus/README.md](../tests/corpus/README.md)). An app is not run on a
 Python where a package of its lock has no wheel for manylinux_2_34 (`tests/support/no-wheels.txt`:
 on 3.15, 23 apps; `tensorflow` also on 3.14, and it has no 3.14 or 3.15 wheels at all). An
 app that fails is marked in its directory's `commands.toml` as a known failure: the test

@@ -10,6 +10,20 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Changed
+- **The test suite has no skips.** A test whose tool is missing (a C compiler, `uv`, `unshare`,
+  `podman`, `llvm-objdump`, `groff`, `git`, `strace`, `zstd`, `wget`, `busybox`, `make`) or whose
+  environment is not as it needs (a normal user, a supplementary group, user namespaces,
+  set-id bits, a directory of another user, 10% free disk) now fails with one line that names
+  what to install or change and points at CONTRIBUTING.md; `make test-prereqs` lists everything
+  a machine lacks at once. A case that does not apply to the Python, target or mode is not
+  generated, deselected (`-m "not podman"` where there is no podman, packages without a wheel in
+  `tests/support/no-wheels.txt`) or asserts its own behaviour. A skip or xfail by any means fails
+  the run. `FSBPYR_TESTS_REQUIRE_ALL` and its allowlists are removed, from the tests, the
+  Makefile and the workflows. `make test-container` runs with `--privileged`, the Pythons 3.12 to
+  3.15 and a `/var/tmp` that allows set-id bits, so that it leaves out nothing but the tests
+  that need podman.
+
 ## [0.27.0] - 2026-10-27
 
 ### Changed

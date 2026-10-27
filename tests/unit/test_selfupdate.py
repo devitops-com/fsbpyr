@@ -239,17 +239,26 @@ def test_a_checkout_is_refused(
     assert github.requests == []
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
 def test_an_unwritable_directory_is_an_error_saying_how_to_update(
-    github: FakeGitHub, installed: Path, capsys: pytest.CaptureFixture[str]
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Root ignores file modes: its 0o555 directory is still written to, and the update goes
+    through."""
+    binary = _release_binary(tmp_path)
+    github.assets[f"{OWN}.xz"] = lzma.compress(binary)
     installed.parent.chmod(0o555)
     try:
-        assert main(["self", "update"]) == 1
+        status = main(["self", "update"])
     finally:
         installed.parent.chmod(0o755)
 
     err = capsys.readouterr().err
+    if os.geteuid() == 0:
+        assert status == 0
+        assert installed.read_bytes() == binary
+        assert "cannot write to" not in err
+        return
+    assert status == 1
     assert "cannot write to" in err
     directory = installed.parent
     assert f"install.sh | FSBPYR_INSTALL_DIR={directory} sh -s -- --python {RUNNING}" in err

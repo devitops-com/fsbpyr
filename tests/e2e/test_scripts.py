@@ -14,7 +14,7 @@ import pytest
 from fsbpyr.cli import main
 from fsbpyr.runtime.registry import Runtime
 
-from ..support import contain
+from ..support import contain, requires
 
 pytestmark = pytest.mark.slow
 
@@ -62,8 +62,7 @@ def test_it_runs_like_uv_run_main_py(
     built: tuple[Path, list[str], list[str]], tmp_path: Path
 ) -> None:
     project = built[0]
-    uv = shutil.which("uv")
-    assert uv is not None  # the build needs it
+    uv = requires.tool("uv")
     expected = subprocess.run(
         [uv, "run", "--offline", "--no-project", "main.py", "x", "y"], cwd=project,
         capture_output=True, text=True, check=False,

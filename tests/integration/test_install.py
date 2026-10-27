@@ -30,11 +30,12 @@ from pathlib import Path
 
 import pytest
 
+from ..support import requires
+
 ROOT = Path(__file__).parents[2]
 MAKE_INSTALL_SH = ROOT / "tools" / "release" / "make-install.sh"
 VERSION = "9.9.9"
 SCRIPT_TIMEOUT_S = 60.0
-BASH = shutil.which("bash") or "/bin/bash"
 GNU = "x86_64-linux-gnu"
 MUSL = "x86_64-linux-musl"
 # the Python the installer takes when not told one: .python-version's, not the newest
@@ -63,10 +64,7 @@ esac
 @pytest.fixture(params=SHELLS, ids=lambda shell: shell[0] + ("-sh" if len(shell) > 1 else ""))
 def shell(request: pytest.FixtureRequest) -> list[str]:
     command: list[str] = request.param
-    found = shutil.which(command[0])
-    if found is None:
-        pytest.skip(f"needs {command[0]}")
-    return [found, *command[1:]]
+    return [requires.tool(command[0]), *command[1:]]
 
 
 @dataclass(frozen=True)
@@ -78,9 +76,7 @@ class Certificate:
 @pytest.fixture(scope="session")
 def tls_certificate(tmp_path_factory: pytest.TempPathFactory) -> Certificate:
     """A fresh self-signed certificate for 127.0.0.1 and localhost; no key is kept in the repo."""
-    openssl = shutil.which("openssl")
-    if openssl is None:
-        pytest.fail("the installer tests need the openssl CLI to make their test certificate")
+    openssl = requires.tool("openssl")
     directory = tmp_path_factory.mktemp("tls")
     cert, key = directory / "cert.pem", directory / "key.pem"
     subprocess.run(
@@ -173,8 +169,9 @@ class Release:
         inspector.write_text(f'#!/bin/sh\ncase "$3" in\n{cases}esac\n')
         inspector.chmod(0o755)
         out = self.root / "install.sh"
+        bash = requires.tool("bash")
         subprocess.run(
-            [BASH, str(MAKE_INSTALL_SH), VERSION, str(self.assets), str(out), str(inspector)],
+            [bash, str(MAKE_INSTALL_SH), VERSION, str(self.assets), str(out), str(inspector)],
             check=True,
             capture_output=True,
             timeout=SCRIPT_TIMEOUT_S,
@@ -219,9 +216,10 @@ class Host:
         self.fake("uname", 'case "$1" in -s) echo Linux ;; -m) echo x86_64 ;; esac')
 
     def link(self, tool: str) -> None:
-        found = shutil.which(tool)
-        if found is None:
-            pytest.skip(f"needs {tool}")
+        found = requires.tool(tool) if tool in requires.TOOLS else shutil.which(tool)
+        if found is None:  # the POSIX utilities in BASE_TOOLS are not in requires.TOOLS
+            pytest.fail(f"missing tool: {tool}: the installer runs it; {requires.FIX}",
+                        pytrace=False)
         (self.bin / tool).unlink(missing_ok=True)
         (self.bin / tool).symlink_to(found)
 
@@ -319,8 +317,6 @@ def test_installs_with_wget_when_there_is_no_curl(
     host: Host,
     server: Server,
 ) -> None:
-    if shutil.which("wget") is None:
-        pytest.skip("needs wget")
     script = release.make()
     host.drop("curl")
     host.link("wget")
@@ -908,7 +904,7 @@ def test_it_runs_from_a_pipe(shell: list[str], release: Release, host: Host) -> 
 
 def run_generator(*args: str | Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [BASH, str(MAKE_INSTALL_SH), *map(str, args)],
+        [requires.tool("bash"), str(MAKE_INSTALL_SH), *map(str, args)],
         capture_output=True,
         text=True,
         timeout=SCRIPT_TIMEOUT_S,
@@ -1001,9 +997,8 @@ def test_the_template_has_no_bashisms(release: Release) -> None:
     """dash parses it (-n), and so does busybox."""
     script = release.make()
     for command in (["dash"], ["busybox", "sh"]):
-        if shutil.which(command[0]) is None:
-            continue
+        shell = [requires.tool(command[0]), *command[1:]]
         result = subprocess.run(
-            [*command, "-n", str(script)], capture_output=True, text=True, check=False
+            [*shell, "-n", str(script)], capture_output=True, text=True, check=False
         )
         assert result.returncode == 0, result.stderr

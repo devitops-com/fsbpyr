@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import random
-import shutil
 import signal
 import stat
 import struct
@@ -33,6 +32,7 @@ from fsbpyr.payload.reader import Executable
 from fsbpyr.payload.spec import Blob, File
 from fsbpyr.runtime.registry import Runtime
 
+from ..support import requires
 from ..support.apps import library
 from .conftest import BuildApp, app_content
 
@@ -77,25 +77,19 @@ def test_app_runs_stdlib_from_payload_and_returns_exit_code(build_app: BuildApp)
     ]
 
 
-def _setgid_group() -> int | None:
+def _setgid_group() -> int:
     """A group to give the app so that its egid differs from the caller's gid: nogroup for
     root, a supplementary group otherwise (only those can be set on a file)."""
     if os.geteuid() == 0:
         return grp.getgrnam("nogroup").gr_gid
-    others = [g for g in os.getgroups() if g != os.getegid()]
-    return others[0] if others else None
+    return requires.supplementary_group()
 
 
 def test_a_set_gid_start_is_refused(build_app: BuildApp) -> None:
     """The kernel sets AT_SECURE when the egid differs from the real gid (SEC-3)."""
     app = build_app(HELLO, "hello:main")
     group = _setgid_group()
-    if group is None:
-        pytest.skip("needs a supplementary group")
-    if os.statvfs(app).f_flag & os.ST_NOSUID:
-        pytest.skip("needs a mount that allows set-id bits, not nosuid")
-    if "NoNewPrivs:\t1" in Path("/proc/self/status").read_text():
-        pytest.skip("needs set-id bits, which no_new_privs disables")
+    requires.set_id_bits(app)
     os.chown(app, -1, group)
     app.chmod(app.stat().st_mode | stat.S_ISGID)
 
@@ -108,10 +102,7 @@ def test_a_set_gid_start_is_refused(build_app: BuildApp) -> None:
 def test_a_set_uid_start_by_the_owner_is_not_privileged(build_app: BuildApp) -> None:
     """AT_SECURE is set only when a start changes privileges; owner-run set-uid changes none."""
     app = build_app(HELLO, "hello:main")
-    if os.statvfs(app).f_flag & os.ST_NOSUID:
-        pytest.skip("needs a mount that allows set-id bits, not nosuid")
-    if "NoNewPrivs:\t1" in Path("/proc/self/status").read_text():
-        pytest.skip("needs set-id bits, which no_new_privs disables")
+    requires.set_id_bits(app)
     app.chmod(app.stat().st_mode | stat.S_ISUID)
     assert app.stat().st_mode & stat.S_ISUID
 
@@ -322,16 +313,13 @@ def test_selftest_of_a_package_entry_finds_its_main_without_running_it(
     assert without.returncode == 1 and "tool.__main__" in without.stderr
 
 
-STRACE = shutil.which("strace")
-
-
-@pytest.mark.skipif(STRACE is None, reason="strace not installed")
+@requires.tools("strace")
 def test_startup_never_touches_the_stdlib_on_disk(build_app: BuildApp, tmp_path: Path) -> None:
     app = build_app(HELLO, "hello:main")
     log = tmp_path / "trace.txt"
 
     subprocess.run(
-        [str(STRACE), "-f", "-o", log, "-e", "trace=%file,getdents64", app],
+        [requires.tool("strace"), "-f", "-o", log, "-e", "trace=%file,getdents64", app],
         check=True,
         capture_output=True,
     )

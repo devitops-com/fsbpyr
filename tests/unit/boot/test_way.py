@@ -6,7 +6,6 @@ tests/support/contract.py."""
 
 import errno
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -17,9 +16,9 @@ from fsbpyr.boot._fsbpyr_rt import gc
 from fsbpyr.boot._fsbpyr_rt.gc import EXPOSED, FOREIGN, Problem
 from fsbpyr.runtime import registry
 
+from ...support import requires
+
 SRC = Path(__file__).parents[3] / "src"
-UNSHARE, PODMAN = shutil.which("unshare"), shutil.which("podman")
-OTHER_GROUPS = [g for g in os.getgroups() if g != os.getegid()]
 
 
 @pytest.fixture
@@ -59,23 +58,27 @@ def test_a_directory_our_own_group_may_write_to_is_trusted(tmp_path: Path) -> No
     assert gc.way_problem(str(tmp_path / "shared" / "cache")) is None
 
 
-@pytest.mark.skipif(not OTHER_GROUPS, reason="needs a supplementary group")
 def test_a_directory_another_group_may_write_to_is_refused(tmp_path: Path) -> None:
+    group = requires.supplementary_group()
     shared = tmp_path / "shared"
     shared.mkdir()
     try:
-        os.chown(shared, -1, OTHER_GROUPS[0])
+        os.chown(shared, -1, group)
     except OSError as exc:  # a group no one inside a namespace maps to, say
-        pytest.skip(f"cannot give a directory to group {OTHER_GROUPS[0]}: {exc}")
+        requires.unmet(f"cannot give a directory to group {group}: {exc}",
+                       "run outside a user namespace, as a user who really belongs to that group")
     shared.chmod(0o775)  # as staff's /usr/local
 
     assert gc.way_problem(str(shared / "cache")) == Problem(str(shared), reason=EXPOSED)
 
 
-@pytest.mark.skipif(os.geteuid() == 0 or Path("/").stat().st_uid != 0, reason="needs root's /")
 def test_a_directory_of_another_user_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    requires.non_root("the case needs files that are ours")
+    if Path("/").stat().st_uid != 0:
+        requires.unmet("/ is not owned by root",
+                       "run on a host whose / belongs to root, not in a user namespace")
     ways = [p for p in (tmp_path, *tmp_path.parents) if p.stat().st_uid != 0]
     monkeypatch.setattr(os, "geteuid", lambda: 4242)  # what was ours is another user's now
 
@@ -161,41 +164,37 @@ def _in_a_namespace(command: list[str], path: Path | str) -> str:
     code = ("import sys; sys.path[:0] = [sys.argv[1]]\n"
             "from fsbpyr.boot._fsbpyr_rt.gc import way_problem\n"
             "print(way_problem(sys.argv[2]))")  # fmt: skip
-    if subprocess.run([*command, "true"], capture_output=True, check=False).returncode != 0:
-        pytest.skip(f"no such namespace here: {command}")
+    if command[1] == "unshare":
+        requires.rootless_podman()
+    else:
+        requires.user_namespaces()
     result = subprocess.run([*command, sys.executable, "-I", "-c", code, SRC, str(path)],
                             capture_output=True, text=True, check=False)  # fmt: skip
     assert result.returncode == 0, result.stderr
     return result.stdout.strip()
 
 
-def _roots_in_tmp() -> list[Path]:
-    """Root's own directories in /tmp (sticky: anyone may add one): .ICE-unix, say."""
-    return sorted(p for p in Path("/tmp").iterdir()  # noqa: S108  the case
-                  if p.is_dir() and not p.is_symlink() and p.stat().st_uid == 0)  # fmt: skip
-
-
-@pytest.mark.skipif(UNSHARE is None, reason="needs unshare")
+@requires.tools("unshare")
 def test_in_a_user_namespace_owners_outside_it_count_as_roots(tmp_path: Path) -> None:
     """There root's own directories ("/", "/tmp") show as nobody's: a sandbox's layout."""
-    assert _in_a_namespace([str(UNSHARE), "-r"], tmp_path / "cache") == "None"
+    assert _in_a_namespace([requires.tool("unshare"), "-r"], tmp_path / "cache") == "None"
 
 
-@pytest.mark.skipif(UNSHARE is None or not _roots_in_tmp(), reason="needs unshare, /tmp/.X")
+@requires.tools("unshare")
 def test_below_a_shared_directory_an_owner_outside_the_namespace_is_refused() -> None:
     """Anyone may add a directory to /tmp: below it, nobody's could be anyone's."""
-    shown = _roots_in_tmp()[0]
+    shown = requires.root_directory_in_tmp()  # sticky, anyone may add one: .ICE-unix, say
 
-    out = _in_a_namespace([str(UNSHARE), "-r"], shown / "cache")
+    out = _in_a_namespace([requires.tool("unshare"), "-r"], shown / "cache")
 
     assert out == repr(Problem(str(shown), reason=FOREIGN))
 
 
-@pytest.mark.skipif(PODMAN is None, reason="needs podman")
+@requires.tools("podman")
 def test_where_the_overflow_uid_is_mapped_nobody_is_another_user(tmp_path: Path) -> None:
     """podman unshare maps 65536 uids, 65534 among them: a real nobody may own what shows as
     such, "/" included."""
-    out = _in_a_namespace([str(PODMAN), "unshare"], tmp_path / "cache")
+    out = _in_a_namespace([requires.tool("podman"), "unshare"], tmp_path / "cache")
 
     assert out == repr(Problem("/", reason=FOREIGN))
 

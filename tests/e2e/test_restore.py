@@ -151,12 +151,11 @@ def test_every_file_is_written_whole(
     assert _whole(root, files) == []
 
 
-@pytest.mark.skipif(CORES < 2, reason="one usable core: no helper")
 def test_small_files_are_written_on_the_helpers_too(restored: tuple[Path, dict[str, str]]) -> None:
     _, lines = restored
     writers = {lines[f"f{i:04}.txt"].split()[0] for i in range(SMALL)}
 
-    assert writers == {"caller", "helper"}
+    assert writers == ({"caller", "helper"} if CORES >= 2 else {"caller"})  # one core: no helper
 
 
 def test_files_over_a_piece_or_in_xz_are_written_by_the_caller(
@@ -171,10 +170,9 @@ def test_new_files_are_linked_into_place_and_nothing_is_left_behind(
     restored: tuple[Path, dict[str, str]], files: dict[str, tuple[File, bytes]]
 ) -> None:
     root, lines = restored
-    if not _links_unnamed_files(root):
-        pytest.skip("no O_TMPFILE or links on this file system")
+    how = "link" if _links_unnamed_files(root) else "rename"  # the file system's: see _links_...
 
-    assert {lines[path.rpartition("/")[2]].split()[1] for path in files} == {"link"}
+    assert {lines[path.rpartition("/")[2]].split()[1] for path in files} == {how}
     assert os.listdir(root / "runtime" / "g" / ".scratch") == []
 
 

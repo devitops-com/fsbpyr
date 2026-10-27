@@ -31,11 +31,6 @@ AUTHKEY = sys.version_info >= (3, 14)  # 3.14's forkserver and later authenticat
 ON_ERROR = sys.version_info >= (3, 15)  # 3.15's sends on_error when the preload names one
 
 
-# Under user-mode QEMU (the development host's basic aarch64 checks) /proc/<pid>/exe names the
-# emulator for every process, so every parent "runs the same executable".
-EMULATED = os.stat("/proc/self/exe").st_ino != os.stat(sys.executable).st_ino
-
-
 @pytest.fixture(scope="module")
 def mp() -> ModuleType:
     spec = importlib.util.spec_from_file_location("_fsbpyr_rt_mp", MP_SOURCE)
@@ -237,10 +232,11 @@ def test_run_child_calls_the_function_with_cpythons_argv(
     assert mp.run_child([EXE, "--help"]) is False
 
 
-@pytest.mark.skipif(EMULATED, reason="/proc/<pid>/exe is the emulator's under user-mode QEMU")
 def test_children_of_any_other_program_are_refused(
     mp: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Fails by design under user-mode QEMU: /proc/<pid>/exe names the emulator for every
+    process, so every parent "runs the same executable" (CONTRIBUTING.md)."""
     argv = [EXE, "-c", "from multiprocessing.resource_tracker import main;main(6)"]
     other = subprocess.Popen(["/bin/sleep", "60"])  # ours, our ids: only the program differs
     # not pytest's own parent: under pytest-xdist that is pytest, this executable

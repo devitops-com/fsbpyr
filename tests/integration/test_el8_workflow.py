@@ -7,7 +7,6 @@ against a fake `gh`."""
 import fnmatch
 import os
 import re
-import shutil
 import subprocess
 import textwrap
 from pathlib import Path
@@ -16,6 +15,8 @@ import pytest
 
 from fsbpyr.bytecode import SUPPORTED_PYTHON
 from fsbpyr.vcs import release_stub_asset, release_stub_sums
+
+from ..support import requires
 
 ROOT = Path(__file__).parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -322,7 +323,7 @@ class Publish:
                        "GH_REPO": "devitops-com/fsbpyr", "GITHUB_SHA": "a" * 40,
                        "GITHUB_OUTPUT": str(self.root / "out"), "RUNNER_TEMP": str(self.root),
                        **env}  # fmt: skip
-        bash = shutil.which("bash") or "bash"
+        bash = requires.tool("bash")
         return subprocess.run([bash, "-e", "-c", step_script(step)], cwd=self.root, env=environment,
                               capture_output=True, text=True, check=False)  # fmt: skip
 

@@ -2,7 +2,6 @@
 
 import importlib.resources
 import re
-import shutil
 import struct
 import subprocess
 from pathlib import Path
@@ -10,6 +9,8 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.payload import format as fmt
+
+from ..support import requires
 
 PROBE = r"""
 #include <stdio.h>
@@ -47,9 +48,7 @@ int main(void) {
 
 @pytest.fixture(scope="module")
 def probe(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[int, ...]]:
-    compiler = shutil.which("cc")
-    if compiler is None:
-        pytest.skip("no C compiler")
+    compiler = requires.tool("cc")
     work = tmp_path_factory.mktemp("probe")
     (work / "probe.c").write_text(PROBE)
     header = importlib.resources.files("fsbpyr.launcher").joinpath("format.h").read_bytes()

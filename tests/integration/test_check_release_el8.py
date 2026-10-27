@@ -6,13 +6,14 @@ verify helpers."""
 import hashlib
 import lzma
 import re
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from fsbpyr.vcs import release_stub_asset, release_stub_sums
+
+from ..support import requires
 
 ROOT = Path(__file__).parents[2]
 SCRIPT = (ROOT / "tools" / "release" / "check-release.sh").read_text(encoding="utf-8")
@@ -95,7 +96,7 @@ class Check:
         environment = {"PATH": "/usr/bin:/bin", "FAKE_FLAGS": self.flags, "STUB": STUB.decode(),
                        "FAKE_ASSETS": " ".join(assets), "FAKE_DIR": str(self.files),
                        "ASSET": ASSET, **env}  # fmt: skip
-        bash = shutil.which("bash") or "bash"
+        bash = requires.tool("bash")
         return subprocess.run([bash, "-c", script], cwd=self.root, env=environment,
                               capture_output=True, text=True, check=False)  # fmt: skip
 

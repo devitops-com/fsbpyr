@@ -37,9 +37,9 @@ WORKDIR /src
 
 # The full test suite's environment (`make test-container`): the build stage plus what
 # tools/test-setup.sh adds, with uv's Pythons in the home of `tester`, whom the suite runs as.
-# No podman here: the tests that need one skip (CONTRIBUTING.md). The project environment is
-# the checkout's own .venv, as the tests expect: the build stage's /opt/venv is unset, since
-# uv runs the tests start for their fixture projects would otherwise sync into it.
+# No podman here: the tests that need one are left out with `-m "not podman"`. The project
+# environment is the checkout's own .venv, as the tests expect: the build stage's /opt/venv is
+# unset, since uv runs the tests start for their fixture projects would otherwise sync into it.
 FROM build AS test
 COPY tools/test-setup.sh /usr/local/sbin/test-setup.sh
 RUN bash /usr/local/sbin/test-setup.sh \

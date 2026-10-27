@@ -9,7 +9,6 @@ success rate.
 """
 
 import os
-import platform
 import tomllib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -94,19 +93,17 @@ def gaps(app: str, python: str, machine: str) -> list[str]:
 
 
 def unlisted_gaps(app: str, python: str, machine: str) -> list[str]:
-    """``gaps`` if no-wheels.txt lists none of them: the app would be skipped there for no
-    reason written down (none, or the lock needs looking at). One listed gap explains the
-    skip; the others need no line (an older pin in that app's lock, say)."""
+    """``gaps`` if no-wheels.txt lists none of them: the app would not run there for no reason
+    written down (none, or the lock needs looking at). One listed gap explains it; the others
+    need no line (an older pin in that app's lock, say)."""
     found = gaps(app, python, machine)
     return [] if any(wheels.missing(package, python) for package in found) else found
 
 
-def skip_without_wheels(app: str, python: str) -> None:
-    """Skips the test when a package ``app``'s lock installs here has no wheel for ``python``
-    (X.Y) on this machine, as no-wheels.txt says."""
-    machine = platform.machine()
-    if found := gaps(app, python, machine):
-        pytest.skip(f"{wheels.REASON} {python} on {machine}: {', '.join(found)}")
+def runnable(python: str, machine: str) -> list[str]:
+    """``selected()`` but the apps whose lock installs a package without a wheel for ``python``
+    (X.Y) on ``machine``, as no-wheels.txt says: those are not run there."""
+    return [app for app in selected() if not gaps(app, python, machine)]
 
 
 @dataclass

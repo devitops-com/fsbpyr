@@ -19,6 +19,7 @@ from fsbpyr.elf import (
 from fsbpyr.natives import NativeError, closures, is_extension_module
 from fsbpyr.targets import EM_AARCH64, EM_X86_64, host_target
 
+from ...support import requires
 from ...support.elf import DT_NEEDED, make_elf
 
 FOREIGN_MACHINE = EM_AARCH64 if host_target().elf_machine == EM_X86_64 else EM_X86_64
@@ -88,12 +89,13 @@ def test_objects_without_dynamic_section_have_no_dependencies() -> None:
 
 
 def test_real_host_library_parses() -> None:
+    requires.glibc_host()
     host = host_target()
-    libc = Path(f"/lib/{host.multiarch}/libc.so.6")
-    if host.libc != "glibc" or not libc.exists():
-        pytest.skip("no glibc at the Debian path")
+    mapped = [line.split()[-1] for line in Path("/proc/self/maps").read_text().splitlines()
+              if line.endswith("/libc.so.6")]  # wherever the distribution keeps it
+    assert mapped, "no libc.so.6 is mapped into this process"
 
-    info = dynamic_info(libc.read_bytes())
+    info = dynamic_info(Path(mapped[0]).read_bytes())
 
     assert info.soname == "libc.so.6" and host.loader in info.needed
 
@@ -361,9 +363,7 @@ def test_required_symbol_versions_are_read() -> None:
 
 
 def test_host_binaries_report_their_glibc_requirement() -> None:
-    ls = Path("/bin/ls")
-    if not ls.exists():
-        pytest.skip("no /bin/ls")
+    ls = Path(requires.tool("ls")).resolve()
 
     requirement = glibc_requirement(ls.read_bytes())
 

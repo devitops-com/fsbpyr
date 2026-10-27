@@ -301,7 +301,8 @@ jobs:
   # for every Python) in the suite job's setup of full-suite.yml
   # (privileged container, the user `tester`, /var/tmp a tmpfs), minus podman and the coverage
   # and fuzzing: the tests link the glibc 2.28 runtime themselves, with the same recipe as the
-  # stub job. FSBPYR_TESTS_REQUIRE_ALL=el8: no skip is expected but podman's (tests/conftest.py).
+  # stub job. Nothing skips: the Makefile leaves out the tests that need podman (-m "not podman"),
+  # which this container lacks.
   tests:
     name: tests (${{ matrix.target }}, Python ${{ matrix.python }})
     needs: plan
@@ -375,7 +376,7 @@ jobs:
       # make fetches clang/lld 23 and builds the runtimes itself. TESTTMP=/var/tmp: the tmpfs.
       - name: make test-el8-stub
         run: |
-          as-tester FSBPYR_UV_VERSION="$FSBPYR_UV_VERSION" FSBPYR_TESTS_REQUIRE_ALL=el8 JOBS=4 \
+          as-tester FSBPYR_UV_VERSION="$FSBPYR_UV_VERSION" JOBS=4 \
             TESTTMP=/var/tmp PYTEST_ADDOPTS="--durations=30" make test-el8-stub $MAKE_ARGS
 
   # The portability matrix with apps built for glibc 2.28. On the runner host, as full-suite.yml's
@@ -451,11 +452,9 @@ jobs:
           uv python install "$(cat .python-version)" "$MATRIX_PYTHON"
           tools/portability-apps.sh "dist/$ASSET" "$RUNNER_TEMP/apps" "$MATRIX_PYTHON" 2.28
 
-      # FSBPYR_TESTS_REQUIRE_ALL=portability: no skip is expected.
       - name: The portability tests
         run: |
           FSBPYR_TEST_GLIBC=2.28 FSBPYR_PORTABILITY_APPS="$RUNNER_TEMP/apps" \
-            FSBPYR_TESTS_REQUIRE_ALL=portability \
             uv run --locked pytest tests/e2e/test_portability.py -rf --tb=short \
               --junitxml=portability.xml
 
@@ -533,12 +532,12 @@ jobs:
             as-tester uv python install "$MATRIX_PYTHON"
           fi
 
-      # FSBPYR_TESTS_REQUIRE_ALL=full: an app may only be skipped for a package without a wheel
-      # on this Python and machine (at manylinux_2_28 in this mode).
+      # An app whose lock needs a package without a wheel on this Python and machine (at
+      # manylinux_2_28 in this mode) is not part of the run.
       - name: make test-corpus (glibc 2.28)
         run: |
           as-tester FSBPYR_TEST_GLIBC=2.28 FSBPYR_CORPUS_APPS="$CORPUS_APPS" \
-            FSBPYR_TESTS_REQUIRE_ALL=full JOBS=4 \
+            JOBS=4 \
             PYTEST_ADDOPTS="--durations=30 --junitxml=corpus.xml" make test-corpus $MAKE_ARGS
 
       - name: Upload the report

@@ -5,7 +5,6 @@ import base64
 import csv
 import hashlib
 import io
-import shutil
 import subprocess
 import zipfile
 from collections.abc import Mapping
@@ -32,6 +31,8 @@ from fsbpyr.staging import (
     _write_loose_wheel,
     staging_plan,
 )
+
+from ...support import requires
 
 HEAD = '[project]\nname = "My_Tool"\nversion = "1.2"\nrequires-python = ">=3.12"\n'
 GUARD = 'if __name__ == "__main__":\n    print("hi")\n'
@@ -176,7 +177,7 @@ def test_a_directory_with_no_python_file_has_nothing_to_package(tmp_path: Path) 
         Package.load(_tree(tmp_path))
 
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+@requires.tools("git")
 def test_in_a_git_work_tree_the_files_are_the_tracked_ones_and_untracked_ones_are_reported(
     tmp_path: Path,
 ) -> None:

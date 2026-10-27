@@ -2256,10 +2256,9 @@ build with its checks (`build.yml`), then, for every Python (3.12 to 3.15) and b
 test but the portability ones as an unprivileged user in a Debian trixie container (also
 `make check`, the coverage gates, 90% for `payload/` plus `elf.py`), and the portability tests
 (12 images) on the runner host (`make test-portability` locally). `release.yml` tests nothing: a
-release needs a green full-suite run for the commit it tags. Tests that need the kernel to
-refuse access skip as root, and a skip that the `FSBPYR_TESTS_REQUIRE_ALL` list in
-`tests/conftest.py` (`full` for the full suite, which expects none) does not expect fails the
-run.
+release needs a green full-suite run for the commit it tags. Nothing in the suite skips: a
+test whose tool or environment is missing fails, naming it (`tests/support/requires.py`;
+CONTRIBUTING.md, "Running the tests"), and a skip by any other means fails the run.
 
 - **Unit (pytest):**
   - format and writer/reader

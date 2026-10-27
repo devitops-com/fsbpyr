@@ -5,7 +5,6 @@ cached runtime; the dependencies are local directories, so no network."""
 import io
 import json
 import os
-import shutil
 import stat
 import subprocess
 import sys
@@ -18,7 +17,7 @@ import pytest
 from fsbpyr.cli import main
 from fsbpyr.runtime.registry import Runtime
 
-from ..support import contain
+from ..support import contain, requires
 
 pytestmark = pytest.mark.slow
 
@@ -393,7 +392,6 @@ def test_the_pep_723_blocks_of_the_commands_give_the_dependencies(
 
 # --- the venv rung ---------------------------------------------------------------------------
 
-UV = shutil.which("uv")
 SHOW = ("from markdown_it import MarkdownIt\n\nif __name__ == '__main__':\n"
         "    print('show', MarkdownIt().render('*x*').strip())\n")
 
@@ -401,11 +399,11 @@ SHOW = ("from markdown_it import MarkdownIt\n\nif __name__ == '__main__':\n"
 def _venv(path: Path, *requirements: str) -> dict[str, str]:
     """A venv at ``path`` with ``requirements`` installed from uv's cache; the version of each
     installed distribution by canonical name."""
-    assert UV is not None
-    subprocess.run([UV, "venv", "--quiet", "--python", sys.executable, str(path)], check=True)
-    subprocess.run([UV, "pip", "install", "--offline", "--quiet", "--python",
+    uv = requires.tool("uv")
+    subprocess.run([uv, "venv", "--quiet", "--python", sys.executable, str(path)], check=True)
+    subprocess.run([uv, "pip", "install", "--offline", "--quiet", "--python",
                     str(path / "bin" / "python"), *requirements], check=True)  # fmt: skip
-    listed = subprocess.run([UV, "pip", "list", "--format", "json", "--python",
+    listed = subprocess.run([uv, "pip", "list", "--format", "json", "--python",
                              str(path / "bin" / "python")], check=True, capture_output=True,
                             text=True).stdout  # fmt: skip
     return {item["name"]: item["version"] for item in json.loads(listed)}
@@ -418,7 +416,7 @@ def _inspect(executable: Path, capsys: pytest.CaptureFixture[str]) -> dict[str, 
     return report
 
 
-needs_uv = pytest.mark.skipif(UV is None, reason="needs uv")
+needs_uv = requires.tools("uv")
 
 
 @needs_uv

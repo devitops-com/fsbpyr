@@ -1,11 +1,10 @@
 # The packages that publish no wheel yet for a Python fsbpyr supports, or none for its
 # manylinux_2_34 baseline, or (charset-normalizer 3.4.7, which the compat fixture pins) only a
 # pure-Python one where the test needs the compiled module (owner, 2026-10-23): on that Python,
-# what needs one is skipped (tests/support/wheels.py, tools/portability-apps.sh) and
-# tests/conftest.py expects the skip. A line: a Python's X.Y, then packages (several lines may
-# name one Python); a package goes when its wheels arrive (pyyaml and orjson: with their
-# markers in the compat fixture).
-# A corpus app is skipped where its lock installs a listed package (tests/corpus/README.md).
+# what needs one is not run (tests/support/wheels.py, tools/portability-apps.sh). A line: a
+# Python's X.Y, then packages (several lines may name one Python); a package goes when its
+# wheels arrive (pyyaml and orjson: with their markers in the compat fixture).
+# A corpus app is not run where its lock installs a listed package (tests/corpus/README.md).
 3.14 tensorflow
 3.15 onnxruntime pyyaml orjson gnureadline charset-normalizer cvxpy osqp highspy h5py
 3.15 tensorstore spacy sentencepiece openmm ortools qutip scikit-image numcodecs tensorflow

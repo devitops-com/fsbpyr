@@ -4,7 +4,9 @@ Needs podman with the images below (pulled on first use) and the cached runtime.
 FSBPYR_PORTABILITY_APPS names a directory with the four built apps (tools/portability-apps.sh,
 `make test-portability`), they are used as they are and no runtime is needed. On a Python that
 onnxruntime has no wheel for (tests/support/no-wheels.txt), heavy and heavy-pip are not built
-and what runs them is skipped; so are the compat checks of packages without a wheel.
+and what runs them is not run; the compat checks of packages without a wheel are not run either.
+The glibc 2.28 apps are tested where they can be: not in the EL8 test mode, whose matrix runs
+every app on the EL8 images, and not when a prebuilt set has none.
 """
 
 import json
@@ -24,17 +26,14 @@ from fsbpyr.payload.format import NATIVE_KINDS
 from fsbpyr.payload.reader import Executable
 from fsbpyr.project import LockSource
 
-from ..support import baseline, wheels
+from ..support import baseline, requires, wheels
 from ..support.images import EL8_IMAGES, images_for
 from ..support.stderr import NO_HOSTNAME, ONNX_HOST
 from .test_compat import MATRIX
 from .test_el8 import HELLO_OUTPUT, NATIVE_OUTPUT, native_project
 from .test_natives import EXPECTED as HEAVY
 
-PODMAN = shutil.which("podman")
-UV = shutil.which("uv")
-OBJDUMP = shutil.which("llvm-objdump-22") or shutil.which("llvm-objdump")
-pytestmark = [pytest.mark.slow, pytest.mark.skipif(PODMAN is None, reason="needs podman")]
+pytestmark = [pytest.mark.slow, requires.tools("podman")]
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "projects"
 # x86-64: all 12; aarch64: those with an arm64 variant; the EL8 test mode adds the EL8 images
@@ -82,8 +81,8 @@ def apps(tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureReques
         return directory
     pip_project = directory / "src" / "heavy-pip"  # maintained with pip: hash-pinned, no uv.lock
     shutil.copytree(FIXTURES / "heavy", pip_project)
-    subprocess.run([UV or "uv", "export", "--quiet", "--frozen", "--no-dev", "--no-emit-project",
-                    "--format", "requirements-txt", "-o", "requirements.txt"],
+    subprocess.run([requires.tool("uv"), "export", "--quiet", "--frozen", "--no-dev",
+                    "--no-emit-project", "--format", "requirements-txt", "-o", "requirements.txt"],
                    cwd=pip_project, check=True)  # fmt: skip
     (pip_project / "uv.lock").unlink()
     assert main(["build", str(pip_project), "-o", str(directory / "heavy-pip")]) == 0
@@ -101,7 +100,7 @@ def test_apps_run_on_older_distributions(apps: Path, image: str) -> None:
         for binary, args in COMMANDS
     )
     result = subprocess.run(
-        [PODMAN or "podman", "run", "--rm", "--network=none", "-v", f"{apps}:/apps:ro,Z",
+        [requires.tool("podman"), "run", "--rm", "--network=none", "-v", f"{apps}:/apps:ro,Z",
          image, "sh", "-c", script],
         capture_output=True, text=True, timeout=900, check=False,
     )  # fmt: skip
@@ -119,24 +118,24 @@ def test_apps_run_on_older_distributions(apps: Path, image: str) -> None:
 
 def _podman(apps: Path, image: str, script: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [PODMAN or "podman", "run", "--rm", "--network=none", "-v", f"{apps}:/apps:ro,Z",
+        [requires.tool("podman"), "run", "--rm", "--network=none", "-v", f"{apps}:/apps:ro,Z",
          image, "sh", "-c", script],
         capture_output=True, text=True, timeout=900, check=False,
     )  # fmt: skip
 
 
+@wheels.needs("onnxruntime", python=APPS_PYTHON)
 @pytest.mark.parametrize("image", IMAGES)
 def test_selftest_natives_passes_on_older_distributions(apps: Path, image: str) -> None:
     """NAT-4: every extension of heavy finds its libraries and versions on each image."""
-    wheels.skip_without("onnxruntime", APPS_PYTHON)
     result = _podman(apps, image, "FSBPYR_CACHE_DIR=/tmp/cache FSBPYR_SELFTEST=natives /apps/heavy")
 
     assert result.returncode == 0, f"{image}: {result.stdout}{result.stderr}"
     assert "all natives load" in result.stdout
 
 
+@wheels.needs("onnxruntime", python=APPS_PYTHON)
 def test_selftest_natives_names_a_library_the_machine_lacks(apps: Path) -> None:
-    wheels.skip_without("onnxruntime", APPS_PYTHON)
     script = ("rm -f /usr/lib/*-linux-gnu/libstdc++.so.6* /lib/*-linux-gnu/libstdc++.so.6*; "
               "FSBPYR_CACHE_DIR=/tmp/cache FSBPYR_SELFTEST=natives /apps/heavy")  # fmt: skip
     result = _podman(apps, "docker.io/library/debian:12", script)  # the layout the rm names
@@ -147,7 +146,7 @@ def test_selftest_natives_names_a_library_the_machine_lacks(apps: Path) -> None:
 
 def _objdump_glibc(data: bytes, scratch: Path) -> tuple[int, int] | None:
     scratch.write_bytes(data)
-    listing = subprocess.run([OBJDUMP or "llvm-objdump", "-T", str(scratch)],
+    listing = subprocess.run([requires.tool("llvm-objdump"), "-T", str(scratch)],
                              capture_output=True, text=True, check=True).stdout  # fmt: skip
     return max(((int(a), int(b)) for a, b in _GLIBC.findall(listing)), default=None)
 
@@ -155,7 +154,7 @@ def _objdump_glibc(data: bytes, scratch: Path) -> tuple[int, int] | None:
 def _objdump_versions(data: bytes, scratch: Path) -> dict[str, dict[str, str]]:
     """The newest numeric symbol version per library and namespace, as objdump lists them."""
     scratch.write_bytes(data)
-    listing = subprocess.run([OBJDUMP or "llvm-objdump", "-p", str(scratch)],
+    listing = subprocess.run([requires.tool("llvm-objdump"), "-p", str(scratch)],
                              capture_output=True, text=True, check=True).stdout  # fmt: skip
     found: dict[str, dict[str, tuple[int, ...]]] = {}
     library = ""
@@ -170,13 +169,11 @@ def _objdump_versions(data: bytes, scratch: Path) -> dict[str, dict[str, str]]:
             for lib, table in sorted(found.items())}  # fmt: skip
 
 
-@pytest.mark.skipif(OBJDUMP is None, reason="needs llvm-objdump")
-@pytest.mark.parametrize("name", ["hello", "heavy", "heavy-pip", "compat"])
+@requires.tools("llvm-objdump")
+@pytest.mark.parametrize("name", ["hello", *HEAVY_APPS, "compat"])
 def test_reported_system_libraries_match_the_binary(apps: Path, tmp_path: Path, name: str) -> None:
     """Every library and version namespace the build reports is one the objects need, with the
     newest version among them; hello needs nothing beyond glibc's libraries."""
-    if name.startswith("heavy"):
-        wheels.skip_without("onnxruntime", APPS_PYTHON)
     with Executable.open(apps / name) as executable:
         payload = executable.payload
         reported = json.loads(payload.build_info)["system"]["libraries"]
@@ -202,13 +199,11 @@ def test_reported_system_libraries_match_the_binary(apps: Path, tmp_path: Path, 
         assert {"libstdc++.so.6", "libgcc_s.so.1"} <= set(reported)
 
 
-@pytest.mark.skipif(OBJDUMP is None, reason="needs llvm-objdump")
-@pytest.mark.parametrize("name", ["hello", "heavy", "heavy-pip", "compat"])
+@requires.tools("llvm-objdump")
+@pytest.mark.parametrize("name", ["hello", *HEAVY_APPS, "compat"])
 def test_reported_glibc_requirement_matches_the_binary(
     apps: Path, tmp_path: Path, name: str
 ) -> None:
-    if name.startswith("heavy"):
-        wheels.skip_without("onnxruntime", APPS_PYTHON)
     with Executable.open(apps / name) as executable:
         payload = executable.payload
         reported = json.loads(payload.build_info)["glibc"]
@@ -223,40 +218,41 @@ def test_reported_glibc_requirement_matches_the_binary(
     assert highest <= baseline.as_tuple(baseline.BASELINE)  # what these distributions provide
 
 
-@pytest.fixture(scope="module")
-def el8_apps(tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest) -> Path:
-    """`hello` and an app with a manylinux_2_28 wheel, built with --glibc 2.28 (D46): from a
-    prebuilt set that has them, else here, with the EL8 runtime. A release's glibc 2.28 stubs
-    are assets of their own, so the prebuilt set of a run on a release executable may lack them.
-    In the EL8 test mode all the apps are glibc 2.28 ones and the matrix runs them on the EL8
-    images, so there is nothing to add."""
-    if baseline.EL8:
-        pytest.skip("no glibc 2.28 apps of their own: this mode's matrix runs them on EL8")
-    if prebuilt := os.environ.get("FSBPYR_PORTABILITY_APPS"):
-        if not (Path(prebuilt) / "hello-el8").is_file():
-            pytest.skip("no glibc 2.28 apps in FSBPYR_PORTABILITY_APPS")
-        return Path(prebuilt)
-    request.getfixturevalue("el8_runtime")
-    directory = tmp_path_factory.mktemp("el8-apps")
-    hello = directory / "src" / "hello"
-    shutil.copytree(FIXTURES / "hello", hello)
-    options = ["--glibc", "2.28"]
-    assert main(["build", str(hello), "-o", str(directory / "hello-el8"), *options]) == 0
-    project = native_project(tmp_path_factory)
-    assert main(["build", str(project), "-o", str(directory / "native-el8"), *options]) == 0
-    return directory
+def _el8_apps_wanted() -> bool:
+    """Whether the glibc 2.28 apps are tested: not in the EL8 test mode, whose matrix runs all the
+    apps on the EL8 images, and not when a prebuilt set has none (a release's glibc 2.28 stubs
+    are assets of their own, so the set of a run on a release executable may lack them)."""
+    prebuilt = os.environ.get("FSBPYR_PORTABILITY_APPS")
+    return not baseline.EL8 and (not prebuilt or (Path(prebuilt) / "hello-el8").is_file())
 
 
-@pytest.mark.parametrize("image", EL8_IMAGES)
-def test_el8_apps_run_on_el8(el8_apps: Path, image: str) -> None:
-    script = ("export FSBPYR_CACHE_DIR=/tmp/cache; /apps/hello-el8 5 x 2>&1; echo \"rc=$?\"; "
-              "/apps/native-el8 2>&1; echo \"rc=$?\"")  # fmt: skip
+if _el8_apps_wanted():
+    @pytest.fixture(scope="module")
+    def el8_apps(tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest) -> Path:
+        """`hello` and an app with a manylinux_2_28 wheel, built with --glibc 2.28 (D46): from a
+        prebuilt set that has them, else here, with the EL8 runtime."""
+        if prebuilt := os.environ.get("FSBPYR_PORTABILITY_APPS"):
+            return Path(prebuilt)
+        request.getfixturevalue("el8_runtime")
+        directory = tmp_path_factory.mktemp("el8-apps")
+        hello = directory / "src" / "hello"
+        shutil.copytree(FIXTURES / "hello", hello)
+        options = ["--glibc", "2.28"]
+        assert main(["build", str(hello), "-o", str(directory / "hello-el8"), *options]) == 0
+        project = native_project(tmp_path_factory)
+        assert main(["build", str(project), "-o", str(directory / "native-el8"), *options]) == 0
+        return directory
 
-    result = subprocess.run(
-        [PODMAN or "podman", "run", "--rm", "--network=none", "--pids-limit", "512", "--memory",
-         "4g", "-v", f"{el8_apps}:/apps:ro,Z", image, "sh", "-c", script],
-        capture_output=True, text=True, timeout=900, check=False,
-    )  # fmt: skip
+    @pytest.mark.parametrize("image", EL8_IMAGES)
+    def test_el8_apps_run_on_el8(el8_apps: Path, image: str) -> None:
+        script = ("export FSBPYR_CACHE_DIR=/tmp/cache; /apps/hello-el8 5 x 2>&1; echo \"rc=$?\"; "
+                  "/apps/native-el8 2>&1; echo \"rc=$?\"")  # fmt: skip
 
-    assert result.stdout.splitlines() == [HELLO_OUTPUT, "rc=5", NATIVE_OUTPUT, "rc=0"], (
-        image, result.stdout, result.stderr)
+        result = subprocess.run(
+            [requires.tool("podman"), "run", "--rm", "--network=none", "--pids-limit", "512",
+             "--memory", "4g", "-v", f"{el8_apps}:/apps:ro,Z", image, "sh", "-c", script],
+            capture_output=True, text=True, timeout=900, check=False,
+        )  # fmt: skip
+
+        assert result.stdout.splitlines() == [HELLO_OUTPUT, "rc=5", NATIVE_OUTPUT, "rc=0"], (
+            image, result.stdout, result.stderr)

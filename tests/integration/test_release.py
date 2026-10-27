@@ -26,6 +26,8 @@ from packaging.requirements import Requirement
 
 from fsbpyr.bytecode import SUPPORTED_PYTHON
 
+from ..support import requires
+
 ROOT = Path(__file__).parents[2]
 VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
 SYSTEM_PATH = "/usr/bin:/bin"
@@ -1215,28 +1217,28 @@ def test_the_full_suite_runs_on_main_and_weekly_once_per_python_version() -> Non
     assert "options: --privileged" in workflow and "timeout-minutes: 60" in workflow
     assert "--ignore=tests/e2e/test_portability.py" in workflow
     assert "--ignore=tests/e2e/test_corpus.py" in workflow  # the corpus job's
-    assert "FSBPYR_TESTS_REQUIRE_ALL=full" in workflow
+    assert "FSBPYR_TESTS_REQUIRE_ALL" not in workflow  # nothing is skipped, so nothing is allowed
     assert 'git diff --quiet "$last" HEAD -- src/fsbpyr/launcher tests/fuzz' in workflow
 
 
-def test_the_corpus_job_runs_make_test_corpus_with_nothing_skipped_by_surprise() -> None:
+def test_the_corpus_job_runs_make_test_corpus() -> None:
     workflow = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
     job = workflow.split("\n  corpus:\n")[1].split("\n  portability:\n")[0]
 
     assert "make test-corpus $MAKE_ARGS" in job
-    assert "FSBPYR_TESTS_REQUIRE_ALL=full" in job
+    assert "FSBPYR_TESTS_REQUIRE_ALL" not in job
     assert "--junitxml=corpus.xml" in job
     assert "tmpfs" not in job  # big apps: temporary files on disk
 
 
-def test_the_portability_job_runs_on_the_host_after_the_suite_with_nothing_skipped() -> None:
+def test_the_portability_job_runs_on_the_host_after_the_suite() -> None:
     workflow = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
     job = workflow.split("\n  portability:\n")[1]
 
     assert "needs: suite" in job and "runs-on: ${{ matrix.runner }}" in job
     assert "container:" not in job
     assert "tools/portability-apps.sh dist/fsbpyr$SUFFIX" in job
-    assert "FSBPYR_TESTS_REQUIRE_ALL=portability" in job
+    assert "FSBPYR_TESTS_REQUIRE_ALL" not in job
     assert "FSBPYR_PORTABILITY_APPS=" in job and "--junitxml=portability.xml" in job
     assert "podman login docker.io" in job
 
@@ -1557,9 +1559,7 @@ LLVM23_NAME = f"LLVM-23.1.3-Linux-{'ARM64' if platform.machine() == 'aarch64' el
 def _llvm23_repo(tmp_path: Path, *, sha256: str | None = None) -> tuple[Path, Path, dict[str, str]]:
     """A copy of tools/ whose pin names a small tarball laid out like LLVM's, the tarball, and
     an environment with a cache under tmp_path and a fake uv that logs its calls."""
-    zstd, tar = shutil.which("zstd"), shutil.which("tar")
-    if zstd is None or tar is None:
-        pytest.skip("zstd is not installed")
+    zstd, tar = requires.tool("zstd"), requires.tool("tar")
     root = tmp_path / "repo"
     shutil.copytree(ROOT / "tools", root / "tools", ignore=shutil.ignore_patterns("__pycache__"))
     (root / ".python-version").write_text("3.14\n", encoding="utf-8")
@@ -1693,9 +1693,7 @@ def test_bootstrap_python_takes_a_minor_version(tmp_path: Path) -> None:
 
 
 def test_make_runs_on_the_python_given_on_its_command_line_only() -> None:
-    make = shutil.which("make")
-    if make is None:
-        pytest.skip("make is not installed")
+    make = requires.tool("make")
     env = {"PATH": SYSTEM_PATH, "HOME": "/nonexistent"}
 
     def dry_run(*arguments: str, **extra: str) -> str:
@@ -1806,7 +1804,7 @@ def test_the_release_xz_uses_the_filter_of_the_targets_architecture(
     write_program(tmp_path / "bin" / "xz", 'echo "$*" >> "$XZ_LOG"\n')
     env = {"PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin", "TARGET": target, "SUFFIX": "-3.12",
            "XZ_LOG": str(tmp_path / "xz.log")}
-    dash = shutil.which("dash") or shutil.which("sh") or "sh"
+    dash = requires.tool("dash")
 
     done = subprocess.run([dash, "-e", "-c", textwrap.dedent(step.group(1))], cwd=tmp_path,
                           env=env, capture_output=True, text=True, check=False)
@@ -1866,7 +1864,7 @@ def test_install_uv_fetches_the_tarball_of_the_machines_architecture_and_checks_
     other = "0" * 64
     script = installer_copy(tmp_path, "9.9.9", *((digest, other) if arch == "x86_64"
                                                   else (other, digest)))
-    dash = shutil.which("dash") or shutil.which("sh") or "sh"
+    dash = requires.tool("dash")
 
     done = run_script([dash, str(script), str(tmp_path / "out" / "bin")], env)
 
@@ -1886,7 +1884,7 @@ def test_install_uv_refuses_a_tarball_that_does_not_match_the_digest_of_its_arch
     # the other architecture's digest is the right one for the tarball: the wrong column fails
     script = installer_copy(tmp_path, "9.9.9", *(("1" * 64, digest) if arch == "x86_64"
                                                   else (digest, "1" * 64)))
-    dash = shutil.which("dash") or shutil.which("sh") or "sh"
+    dash = requires.tool("dash")
 
     done = run_script([dash, str(script), str(tmp_path / "out")], env)
 
@@ -1957,7 +1955,7 @@ def test_the_release_before_a_release_is_the_one_of_a_version_not_a_companion(
     match = re.search(r'^previous="\$\(gh release list .*?\)"$', script, re.MULTILINE | re.DOTALL)
     assert match, "the previous-release lookup is gone"
     write_program(tmp_path / "gh", "printf '%s\\n' el8-v0.3.0 v0.3.0 v0.2.0 el8-v0.2.0 v0.1.0\n")
-    bash = shutil.which("bash") or "bash"
+    bash = requires.tool("bash")
 
     result = subprocess.run([bash, "-c", f'{match.group(0)}\necho "$previous"'],
                             env={"PATH": f"{tmp_path}:/usr/bin:/bin", "TAG": "v0.2.0",

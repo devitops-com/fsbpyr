@@ -6,7 +6,6 @@ case as the release launcher and its ASan/UBSan build run it; tests/support/cont
 compares the C walk with gc.way_problem."""
 
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -17,10 +16,10 @@ from fsbpyr.payload.format import FileKind, ModuleKind
 from fsbpyr.payload.spec import Blob, File, Module
 from fsbpyr.runtime.registry import Runtime
 
+from ..support import requires
 from .conftest import app_content
 
 pytestmark = [pytest.mark.slow, pytest.mark.sanitized]
-UNSHARE, PODMAN = shutil.which("unshare"), shutil.which("podman")
 
 LIBRARY = b"\x7fELF x" * 999
 _SYNCS = """\
@@ -70,24 +69,6 @@ def _run(app: Path, cache: Path | str, *, root: str = "", cwd: Path | None = Non
     return result.stdout.strip()
 
 
-def _foreign_directory() -> Path | None:
-    """A directory of another user (not root) that we may search, if the system has one."""
-    for parent in (Path("/var/lib"), Path("/etc"), Path("/var/spool"), Path("/home")):
-        try:
-            candidates = sorted(parent.iterdir())
-        except OSError:
-            continue
-        for path in candidates:
-            try:
-                info = path.lstat()
-            except OSError:
-                continue
-            if (path.is_dir() and not path.is_symlink() and info.st_uid not in (0, os.geteuid())
-                    and os.access(path, os.X_OK)):  # fmt: skip
-                return path
-    return None
-
-
 @pytest.fixture
 def exposed(tmp_path: Path) -> Path:
     """A directory any user may write to, not sticky."""
@@ -125,8 +106,8 @@ def test_a_sticky_directory_others_may_write_to_is_fine(app: Path, exposed: Path
     assert _run(app, exposed / "cache") == "synced"
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root owns /usr")
 def test_a_root_of_another_user_is_refused(app: Path) -> None:
+    requires.non_root("root owns /usr, so /usr is not another user's directory")
     assert _run(app, "/usr") == "refusing cache directory /usr: owned by another user"
 
 
@@ -159,51 +140,46 @@ def test_a_root_through_dot_dot_is_checked_as_the_kernel_walks_it(
 
 
 def test_a_directory_of_another_user_on_the_way_is_refused(app: Path, tmp_path: Path) -> None:
-    foreign = _foreign_directory()
-    if foreign is None or os.geteuid() == 0:
-        pytest.skip("no directory of another user to walk through")
+    requires.non_root("root owns every directory it could walk through")
+    foreign = requires.foreign_directory()
 
     out = _run(app, tmp_path, root=f"{foreign}/cache")
 
     assert out == f"refusing cache directory {foreign}: owned by another user"
 
 
-@pytest.mark.skipif(UNSHARE is None, reason="needs unshare")
+@requires.tools("unshare")
 def test_a_cache_in_a_user_namespace_is_used(app: Path, tmp_path: Path) -> None:
     """There root's own directories ("/", "/tmp") show as nobody's: a sandbox's layout."""
-    probe = subprocess.run([str(UNSHARE), "-r", "true"], capture_output=True, check=False)
-    if probe.returncode != 0:
-        pytest.skip("no user namespace here")
+    requires.user_namespaces()
 
-    assert _run(app, tmp_path / "cache", prefix=(str(UNSHARE), "-r")) == "synced"
+    assert _run(app, tmp_path / "cache", prefix=(requires.tool("unshare"), "-r")) == "synced"
 
 
-@pytest.mark.skipif(UNSHARE is None, reason="needs unshare")
+@requires.tools("unshare")
 def test_in_a_user_namespace_below_tmp_nobodys_directory_is_refused(app: Path) -> None:
     """Anyone may add a directory to /tmp: below it, one shown as nobody's could be anyone's."""
-    shown = next((p for p in sorted(Path("/tmp").iterdir())  # noqa: S108  the case
-                  if p.is_dir() and not p.is_symlink() and p.stat().st_uid == 0), None)  # fmt: skip
-    if shown is None or subprocess.run([str(UNSHARE), "-r", "true"], check=False).returncode:
-        pytest.skip("no root's directory in /tmp, or no user namespace")
+    shown = requires.root_directory_in_tmp()
+    requires.user_namespaces()
 
-    out = _run(app, shown / "fsbpyr-test-cache", prefix=(str(UNSHARE), "-r"))
+    out = _run(app, shown / "fsbpyr-test-cache", prefix=(requires.tool("unshare"), "-r"))
 
     assert out == f"refusing cache directory {shown}: owned by another user"
     assert not (shown / "fsbpyr-test-cache").exists()
 
 
-@pytest.mark.skipif(PODMAN is None, reason="needs podman")
+@requires.tools("podman")
 def test_a_symlink_of_another_user_is_refused(app: Path, tmp_path: Path) -> None:
     """One planted (in a sticky directory, say) by another user: its target is theirs to change.
     Made here by a subordinate uid of ours (podman unshare)."""
+    requires.rootless_podman()
     (tmp_path / "real").mkdir()
     link = tmp_path / "theirs"
     script = 'ln -s "$1" "$2" && chown -h 1:1 "$2"'
-    made = subprocess.run([str(PODMAN), "unshare", "sh", "-c", script, "sh",
+    made = subprocess.run([requires.tool("podman"), "unshare", "sh", "-c", script, "sh",
                            str(tmp_path / "real"), str(link)], capture_output=True,
                           check=False)  # fmt: skip
-    if made.returncode != 0:
-        pytest.skip(f"cannot make a symlink of another user: {made.stderr!r}")
+    assert made.returncode == 0, made.stderr
 
     refused = f"refusing cache directory {link}: owned by another user"
     assert _run(app, tmp_path, root=f"{link}/c") == refused

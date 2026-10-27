@@ -29,7 +29,7 @@ from fsbpyr.runtime.registry import Runtime, cache_home, cache_root
 from fsbpyr.staging import StagingPlan
 from fsbpyr.vcs import git_state, own_version, version_string
 
-from ..support import contain
+from ..support import contain, requires
 from ..support.readme import quickstart
 from ..support.sbom import load as load_sbom
 
@@ -38,8 +38,6 @@ pytestmark = pytest.mark.slow
 ROOT = Path(__file__).parents[2]
 VENV = Path(sys.prefix)  # the development environment: .venv, or .venv-3.X for make PYTHON=3.X
 FIXTURES = ROOT / "tests" / "fixtures" / "projects"
-UV = shutil.which("uv")
-GIT = shutil.which("git")
 INSTALLER = "https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh"
 
 
@@ -111,14 +109,14 @@ def test_readme_quickstart_works_on_a_new_account(tmp_path: Path) -> None:
     new ~/.local/bin is not on PATH. A stand-in for curl serves an installer that puts the
     fsbpyr under test where the release's would go. uv keeps its cache (XDG_CACHE_HOME) and
     its Pythons; the runtime is in FSBPYR_CACHE_DIR (conftest)."""
-    assert UV is not None
+    uv = requires.tool("uv")
     project = _fixture("hello", tmp_path)
     with (project / "pyproject.toml").open("a") as pyproject:  # builds for the Python tests run on
         pyproject.write(f'\n[tool.fsbpyr]\npython = "{TARGET_PYTHON}"\n')
     home, tools, fsbpyr = tmp_path / "home", tmp_path / "tools", tmp_path / "fsbpyr"
     home.mkdir()
     tools.mkdir()
-    (tools / "uv").symlink_to(UV)
+    (tools / "uv").symlink_to(uv)
     under_test = shlex.quote(str(VENV / "bin" / "fsbpyr"))
     fsbpyr.write_text(f'#!/bin/sh\nexec {under_test} "$@"\n')
     (tools / "curl").write_text(
@@ -131,7 +129,7 @@ def test_readme_quickstart_works_on_a_new_account(tmp_path: Path) -> None:
         "EOF\n"
     )
     (tools / "curl").chmod(0o755)
-    pythons = subprocess.run([UV, "python", "dir"], capture_output=True, text=True, check=True)
+    pythons = subprocess.run([uv, "python", "dir"], capture_output=True, text=True, check=True)
     path = os.pathsep.join([str(tools), "/usr/bin", "/bin"])
     env = {**os.environ, "HOME": str(home), "PATH": path, "XDG_CACHE_HOME": str(cache_home()),
            "UV_PYTHON_INSTALL_DIR": pythons.stdout.strip()}  # fmt: skip
@@ -180,7 +178,7 @@ def test_builds_do_not_depend_on_the_build_environment(
     first, second = tmp_path / "first", tmp_path / "second"
     assert main(["build", str(project), "-o", str(first), "--no-smoke"]) == 0
     other = tmp_path / "other-venv"  # uv prefers an active virtual environment's interpreter
-    command = [UV or "uv", "venv", "--quiet", "--python", TARGET_PYTHON, str(other)]
+    command = [requires.tool("uv"), "venv", "--quiet", "--python", TARGET_PYTHON, str(other)]
     subprocess.run(command, check=True)
     monkeypatch.setenv("VIRTUAL_ENV", str(other))
     monkeypatch.setenv("UV_VENV_SEED", "1")  # would add pip to a venv uv creates
@@ -260,8 +258,8 @@ def test_sources_are_rebuilt_after_every_change(tmp_path: Path) -> None:
 
 def test_developer_venv_is_never_touched(tmp_path: Path) -> None:
     project = _fixture("clicky", tmp_path)
-    assert UV is not None
-    subprocess.run([UV, "sync", "--quiet", "--project", project], check=True)
+    uv = requires.tool("uv")
+    subprocess.run([uv, "sync", "--quiet", "--project", project], check=True)
     before = _tree(project / ".venv")
 
     assert main(["build", str(project)]) == 0
@@ -272,12 +270,11 @@ def test_developer_venv_is_never_touched(tmp_path: Path) -> None:
 def test_self_hosting_reaches_a_fixed_point(tmp_path: Path) -> None:
     """stage1 (venv) -> stage2 -> stage3 with only uv (and git, whose commit the build records
     for --version) on PATH and an empty cache."""
-    assert UV is not None
-    if GIT is None:
-        pytest.skip("needs git: the build records the commit for --version")
+    uv = requires.tool("uv")
+    git = requires.tool("git", "the build records the commit for --version")
     (tmp_path / "git").mkdir()
-    (tmp_path / "git" / "git").symlink_to(GIT)
-    path = os.pathsep.join([str(Path(UV).parent), str(tmp_path / "git")])
+    (tmp_path / "git" / "git").symlink_to(git)
+    path = os.pathsep.join([str(Path(uv).parent), str(tmp_path / "git")])
     env = {**os.environ, "PATH": path, "FSBPYR_CACHE_DIR": str(tmp_path / "c")}
     venv_before = _tree(VENV)
     stages = [tmp_path / f"stage{n}" for n in (1, 2, 3)]
@@ -309,12 +306,12 @@ def test_self_hosting_reaches_a_fixed_point(tmp_path: Path) -> None:
 
 
 def test_self_hosted_binary_builds_offline_without_clang(tmp_path: Path) -> None:
-    assert UV is not None
+    uv = requires.tool("uv")
     builder = tmp_path / "fsbpyr"
     assert main(["build", str(ROOT), "-o", str(builder)]) == 0
     project = _fixture("clicky", tmp_path)
     main(["build", str(project), "--no-smoke"])  # warm the uv cache for this project
-    env = {**os.environ, "PATH": str(Path(UV).parent), "FSBPYR_CACHE_DIR": str(tmp_path / "c")}
+    env = {**os.environ, "PATH": str(Path(uv).parent), "FSBPYR_CACHE_DIR": str(tmp_path / "c")}
 
     result = subprocess.run(
         [builder, "build", project, "--python", TARGET_PYTHON, "--offline", "-o",
@@ -353,8 +350,7 @@ def test_the_projects_own_extension_is_rebuilt_against_the_glibc_sysroot(
     against Debian 12's sysroot, strtol (GLIBC_2.2.5).
     The build gets a uv cache of its own: `uv run`, which runs the tests, holds its cache shared
     until pytest exits, and the rebuild's `uv cache clean` waits to hold it alone."""
-    if shutil.which("cc") is None:
-        pytest.skip("no C compiler")
+    requires.tool("cc")
     project = _fixture("cext", tmp_path)
     monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "uv-cache"))
     host_builds: list[tuple[int, int] | None] = []
@@ -555,7 +551,7 @@ def test_build_interpreter_optimization_does_not_change_the_output(tmp_path: Pat
 def test_workspace_member_uses_the_workspace_lock_and_fresh_sibling_sources(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert UV is not None
+    uv = requires.tool("uv")
     root = _write(tmp_path / "ws", {
         "pyproject.toml": '[tool.uv.workspace]\nmembers = ["packages/*"]\n',
         "packages/app/pyproject.toml": _uv_project(
@@ -565,7 +561,7 @@ def test_workspace_member_uses_the_workspace_lock_and_fresh_sibling_sources(
         "packages/lib/pyproject.toml": _uv_project("lib"),
         "packages/lib/src/lib/__init__.py": "VALUE = 'first'\n",
     })  # fmt: skip
-    subprocess.run([UV, "lock", "--quiet", "--project", root], check=True)
+    subprocess.run([uv, "lock", "--quiet", "--project", root], check=True)
     member = root / "packages" / "app"
     out = tmp_path / "app"
 
@@ -578,7 +574,7 @@ def test_workspace_member_uses_the_workspace_lock_and_fresh_sibling_sources(
 
 
 def test_default_dependency_groups_are_not_packaged(tmp_path: Path) -> None:
-    assert UV is not None
+    uv = requires.tool("uv")
     groups = (
         '[project.scripts]\ngrp = "grpapp:main"\n[dependency-groups]\nlint = ["six"]\n'
         '[tool.uv]\ndefault-groups = ["lint"]'
@@ -587,7 +583,7 @@ def test_default_dependency_groups_are_not_packaged(tmp_path: Path) -> None:
         "pyproject.toml": _uv_project("grpapp", "", groups),
         "src/grpapp/__init__.py": "def main():\n    print('grp')\n",
     })  # fmt: skip
-    subprocess.run([UV, "lock", "--quiet", "--project", project], check=True)
+    subprocess.run([uv, "lock", "--quiet", "--project", project], check=True)
 
     assert main(["build", str(project)]) == 0
 
