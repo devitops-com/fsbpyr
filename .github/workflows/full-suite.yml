@@ -10,7 +10,7 @@ name: Full suite
 #   - corpus: the real-world apps of tests/corpus, built and compared with their venvs;
 #   - portability: the portability tests (tests/e2e/test_portability.py, which need `podman run`
 #     on the runner host);
-#   - vm-smoke: aarch64 apps run in QEMU system VMs whose kernels have 16 KiB and 64 KiB pages
+#   - vm-smoke: aarch64 apps run in a QEMU system VM whose kernel has 64 KiB pages
 #     (tools/vm-smoke.py).
 # It runs on every push to main, which is a merge, that changes more than documentation (*.md
 # files and docs/): tools/release/release.sh tags only a main commit whose run passed, or one
@@ -462,9 +462,10 @@ jobs:
           path: portability.xml
           if-no-files-found: warn
 
-  # The aarch64 apps in QEMU system VMs with 16 KiB pages (Raspberry Pi 5's kernel) and 64 KiB
-  # pages (EL8's), on a Debian trixie userland (tools/vm-smoke.py, pins in tools/vm-pins.toml):
-  # the runners' own kernels have 4 KiB pages. Under TCG, a few minutes. Only the default Python:
+  # The aarch64 apps in a QEMU system VM with 64 KiB pages (EL8's kernel), on a Debian trixie
+  # userland (tools/vm-smoke.py, pins in tools/vm-pins.toml): the runners' own kernels have 4 KiB
+  # pages. 16K-page kernels are not tested (owner decision 2026-10-27; Raspberry Pi 5's hung
+  # before /init under this QEMU). Under TCG, a few minutes. Only the default Python:
   # the page size matters to the launcher and the payload, not to the interpreter. The apps are
   # the aarch64 suite job's executable and two fixtures it builds, a pure-Python one and one with
   # natives. Its conclusion is part of the run's, which the release gate
@@ -514,10 +515,10 @@ jobs:
       # A command that exits non-zero, or whose output lacks the text after `=>`, fails the job.
       # Exit 3: a pinned kernel or root file system is gone from its mirror; a warning, so a mirror
       # cannot block a release, until the pin is renewed (CONTRIBUTING.md).
-      - name: Boot both kernels and run the apps
+      - name: Boot the 64K kernel and run the apps
         run: |
           status=0
-          uv run --locked python tools/vm-smoke.py --kernel 16k --kernel 64k \
+          uv run --locked python tools/vm-smoke.py --kernel 64k \
             --app dist/fsbpyr --app "$RUNNER_TEMP/apps/hello" --app "$RUNNER_TEMP/apps/native" \
             --run 'fsbpyr --version' \
             --run 'fsbpyr inspect /apps/fsbpyr => glibc >= 2.34' \

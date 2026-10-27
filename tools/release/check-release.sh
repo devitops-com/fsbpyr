@@ -358,9 +358,10 @@ EOF
 fi
 
 step "self update"
+# versions only: a companion el8-vX.Y.Z has its release's commit, so its date, and sorts beside it
 previous="$(gh release list --repo "$REPO" --exclude-drafts --exclude-pre-releases --limit 50 \
-    --json tagName,createdAt \
-    --jq 'map(select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))) | sort_by(.createdAt) | reverse | .[].tagName' \
+    --json tagName,createdAt --jq 'sort_by(.createdAt) | reverse | .[].tagName' \
+    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
     | awk -v tag="$TAG" 'found { print; exit } $0 == tag { found = 1 }')"
 if [ "$TAG" != "$LATEST" ]; then
     skip "$TAG is not the latest release ($LATEST): self update would install that one"

@@ -2,25 +2,14 @@
 # checks the table's shape; the script verifies every file on every use). Kept in
 # FSBPYR_TEST_DOWNLOADS (or ~/.cache/fsbpyr-vm-smoke).
 #
-# A kernel gives its image and its config as members of the package; the script refuses a
+# A kernel gives its image and its config as members of its RPM; the script refuses a
 # package whose config lacks `option` = y, and the guest must report `pagesize` bytes.
-
-# Raspberry Pi 5's kernel (BCM2712): 16 KiB pages. Booted on QEMU's `virt` machine (it has the
-# PL011 and GIC drivers built in); arm64 Image, gzip-compressed. Version and SHA-256 from the
-# archive's trixie Packages.gz.
-[kernel."16k"]
-kind = "deb"
-url = "https://archive.raspberrypi.com/debian/pool/main/l/linux/linux-image-6.18.50+rpt-rpi-2712_6.18.50-1+rpt1_arm64.deb"
-sha256 = "41a73543781af93f591adddcbf1e2fcc478450784ba2a27be2f07af84ce2bbb6"
-image = "./boot/vmlinuz-6.18.50+rpt-rpi-2712"
-config = "./boot/config-6.18.50+rpt-rpi-2712"
-option = "CONFIG_ARM64_16K_PAGES"
-pagesize = 16384
+# 16K-page kernels (Raspberry Pi 5's, Asahi Linux's) are not tested: owner decision
+# 2026-10-27, too few users for now.
 
 # EL8's kernel: 64 KiB pages (RHEL's aarch64 kernels, as Rocky Linux 8.10 rebuilds them). The
 # SHA-256 is the one in the BaseOS repository's primary.xml.
 [kernel."64k"]
-kind = "rpm"
 url = "https://dl.rockylinux.org/pub/rocky/8.10/BaseOS/aarch64/os/Packages/k/kernel-core-4.18.0-553.97.1.el8_10.aarch64.rpm"
 sha256 = "cccb49fa0f99bb1fbb71fbd0cfb029213bfc7c6315f4b637955f53dbacd241d1"
 image = "./lib/modules/4.18.0-553.97.1.el8_10.aarch64/vmlinuz"

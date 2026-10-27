@@ -76,7 +76,7 @@ these from the machine:
   (`place_unnamed` in `src/fsbpyr/launcher/cache.c`), and `close_range` is compiled out when
   the headers lack it (`src/fsbpyr/launcher/due.c`). The instance limit needs OFD locks
   (Linux 3.15) and `/dev/shm` or `$XDG_RUNTIME_DIR`; without them a start runs unguarded
-  (`src/fsbpyr/launcher/slots.c`). Page sizes of 16K and 64K: see Tested on.
+  (`src/fsbpyr/launcher/slots.c`). Page sizes: see Tested on; 16K is not supported for now.
 
 ## Tested on
 
@@ -117,10 +117,12 @@ compares them. On the default Python only, it runs the stub tests, the four port
 these two, and a small corpus subset against its venvs; on aarch64 it also runs a pure-Python
 and a native app in the VM described below.
 
-aarch64 kernels with 16K pages (Raspberry Pi 5's) and 64K pages (EL8's) are smoke-tested in QEMU
-system VMs, not on hardware (`make test-vm`; the `vm-smoke` job of `full-suite.yml`, and the EL8
-workflow with the EL8 userland): a few built apps start and run. The container matrix above runs
-on 4K-page kernels.
+aarch64 kernels with 64K pages (EL8's) are smoke-tested in a QEMU system VM, not on hardware
+(`make test-vm`; the `vm-smoke` job of `full-suite.yml`, and the EL8 workflow with the EL8
+userland): a few built apps start and run. The container matrix above runs on 4K-page kernels.
+Kernels with 16K pages (the Raspberry Pi 5's default kernel, Asahi Linux on Apple Silicon) are
+not tested and not supported for now (owner decision 2026-10-27: too few users); a Raspberry
+Pi 5 can boot its 4K kernel with `kernel=kernel8.img` in `config.txt`.
 
 The `compat` app runs one small check per library or behaviour in each build:
 
