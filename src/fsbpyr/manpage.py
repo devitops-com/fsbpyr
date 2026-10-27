@@ -22,8 +22,11 @@ EXIT_STATUS = (
     ("70", "An executable built by fsbpyr refused to start: its integrity check failed (the "
            "file was modified or damaged), it was started with privileges changed "
            "(set-uid or set-gid to another user or group, or file capabilities), it was "
-           "started by itself as a Python interpreter without `--interpreter-reexec`, or as "
-           "many copies of it run already as the machine allows (FSBPYR_MAX_INSTANCES). "
+           "started by itself as a Python interpreter unless it was built with "
+           "`--interpreter-reexec` or `--no-interpreter-reexec`, the cache directory was "
+           "refused (`refusing cache directory <path>`: owned by another user, or others "
+           "may write to it), or as many copies of it run already for the same user as the "
+           "machine allows (FSBPYR_MAX_INSTANCES). "
            "Printed by the built app, not by `fsbpyr`."),
 )
 
@@ -42,8 +45,8 @@ ENVIRONMENT = (
                      "and how long the integrity check took, as JSON on standard error."),
     ("FSBPYR_IMPORTTIME", "Built executables only. Set: print CPython's import-time table."),
     ("FSBPYR_MAX_INSTANCES", "Built executables only. How many copies of the app may run at "
-                             "once (at most 4096; `0`: no limit); by default 4 per CPU and 16, "
-                             "at least 64 and at most 1024."),
+                             "once for one user (at most 4096; `0`: no limit); by default 4 per "
+                             "CPU and 16, at least 64 and at most 1024."),
     ("FSBPYR_SELFTEST", "Built executables only. `natives`: check that this machine provides "
                         "every library and symbol version the native extensions need, print "
                         "one line per missing one and exit 1 if any (glibc targets). Any other "

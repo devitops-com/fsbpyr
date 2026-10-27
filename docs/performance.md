@@ -10,7 +10,7 @@ the boot code, and keep the old rows.
   CPUs 8–23; SHA-NI and AVX2), Linux 6.12 (Debian 13).
 - Warm: the executable is in the page cache and its natives are already extracted. A first
   start after a reboot also reads the whole file from disk; see "Cold start (0.20.0)".
-- Each figure is the median (p50) of 31 to 200 runs started with `subprocess` from Python.
+- Each figure is the median (p50) of 31 to 200 runs started with `os.posix_spawn` from Python (`spikes/bench.py`).
   Variants that are compared are run interleaved, so that a drift of the CPU clock hits both.
   Runs of 100 ms and more vary by about ±1.5 ms between rounds; repeat before trusting a
   difference of a few milliseconds.
@@ -52,7 +52,7 @@ D44, D45) is no slower than 0.24.0 on 3.14. D45's instance slot, an `open` and a
 every start, costs 0.03 to 0.08 ms: the app with `FSBPYR_MAX_INSTANCES=0`, interleaved with
 the other variants, started that much faster.
 
-Since 0.25.0 (unreleased) each start also looks up three environment variables
+Since 0.26.0 each start also looks up three environment variables
 (`FSBPYR_INSTALL_LINKS`, `JOURNAL_STREAM` and, in the launcher, `PYTHONUNBUFFERED`), calls
 `getpid`, reads `AT_EXECFN` for `argv[0]`, scans `argv` for the restart idiom and tests the
 entrypoint for a newline (a command table); the code they run is imported only when one applies.
@@ -591,7 +591,8 @@ sysroot (D46); its time and peak memory were not measured.
   64 ms on the 8 performance cores, 59 ms with `OPENBLAS_NUM_THREADS=1`. While those threads
   occupy every core, a thread that sleeps and is woken may land on an efficiency core and stay
   there: joining the hashing threads cost `heavy np` +38–41 ms; spinning on non-blocking joins
-  (for at most 2 ms, then a normal join) +4–5 ms (D32).
+  (for at most 2 ms, then a normal join) +4–7 ms (D32; +4–5 ms in these runs, +4 to 7 in the
+  comment above `fsb_parallel` in `parallel.c`).
 - **Whatever the run loads is hashed.** The cache check grows with the natives a run imports,
   about 0.1–0.3 ms per MB on this machine; the integrity check with the executable's size.
 - **The builder's CPython compiles the app's modules.** A build by the installed `fsbpyr` (its
@@ -724,7 +725,7 @@ removes it at exit: 35.0 MB in 2 files for `hello` (`libpython3.14.so.1.0` and
    on a first run.
 2. `FSBPYR_IMPORTTIME=1 app ...`: CPython's import-time table, per module.
 3. Compare with the tables above: the no-op app isolates the launcher (its instance slot
-   apart: `FSBPYR_MAX_INSTANCES=0` turns it off; the boot's start checks of the unreleased code
+   apart: `FSBPYR_MAX_INSTANCES=0` turns it off; the boot's start checks of 0.26.0
    are not apart, see 'Starting a no-op app') and the integrity check,
    `heavy json` the payload imports, `heavy np` and `heavy onnx` the cache check and native
    loading, aiagent a large pure-Python import tree.
