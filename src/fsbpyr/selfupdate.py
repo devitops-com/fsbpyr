@@ -40,7 +40,6 @@ _ASSET_NAME = re.compile(rf"fsbpyr-3\.\d+-({_TARGETS})")
 _TIMEOUT_S = 60
 _CHUNK = 1 << 20
 _RELEASE = re.compile(r"v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
-_PLACED_STUBS = "fsbpyr-stub-*-glibc*"  # EL8 stubs a user placed beside the executable (D46)
 _ACCEPT = {"Accept": "application/vnd.github+json", "User-Agent": "fsbpyr-self-update"}
 
 # What `make install` puts under the prefix (Makefile), and the command that writes each.
@@ -246,6 +245,23 @@ def _stage_extras(
     return staged
 
 
+def _warn_about_placed_stubs(executable: Path, tag: str, warn: Callable[[str], None]) -> None:
+    """Name the EL8 stubs placed beside the executable that ``--glibc`` of release ``tag``
+    refuses (D46); all of them, as maybe, when that cannot be told."""
+    from .runtime import stubs  # noqa: PLC0415  stubs.py needs this module
+
+    refused, known = stubs.refused_after_update(tag, stubs.own_paths(real=str(executable)))
+    if not refused:
+        return
+    names = ", ".join(str(path) for path in refused)
+    if known:
+        warn(f"{names} are not the stubs of {tag}: `--glibc` will refuse them; place the stubs "
+             f"of {tag} next to them, or remove these and let `--glibc` download them")  # fmt: skip
+    else:
+        warn(f"{names} could not be checked against the stubs of {tag}: if the runtime id of "
+             f"{tag} differs, `--glibc` refuses them and names the stub to place")  # fmt: skip
+
+
 def update(
     log: Callable[[str], None] = print, warn: Callable[[str], None] = print
 ) -> bool:
@@ -290,10 +306,7 @@ def update(
         except OSError as exc:
             temporary.unlink(missing_ok=True)
             warn(f"{final} was not updated: {exc.strerror or exc}")
-    if placed := sorted(path.name for path in directory.glob(_PLACED_STUBS)):
-        warn(f"{', '.join(placed)} beside {executable.name} belong to the old release and "
-             f"`--glibc` will refuse them; place the stubs of {release.tag} there, or remove "
-             "these and let `--glibc` download them")  # fmt: skip
+    _warn_about_placed_stubs(executable, release.tag, warn)
     log(f"updated {executable} to fsbpyr {release.tag}")
     return True
 

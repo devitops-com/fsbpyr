@@ -1,5 +1,6 @@
 """fsbpyr self update, against a fake GitHub served from localhost: nothing reaches the net."""
 
+import hashlib
 import json
 import lzma
 import os
@@ -13,11 +14,12 @@ from pathlib import Path
 
 import pytest
 
-from fsbpyr import selfupdate
+from fsbpyr import dispatch, selfupdate
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.cli import main
 from fsbpyr.targets import target_named
 
+from ..support.releases import FakeReleases
 from .boot.conftest import FAKE_RUNTIME
 
 OWN = "fsbpyr-3.14-x86_64-linux-gnu"  # the asset the 'running' executable was released as
@@ -350,18 +352,102 @@ def test_man_page_and_completions_under_the_prefix_are_written_again(
     assert "left alone" in capsys.readouterr().err  # the hint for ones not found
 
 
-def test_placed_el8_stubs_of_the_old_release_are_named_in_a_warning(
-    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    stub = installed.parent / "fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz"
-    stub.write_bytes(b"old stub")
-    github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
+STUB = "fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28"
+COMPANION = "el8-v1.2.0"
 
+
+@pytest.fixture
+def companion(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeReleases]:
+    """The downloads server of the new release's companion, with no stubs published yet."""
+    fake = FakeReleases()
+    monkeypatch.setenv(dispatch.DOWNLOADS_VARIABLE, fake.base)
+    yield fake
+    fake.close()
+
+
+def _publish_stubs(companion: FakeReleases, *stubs: bytes) -> None:
+    companion.files[f"/{COMPANION}/SHA256SUMS-glibc2.28"] = "".join(
+        f"{hashlib.sha256(stub).hexdigest()}  {STUB}\n" for stub in stubs).encode()
+
+
+def _update(github: FakeGitHub, tmp_path: Path) -> None:
+    github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
     assert main(["self", "update"]) == 0
 
+
+def test_a_placed_el8_stub_the_new_release_lists_is_not_named(
+    github: FakeGitHub, installed: Path, tmp_path: Path, companion: FakeReleases,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    stub = installed.parent / f"{STUB}.xz"
+    stub.write_bytes(lzma.compress(b"same stub"))  # the sums list the stub, not the .xz
+    _publish_stubs(companion, b"same stub")
+
+    _update(github, tmp_path)
+
+    assert "--glibc" not in capsys.readouterr().err
+    assert companion.requests == [f"/{COMPANION}/SHA256SUMS-glibc2.28"]
+
+
+def test_a_placed_el8_stub_the_new_release_does_not_list_is_named_in_a_warning(
+    github: FakeGitHub, installed: Path, tmp_path: Path, companion: FakeReleases,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    old = installed.parent / STUB
+    old.write_bytes(b"old stub")
+    current = installed.parent / f"{STUB}.xz"
+    current.write_bytes(lzma.compress(b"new stub"))
+    _publish_stubs(companion, b"new stub")
+
+    _update(github, tmp_path)
+
     err = capsys.readouterr().err
-    assert stub.name in err and "belong to the old release" in err
-    assert stub.read_bytes() == b"old stub"  # the user's files are left alone
+    assert str(old) in err and str(current) not in err
+    assert "`--glibc` will refuse" in err and "v1.2.0" in err
+    assert old.read_bytes() == b"old stub"  # the user's files are left alone
+
+
+def test_placed_el8_stubs_are_looked_for_beside_the_path_fsbpyr_was_run_by_too(
+    github: FakeGitHub, installed: Path, tmp_path: Path, companion: FakeReleases,
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    link = tmp_path / "links" / "fsbpyr"
+    link.parent.mkdir()
+    link.symlink_to(installed)
+    monkeypatch.setattr(sys, "argv", [str(link), "self", "update"])
+    beside_link = link.parent / STUB
+    beside_link.write_bytes(b"old stub")
+    _publish_stubs(companion, b"new stub")
+
+    _update(github, tmp_path)
+
+    assert str(beside_link) in capsys.readouterr().err
+
+
+def test_without_a_companion_the_warning_is_conditional(
+    github: FakeGitHub, installed: Path, tmp_path: Path, companion: FakeReleases,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    stub = installed.parent / STUB
+    stub.write_bytes(b"some stub")  # the companion publishes nothing: 404
+
+    _update(github, tmp_path)
+
+    err = capsys.readouterr().err
+    assert str(stub) in err
+    assert "if the runtime id of v1.2.0 differs" in err and "names the stub to place" in err
+    assert "will refuse them;" not in err
+
+
+def test_without_stubs_placed_the_companion_is_not_asked(
+    github: FakeGitHub, installed: Path, tmp_path: Path, companion: FakeReleases,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    (installed.parent / "fsbpyr-stub-notes.txt").write_text("not a stub")
+
+    _update(github, tmp_path)
+
+    assert "--glibc" not in capsys.readouterr().err and companion.requests == []
 
 
 def test_an_executable_outside_a_bin_directory_gets_the_hint_only(

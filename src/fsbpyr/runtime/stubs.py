@@ -20,6 +20,7 @@ import dataclasses
 import hashlib
 import lzma
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -33,6 +34,8 @@ from . import pins, registry
 from .stub import stub_identity
 
 RELEASES = f"https://github.com/{REPO}/releases"
+_PLACED_STUBS = "fsbpyr-stub-*-glibc*"  # what a user places beside the executable
+_PLACED_NAME = re.compile(r"fsbpyr-stub-\d+\.\d+-[\w-]+-glibc(\d+\.\d+)(\.xz)?")
 _PLACED_SUFFIXES = ("", ".xz")  # the asset as it is, or as the release compresses it
 _SHA256_HEX = 64
 _MAX_STUB = 256 * 1024 * 1024  # a stub is a few MB; a larger one is no stub (or a bomb)
@@ -110,6 +113,43 @@ def _placed(paths: list[Path], asset: str) -> tuple[Path, bytes] | None:
                 raise StubError(f"{path} is larger than {_MAX_STUB >> 20} MB: no stub")
             return path, data
     return None
+
+
+def _digest(path: Path) -> str | None:
+    """The SHA-256 of the stub in the placed file ``path`` (unpacked when ``.xz``); None when
+    it cannot be read."""
+    try:
+        data = path.read_bytes()
+        if path.suffix == ".xz":
+            data = lzma.LZMADecompressor().decompress(data, _MAX_STUB + 1)
+    except (OSError, lzma.LZMAError, EOFError):
+        return None
+    return hashlib.sha256(data).hexdigest()
+
+
+def refused_after_update(tag: str, paths: list[Path]) -> tuple[list[Path], bool]:
+    """The stubs placed beside ``paths`` (as ``own_paths``) that the fsbpyr of release ``tag``
+    would refuse, and whether that is known. The new fsbpyr's runtime id cannot be computed
+    here, so a stub is current when the SHA-256 the companion release publishes lists it; with
+    no companion or no network all placed stubs are returned, unknown."""
+    directories = dict.fromkeys(path.parent for path in paths)
+    placed = {found: match[1] for directory in directories
+              for found in sorted(directory.glob(_PLACED_STUBS))
+              if found.is_file() and (match := _PLACED_NAME.fullmatch(found.name))}  # fmt: skip
+    base = os.environ.get(DOWNLOADS_VARIABLE) or DEFAULT_DOWNLOADS
+    listed: dict[str, set[str]] = {}
+    refused: list[Path] = []
+    for path, baseline in placed.items():
+        try:
+            if baseline not in listed:
+                sums = download_text(f"{base}/{release_stub_tag(baseline, tag)}/"
+                                     f"{release_stub_sums(baseline)}")
+                listed[baseline] = {line.partition(" ")[0].lower() for line in sums.splitlines()}
+        except (UpdateError, ValueError):
+            return list(placed), False
+        if _digest(path) not in listed[baseline]:
+            refused.append(path)
+    return refused, True
 
 
 def _published(base: str, release: str, baseline: str, asset: str) -> str:
