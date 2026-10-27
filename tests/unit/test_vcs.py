@@ -1,6 +1,5 @@
 """The git state a build records, and the version string `fsbpyr --version` makes of it."""
 
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -16,15 +15,16 @@ from fsbpyr.vcs import (
     version_string,
 )
 
+from ..support import requires
+
 COMMIT = "6457a95b" + "0" * 32
-GIT = shutil.which("git") or "git"
 LOCATION = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
             "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX")  # fmt: skip
 
 
 def _git(repo: Path, *args: str) -> str:
-    result = subprocess.run([GIT, "-C", str(repo), *args], capture_output=True, text=True,
-                            check=True)  # fmt: skip
+    result = subprocess.run([requires.tool("git"), "-C", str(repo), *args], check=True,
+                            capture_output=True, text=True)  # fmt: skip
     return result.stdout.strip()
 
 

@@ -1,5 +1,7 @@
 """fsbpyr self update, against a fake GitHub served from localhost: nothing reaches the net."""
 
+import hashlib
+import http.client
 import json
 import lzma
 import os
@@ -7,17 +9,20 @@ import stat
 import sys
 import threading
 import types
-from collections.abc import Iterator
+import urllib.request
+from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from fsbpyr import selfupdate
+from fsbpyr import dispatch, selfupdate
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.cli import main
 from fsbpyr.targets import target_named
 
+from ..support.releases import FakeReleases
 from .boot.conftest import FAKE_RUNTIME
 
 OWN = "fsbpyr-3.14-x86_64-linux-gnu"  # the asset the 'running' executable was released as
@@ -239,17 +244,26 @@ def test_a_checkout_is_refused(
     assert github.requests == []
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
 def test_an_unwritable_directory_is_an_error_saying_how_to_update(
-    github: FakeGitHub, installed: Path, capsys: pytest.CaptureFixture[str]
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Root ignores file modes: its 0o555 directory is still written to, and the update goes
+    through."""
+    binary = _release_binary(tmp_path)
+    github.assets[f"{OWN}.xz"] = lzma.compress(binary)
     installed.parent.chmod(0o555)
     try:
-        assert main(["self", "update"]) == 1
+        status = main(["self", "update"])
     finally:
         installed.parent.chmod(0o755)
 
     err = capsys.readouterr().err
+    if os.geteuid() == 0:
+        assert status == 0
+        assert installed.read_bytes() == binary
+        assert "cannot write to" not in err
+        return
+    assert status == 1
     assert "cannot write to" in err
     directory = installed.parent
     assert f"install.sh | FSBPYR_INSTALL_DIR={directory} sh -s -- --python {RUNNING}" in err
@@ -341,18 +355,124 @@ def test_man_page_and_completions_under_the_prefix_are_written_again(
     assert "left alone" in capsys.readouterr().err  # the hint for ones not found
 
 
-def test_placed_el8_stubs_of_the_old_release_are_named_in_a_warning(
-    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    stub = installed.parent / "fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz"
-    stub.write_bytes(b"old stub")
-    github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
+STUB = "fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28"
+COMPANION = "el8-v1.2.0"
 
+
+@pytest.fixture
+def companion(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeReleases]:
+    """The downloads server of the new release's companion, with no stubs published yet."""
+    fake = FakeReleases()
+    monkeypatch.setenv(dispatch.DOWNLOADS_VARIABLE, fake.base)
+    yield fake
+    fake.close()
+
+
+def _publish_stubs(companion: FakeReleases, *stubs: bytes) -> None:
+    companion.files[f"/{COMPANION}/SHA256SUMS-glibc2.28"] = "".join(
+        f"{hashlib.sha256(stub).hexdigest()}  {STUB}\n" for stub in stubs).encode()
+
+
+def _update(github: FakeGitHub, tmp_path: Path) -> None:
+    github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
     assert main(["self", "update"]) == 0
 
+
+def test_a_placed_el8_stub_the_new_release_lists_is_not_named(
+    github: FakeGitHub, installed: Path, tmp_path: Path, companion: FakeReleases,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    stub = installed.parent / f"{STUB}.xz"
+    stub.write_bytes(lzma.compress(b"same stub"))  # the sums list the stub, not the .xz
+    _publish_stubs(companion, b"same stub")
+
+    _update(github, tmp_path)
+
+    assert "--glibc" not in capsys.readouterr().err
+    assert companion.requests == [f"/{COMPANION}/SHA256SUMS-glibc2.28"]
+
+
+def test_a_placed_el8_stub_the_new_release_does_not_list_is_named_in_a_warning(
+    github: FakeGitHub, installed: Path, tmp_path: Path, companion: FakeReleases,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    old = installed.parent / STUB
+    old.write_bytes(b"old stub")
+    current = installed.parent / f"{STUB}.xz"
+    current.write_bytes(lzma.compress(b"new stub"))
+    _publish_stubs(companion, b"new stub")
+
+    _update(github, tmp_path)
+
     err = capsys.readouterr().err
-    assert stub.name in err and "belong to the old release" in err
-    assert stub.read_bytes() == b"old stub"  # the user's files are left alone
+    assert str(old) in err and str(current) not in err
+    assert "`--glibc` refuses them unless" in err and "v1.2.0" in err
+    assert old.read_bytes() == b"old stub"  # the user's files are left alone
+
+
+def test_placed_el8_stubs_are_looked_for_beside_the_path_fsbpyr_was_run_by_too(
+    github: FakeGitHub, installed: Path, tmp_path: Path, companion: FakeReleases,
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    link = tmp_path / "links" / "fsbpyr"
+    link.parent.mkdir()
+    link.symlink_to(installed)
+    monkeypatch.setattr(sys, "argv", [str(link), "self", "update"])
+    beside_link = link.parent / STUB
+    beside_link.write_bytes(b"old stub")
+    _publish_stubs(companion, b"new stub")
+
+    _update(github, tmp_path)
+
+    assert str(beside_link) in capsys.readouterr().err
+
+
+def test_without_a_companion_the_warning_is_conditional(
+    github: FakeGitHub, installed: Path, tmp_path: Path, companion: FakeReleases,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    stub = installed.parent / STUB
+    stub.write_bytes(b"some stub")  # the companion publishes nothing: 404
+
+    _update(github, tmp_path)
+
+    err = capsys.readouterr().err
+    assert str(stub) in err
+    assert "if the runtime id of v1.2.0 differs" in err and "names the stub to place" in err
+    assert "refuses them unless" not in err
+
+
+def test_a_sums_read_cut_short_is_an_unknown_not_a_traceback(
+    github: FakeGitHub, installed: Path, tmp_path: Path, companion: FakeReleases,
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stub = installed.parent / STUB
+    stub.write_bytes(b"some stub")
+
+    real = urllib.request.urlopen
+
+    def cut_short(request: urllib.request.Request, *args: Any, **kwargs: Any) -> Any:
+        if request.full_url.endswith("SHA256SUMS-glibc2.28"):
+            return _CutShort()
+        return real(request, *args, **kwargs)
+
+    monkeypatch.setattr(urllib.request, "urlopen", cut_short)
+
+    _update(github, tmp_path)  # the update itself succeeded: exit status 0
+
+    err = capsys.readouterr().err
+    assert str(stub) in err and "if the runtime id of v1.2.0 differs" in err
+
+
+def test_without_stubs_placed_the_companion_is_not_asked(
+    github: FakeGitHub, installed: Path, tmp_path: Path, companion: FakeReleases,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    (installed.parent / "fsbpyr-stub-notes.txt").write_text("not a stub")
+
+    _update(github, tmp_path)
+
+    assert "--glibc" not in capsys.readouterr().err and companion.requests == []
 
 
 def test_an_executable_outside_a_bin_directory_gets_the_hint_only(
@@ -464,6 +584,39 @@ def test_the_guard_is_skipped_where_the_host_has_no_glibc(
     monkeypatch.setattr(os, "confstr", musl)
 
     selfupdate.check_glibc("9.99")
+
+
+class _CutShort:
+    """A response whose body ends before its Content-Length."""
+
+    def __enter__(self) -> "_CutShort":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        pass
+
+    def read(self, size: int = -1) -> bytes:
+        raise http.client.IncompleteRead(b"partial")
+
+
+@pytest.mark.parametrize(
+    "fetch",
+    [
+        lambda tmp: selfupdate.latest_release(OWN),
+        lambda tmp: selfupdate.unpack("https://example.invalid/x.xz", tmp / "x"),
+        lambda tmp: selfupdate.download_text("https://example.invalid/sums"),
+    ],
+    ids=["latest-release", "unpack", "download-text"],
+)
+def test_a_body_cut_short_is_an_update_error(
+    fetch: Callable[[Path], object], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Not http.client's IncompleteRead, which no command reports: a traceback."""
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: _CutShort())
+    monkeypatch.setenv(selfupdate.API_VARIABLE, "https://example.invalid/api")
+
+    with pytest.raises(selfupdate.UpdateError):
+        fetch(tmp_path)
 
 
 def test_unpack_stops_at_its_limit(tmp_path: Path) -> None:

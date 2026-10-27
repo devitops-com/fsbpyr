@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# release.sh — release the version main's HEAD declares: tag HEAD and push the tag.
+# release.sh — release the version main's HEAD declares: tag HEAD and push the tags.
 #
 #     bash tools/release/release.sh [X.Y.Z]        (make release [VERSION=X.Y.Z])
 #
@@ -47,6 +47,9 @@ if [ $# -eq 1 ] && [ "$1" != "$VERSION" ]; then
     exit 1
 fi
 TAG="v$VERSION"
+# The tag of the EL8 stubs' companion release, on the same commit: the EL8 workflow publishes
+# that release on it, but GitHub refuses its token a tag on a commit that changes a workflow.
+EL8_TAG="el8-$TAG"
 
 # --- 0. Tooling --------------------------------------------------------------
 command -v gh  >/dev/null || { echo "ERROR: gh CLI not installed" >&2; exit 1; }
@@ -72,12 +75,14 @@ HIDDEN="$(git ls-files -v | grep -E '^([a-z]|S) ' || true)"
     exit 1
 }
 
-if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-    echo "ERROR: tag $TAG already exists locally" >&2; exit 1
-fi
-if git ls-remote --exit-code --tags hub "$TAG" >/dev/null 2>&1; then
-    echo "ERROR: tag $TAG already exists on hub" >&2; exit 1
-fi
+for tag in "$TAG" "$EL8_TAG"; do
+    if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+        echo "ERROR: tag $tag already exists locally" >&2; exit 1
+    fi
+    if git ls-remote --exit-code --tags hub "$tag" >/dev/null 2>&1; then
+        echo "ERROR: tag $tag already exists on hub" >&2; exit 1
+    fi
+done
 if gh release view "$TAG" >/dev/null 2>&1; then
     echo "ERROR: a GitHub release for $TAG already exists" >&2; exit 1
 fi
@@ -146,17 +151,17 @@ if [ "${FSBPYR_RELEASE_ASSUME_YES:-0}" != "1" ]; then
 fi
 
 # --- 3. Tag and push the tag ---------------------------------------------------
-if ! git tag -a "$TAG" -m "fsbpyr $TAG"; then
-    echo "ERROR: creating tag $TAG failed; nothing was pushed" >&2
+if ! git tag -a "$TAG" -m "fsbpyr $TAG" || ! git tag -a "$EL8_TAG" -m "fsbpyr $TAG: EL8 stubs"; then
+    echo "ERROR: creating the tags $TAG and $EL8_TAG failed; nothing was pushed" >&2
     exit 1
 fi
-echo "==> Tagged $TAG; pushing it to hub"
-if ! git push hub "$TAG"; then
+echo "==> Tagged $TAG and $EL8_TAG; pushing them to hub"
+if ! git push --atomic hub "$TAG" "$EL8_TAG"; then
     cat >&2 <<EOF
-ERROR: push failed. The tag $TAG exists locally, but nothing was pushed. Choose one:
-       (a) Abort: git tag -d $TAG
-       (b) Fix the remote state and push again; the tag starts the release workflow:
-             git push hub $TAG
+ERROR: push failed. The tags $TAG and $EL8_TAG exist locally, but nothing was pushed. Choose one:
+       (a) Abort: git tag -d $TAG $EL8_TAG
+       (b) Fix the remote state and push again; $TAG starts the release workflow:
+             git push --atomic hub $TAG $EL8_TAG
 EOF
     exit 1
 fi

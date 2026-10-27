@@ -1,7 +1,8 @@
 # fsbpyr executable format — version 7
 
-The single source of truth for this format is `src/fsbpyr/payload/format.py`.
-`src/fsbpyr/launcher/format.h` mirrors it, and a test checks that the two agree.
+The single source of truth for this format is `src/fsbpyr/payload/format.py`, the code the reader and
+the writer use; this document describes it. `src/fsbpyr/launcher/format.h` mirrors it, and a test
+checks that the two agree.
 All integers are little-endian.
 
 ## Executable layout
@@ -77,12 +78,15 @@ equal), for two things:
   written the same way; a changed file, or one that cannot be read, is reported on stderr and
   restored. When the files a pass holds leave no descriptor or memory to open the next file or
   its directories, the pass is checked first; if that is not enough, the run fails. A file
-  changed while a process runs is noticed by the next one. Files are written under a temporary
-  name a window at a time, hashed as they are written, in pieces of at most 1 MiB (a piece of
-  zeros is left a hole), then renamed if their digest is right, without fsync: one a crash left
-  incomplete fails its check and is restored. Content is decoded a window of at most 64 MiB at
-  a time, and the digest keeps a bounded window of leaf digests, so neither a file's size nor
-  the number of files (synced 4096 at a time) sets the memory a sync needs (D38).
+  changed while a process runs is noticed by the next one. Files are written a window at a
+  time, hashed as they are written, in pieces of at most 1 MiB (a piece of zeros is left a
+  hole): a new file unnamed (`O_TMPFILE`) and linked into place (`linkat`) if its digest is
+  right; a replacement, or a file that cannot be written unnamed and linked (no `O_TMPFILE` on
+  the file system), under a temporary name in a scratch directory and renamed (`renameat`).
+  Nothing is synced: a file a crash left incomplete fails its check and is restored. Content is
+  decoded a window of at most 64 MiB at a time, and the digest keeps a bounded window of leaf
+  digests, so neither a file's size nor the number of files (synced 4096 at a time) sets the
+  memory a sync needs (D38).
 - `fsbpyr inspect` shows the stored digest, which proves nothing by itself; `--verify` and the
   shell recipe compute it from the bytes.
 
@@ -115,7 +119,7 @@ from `argv[1]` as an exact name, which it removes from `sys.argv`. A start that 
 
 **Scripts.** A target below the module `_fsbpyr_scripts` (a project without a build system, a directory of scripts or a single script,
 [Scripts and tools](https://github.com/devitops-com/fsbpyr/wiki/User-Scripts) in the wiki) is started after the boot code puts the target's module
-directory (`<exe>/` and the dotted name's path without its last part) first on `sys.path`; a
+directory first on `sys.path`: the executable's directory plus the dotted name's path below `_fsbpyr_scripts` without its last part (`_script_directory`); a
 target without `:attr` is run as `__main__` and the selftest only finds it, never imports it. A
 directory below `_fsbpyr_scripts` whose name is no Python name (`sub-dir`) is recorded under its
 mangled name (`sub_dir`; likewise a file `check-disk` is `check_disk.py`: each character no
@@ -161,7 +165,9 @@ The MODULES, FILES and DISTS tables are sorted strictly ascending by their key's
 - `size` is at most 2^62 (D38: no limit of ours below what file systems hold; readers stream
   content larger than a window instead of holding it).
 - Blob order on disk: startup code, module code, resources, sources, natives. Within each
-  class, blobs are ordered by the first path that references them.
+  class, blobs are ordered by the first path that references them. The records follow the same
+  order; the block records follow them, and the records of the pieces of blobs of codecs 4 and 5
+  follow the block records.
 - Identical blobs are stored once; in blocks, identical content is one member whether the spec
   gave it raw or as a zstd frame.
 - For codec none, `stored_size == size`. A raw blob of `DIGEST_LEAF` bytes or more may hold
@@ -194,9 +200,10 @@ The MODULES, FILES and DISTS tables are sorted strictly ascending by their key's
   `MAX_BLOCK_SIZE` (1 MiB); the writer references blocks only from members. The writer packs
   every non-empty blob under 64 KiB except natives into blocks, one stream per placement class
   (startup code, code, resources and metadata, sources) filled in blob order: 64 KiB blocks for
-  code, which an import decompresses whole, and 256 KiB for the rest. Block records follow all other blob records; a
-  block's data sits where its first member would. Readers keep recently decompressed blocks
-  (the launcher the last 32), since a package's modules share blocks. Blocks make payloads about
+  code, which an import decompresses whole, and 256 KiB for the rest. Block records follow all
+  other blob records but the pieces'; a block's data sits where its first member would. Readers
+  keep recently decompressed blocks (the launcher the last 32), since a package's modules share
+  blocks. Blocks make payloads about
   5% smaller (aiagent: 157.4 → 149.6 MB) for about 3% more startup time on import-heavy apps.
 
 ### MODULES record (40 B), keyed by dotted module name
@@ -243,7 +250,7 @@ Invariants:
 | 16 | 4 | `dist`: DISTS index or NONE |
 | 20 | 4 | `closure`: CLOSURES word index or NONE |
 
-Paths are relative, use `/` as separator, and contain no empty, `.` or `..` components and no NUL.
+Paths are relative, use `/` as separator, and contain no empty, `.` or `..` components, no backslash and no NUL.
 Because the table is sorted, listing a directory is a prefix range scan.
 
 ### DISTS record (24 B), keyed by canonical distribution name (PEP 503)
@@ -278,24 +285,31 @@ FS_REQUIRED). Resources extracted on demand (D27) may have none.
 u32 MODULES indices, strictly ascending: exactly the modules flagged STARTUP. The launcher reads
 this short list to build CPython's frozen-module table, so it never scans the MODULES table.
 
-## Validation rules (readers MUST enforce)
+## Validation rules
+
+The Python reader checks all of the rules below, and the writer's output keeps them. The launcher
+checks the integrity digest first and then the trailer and header, the section bounds and
+alignment, each blob record as it is used (bounds, alignment, codec rules, sizes, block and piece
+references), record kinds, file modes, string bounds and index ranges, each zstd frame and decoded
+size, the STARTUP modules, the form of each closure and the paths of the files it extracts; the
+rules it leaves to the integrity digest, which only the writer's output passes, are marked
+"launcher: digest".
 
 - Trailer and header magic and version must match. `header_size` must be 208. Trailer `flags`
   must be 0. The launcher accepts only version 7; the Python reader also reads 1 to 6.
 - A blob of codec 3 or 4 needs format version 5 and belongs only to native files, never to
   another file or a module; a blob of codec 5 needs version 6 and may belong to any file or
   module (its pieces are checksummed frames, so module code may be in them); no file or module
-  names a piece directly. The Python reader and the
-  writer enforce this; the launcher relies on the integrity digest, which only the writer's
-  output passes.
+  names a piece directly (launcher: digest).
 - The launcher checks the integrity digest (above) before any other rule.
 - `payload_offset` must be 65536-aligned (4096-aligned in versions 1 to 6), and the file size
   must match exactly.
 - Every section must lie inside the payload, start after the header, be 8-byte aligned, and not
-  overlap any other section.
-- Every Str must lie inside STRTAB, be NUL-terminated, contain no NUL, and be valid UTF-8.
+  overlap any other section (launcher: digest for overlap).
+- Every Str must lie inside STRTAB, be NUL-terminated, contain no NUL, and be valid UTF-8 (launcher: digest for NUL inside and UTF-8).
 - Every index field must be NONE or in range. Enum fields must hold known values, and flag
-  fields must hold known bits only. Reserved fields must be 0.
+  fields must hold known bits only. Reserved fields must be 0 (launcher: digest for flags and
+  reserved fields).
 - Every blob must be 16-byte aligned, lie inside the blob data area, and have `size` ≤ 2^62.
   For codec none, `stored_size == size`. A blob of codec 2 instead names a block (in range, codec
   zstd, `size` ≤ 1 MiB) and lies inside its content (`stored_size + size` ≤ the block's
@@ -304,16 +318,17 @@ this short list to build CPython's frozen-module table, so it never scans the MO
   dotted names whose parts are Python identifiers once `-` is read as `_` and a leading digit is
   allowed: CPython imports file stems such as `_sysconfigdata__linux_x86_64-linux-gnu` and
   mypyc's `81d243bd2c585b0f4821__mypyc` through `importlib.import_module`.
-  Dist names are canonical.
+  Dist names are canonical (launcher: digest, but for the paths of the files it extracts).
 - The module kind invariants (including checksummed code: a zstd frame, zstd frames in pieces, or inside a block), the
   STARTUP rule (the STARTUP section lists exactly the flagged modules) and the closure rules
-  hold.
+  hold (launcher: digest, but for the flag and code of the STARTUP modules and the count and
+  order of each closure's members).
 - Every zstd frame a reader decompresses must have the content-checksum flag set, declare its
   content size, equal to `size`, and end where its stored bytes end.
 - On decompression, the output must be exactly `size` bytes, with no trailing data, and must
   pass the zstd checksum. Readers never allocate more than `size + 1` bytes for a blob, and a
   member's whole block (at most `MAX_BLOCK_SIZE`).
-- Tables must be strictly sorted.
+- Tables must be strictly sorted (launcher: digest).
 
 ## Build information
 
@@ -325,9 +340,9 @@ project's directory: nothing in it names the builder's paths, time or host.
 | Key | Content |
 |-----|---------|
 | `schema` | `1`. Incremented when a key changes meaning, never for a new key |
-| `lock` | `{kind, path, sha256, hashed}`: `kind` is `uv.lock`, `script.lock` (uv's `<script>.lock` beside a single script), `pylock.toml`, `requirements`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, `inferred` or `unlocked`; `path` is relative to the project directory (`../uv.lock` for a workspace member), null if unlocked; `sha256` is of the file; `hashed` says whether it pins artifact hashes (a `Pipfile.lock` does, but its hashes carry no file names, so a distribution of it has no `artifact_sha256`). For `inferred` (a directory of scripts or a single script that declared nothing, whose versions were read from the venv it runs in), `path` is that venv, relative to the project directory (just its directory name when it lies outside), `sha256` is null, `hashed` is false and `pins` lists the `name==version` pins installed |
+| `lock` | `{kind, path, sha256, hashed}`: `kind` is `uv.lock`, `script.lock` (uv's `<script>.lock` beside a single script), `pylock.toml`, `requirements`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, `inferred` or `unlocked`; `path` is relative to the project directory (`../uv.lock` for a workspace member), null if unlocked; `sha256` is of the file; `hashed` says whether it pins artifact hashes (a `Pipfile.lock` does, but the hashes of its registry entries carry no file names, so a distribution of one has no `artifact_sha256`; a `file` entry with exactly one hash is the exception: the hash is of the file it names, and that distribution gets it as `artifact_sha256` when the file is a wheel for the target, or as that of its sdist when it is built from one). For `inferred` (a directory of scripts or a single script that declared nothing, whose versions were read from the venv it runs in), `path` is that venv, relative to the project directory (just its directory name when it lies outside), `sha256` is null, `hashed` is false and `pins` lists the `name==version` pins installed |
 | `dists` | `[{name, version, source, artifact_sha256, backend}]`, sorted by name: `artifact_sha256` where the lock names the artifact, `backend` for `built-from-sdist` only |
-| `runtime` | the runtime's id, `cp<python>-<triple>-<12 hex digits>` (a digest of the launcher, the PBS archive, the sysroot and the layout version: the default Debian 12 sysroot and the EL8 one (`--glibc 2.28`) give different ids); the stub records it too (`fsbpyr-stub-identity=<id>` in its `.rodata`), which is how a build proves a stub it was handed is the one of its own release (D46) |
+| `runtime` | the runtime's id, `cp<python>-<triple>-<12 hex digits>` (a digest of the launcher sources and their compile and link flags, the PBS pin, the sysroot and the layout version: the default Debian 12 sysroot and the EL8 one (`--glibc 2.28`) give different ids; it names the stub's inputs, which several releases may share, not a release); the stub records it too (`fsbpyr-stub-identity=<id>` in its `.rodata`), which is how a build checks that a stub it was handed was linked from the same inputs (D46) |
 | `runtime_tag` | the PBS distribution's tag and the target triple (`<tag>-<triple>`); it seeds `generation_id` |
 | `python` | the target CPython's version (3.12 to 3.15) |
 | `extension_suffixes` | the file name suffixes the runtime's interpreter imports extension modules by, in its order; asked of the interpreter itself since 0.25.0, as PYTHON.json's list lags (3.15.1's lacks `.abi3t.so`) |
@@ -335,7 +350,7 @@ project's directory: nothing in it names the builder's paths, time or host.
 | `zstd` | the libzstd version that compressed the payload (see Determinism) |
 | `resources` | `sha256` over every payload file's path, content digest and mode, cut to 32 hex digits: the name of the tree where resources extracted on demand live (D27) |
 | `runtime_inputs` | `{pbs: {release, name, sha256}, sysroot, layout}`: the python-build-standalone archive and the glibc sysroot the runtime was made from, and its layout version |
-| `runtime_components` | versions the runtime's interpreter reports: `openssl`, `sqlite`, `zlib`, `expat`, `libmpdec`. Read once when the runtime is built; an executable that builds another passes them on |
+| `runtime_components` | versions the runtime's interpreter reports: `openssl`, `sqlite`, `zlib`, `expat`, `libmpdec`, and `zstd`, the version string in the `libzstd.a` the launcher links (absent when the archive gives none). Read once when the runtime is built; an executable that builds another passes them on |
 | `stub_sha256` | SHA-256 of the bytes before the payload (the stub and its zero padding): `head -c <payload_offset> app \| sha256sum`. The same in every app built by the same fsbpyr release for the same glibc baseline (the EL8 stub differs from the default one, D46); there is no digest of the builder |
 | `settings` | `{entry, fs_packages, allow_system_libs, extras, include_source}`: `fs_packages` is the effective list (the built-in packages and the configured ones) |
 | `glibc_baseline` | only in an app built with `--glibc 2.28` (D46): the glibc baseline it is built for, `"2.28"`; an app without the key is built for the default, 2.34; the stub for it is an asset of the companion release `el8-vX.Y.Z` (`fsbpyr-stub-3.X-<target>-glibc2.28`) or one placed next to fsbpyr, and a build accepts it only if its embedded `fsbpyr-stub-identity` equals the runtime id. `fsbpyr inspect --json` reports it as `glibc_baseline` for every app |

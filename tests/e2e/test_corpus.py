@@ -16,6 +16,7 @@ stub (FSBPYR_TEST_GLIBC=2.28).
 """
 
 import os
+import platform
 import shutil
 from pathlib import Path
 
@@ -72,15 +73,27 @@ def _remove(tree: Path) -> None:
     shutil.rmtree(tree)
 
 
-@pytest.mark.parametrize("app", corpus.selected())
+def _check(app: str, result: corpus.Result, tmp: Path, runtime: Runtime) -> None:
+    """Builds ``app`` and compares its commands with the venv's; fails with what differs."""
+    project, venv, executable = _prepare(corpus.CORPUS / app, app, tmp, runtime)
+    result.built = main(["build", str(project), "-o", str(executable)]) == 0
+    assert result.built, f"{app}: the build failed"
+    outcomes, differences = _compare(result, (project, venv, executable), tmp, app)
+
+    shown = "\n".join(differences)
+    assert result.false_successes == 0, f"{app}: exit 0, another output than the venv's\n{shown}"
+    assert result.failures == 0, f"{app}: fails where the venv's run does not\n{shown}"
+    assert any(corpus.expected(app) in outcome.stdout for outcome in outcomes), outcomes
+
+
+# The apps whose lock installs a package without a wheel here (tests/support/no-wheels.txt) are
+# not run on this Python and machine.
+@pytest.mark.parametrize("app", corpus.runnable(TARGET_PYTHON, platform.machine()))
 def test_corpus_app_matches_its_venv(
     app: str, runtime: Runtime, tmp_path_factory: pytest.TempPathFactory,
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    corpus.skip_without_wheels(app, TARGET_PYTHON)
     reason = corpus.known_failure(app, TARGET_PYTHON)
-    if reason is not None:
-        request.applymarker(pytest.mark.xfail(reason=reason, strict=True))
     tmp = tmp_path_factory.mktemp(app)
     # The build's cache: the session's runtimes, and what its smoke test extracts, removed with
     # the rest (the session's cache would keep every app's natives until the session ends).
@@ -88,19 +101,21 @@ def test_corpus_app_matches_its_venv(
     (tmp / "build-cache" / "runtimes").symlink_to(registry.cache_root() / "runtimes")
     monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp / "build-cache"))
     result = corpus.Result(app, corpus.settings(app), known=reason is not None)
+    failed = False
     try:
-        project, venv, executable = _prepare(corpus.CORPUS / app, app, tmp, runtime)
-        result.built = main(["build", str(project), "-o", str(executable)]) == 0
-        assert result.built, f"{app}: the build failed"
-        outcomes, differences = _compare(result, (project, venv, executable), tmp, app)
+        _check(app, result, tmp, runtime)
+    except Exception:
+        if reason is None:
+            raise
+        failed = True  # the failure commands.toml names: asserted below
     finally:
         corpus.record(request, result)
 
-    shown = "\n".join(differences)
-    assert result.false_successes == 0, f"{app}: exit 0, another output than the venv's\n{shown}"
-    assert result.failures == 0, f"{app}: fails where the venv's run does not\n{shown}"
-    assert any(corpus.expected(app) in outcome.stdout for outcome in outcomes), outcomes
-    _remove(tmp)
+    if reason is not None:
+        assert failed, (f"{app}: known failure ({reason}) no longer fails: "
+                        "remove known-failure from commands.toml")  # fmt: skip
+    else:
+        _remove(tmp)
 
 
 def test_every_corpus_app_says_what_its_output_contains() -> None:

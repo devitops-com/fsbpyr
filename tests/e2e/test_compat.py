@@ -119,11 +119,13 @@ def _run(executable: Path, cache: Path, *args: str) -> subprocess.CompletedProce
     return contain.run([executable, *args], env=env, timeout=120)
 
 
-@pytest.mark.parametrize("check", sorted(MATRIX))
+# a check is named after the package it exercises; those without a wheel here are not run
+@pytest.mark.parametrize(
+    "check", [check for check in sorted(MATRIX) if not wheels.missing(check, TARGET_PYTHON)]
+)
 def test_compatibility_matrix(
     compat: Path, compat_venv: Path, url: str, tmp_path: Path, check: str
 ) -> None:
-    wheels.skip_without(check, TARGET_PYTHON)  # a check is named after the package it exercises
     env = {"FSBPYR_CACHE_DIR": str(tmp_path / "cache")}
 
     result = assert_same(compat_venv, compat, [check, url], env=env)

@@ -28,10 +28,11 @@ from .hold import hold
 from .toolchain import describe, find_toolchain
 
 BOOT_PACKAGES = ("_fsbpyr_boot", "_fsbpyr_rt")  # regenerated for every build, never runtime content
-LAYOUT_VERSION = 9  # bump when the stdlib selection, its canonical bytecode, the layout or the
+LAYOUT_VERSION = 10  # bump when the stdlib selection, its canonical bytecode, the layout or the
 # launcher's link changes (7: a reproducible link; 8: runtime.json records its inputs and
 # components, which build_info carries, REP-3; the stdlib fragment carries the licence notices
-# of what the runtime links, REP-4; 9: zlib-ng's notice is left out, PBS ships it from 20261020)
+# of what the runtime links, REP-4; 9: zlib-ng's notice is left out, PBS ships it from 20261020;
+# 10: zstd's notice is in every runtime, 3.12's and 3.13's too)
 _STUB = "stub"
 _STDLIB = "stdlib.fsbp"
 _META = "runtime.json"
@@ -97,7 +98,7 @@ def _home() -> Path:
     except KeyError:
         entry = ""
     if not os.path.isabs(entry):
-        raise RuntimeError(
+        raise RuntimeCacheError(
             "cannot find the home directory; set HOME, XDG_CACHE_HOME or FSBPYR_CACHE_DIR"
         )
     return Path(entry)
@@ -130,8 +131,9 @@ def runtime_id(
     the glibc the stub is linked for; the sysroot's identity is in the digest, so runtimes of
     two baselines never share an id."""
     sysroot_pin = pins.sysroot_for(pin.triple, baseline)
-    identity = "\0".join((stub.launcher_digest(sanitize=sanitize), pin.name, pin.sha256,
-                          sysroot_pin.identity, str(LAYOUT_VERSION)))  # fmt: skip
+    launcher = stub.launcher_digest(pin.triple, sanitize=sanitize)
+    identity = "\0".join((launcher, pin.name, pin.sha256, sysroot_pin.identity,
+                          str(LAYOUT_VERSION)))  # fmt: skip
     digest = hashlib.sha256(identity.encode()).hexdigest()[:12]
     suffix = "-sanitized" if sanitize else ""
     return f"cp{pin.python.replace('.', '')}-{pin.triple}-{digest}{suffix}"
@@ -308,11 +310,15 @@ def running_executable() -> Path | None:
 
 
 def select_runtime(
-    python: str, cache: Path | None = None, baseline: str = pins.DEFAULT_BASELINE
+    python: str,
+    cache: Path | None = None,
+    baseline: str = pins.DEFAULT_BASELINE,
+    *,
+    offline: bool = False,
 ) -> Runtime:
     """Our own embedded runtime when it matches ``python`` and the glibc ``baseline``
     (self-hosting); a released executable's own stdlib with its release's stub of another
-    baseline (stubs.py); else the cache."""
+    baseline (stubs.py; ``offline``: placed or cached, never downloaded); else the cache."""
     own = running_executable()
     if own is not None:
         runtime = Runtime.from_executable(own)
@@ -321,7 +327,7 @@ def select_runtime(
                 return runtime
             from . import stubs  # noqa: PLC0415  stubs.py needs this module
 
-            if (paired := stubs.paired(runtime, baseline, cache)) is not None:
+            if (paired := stubs.paired(runtime, baseline, cache, offline=offline)) is not None:
                 return paired
     return find_runtime(python, cache, baseline=baseline)
 
@@ -379,6 +385,9 @@ def build_runtime(  # noqa: PLR0913  # what to build, where, how to say so, whic
                                     identity=directory.name):
             log(line)  # every warning shown, not only failures
         stub_bytes = stub_path.read_bytes()
+    components = pbs.component_versions(dist.interpreter)
+    if (zstd := pbs.zstd_version(dist)) is not None:
+        components["zstd"] = zstd  # linked by the launcher, whatever the Python
     log("compiling the standard library")
     modules, files = stdlib.fragment(dist, warn=log)
     files = (*files, *notices.files(dist))
@@ -394,7 +403,7 @@ def build_runtime(  # noqa: PLR0913  # what to build, where, how to say so, whic
         files=files,
         toolchain=describe(toolchain),
         inputs=runtime_inputs(pin, baseline),
-        components=pbs.component_versions(dist.interpreter),
+        components=components,
         baseline=baseline,
     )
     runtime.save(directory)

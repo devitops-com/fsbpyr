@@ -7,7 +7,6 @@ against a fake `gh`."""
 import fnmatch
 import os
 import re
-import shutil
 import subprocess
 import textwrap
 from pathlib import Path
@@ -16,6 +15,8 @@ import pytest
 
 from fsbpyr.bytecode import SUPPORTED_PYTHON
 from fsbpyr.vcs import release_stub_asset, release_stub_sums
+
+from ..support import requires
 
 ROOT = Path(__file__).parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -151,11 +152,11 @@ def test_publish_makes_the_companion_release_and_leaves_the_release_of_the_tag_a
     created = re.findall(r"gh release create .*", create)
 
     assert "COMPANION: el8-${{ needs.plan.outputs.tag }}" in publish
-    assert len(created) == 1 and created[0].startswith('gh release create "$COMPANION" --draft ')
-    for flag in ('--latest=false', '--target "$GITHUB_SHA"', "dist/fsbpyr-stub-*.xz",
-                 f"dist/{release_stub_sums('2.28')}"):  # fmt: skip
+    assert len(created) == 1
+    assert created[0].startswith('gh release create "$COMPANION" --verify-tag --draft ')
+    for flag in ('--latest=false', "dist/fsbpyr-stub-*.xz", f"dist/{release_stub_sums('2.28')}"):
         assert flag in created[0], flag
-    assert "--verify-tag" not in publish  # the tag of a draft does not exist yet
+    assert "--target" not in created[0]  # the tag exists: make release pushed it
     assert re.findall(r"gh release edit .*", create) == [
         'gh release edit "$COMPANION" --draft=false --latest=false']  # the publishing call too
     assert create.index("gh release create") < create.index("gh release edit")
@@ -322,7 +323,7 @@ class Publish:
                        "GH_REPO": "devitops-com/fsbpyr", "GITHUB_SHA": "a" * 40,
                        "GITHUB_OUTPUT": str(self.root / "out"), "RUNNER_TEMP": str(self.root),
                        **env}  # fmt: skip
-        bash = shutil.which("bash") or "bash"
+        bash = requires.tool("bash")
         return subprocess.run([bash, "-e", "-c", step_script(step)], cwd=self.root, env=environment,
                               capture_output=True, text=True, check=False)  # fmt: skip
 
@@ -347,7 +348,7 @@ def test_the_check_of_the_result_runs_whether_or_not_the_companion_was_just_publ
 
     assert "if: steps.published.outputs.new != ''" in check
     assert "steps.published.outputs.new == 'true'" in publish.split(
-        "- name: Is the companion tag free\n", 1)[1].split("run: |", 1)[0]
+        "- name: The companion tag\n", 1)[1].split("run: |", 1)[0]
 
 
 def test_nothing_published_yet_goes_on_to_make_the_companion_release(publish: Publish) -> None:
@@ -404,9 +405,8 @@ def test_the_companion_is_created_as_a_draft_and_published_not_latest(publish: P
 
     assert result.returncode == 0, result.stderr
     create, edit = publish.calls
-    target = "a" * 40
-    assert create.startswith(
-        f"release create {COMPANION} --draft --latest=false --target {target} ")
+    assert create.startswith(f"release create {COMPANION} --verify-tag --draft --latest=false ")
+    assert "--target" not in create  # the token cannot make the tag: make release pushed it
     assert f"--title EL8 stubs for {TAG}" in create
     assert all(f"dist/{name}" in create for name in [*STUBS, SUMS])
     assert edit == f"release edit {COMPANION} --draft=false --latest=false"
@@ -420,15 +420,16 @@ def test_the_wait_goes_on_until_the_release_of_the_tag_is_published(publish: Pub
         assert f"::error::release {TAG} does not exist yet" in result.stdout
 
 
-def test_a_companion_tag_that_exists_on_another_commit_fails_before_the_publication(
+def test_the_companion_tag_must_exist_on_the_tags_commit_before_the_publication(
         publish: Publish) -> None:  # fmt: skip
     shas = f"{TAG}={'a' * 40},{COMPANION}=" + "{}"
 
-    free = publish.run("Is the companion tag free")
-    assert free.returncode == 0, free.stderr
-    here = publish.run("Is the companion tag free", FAKE_REF="1", FAKE_SHAS=shas.format("a" * 40))
+    missing = publish.run("The companion tag")
+    assert missing.returncode == 1
+    assert f"::error::the tag {COMPANION} does not exist: make release pushes it" in missing.stdout
+    here = publish.run("The companion tag", FAKE_REF="1", FAKE_SHAS=shas.format("a" * 40))
     assert here.returncode == 0, here.stderr
-    other = publish.run("Is the companion tag free", FAKE_REF="1", FAKE_SHAS=shas.format("b" * 40))
+    other = publish.run("The companion tag", FAKE_REF="1", FAKE_SHAS=shas.format("b" * 40))
     assert other.returncode == 1
     assert f"::error::the tag {COMPANION} exists on another commit than {TAG}'s" in other.stdout
     assert not [call for call in publish.calls if "release" in call]

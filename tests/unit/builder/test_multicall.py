@@ -1,17 +1,21 @@
 """The build side of a multi-command executable: the table, the links, and the requirements
 check that belongs to the same change."""
 
+import json
 import os
 from pathlib import Path
 
 import pytest
 
 from fsbpyr.boot._fsbpyr_rt.commands import parse
-from fsbpyr.build import check_before_staging
+from fsbpyr.build import _output_path, check_before_staging
 from fsbpyr.closure import ClosureError, InstalledDist, command_table, resolve_entry
 from fsbpyr.config import BuildConfig
-from fsbpyr.links import LinkError, check_links, link_paths, make_links
+from fsbpyr.links import LinkError, check_links, is_earlier_link, link_paths, make_links
+from fsbpyr.payload.writer import write_executable
 from fsbpyr.project import Project, ProjectError
+
+from ..payload.conftest import make_spec
 
 SHA = "a" * 40
 
@@ -95,6 +99,87 @@ def test_an_existing_symlink_is_replaced_even_when_dangling(tmp_path: Path) -> N
 
     assert os.readlink(tmp_path / "a") == "app" and os.readlink(tmp_path / "b") == "app"
     assert (tmp_path / "other").read_text() == "theirs"  # the old target is untouched
+
+
+def _earlier_output(path: Path, project: str | None = "ops", app_name: str | None = None) -> None:
+    """An fsbpyr executable at ``path``, as an earlier build of ``project`` wrote it."""
+    info = json.dumps({} if project is None else {"project": {"name": project, "version": "1"}})
+    spec = make_spec(app_name=app_name or path.name, build_info=info)
+    write_executable(path, b"\x7fELF" + b"x" * 100, spec)
+
+
+def test_an_earlier_output_of_the_same_project_is_replaced_by_the_link(tmp_path: Path) -> None:
+    binary = tmp_path / "ops"
+    binary.write_bytes(b"x")
+    _earlier_output(tmp_path / "a")
+
+    check_links(binary, ["a", "b"], project="ops")
+    make_links(binary, ["a", "b"], project="ops")
+
+    assert os.readlink(tmp_path / "a") == "ops" and os.readlink(tmp_path / "b") == "ops"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["a", "b", "ops"]  # no .tmp
+
+
+@pytest.mark.parametrize("kind", ["other-project", "no-project", "other-command", "text", "dir"])
+def test_anything_but_an_earlier_output_of_the_project_is_still_refused(
+    tmp_path: Path, kind: str
+) -> None:
+    binary = tmp_path / "ops"
+    binary.write_bytes(b"x")
+    taken = tmp_path / "a"
+    if kind == "other-project":
+        _earlier_output(taken, project="elsewhere")
+    elif kind == "no-project":
+        _earlier_output(taken, project=None)
+    elif kind == "other-command":
+        _earlier_output(taken, app_name="ops")  # the build of several commands, not of this one
+    elif kind == "text":
+        taken.write_text("mine")
+    else:
+        taken.mkdir()
+    before = None if kind == "dir" else taken.read_bytes()
+
+    with pytest.raises(LinkError, match=r"'a'.*is not a symlink"):
+        make_links(binary, ["a", "b"], project="ops")
+
+    assert taken.is_dir() if before is None else taken.read_bytes() == before
+    assert not (tmp_path / "b").exists()
+
+
+def test_a_link_to_the_earlier_multi_command_output_is_the_builds_own(tmp_path: Path) -> None:
+    _earlier_output(tmp_path / "ops")
+    (tmp_path / "a").symlink_to("ops")
+
+    assert is_earlier_link(tmp_path / "a", "ops")
+    assert _output_path(tmp_path / "a", "ops") == tmp_path / "a"  # the link, not what it names
+
+
+@pytest.mark.parametrize("kind", ["other-project", "other-directory", "text", "regular", "chain"])
+def test_any_other_link_is_followed_as_before(tmp_path: Path, kind: str) -> None:
+    (tmp_path / "sub").mkdir()
+    taken = tmp_path / "a"
+    if kind == "other-project":
+        _earlier_output(tmp_path / "ops", project="elsewhere")
+        taken.symlink_to("ops")
+        target = tmp_path / "ops"
+    elif kind == "other-directory":
+        _earlier_output(tmp_path / "sub" / "ops")
+        taken.symlink_to("sub/ops")
+        target = tmp_path / "sub" / "ops"
+    elif kind == "text":
+        (tmp_path / "ops").write_text("mine")
+        taken.symlink_to("ops")
+        target = tmp_path / "ops"
+    elif kind == "chain":
+        _earlier_output(tmp_path / "real")
+        (tmp_path / "ops").symlink_to("real")
+        taken.symlink_to("ops")
+        target = tmp_path / "real"
+    else:
+        taken.write_text("mine")
+        target = taken
+
+    assert _output_path(taken, "ops") == target.resolve()
 
 
 def test_links_follow_the_output_name_not_the_project_name(tmp_path: Path) -> None:

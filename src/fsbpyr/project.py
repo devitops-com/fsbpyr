@@ -167,7 +167,7 @@ class Project:
         if script.suffix != ".py" and (script.suffix or not python_shebang(data)):
             raise ProjectError(f"{script} is a file, but not a Python script: fsbpyr builds a "
                                "`*.py` file, an extensionless file whose first line is a python "
-                               "or `uv run --script` shebang, or a project directory")  # fmt: skip
+                               "or `uv run` shebang, or a project directory")  # fmt: skip
         tools = inline_metadata(data, script.name).get("tool", {})
         tool = tools.get("fsbpyr", {}) if isinstance(tools, dict) else None
         if not isinstance(tool, dict):

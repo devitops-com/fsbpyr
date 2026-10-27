@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from fsbpyr.build import StrictError, check_strict
 from fsbpyr.classify import ClassifyError, Uncounted, _digested, classify
 from fsbpyr.closure import ClosureError, SiteIndex, resolve_entry
 from fsbpyr.compat import process_cpu_count
@@ -806,6 +807,20 @@ def test_reads_next_to_file_are_reported_unless_fs_required(site: Path) -> None:
     assert not [w for w in fs.warnings if "__file__" in w]
 
 
+def test_strict_does_not_count_the_file_read_guess(site: Path) -> None:
+    _dist(site, "datapkg", "1.0", {"datapkg/__init__.py": READS_DATA})
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["datapkg"]], extension_suffixes=SUFFIXES,
+                       include_source=True, hints=True)  # fmt: skip
+
+    (hint,) = [w for w in content.warnings if "__file__" in w]
+    assert isinstance(hint, Uncounted)
+    check_strict(content.warnings)  # a guess about the app does not fail a --hints --strict build
+    with pytest.raises(StrictError):
+        check_strict([*content.warnings, "datapkg/x.py kept as data (bad, line 1)"])
+
+
 def test_file_read_hints_name_a_package_fs_packages_accepts(site: Path) -> None:
     _dist(site, "google-cloud-x", "1.0", {"google/cloud/x/__init__.py": b"",
                                           "google/cloud/x/res.py": READS_DATA})  # fmt: skip
@@ -832,12 +847,76 @@ def test_reads_next_to_file_in_the_scripts_root_are_always_reported_by_project_f
     dist = SiteIndex.scan(site).dists["ops"]
 
     content = classify([dist], extension_suffixes=SUFFIXES, include_source=True, project="ops",
-                       origins={"_fsbpyr_scripts/check_disk.py": "check-disk"})  # fmt: skip
+                       origins={"_fsbpyr_scripts/check_disk.py": "check-disk"},
+                       entrypoint="_fsbpyr_scripts.guarded")  # fmt: skip
 
     reads = [w for w in content.warnings if "next to its own __file__" in w]
-    assert [w.partition(": ")[0] for w in reads] == ["check-disk:2", "sub/plain.py:2"]
+    assert [w.partition(": ")[0] for w in reads] == ["check-disk:2", "guarded.py:2",
+                                                     "sub/plain.py:2"]  # a command's guard
     assert "read next to the executable" in reads[0] and "beside the binary" in reads[0]
     assert not [w for w in content.warnings if "these packages read files" in w]  # no --hints
+
+
+def test_hints_leave_out_packages_below_the_scripts_root(site: Path) -> None:
+    _dist(site, "ops", "0", {"_fsbpyr_scripts/tools/__init__.py": b"",
+                             "_fsbpyr_scripts/tools/spawn.py": READS_DATA,
+                             "datapkg/__init__.py": READS_DATA})  # fmt: skip
+    dist = SiteIndex.scan(site).dists["ops"]
+
+    content = classify([dist], extension_suffixes=SUFFIXES, include_source=True, project="ops",
+                       hints=True)  # fmt: skip
+
+    (hint,) = [w for w in content.warnings if "these packages read files" in w]
+    assert "datapkg (datapkg/__init__.py:2)" in hint and "_fsbpyr_scripts" not in hint
+    assert [w for w in content.warnings if "tools/spawn.py:2: reads a file next" in w]
+
+
+GUARDED_READ = b"import os\nif __name__ == '__main__':\n    open(os.path.dirname(__file__))\n"
+
+
+def _guarded_warnings(site: Path, entrypoint: str) -> list[str]:
+    _dist(site, "ops", "0", {"_fsbpyr_scripts/tool.py": GUARDED_READ,
+                             "_fsbpyr_scripts/helper.py": GUARDED_READ,
+                             "_fsbpyr_scripts/app/__init__.py": b"",
+                             "_fsbpyr_scripts/app/__main__.py": GUARDED_READ,
+                             "_fsbpyr_scripts/entry.py": GUARDED_READ})  # fmt: skip
+    dist = SiteIndex.scan(site).dists["ops"]
+    content = classify([dist], extension_suffixes=SUFFIXES, include_source=True, project="ops",
+                       entrypoint=entrypoint)  # fmt: skip
+    return [w.split(": reads")[0] for w in content.warnings if "reads a file next" in w]
+
+
+def test_the_main_guard_read_of_a_command_script_is_reported_and_a_siblings_is_not(
+    site: Path,
+) -> None:
+    found = _guarded_warnings(site, "app=_fsbpyr_scripts.app\ntool=_fsbpyr_scripts.tool")
+
+    assert found == ["app/__main__.py:3", "tool.py:3"]
+
+
+def test_only_the_command_or_module_the_entry_point_names_runs_its_main_guard(
+    site: Path,
+) -> None:
+    assert _guarded_warnings(site, "_fsbpyr_scripts.tool") == ["tool.py:3"]  # --entry tool
+    assert _guarded_warnings(site, "_fsbpyr_scripts.helper") == ["helper.py:3"]  # no command
+
+
+def test_the_main_guard_of_a_module_run_through_an_entry_function_never_runs(site: Path) -> None:
+    found = _guarded_warnings(site, "entry=_fsbpyr_scripts.entry:main\ntool=pkg.cli:main")
+
+    assert found == []
+
+
+def test_a_packages_read_in_the_main_guard_is_not_reported(site: Path) -> None:
+    _dist(site, "datapkg", "1.0", {"datapkg/__init__.py": b"",
+                                   "datapkg/cli.py":
+                                       b"if __name__ == '__main__':\n    open(__file__)\n"})
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["datapkg"]], extension_suffixes=SUFFIXES,
+                       include_source=True, hints=True)  # fmt: skip
+
+    assert not [w for w in content.warnings if "__file__" in w]  # never runs on import
 
 
 def test_shared_objects_python_code_names_are_reported(site: Path) -> None:

@@ -1,7 +1,7 @@
 """Every corpus app's uv.lock has a wheel for fsbpyr's glibc baseline on each Python and machine,
 unless tests/support/no-wheels.txt lists the package there: the corpus never builds a package
-from its sdist, and every gap that skips an app is written down. Checked for aarch64 too,
-where the corpus runs only in CI."""
+from its sdist, and every gap that keeps an app from running is written down. Checked for
+aarch64 too, where the corpus runs only in CI."""
 
 from pathlib import Path
 

@@ -12,7 +12,7 @@
 # platform it runs on), so the job runs it on each target's runner and the test runs the
 # images that have a variant for that architecture (tests/support/images.py). On a Python that
 # onnxruntime has no wheel for (tests/support/no-wheels.txt) heavy and heavy-pip are not built,
-# and the test skips what runs them.
+# and the tests that run them are not generated.
 set -euo pipefail
 
 [ $# = 3 ] || [ $# = 4 ] || { echo "usage: $0 FSBPYR DIR PYTHON [GLIBC]" >&2; exit 2; }

@@ -26,6 +26,8 @@ from packaging.requirements import Requirement
 
 from fsbpyr.bytecode import SUPPORTED_PYTHON
 
+from ..support import requires
+
 ROOT = Path(__file__).parents[2]
 VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
 SYSTEM_PATH = "/usr/bin:/bin"
@@ -284,13 +286,14 @@ def assert_nothing_tagged_or_pushed(repo: Path, tmp_path: Path, env: dict[str, s
 
 def assert_released_at_origin(repo: Path, tmp_path: Path, env: dict[str, str]) -> None:
     """No commit: the annotated tag is on HEAD, the tested release commit, here and on origin,
-    whose main is HEAD as before."""
+    whose main is HEAD as before; so is the tag of the EL8 companion release."""
     assert git(repo, "log", "--format=%s", env=env) == "initial"
     assert git(repo, "cat-file", "-t", TAG, env=env) == "tag"  # annotated
     assert git(repo, "tag", "-l", "--format=%(contents:subject)", TAG, env=env) == f"fsbpyr {TAG}"
     head = git(repo, "rev-parse", "HEAD", env=env)
     origin = tmp_path / "origin.git"
-    assert git(origin, "rev-parse", "main", f"{TAG}^{{commit}}", env=env).split() == [head, head]
+    assert git(origin, "rev-parse", "main", f"{TAG}^{{commit}}", f"el8-{TAG}^{{commit}}",
+               env=env).split() == [head, head, head]  # fmt: skip
 
 
 def released_files(repo: Path, env: dict[str, str]) -> list[str]:
@@ -709,7 +712,7 @@ def test_release_reports_a_failed_workflow_run_with_its_recovery(
 def test_release_reports_a_refused_tag_push_with_its_recovery(
     tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    """origin refuses the tag: nothing reaches origin, and the local tag can go."""
+    """origin refuses the tags: nothing reaches origin, and the local tags can go."""
     repo = make_release_repo(tmp_path, release_env)
     write_program(
         tmp_path / "origin.git" / "hooks" / "update",
@@ -722,9 +725,9 @@ def test_release_reports_a_refused_tag_push_with_its_recovery(
     assert "push failed" in result.stderr
     origin = tmp_path / "origin.git"
     assert git(origin, "tag", "--list", env=release_env) == ""
-    assert git(repo, "tag", "--list", env=release_env) == TAG
-    assert f"(a) Abort: git tag -d {TAG}\n" in result.stderr
-    assert f"git push hub {TAG}\n" in result.stderr
+    assert git(repo, "tag", "--list", env=release_env).split() == [f"el8-{TAG}", TAG]
+    assert f"(a) Abort: git tag -d {TAG} el8-{TAG}\n" in result.stderr
+    assert f"git push --atomic hub {TAG} el8-{TAG}\n" in result.stderr
     assert_nothing_built_or_published(tmp_path)
     assert not tag_run_calls(tmp_path)
 
@@ -1171,10 +1174,10 @@ def test_the_image_is_pinned_by_digest_in_the_workflow_and_the_containerfile() -
 
 
 def test_a_release_is_one_run_and_a_pull_request_starts_none() -> None:
-    """release.yml runs for a pushed tag only and pushes nothing; release.sh pushes the tag
-    alone, on the main commit the full suite tested. full-suite.yml runs for pushes to main
-    (merges), weekly and on request. Neither runs for pull requests: anyone can open one, and a
-    branch is tested locally first."""
+    """release.yml runs for a pushed tag only and pushes nothing; release.sh pushes the tag and
+    its EL8 companion's tag alone, on the main commit the full suite tested. full-suite.yml
+    runs for pushes to main (merges), weekly and on request. Neither runs for pull requests:
+    anyone can open one, and a branch is tested locally first."""
     triggers = {}
     for name in ("release.yml", "full-suite.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
@@ -1187,8 +1190,8 @@ def test_a_release_is_one_run_and_a_pull_request_starts_none() -> None:
     release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     assert "refs/heads/main" not in release and "git push" not in release
     script = RELEASE_SH.read_text(encoding="utf-8")
-    assert script.count("git push") == script.count("git push hub $TAG") + script.count(
-        'git push hub "$TAG"') == 2
+    assert script.count("git push") == script.count("git push --atomic hub $TAG $EL8_TAG") + \
+        script.count('git push --atomic hub "$TAG" "$EL8_TAG"') == 2
 
 
 def test_the_publish_job_checks_the_tagged_commits_full_suite_run_and_names_it() -> None:
@@ -1215,28 +1218,28 @@ def test_the_full_suite_runs_on_main_and_weekly_once_per_python_version() -> Non
     assert "options: --privileged" in workflow and "timeout-minutes: 60" in workflow
     assert "--ignore=tests/e2e/test_portability.py" in workflow
     assert "--ignore=tests/e2e/test_corpus.py" in workflow  # the corpus job's
-    assert "FSBPYR_TESTS_REQUIRE_ALL=full" in workflow
+    assert "FSBPYR_TESTS_REQUIRE_ALL" not in workflow  # nothing is skipped, so nothing is allowed
     assert 'git diff --quiet "$last" HEAD -- src/fsbpyr/launcher tests/fuzz' in workflow
 
 
-def test_the_corpus_job_runs_make_test_corpus_with_nothing_skipped_by_surprise() -> None:
+def test_the_corpus_job_runs_make_test_corpus() -> None:
     workflow = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
     job = workflow.split("\n  corpus:\n")[1].split("\n  portability:\n")[0]
 
     assert "make test-corpus $MAKE_ARGS" in job
-    assert "FSBPYR_TESTS_REQUIRE_ALL=full" in job
+    assert "FSBPYR_TESTS_REQUIRE_ALL" not in job
     assert "--junitxml=corpus.xml" in job
     assert "tmpfs" not in job  # big apps: temporary files on disk
 
 
-def test_the_portability_job_runs_on_the_host_after_the_suite_with_nothing_skipped() -> None:
+def test_the_portability_job_runs_on_the_host_after_the_suite() -> None:
     workflow = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
     job = workflow.split("\n  portability:\n")[1]
 
     assert "needs: suite" in job and "runs-on: ${{ matrix.runner }}" in job
     assert "container:" not in job
     assert "tools/portability-apps.sh dist/fsbpyr$SUFFIX" in job
-    assert "FSBPYR_TESTS_REQUIRE_ALL=portability" in job
+    assert "FSBPYR_TESTS_REQUIRE_ALL" not in job
     assert "FSBPYR_PORTABILITY_APPS=" in job and "--junitxml=portability.xml" in job
     assert "podman login docker.io" in job
 
@@ -1557,9 +1560,7 @@ LLVM23_NAME = f"LLVM-23.1.3-Linux-{'ARM64' if platform.machine() == 'aarch64' el
 def _llvm23_repo(tmp_path: Path, *, sha256: str | None = None) -> tuple[Path, Path, dict[str, str]]:
     """A copy of tools/ whose pin names a small tarball laid out like LLVM's, the tarball, and
     an environment with a cache under tmp_path and a fake uv that logs its calls."""
-    zstd, tar = shutil.which("zstd"), shutil.which("tar")
-    if zstd is None or tar is None:
-        pytest.skip("zstd is not installed")
+    zstd, tar = requires.tool("zstd"), requires.tool("tar")
     root = tmp_path / "repo"
     shutil.copytree(ROOT / "tools", root / "tools", ignore=shutil.ignore_patterns("__pycache__"))
     (root / ".python-version").write_text("3.14\n", encoding="utf-8")
@@ -1693,9 +1694,7 @@ def test_bootstrap_python_takes_a_minor_version(tmp_path: Path) -> None:
 
 
 def test_make_runs_on_the_python_given_on_its_command_line_only() -> None:
-    make = shutil.which("make")
-    if make is None:
-        pytest.skip("make is not installed")
+    make = requires.tool("make")
     env = {"PATH": SYSTEM_PATH, "HOME": "/nonexistent"}
 
     def dry_run(*arguments: str, **extra: str) -> str:
@@ -1806,7 +1805,7 @@ def test_the_release_xz_uses_the_filter_of_the_targets_architecture(
     write_program(tmp_path / "bin" / "xz", 'echo "$*" >> "$XZ_LOG"\n')
     env = {"PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin", "TARGET": target, "SUFFIX": "-3.12",
            "XZ_LOG": str(tmp_path / "xz.log")}
-    dash = shutil.which("dash") or shutil.which("sh") or "sh"
+    dash = requires.tool("dash")
 
     done = subprocess.run([dash, "-e", "-c", textwrap.dedent(step.group(1))], cwd=tmp_path,
                           env=env, capture_output=True, text=True, check=False)
@@ -1866,7 +1865,7 @@ def test_install_uv_fetches_the_tarball_of_the_machines_architecture_and_checks_
     other = "0" * 64
     script = installer_copy(tmp_path, "9.9.9", *((digest, other) if arch == "x86_64"
                                                   else (other, digest)))
-    dash = shutil.which("dash") or shutil.which("sh") or "sh"
+    dash = requires.tool("dash")
 
     done = run_script([dash, str(script), str(tmp_path / "out" / "bin")], env)
 
@@ -1886,7 +1885,7 @@ def test_install_uv_refuses_a_tarball_that_does_not_match_the_digest_of_its_arch
     # the other architecture's digest is the right one for the tarball: the wrong column fails
     script = installer_copy(tmp_path, "9.9.9", *(("1" * 64, digest) if arch == "x86_64"
                                                   else (digest, "1" * 64)))
-    dash = shutil.which("dash") or shutil.which("sh") or "sh"
+    dash = requires.tool("dash")
 
     done = run_script([dash, str(script), str(tmp_path / "out")], env)
 
@@ -1957,7 +1956,7 @@ def test_the_release_before_a_release_is_the_one_of_a_version_not_a_companion(
     match = re.search(r'^previous="\$\(gh release list .*?\)"$', script, re.MULTILINE | re.DOTALL)
     assert match, "the previous-release lookup is gone"
     write_program(tmp_path / "gh", "printf '%s\\n' el8-v0.3.0 v0.3.0 v0.2.0 el8-v0.2.0 v0.1.0\n")
-    bash = shutil.which("bash") or "bash"
+    bash = requires.tool("bash")
 
     result = subprocess.run([bash, "-c", f'{match.group(0)}\necho "$previous"'],
                             env={"PATH": f"{tmp_path}:/usr/bin:/bin", "TAG": "v0.2.0",

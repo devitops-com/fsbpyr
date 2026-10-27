@@ -6,7 +6,6 @@ cache; the odd cases use local distributions. Needs the cached runtime."""
 import io
 import json
 import os
-import shutil
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -18,11 +17,10 @@ import pytest
 from fsbpyr.cli import main
 from fsbpyr.runtime.registry import Runtime
 
-from ..support import contain
+from ..support import contain, requires
 
-pytestmark = pytest.mark.slow
+pytestmark = [pytest.mark.slow, requires.tools("uv")]
 
-UV = str(shutil.which("uv"))
 PYFLAKES, PYCODESTYLE, FLAKE8 = "pyflakes==3.2.0", "pycodestyle==2.12.1", "flake8==7.1.1"
 FREEZE = f"{FLAKE8}\nmccabe==0.7.0\n{PYCODESTYLE}\n{PYFLAKES}\n"
 SAMPLE = "import os\n\n\ndef f( x ):\n    return x+1\n"
@@ -76,7 +74,8 @@ def _run(executable: Path, tmp: Path, *args: str, cwd: Path | None = None
 def _reference(spec: str, command: str, *args: str, cwd: Path) -> str:
     """What the tool prints run by uv from the same requirement, in a throwaway environment."""
     result = subprocess.run(
-        [UV, "tool", "run", "--python", sys.executable, "--from", spec, command, *args],
+        [requires.tool("uv"), "tool", "run", "--python", sys.executable, "--from", spec, command,
+         *args],
         cwd=cwd, capture_output=True, text=True, check=False)  # fmt: skip
     return result.stdout
 
@@ -198,8 +197,8 @@ def test_a_pylock_names_its_packages_and_a_directory_named_like_a_tool_builds(
 ) -> None:
     directory = _write(tmp_path / "pyflakes", {"requirements.txt": f"{PYFLAKES}\n"})
     locked = subprocess.run(
-        [UV, "pip", "compile", "--python", sys.executable, "--format", "pylock.toml",
-         "-o", str(tmp_path / "pylock.toml"), str(directory / "requirements.txt")],
+        [requires.tool("uv"), "pip", "compile", "--python", sys.executable, "--format",
+         "pylock.toml", "-o", str(tmp_path / "pylock.toml"), str(directory / "requirements.txt")],
         capture_output=True, text=True, check=False)  # fmt: skip
     assert locked.returncode == 0, locked.stderr
     (directory / "requirements.txt").unlink()

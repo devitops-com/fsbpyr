@@ -12,6 +12,7 @@ refused with the installer command that installs the latest release for its Pyth
 """
 
 import contextlib
+import http.client
 import json
 import lzma
 import os
@@ -40,7 +41,6 @@ _ASSET_NAME = re.compile(rf"fsbpyr-3\.\d+-({_TARGETS})")
 _TIMEOUT_S = 60
 _CHUNK = 1 << 20
 _RELEASE = re.compile(r"v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
-_PLACED_STUBS = "fsbpyr-stub-*-glibc*"  # EL8 stubs a user placed beside the executable (D46)
 _ACCEPT = {"Accept": "application/vnd.github+json", "User-Agent": "fsbpyr-self-update"}
 
 # What `make install` puts under the prefix (Makefile), and the command that writes each.
@@ -128,7 +128,7 @@ def latest_release(asset: str) -> Release:
             document = json.load(response)
         tag = document["tag_name"]
         assets = {a["name"]: a["browser_download_url"] for a in document["assets"]}
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as exc:
         raise UpdateError(f"cannot read the latest release from {api}: {exc}") from exc
     numbers = release_numbers(tag) if isinstance(tag, str) else None
     if numbers is None:
@@ -158,7 +158,7 @@ def unpack(url: str, target: Path, limit: int | None = None) -> None:
                 out.write(decoder.decompress(chunk))
                 if limit is not None and out.tell() > limit:
                     raise UpdateError(f"{url} unpacks to more than {limit} bytes")
-    except (OSError, lzma.LZMAError, EOFError) as exc:
+    except (OSError, http.client.HTTPException, lzma.LZMAError, EOFError) as exc:
         raise _failed(url, exc) from exc
     if not decoder.eof:
         raise UpdateError(f"{url} ended before the end of its xz stream")
@@ -170,7 +170,7 @@ def download_text(url: str, limit: int = _CHUNK) -> str:
         request = urllib.request.Request(url, headers=_ACCEPT)  # noqa: S310  the release's URL
         with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
             body: bytes = response.read(limit + 1)
-    except OSError as exc:
+    except (OSError, http.client.HTTPException) as exc:
         raise _failed(url, exc) from exc
     if len(body) > limit:
         raise UpdateError(f"{url} is larger than {limit} bytes")
@@ -246,6 +246,24 @@ def _stage_extras(
     return staged
 
 
+def _warn_about_placed_stubs(executable: Path, tag: str, warn: Callable[[str], None]) -> None:
+    """Name the EL8 stubs placed beside the executable that ``--glibc`` of release ``tag``
+    refuses (D46); all of them, as maybe, when that cannot be told."""
+    from .runtime import stubs  # noqa: PLC0415  stubs.py needs this module
+
+    refused, known = stubs.refused_after_update(tag, stubs.own_paths(real=str(executable)))
+    if not refused:
+        return
+    names = ", ".join(str(path) for path in refused)
+    if known:
+        warn(f"{names} are not the published stubs of {tag}: `--glibc` refuses them unless "
+             f"they carry its runtime id; place the stubs of {tag} next to them, or remove "
+             "these and let `--glibc` download them")  # fmt: skip
+    else:
+        warn(f"{names} could not be checked against the stubs of {tag}: if the runtime id of "
+             f"{tag} differs, `--glibc` refuses them and names the stub to place")  # fmt: skip
+
+
 def update(
     log: Callable[[str], None] = print, warn: Callable[[str], None] = print
 ) -> bool:
@@ -290,10 +308,7 @@ def update(
         except OSError as exc:
             temporary.unlink(missing_ok=True)
             warn(f"{final} was not updated: {exc.strerror or exc}")
-    if placed := sorted(path.name for path in directory.glob(_PLACED_STUBS)):
-        warn(f"{', '.join(placed)} beside {executable.name} belong to the old release and "
-             f"`--glibc` will refuse them; place the stubs of {release.tag} there, or remove "
-             "these and let `--glibc` download them")  # fmt: skip
+    _warn_about_placed_stubs(executable, release.tag, warn)
     log(f"updated {executable} to fsbpyr {release.tag}")
     return True
 

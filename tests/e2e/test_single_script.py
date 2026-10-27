@@ -5,7 +5,6 @@ cached runtime; the dependencies are local directories, so no network."""
 import io
 import json
 import os
-import shutil
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -17,7 +16,7 @@ import pytest
 from fsbpyr.cli import main
 from fsbpyr.runtime.registry import Runtime
 
-from ..support import contain
+from ..support import contain, requires
 
 pytestmark = pytest.mark.slow
 
@@ -26,7 +25,6 @@ LIBRARY = (
     '[project]\nname = "{name}"\nversion = "1.0"\nrequires-python = ">=3.12"\n'
     '[build-system]\nrequires = ["uv_build>=0.12.17,<0.13.0"]\nbuild-backend = "uv_build"\n'
 )
-UV = shutil.which("uv")
 
 
 @pytest.fixture(autouse=True)
@@ -102,6 +100,21 @@ def test_a_script_with_a_block_and_a_sibling_prints_what_python_prints(
     result = _run(tmp_path / "out" / "report", tmp_path, "-x", "--y")
     assert result.returncode == 0, result.stderr
     assert result.stdout == _python(directory / "report.py", "-x", "--y")
+
+
+def test_a_siblings_main_guard_read_is_not_reported_and_strict_builds(
+    tmp_path: Path, runtime: Runtime
+) -> None:
+    directory = _write(tmp_path / "ops", {
+        "report.py": _block('requires-python = ">=3.12"', "dependencies = []") + SCRIPT,
+        "helpers.py": "import os\n\nVALUE = 42\n\nif __name__ == '__main__':\n"
+        "    print(open(os.path.join(os.path.dirname(__file__), 'sample.txt')).read())\n",
+    })  # fmt: skip
+
+    code, _, err = _build(directory / "report.py", tmp_path / "out" / "report", "--strict")
+
+    assert code == 0, err
+    assert "reads a file next to its own __file__" not in err
 
 
 def test_the_executable_defaults_to_dist_beside_the_script_named_after_the_file(
@@ -200,6 +213,7 @@ def test_an_import_nothing_provides_skips_the_script_with_the_freeze_hint(
 ) -> None:
     directory = _write(tmp_path / "ops", {"a.py": "import notinstalled\nprint(1)\n"})
     (directory / ".venv").mkdir()
+    (directory / ".venv" / "pyvenv.cfg").write_text("")
 
     code, _, err = _build(directory / "a.py", tmp_path / "a")
 
@@ -208,7 +222,7 @@ def test_an_import_nothing_provides_skips_the_script_with_the_freeze_hint(
     assert "uv pip freeze --python .venv/bin/python`" in err
 
 
-needs_uv = pytest.mark.skipif(UV is None, reason="needs uv")
+needs_uv = requires.tools("uv")
 
 
 @needs_uv
@@ -219,10 +233,10 @@ def test_a_venv_beside_a_script_with_no_block_supplies_the_pins(
         "show.py": "from markdown_it import MarkdownIt\n\nif __name__ == '__main__':\n"
         "    print('show', MarkdownIt().render('*x*').strip())\n",
     })  # fmt: skip
-    assert UV is not None
-    subprocess.run([UV, "venv", "--quiet", "--python", sys.executable, str(directory / "venv")],
+    uv = requires.tool("uv")
+    subprocess.run([uv, "venv", "--quiet", "--python", sys.executable, str(directory / "venv")],
                    check=True)  # fmt: skip
-    subprocess.run([UV, "pip", "install", "--offline", "--quiet", "--python",
+    subprocess.run([uv, "pip", "install", "--offline", "--quiet", "--python",
                     str(directory / "venv" / "bin" / "python"), "markdown-it-py"],
                    check=True)  # fmt: skip
 
@@ -247,8 +261,9 @@ def test_a_script_lock_beside_the_script_locks_the_build_and_nothing_is_written(
         "show.py": _block('requires-python = ">=3.12"',
                           f'dependencies = ["greet @ {library.as_uri()}"]')
         + "import greet\nprint(greet.WORD)\n"})  # fmt: skip
-    locked = subprocess.run([str(UV), "lock", "--script", "show.py", "--offline"], cwd=directory,
-                            capture_output=True, text=True, check=False)  # fmt: skip
+    locked = subprocess.run([requires.tool("uv"), "lock", "--script", "show.py", "--offline"],
+                            cwd=directory, capture_output=True, text=True,
+                            check=False)  # fmt: skip
     assert locked.returncode == 0, locked.stderr
     before = _listing(directory)
 
@@ -272,7 +287,7 @@ def test_a_script_lock_the_block_has_outgrown_fails_the_build(
     library = _library(tmp_path / "greetlib", "greet", "from greet")
     directory = _write(tmp_path / "ops", {
         "show.py": _block('requires-python = ">=3.12"', "dependencies = []") + "print(1)\n"})
-    subprocess.run([str(UV), "lock", "--script", "show.py", "--offline"], cwd=directory,
+    subprocess.run([requires.tool("uv"), "lock", "--script", "show.py", "--offline"], cwd=directory,
                    capture_output=True, check=True)  # fmt: skip
     (directory / "show.py").write_text(
         _block('requires-python = ">=3.12"', f'dependencies = ["greet @ {library.as_uri()}"]')

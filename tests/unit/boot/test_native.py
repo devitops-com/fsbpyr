@@ -273,7 +273,6 @@ def _loader(native: types.ModuleType, spec: importlib.machinery.ModuleSpec) -> E
     return loader
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
 def test_an_unreadable_cached_file_is_replaced(
     boot: types.ModuleType, native: types.ModuleType
 ) -> None:
@@ -282,7 +281,8 @@ def test_an_unreadable_cached_file_is_replaced(
     (Path(native.native_cache().site) / LIB).chmod(0o000)
     native._CACHE.clear()  # a new process
 
-    assert native.native_cache().sync(_files(spec)) == 1
+    # root reads it as it is: the file is intact, nothing to replace
+    assert native.native_cache().sync(_files(spec)) == (0 if os.geteuid() == 0 else 1)
     assert (Path(native.native_cache().site) / LIB).read_bytes() == CONTENT[LIB]
 
 
@@ -373,7 +373,6 @@ def test_import_errors_raised_by_the_module_itself_do_not_trigger_a_rehash(
     assert synced == [_files(spec)]
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
 def test_unwritable_cache_is_reported_with_a_hint(
     boot: types.ModuleType, native: types.ModuleType, tmp_path: Path
 ) -> None:
@@ -382,8 +381,11 @@ def test_unwritable_cache_is_reported_with_a_hint(
     spec = _speed_spec(boot)
 
     try:
-        with pytest.raises(native.NativeCacheError, match="FSBPYR_CACHE_DIR"):
-            _loader(native, spec).create_module(spec)
+        if os.geteuid() == 0:  # root writes into it
+            assert _loader(native, spec).create_module(spec).__name__ == spec.name
+        else:
+            with pytest.raises(native.NativeCacheError, match="FSBPYR_CACHE_DIR"):
+                _loader(native, spec).create_module(spec)
     finally:
         (tmp_path / "cache").chmod(0o700)
 

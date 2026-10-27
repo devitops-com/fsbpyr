@@ -14,7 +14,7 @@ import pytest
 from fsbpyr.cli import main
 from fsbpyr.runtime.registry import Runtime
 
-from ..support import contain
+from ..support import contain, requires
 
 pytestmark = pytest.mark.slow
 
@@ -62,8 +62,7 @@ def test_it_runs_like_uv_run_main_py(
     built: tuple[Path, list[str], list[str]], tmp_path: Path
 ) -> None:
     project = built[0]
-    uv = shutil.which("uv")
-    assert uv is not None  # the build needs it
+    uv = requires.tool("uv")
     expected = subprocess.run(
         [uv, "run", "--offline", "--no-project", "main.py", "x", "y"], cwd=project,
         capture_output=True, text=True, check=False,
@@ -174,6 +173,7 @@ def test_an_import_the_executable_lacks_skips_that_command_with_file_and_line(
         + GUARDED.format(who="soft"),
     )  # fmt: skip
     (project / ".venv").mkdir()
+    (project / ".venv" / "pyvenv.cfg").write_text("")
 
     assert _build(project) == 0
 
@@ -241,6 +241,23 @@ def test_a_file_next_to_a_script_is_read_beside_the_executable(
     assert "--fs-package" not in result.stderr
     (tmp_path / "out" / "data.json").write_text('{"host": 1}')
     assert _run(tmp_path / "out" / "app", tmp_path).stdout == '{"host": 1}\n'
+
+
+READS_BESIDE = ("import os\n\nif __name__ == '__main__':\n"
+                "    print(open(os.path.join(os.path.dirname(__file__), 'data.txt')).read())\n")
+
+
+def test_a_modules_main_guard_read_is_reported_when_entry_runs_it_and_only_then(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _project(tmp_path, extra='[project.scripts]\ntool = "tool:run"\n',
+                       tool_py="def run():\n    pass\n", other_py=READS_BESIDE)  # fmt: skip
+
+    assert _build(project) == 0
+    assert "reads a file next to its own __file__" not in capsys.readouterr().err  # no command
+
+    assert _build(project, "--entry", "_fsbpyr_scripts.other") == 0
+    assert "other.py:4: reads a file next to its own __file__" in capsys.readouterr().err
 
 
 # --- Poetry and PDM locks (research UC3) -----------------------------------------------------

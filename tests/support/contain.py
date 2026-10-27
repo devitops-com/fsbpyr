@@ -13,7 +13,6 @@ above the machine's current task count (prlimit), in case polling falls behind.
 
 import contextlib
 import os
-import shutil
 import signal
 import subprocess
 import time
@@ -21,12 +20,13 @@ import uuid
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from . import requires
+
 LIMIT = 64  # tagged processes at once: a pool of workers fits, a restarting app does not
 HEADROOM = 1024  # tasks (threads count) the command may add to the machine's
 POLL = 0.2  # seconds between looks at the tagged processes
 GRACE = 2.0  # seconds a descendant may take to exit after the command did
 _TAG = "FSBPYR_TEST_CONTAINED"
-_PRLIMIT = shutil.which("prlimit")
 
 type Command = Sequence[str | Path]
 
@@ -97,7 +97,7 @@ def run(
     as the module says; ``stdin`` is its input, or it inherits the caller's."""
     token = uuid.uuid4().hex
     tag = f"{_TAG}={token}".encode()
-    prefix = [_PRLIMIT, f"--nproc={_task_cap()}", "--"] if _PRLIMIT else []
+    prefix = [requires.tool("prlimit"), f"--nproc={_task_cap()}", "--"]
     process = subprocess.Popen(
         [*prefix, *command], env={**env, _TAG: token}, cwd=cwd, text=True,
         stdin=subprocess.PIPE if stdin is not None else None, stdout=subprocess.PIPE,

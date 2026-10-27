@@ -5,7 +5,6 @@ cached runtime; the dependencies are local directories, so no network."""
 import io
 import json
 import os
-import shutil
 import stat
 import subprocess
 import sys
@@ -18,7 +17,7 @@ import pytest
 from fsbpyr.cli import main
 from fsbpyr.runtime.registry import Runtime
 
-from ..support import contain
+from ..support import contain, requires
 
 pytestmark = pytest.mark.slow
 
@@ -256,6 +255,7 @@ def paths(tmp_path_factory: pytest.TempPathFactory, runtime: Runtime) -> Path:
     with redirect_stderr(err):
         assert _build(directory) == 0
     assert "skipped" not in err.getvalue() and "not packaged" not in err.getvalue()
+    assert "reads a file next to its own __file__" not in err.getvalue()  # spawn.py, nspawn.py
     return directory
 
 
@@ -335,6 +335,57 @@ def test_an_undeclared_import_skips_its_command_and_an_optional_one_does_not(
     assert _run(dist / "optional", tmp_path).stdout == "optional None\n"
 
 
+def test_a_directory_going_from_one_command_to_several_replaces_its_own_earlier_output(
+    tmp_path: Path, runtime: Runtime
+) -> None:
+    directory = _write(tmp_path / "ops", {"a.py": "if __name__ == '__main__':\n    print('a')\n"})
+    assert _build(directory) == 0
+    dist = directory / "dist"
+    assert [path.name for path in dist.iterdir()] == ["a"] and not (dist / "a").is_symlink()
+
+    (directory / "b.py").write_text("if __name__ == '__main__':\n    print('b')\n")
+    assert _build(directory) == 0
+
+    assert sorted(path.name for path in dist.iterdir()) == ["a", "b", "ops"]
+    assert os.readlink(dist / "a") == "ops" and (dist / "ops").is_file()
+    assert _run(dist / "a", tmp_path).stdout == "a\n"
+    assert _run(dist / "b", tmp_path).stdout == "b\n"
+
+
+def test_a_directory_going_back_to_one_command_replaces_the_link_not_its_target(
+    tmp_path: Path, runtime: Runtime
+) -> None:
+    directory = _write(tmp_path / "ops", {
+        "a.py": "if __name__ == '__main__':\n    print('a')\n",
+        "b.py": "if __name__ == '__main__':\n    print('b')\n",
+    })  # fmt: skip
+    assert _build(directory) == 0
+    dist = directory / "dist"
+    assert os.readlink(dist / "a") == "ops"
+    several = (dist / "ops").read_bytes()
+
+    (directory / "b.py").unlink()
+    assert _build(directory) == 0
+
+    assert not (dist / "a").is_symlink() and (dist / "ops").read_bytes() == several
+    assert _run(dist / "a", tmp_path).stdout == "a\n"
+
+
+def test_a_foreign_file_at_a_commands_link_still_stops_the_build(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = _write(tmp_path / "ops", {
+        "a.py": "if __name__ == '__main__':\n    print('a')\n",
+        "b.py": "if __name__ == '__main__':\n    print('b')\n",
+        "dist/a": "mine",
+    })  # fmt: skip
+
+    assert _build(directory) == 1
+
+    assert "cannot link command 'a'" in capsys.readouterr().err
+    assert (directory / "dist" / "a").read_text() == "mine"
+
+
 def test_strict_fails_on_a_skipped_command_and_writes_nothing(
     tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -393,7 +444,6 @@ def test_the_pep_723_blocks_of_the_commands_give_the_dependencies(
 
 # --- the venv rung ---------------------------------------------------------------------------
 
-UV = shutil.which("uv")
 SHOW = ("from markdown_it import MarkdownIt\n\nif __name__ == '__main__':\n"
         "    print('show', MarkdownIt().render('*x*').strip())\n")
 
@@ -401,11 +451,11 @@ SHOW = ("from markdown_it import MarkdownIt\n\nif __name__ == '__main__':\n"
 def _venv(path: Path, *requirements: str) -> dict[str, str]:
     """A venv at ``path`` with ``requirements`` installed from uv's cache; the version of each
     installed distribution by canonical name."""
-    assert UV is not None
-    subprocess.run([UV, "venv", "--quiet", "--python", sys.executable, str(path)], check=True)
-    subprocess.run([UV, "pip", "install", "--offline", "--quiet", "--python",
+    uv = requires.tool("uv")
+    subprocess.run([uv, "venv", "--quiet", "--python", sys.executable, str(path)], check=True)
+    subprocess.run([uv, "pip", "install", "--offline", "--quiet", "--python",
                     str(path / "bin" / "python"), *requirements], check=True)  # fmt: skip
-    listed = subprocess.run([UV, "pip", "list", "--format", "json", "--python",
+    listed = subprocess.run([uv, "pip", "list", "--format", "json", "--python",
                              str(path / "bin" / "python")], check=True, capture_output=True,
                             text=True).stdout  # fmt: skip
     return {item["name"]: item["version"] for item in json.loads(listed)}
@@ -418,7 +468,7 @@ def _inspect(executable: Path, capsys: pytest.CaptureFixture[str]) -> dict[str, 
     return report
 
 
-needs_uv = pytest.mark.skipif(UV is None, reason="needs uv")
+needs_uv = requires.tools("uv")
 
 
 @needs_uv
@@ -581,3 +631,17 @@ def test_a_file_read_next_to_a_script_is_reported_and_read_next_to_the_executabl
     assert f"{directory / 'dist'}/x.conf is missing" in result.stderr
     assert "deploy it there" in result.stderr
     assert "--fs-package" not in result.stderr
+
+
+def test_only_the_command_entry_names_has_its_main_guard_read_and_strict_builds(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = _write(tmp_path / "ops", {
+        "ok.py": "if __name__ == '__main__':\n    print('ok')\n",
+        "reader.py": "import os\n\nif __name__ == '__main__':\n"
+        "    print(open(os.path.join(os.path.dirname(__file__), 'x.conf')).read())\n",
+    })  # fmt: skip
+
+    assert _build(directory, "--entry", "ok", "--strict") == 0  # reader is no command of it
+
+    assert "reads a file next to its own __file__" not in capsys.readouterr().err

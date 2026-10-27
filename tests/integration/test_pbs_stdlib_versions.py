@@ -1,6 +1,7 @@
 """What differs in the stdlib selection and startup modules between the pinned CPython versions
-(needs the cache). The rules in runtime/stdlib.py are the same for all; these tests pin what they
-select from each version's PBS distribution (checked 2026-10-20 against PBS 20261009)."""
+(the session fetches them). The rules in runtime/stdlib.py are the same for all; these tests pin
+what they select from each version's PBS distribution (checked 2026-10-20 against PBS
+20261009)."""
 
 from collections.abc import Iterator
 
@@ -8,12 +9,11 @@ import pytest
 
 from fsbpyr.payload.format import ModuleFlag
 from fsbpyr.runtime import pbs, stdlib
-from fsbpyr.runtime.pins import pin_for
-from fsbpyr.runtime.registry import cache_home, host_triple
+
+from ..support import downloads
 
 pytestmark = pytest.mark.slow
 
-TRIPLE = host_triple()
 ENCODINGS = {"encodings", "encodings.aliases", "encodings.utf_8"}
 # version -> (built-in extension modules, startup modules, selected modules, unselected ones)
 EXPECTED = {
@@ -28,11 +28,7 @@ BUILTINS_ONLY_IN_314 = {"_zstd", "_hmac", "_remote_debugging", "_types"}
 
 
 def _dist(version: str) -> pbs.PbsDist:
-    # the real cache: once tests/e2e has run, FSBPYR_CACHE_DIR names the session's private one
-    root = cache_home() / "fsbpyr" / "pbs" / pin_for(version, TRIPLE).name / "python"
-    if not (root / "PYTHON.json").exists():
-        pytest.skip(f"PBS distribution for {version} is not in the cache (fsbpyr runtime build)")
-    return pbs.PbsDist.load(root)
+    return downloads.pbs_distribution(version)
 
 
 @pytest.fixture(scope="module", params=sorted(EXPECTED))

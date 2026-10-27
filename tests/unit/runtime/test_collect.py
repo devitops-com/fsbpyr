@@ -211,16 +211,16 @@ def test_a_held_item_is_touched_once_a_day_old_and_a_gone_one_is_no_hold(root: P
     assert not hold.hold(root / "pbs" / "gone")
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
 def test_an_item_that_cannot_be_held_is_used_unheld(root: Path) -> None:
-    """A cache we may not write (no lock can be made): the command goes on."""
+    """A cache we may not write (no lock can be made): the command goes on. Root ignores file
+    modes, so for root the 0o500 item is held after all."""
     item = _item(root, "pbs", OLD_PBS, days=0, lock=False)
     item.chmod(0o500)
     try:
         assert hold.hold(item)
     finally:
         item.chmod(0o700)
-    assert not (item / hold.LOCK).exists()
+    assert (item / hold.LOCK).exists() == (os.geteuid() == 0)
 
 
 def test_an_item_collected_while_its_lock_was_waited_for_is_no_hold(root: Path) -> None:

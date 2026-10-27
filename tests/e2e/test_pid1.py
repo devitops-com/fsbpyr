@@ -13,7 +13,7 @@ import pytest
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.runtime.registry import Runtime
 
-from ..support import contain
+from ..support import contain, requires
 from .conftest import app_content
 
 pytestmark = pytest.mark.slow
@@ -46,13 +46,16 @@ def _podman_works() -> bool:
 
 
 def _as_pid_1(app: Path) -> list[str | Path]:
-    """The command that runs ``app`` as process 1 of a PID namespace, or a skip."""
+    """The command that runs ``app`` as process 1 of a PID namespace, or a failure."""
     if _unshare_works():
         return [*_UNSHARE, app]
     if _podman_works():
         return ["podman", "run", "--rm", "--pids-limit", "64", "-v", f"{app}:/app:Z",
                 _PODMAN_IMAGE, "/app"]  # fmt: skip
-    pytest.skip(f"neither unshare --pid (user namespaces) nor podman with {_PODMAN_IMAGE} works")
+    requires.unmet(f"neither unshare --user --map-root-user --pid works nor podman with "
+                   f"{_PODMAN_IMAGE}",
+                   "allow user namespaces (kernel.apparmor_restrict_unprivileged_userns=0 on "
+                   f"Ubuntu) or install rootless podman and pull {_PODMAN_IMAGE}")
 
 
 @pytest.fixture(scope="module")

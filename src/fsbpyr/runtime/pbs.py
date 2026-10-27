@@ -18,6 +18,7 @@ from typing import Any
 
 from ..compat import tarfile
 from ..text import tail_lines
+from . import ar
 from .hold import hold
 from .pins import PbsPin
 
@@ -25,6 +26,8 @@ _INITTAB_ENTRY = re.compile(r'\{"([A-Za-z0-9_.]+)",\s*PyInit_')
 _LLVM_BITCODE = re.compile(r"llvm-bitcode:(\d+)\.")
 _CHUNK = 1 << 20
 _LIBZSTD = "build/lib/libzstd.a"
+_ZSTD_VERSION_MEMBER = "zstd_common.o"  # holds the string ZSTD_versionString() returns
+_ZSTD_VERSION = re.compile(rb"\0(\d+\.\d+\.\d+)\0")
 _ERROR_TAIL = 500
 
 
@@ -169,6 +172,18 @@ def component_versions(interpreter: Path) -> dict[str, str]:
     if not isinstance(versions, dict):
         raise PbsError(f"{interpreter} did not report its library versions: {versions!r}")
     return {key: str(value) for key, value in versions.items()}
+
+
+def zstd_version(dist: PbsDist) -> str | None:
+    """The version of the ``libzstd.a`` the launcher links (every Python's, 3.12 and 3.13 too,
+    which have no ``_zstd`` to ask), read from the one string its ``zstd_common.o`` holds; None
+    when there is no readable archive, no such member or not exactly one version in it."""
+    try:
+        members = dict(ar.read(dist.root / _LIBZSTD))
+    except (OSError, ar.ArError):
+        return None
+    found = set(_ZSTD_VERSION.findall(members.get(_ZSTD_VERSION_MEMBER, b"")))
+    return found.pop().decode() if len(found) == 1 else None
 
 
 def extension_suffixes(interpreter: Path) -> tuple[str, ...]:

@@ -59,6 +59,11 @@ LINK_FLAGS = (
     "-Wl,-z,noexecstack", "-Wl,-z,relro", "-Wl,-z,now", "-s", "-static-libgcc",
     "-Wl,--wrap=hypot", "-Wl,--wrap=_dl_find_object",
 )  # fmt: skip
+# Cortex-A53 erratum 843419: an adrp in one of a 4 KiB page's last two instruction slots,
+# followed by certain loads or stores, can compute a wrong address; lld patches each such
+# sequence. PBS links its aarch64 builds so since 20261026, but the stub is linked here from
+# PBS's bitcode, so the flag is the stub's own.
+AARCH64_LINK_FLAGS = ("-Wl,--fix-cortex-a53-843419",)
 
 
 # The sanitized test variant (D38): ASan and UBSan, every undefined behaviour fatal; built
@@ -76,8 +81,9 @@ def compile_flags(*, sanitize: bool = False) -> tuple[str, ...]:
     return (*(f for f in COMPILE_FLAGS if f not in _NOT_SANITIZED), "-O1", *SANITIZE_FLAGS)
 
 
-def link_flags(*, sanitize: bool = False) -> tuple[str, ...]:
-    return tuple(f for f in LINK_FLAGS if f not in _NOT_SANITIZED) if sanitize else LINK_FLAGS
+def link_flags(triple: str, *, sanitize: bool = False) -> tuple[str, ...]:
+    flags = tuple(f for f in LINK_FLAGS if f not in _NOT_SANITIZED) if sanitize else LINK_FLAGS
+    return (*flags, *AARCH64_LINK_FLAGS) if triple.startswith("aarch64-") else flags
 
 
 class StubBuildError(RuntimeError):
@@ -117,13 +123,14 @@ def outlined_atomics(toolchain: Toolchain, triple: str) -> Path | None:
     return library
 
 
-def launcher_digest(*, sanitize: bool = False) -> str:
-    """SHA-256 over the launcher sources and flags: part of the runtime identity."""
+def launcher_digest(triple: str, *, sanitize: bool = False) -> str:
+    """SHA-256 over the launcher sources and their flags for ``triple``: part of the runtime
+    identity."""
     root = importlib.resources.files("fsbpyr.launcher")
     digest = hashlib.sha256()
     for name in LAUNCHER_FILES:
         digest.update(name.encode() + b"\0" + root.joinpath(name).read_bytes())
-    flags = (*compile_flags(sanitize=sanitize), *link_flags(sanitize=sanitize))
+    flags = (*compile_flags(sanitize=sanitize), *link_flags(triple, sanitize=sanitize))
     digest.update("\0".join(flags).encode())
     return digest.hexdigest()
 
@@ -163,7 +170,7 @@ def stub_command(  # noqa: PLR0913  # the build's inputs, and which variant
         os.fspath(out),
         *map(os.fspath, sources),
         *map(os.fspath, inputs.extra_objects),
-        *link_flags(sanitize=sanitize),
+        *link_flags(dist.triple, sanitize=sanitize),
         "-Wl,--start-group",
         os.fspath(inputs.libpython),
         *map(os.fspath, inputs.static_libs),

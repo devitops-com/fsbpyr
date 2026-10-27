@@ -208,11 +208,10 @@ jobs:
           clang="$(as-tester bash tools/bootstrap.sh --llvm23)"
           ln -sfn "$(dirname "$clang")" /home/tester/llvm23
 
-      # tests/integration/test_pbs_stdlib_versions.py compares the distributions of all the
-      # versions, and the bootstrap built the runtime of this entry's only; the full suite
-      # expects no skip. tests/e2e/test_dispatch.py builds fsbpyr on another Python, which
-      # needs that Python installed as well. Each runtime is built by fsbpyr on its own Python:
-      # an older Python cannot canonicalize a newer one's bytecode.
+      # tests/e2e/test_dispatch.py builds fsbpyr on another Python, which needs that Python
+      # installed and its runtime in the cache; the bootstrap built the runtime of this entry's
+      # Python only. Each runtime is built by fsbpyr on its own Python: an older Python cannot
+      # canonicalize a newer one's bytecode.
       - name: The other versions' runtimes
         env:
           MATRIX_PYTHON: ${{ matrix.python }}
@@ -242,12 +241,12 @@ jobs:
         run: as-tester make check-c $MAKE_ARGS
 
       # Everything but the portability tests and the corpus (the jobs below).
-      # FSBPYR_TESTS_REQUIRE_ALL=full: no skip is expected, so a test that cannot run here fails
-      # the step. Branch coverage below pyproject.toml's fail_under fails it too. The launcher programs the tests build are
-      # instrumented for llvm-cov and kept (FSBPYR_LLVM_COV_DIR), for the report below.
+      # Nothing in the suite skips, so a test that cannot run here fails the step. Branch
+      # coverage below pyproject.toml's fail_under fails it too. The launcher programs the tests
+      # build are instrumented for llvm-cov and kept (FSBPYR_LLVM_COV_DIR), for the report below.
       - name: The whole suite
         run: |
-          as-tester $UV_ENV FSBPYR_TESTS_REQUIRE_ALL=full \
+          as-tester $UV_ENV \
             FSBPYR_FUZZ_SECONDS="$FSBPYR_FUZZ_SECONDS" FSBPYR_FUZZ_CORPUS=/home/tester/fuzz-corpus \
             FSBPYR_LLVM_COV_DIR=/home/tester/llvm-cov/bin \
             LLVM_PROFILE_FILE=/home/tester/llvm-cov/prof/%p-%m.profraw \
@@ -358,11 +357,11 @@ jobs:
             as-tester uv python install "$MATRIX_PYTHON"
           fi
 
-      # FSBPYR_TESTS_REQUIRE_ALL=full: an app may only be skipped for a package without a wheel
-      # on this Python and machine (tests/support/no-wheels.txt).
+      # An app whose lock needs a package without a wheel on this Python and machine
+      # (tests/support/no-wheels.txt) is not part of the run.
       - name: make test-corpus
         run: |
-          as-tester FSBPYR_TESTS_REQUIRE_ALL=full JOBS=4 \
+          as-tester JOBS=4 \
             PYTEST_ADDOPTS="--durations=30 --junitxml=corpus.xml" make test-corpus $MAKE_ARGS
 
       - name: Upload the report
@@ -415,7 +414,7 @@ jobs:
           path: dist
 
       # The uv that tools/release/uv.version names, for this runner's architecture; llvm for
-      # llvm-objdump (the test skips without it, and a skip fails the run below).
+      # llvm-objdump (the tests that read the executables' sections fail without it).
       - name: Install uv and llvm
         run: |
           sh tools/release/install-uv.sh "$RUNNER_TEMP/bin" > /dev/null
@@ -447,10 +446,9 @@ jobs:
           uv python install "$(cat .python-version)" "$MATRIX_PYTHON"
           tools/portability-apps.sh dist/fsbpyr$SUFFIX "$RUNNER_TEMP/apps" "$MATRIX_PYTHON"
 
-      # FSBPYR_TESTS_REQUIRE_ALL=portability: no skip is expected.
       - name: The portability tests
         run: |
-          FSBPYR_PORTABILITY_APPS="$RUNNER_TEMP/apps" FSBPYR_TESTS_REQUIRE_ALL=portability \
+          FSBPYR_PORTABILITY_APPS="$RUNNER_TEMP/apps" \
             uv run --locked pytest tests/e2e/test_portability.py -rf --tb=short \
               --junitxml=portability.xml
 

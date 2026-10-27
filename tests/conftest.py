@@ -1,9 +1,11 @@
 """Every test: no cache collection unless a test asks for one (D38): the tool's daily check and
 the launcher's background runs would otherwise act on the caches tests use, or the user's.
 
-pytest passes a run however many tests skip. FSBPYR_TESTS_REQUIRE_ALL names one of the lists
-below (the full-suite workflow sets `full` and `portability`, el8.yml `el8` and `portability`,
-`make test-container` `container`), and a skip that the list does not expect fails the run.
+Nothing in this suite skips (tests/support/requires.py): a test whose tool or environment is
+missing fails with one line that says what to install or change. A test marked
+``requires_tools`` fails before it runs when a tool is not on PATH; one marked ``needs_wheel``
+(tests/support/wheels.py) is deselected where no-wheels.txt lists no wheel for its package. A
+skip or xfail by whatever means (a plugin, an empty parameter set) fails the run at the end.
 
 At the end, the builds of local projects the run made leave uv's cache: the tests build their
 fixture projects (and fsbpyr) from new temporary copies every time, and uv keeps every build.
@@ -23,38 +25,11 @@ from hypothesis import settings
 
 from fsbpyr.project import Project
 from fsbpyr.runtime import pins
+from tests.support import requires, wheels
 
-# The skips each list's environment cannot avoid, each entry a nodeid or the start of a reason
-# (some reasons carry runtime text).
-EXPECTED_SKIPS = {
-    # `make test-container`: the Containerfile's `test` stage, as `tester` (uid 1000, one
-    # supplementary group) with no podman, and the Python of .python-version only
-    "container": (
-        "PBS distribution for",
-        "needs Python ",  # the variant a dispatch test builds: another Python, its runtime
-        "needs the Python ",
-        "3.12's takes one resource name",
-        "needs podman",
-        "needs a mount that allows set-id bits",
-        "needs set-id bits",
-        "needs busybox",  # install.sh's tests run it under busybox sh and with wget:
-        "needs wget",  # test-setup.sh installs both for the full suite
-    ),
-    # full-suite.yml's job: the same container with rootless podman and /proc/sys opened for
-    # user namespaces, as `tester` -- every test the other lists skip runs (the job builds
-    # the other versions' runtimes), except the one 3.12 skips by version and what needs a
-    # package without a wheel for the Python (tests/support/no-wheels.txt)
-    "full": ("3.12's takes one resource name", "no wheel for Python "),
-    # el8.yml's tests job: the suite job's container without podman, for the stub-dependent tests
-    "el8": ("3.12's takes one resource name", "no wheel for Python ", "needs podman"),
-    # full-suite.yml's portability job: podman on the runner host, and every image pulled
-    # (the release executable of that job has no glibc 2.28 stubs: the separate EL8 workflow
-    # publishes them, and its apps join the prebuilt set then)
-    "portability": ("no wheel for Python ", "no glibc 2.28 apps"),
-}
 # The glibc baseline the tests build for: the EL8 test mode when FSBPYR_TEST_GLIBC=2.28 (read
-# again by tests/support/baseline.py; not imported, since tests/unit/test_expected_skips.py runs
-# this file outside the package)
+# again by tests/support/baseline.py; not imported, since tests/unit/test_requires.py runs this
+# file outside the package)
 TEST_GLIBC = os.environ.get("FSBPYR_TEST_GLIBC") or pins.DEFAULT_BASELINE
 EL8_MODE = TEST_GLIBC != pins.DEFAULT_BASELINE
 # The corpus projects (TST-3) carry test files of their own, which their built apps run
@@ -135,10 +110,6 @@ def pytest_configure(config: pytest.Config) -> None:
     if TEST_GLIBC not in pins.BASELINES:
         raise pytest.UsageError(f"FSBPYR_TEST_GLIBC={TEST_GLIBC}: not a glibc baseline "
                                 f"({', '.join(pins.BASELINES)})")  # fmt: skip
-    name = os.environ.get("FSBPYR_TESTS_REQUIRE_ALL")
-    if name and name not in EXPECTED_SKIPS:
-        raise pytest.UsageError(f"FSBPYR_TESTS_REQUIRE_ALL={name}: no such list "
-                                f"({', '.join(EXPECTED_SKIPS)})")  # fmt: skip
     kept = os.environ.get("FSBPYR_TEST_DOWNLOADS")
     if kept and getattr(config.option, "numprocesses", None) and not hasattr(config, "workerinput"):
         _prepare_for_workers(Path(kept))
@@ -160,14 +131,46 @@ def _prepare_for_workers(kept: Path) -> None:
             (False, "2.34"), (True, "2.34"), (False, "2.28"))  # fmt: skip
         for sanitize, glibc in runtimes:
             downloads.build_kept_runtime(TARGET_PYTHON, kept, sanitize=sanitize, baseline=glibc)
-    except ToolchainError:  # no compiler here: the end-to-end tests skip in the workers
-        pass
+    except ToolchainError as exc:
+        raise pytest.UsageError(f"missing tool: {exc}; {requires.FIX}") from exc
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """A test marked ``requires_tools`` fails here, before its fixtures build anything, when one
+    of the tools is not on PATH."""
+    for marker in item.iter_markers(requires.MARKER):
+        for name in marker.args:
+            requires.tool(name)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """A test that requires podman is marked ``podman``, so that ``-m "not podman"`` leaves it
+    out where the environment has none. The tests marked ``needs_wheel`` whose package has no
+    wheel for their Python (no-wheels.txt) are deselected: they are not part of the run on that
+    Python, and the summary counts them as deselected."""
+    from fsbpyr.build import TARGET_PYTHON  # noqa: PLC0415
+
+    for item in items:
+        if any("podman" in marker.args for marker in item.iter_markers(requires.MARKER)):
+            item.add_marker(pytest.mark.podman)
+    dropped = [item for item in items
+               if any(wheels.missing(marker.args[0], marker.kwargs.get("python") or TARGET_PYTHON)
+                      for marker in item.iter_markers("needs_wheel"))]  # fmt: skip
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)
+        items[:] = [item for item in items if item not in dropped]
 
 
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:
-    if report.skipped and not hasattr(report, "wasxfail"):
-        assert isinstance(report.longrepr, tuple)  # (path, line, "Skipped: <reason>")
-        _skips.append((report.nodeid, report.longrepr[2].removeprefix("Skipped: ")))
+    if not report.skipped:
+        return
+    if isinstance(report.longrepr, tuple):  # (path, line, "Skipped: <reason>")
+        reason = report.longrepr[2].removeprefix("Skipped: ")
+    else:  # an xfail: the report carries the failure it expected
+        reason = f"xfail: {getattr(report, 'wasxfail', '')}"
+    _skips.append((report.nodeid, reason))
 
 
 def _prune_local_builds() -> str | None:
@@ -205,16 +208,11 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
         return
     if problem := _prune_local_builds():
         session.config.get_terminal_writer().line(f"uv's cache keeps this run's builds: {problem}")
-    name = os.environ.get("FSBPYR_TESTS_REQUIRE_ALL")
-    if not name:
-        return
-    expected = EXPECTED_SKIPS[name]
-    unexpected = [f"{nodeid}: {reason}" for nodeid, reason in _skips
-                  if not any(nodeid == e or reason.startswith(e) for e in expected)]  # fmt: skip
-    if unexpected:
+    if _skips:
         writer = session.config.get_terminal_writer()
         writer.line()  # ends the progress line
-        writer.sep("=", f"skips the {name} list does not expect", red=True)
-        for line in unexpected:
-            writer.line(line)
+        writer.sep("=", "skipped tests: skipping is not allowed in this suite (CONTRIBUTING.md)",
+                   red=True)  # fmt: skip
+        for nodeid, reason in _skips:
+            writer.line(f"{nodeid}: {reason}")
         session.exitstatus = pytest.ExitCode.TESTS_FAILED

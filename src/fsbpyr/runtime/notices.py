@@ -25,7 +25,7 @@ _HACL_OBJECTS = "/_hacl/"
 @dataclass(frozen=True, slots=True)
 class Notices:
     texts: dict[str, bytes]  # file name -> text, PBS's and supplied ones
-    unshipped: frozenset[str]  # names PBS lists for the linked libraries but does not ship
+    unshipped: frozenset[str]  # names of the linked libraries' texts that PBS does not ship
 
 
 def _own_license() -> bytes:
@@ -65,7 +65,9 @@ def collect(dist: PbsDist) -> Notices:
     listed, hacl = _listed(dist)
     texts: dict[str, bytes] = {}
     unshipped: set[str] = set()
-    for name in sorted(listed - NOT_LINKED):
+    # the launcher links zstd whatever the Python; PBS lists its text only for _zstd, which 3.12
+    # and 3.13 lack
+    for name in sorted((listed | {"LICENSE.zstd.txt"}) - NOT_LINKED):
         path = dist.root / "licenses" / name
         if path.is_file():
             texts[name] = path.read_bytes()

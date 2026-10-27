@@ -5,7 +5,8 @@ Layout (manifest §7, D9): ``<cache>/runtime/<generation>/site/<site-relative pa
 libraries unchanged. ``<cache>`` is ``$FSBPYR_CACHE_DIR`` or
 ``${XDG_CACHE_HOME:-~/.cache}/<app>``. Extensions are loaded by CPython's ExtensionFileLoader
 (plain dlopen) once the launcher's ``_fsbpyr.sync`` has put their files in place (D35): it
-writes a missing file under a temporary name and renames it into place, so racing processes
+writes a missing file unnamed (O_TMPFILE) and links it into place, or, to replace a file or
+where that is not possible, under a temporary name that it renames into place, so racing processes
 only ever see complete files and need no lock. Cached files run outside the executable's own
 integrity check, so each process hashes them once, before it first uses them, with the
 launcher's own digest routine (D31, D32): a modified file is reported and restored from the
@@ -101,8 +102,9 @@ class NativeCache:
         return _fsbpyr.sync(self.root, self._chain, files, self._checked, resources, written)
 
     def extract(self, files: "Sequence[int]", *, resources: bool = False) -> int:
-        """``sync`` for the import machinery and the resources API: a refused cache directory
-        (module.c's words) is a refused start, not an error the app could run into."""
+        """``sync`` for the import machinery, the resources API and the native check: a refused
+        cache directory (module.c's words) is a refused start, not an error the app could run
+        into."""
         try:
             return self.sync(files, resources=resources)
         except NativeCacheError as exc:

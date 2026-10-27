@@ -9,7 +9,9 @@ import os
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-_SKIPPED_DIRECTORIES = frozenset({"build", "dist", "node_modules", "__pycache__"})
+# not walked for sources, by the entry inference and by the file walk of a project without a
+# build system (loose)
+SKIPPED_DIRECTORIES = frozenset({"build", "dist", "node_modules", "__pycache__", "site-packages"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +80,7 @@ def source_has_candidate(directory: Path) -> bool:
     for root, dirs, files in os.walk(directory):
         dirs[:] = [
             d for d in dirs
-            if not d.startswith(".") and d not in _SKIPPED_DIRECTORIES
+            if not d.startswith(".") and d not in SKIPPED_DIRECTORIES
             and not (Path(root, d) / "pyvenv.cfg").exists()
         ]  # fmt: skip
         if "__main__.py" in files:
