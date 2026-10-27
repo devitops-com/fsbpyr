@@ -282,6 +282,9 @@ COMPANION = "el8-v1.2.0"
 STUBS = [f"{release_stub_asset(python, target, '2.28')}.xz" for python, target in PYTHON_TARGETS]
 SUMS_TEXT = "".join(f"{i:064x}  {name.removesuffix('.xz')}\n" for i, name in enumerate(STUBS))
 
+# "Is it published" reads gh's JSON with jq, as GitHub's runners have it
+needs_jq = pytest.mark.skipif(shutil.which("jq") is None, reason="jq is not installed")
+
 
 class Publish:
     """The publish job's shell, run in a directory with the job's dist/ and a fake gh."""
@@ -353,6 +356,7 @@ def test_nothing_published_yet_goes_on_to_make_the_companion_release(publish: Pu
     assert publish.calls == [f"release view {COMPANION} --json isDraft,assets"]
 
 
+@needs_jq
 def test_a_published_companion_with_the_same_stubs_has_nothing_to_publish(publish: Publish) -> None:
     publish.release(draft=False)
 
@@ -364,6 +368,7 @@ def test_a_published_companion_with_the_same_stubs_has_nothing_to_publish(publis
     assert not [call for call in publish.calls if "delete" in call or "create" in call]
 
 
+@needs_jq
 @pytest.mark.parametrize("case", ["other sums", "a stub missing", "no sums file"])
 def test_a_published_companion_with_other_stubs_fails_and_is_left_alone(
         publish: Publish, case: str) -> None:  # fmt: skip
@@ -383,6 +388,7 @@ def test_a_published_companion_with_other_stubs_fails_and_is_left_alone(
     assert not [call for call in publish.calls if "delete" in call or "create" in call]
 
 
+@needs_jq
 def test_a_draft_left_by_a_run_that_stopped_is_deleted_and_made_again(publish: Publish) -> None:
     publish.release(draft=True, sums="other\n", assets=STUBS[:3])
 

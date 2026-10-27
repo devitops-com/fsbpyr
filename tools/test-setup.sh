@@ -6,7 +6,7 @@
 #
 #   - libclang-rt-22-dev and llvm-22: Debian's compiler-rt and llvm-objdump (the runtime, the
 #     ASan/UBSan launcher and llvm-cov use LLVM 23's own, tools/release/llvm23);
-#   - gcc, strace, groff-base, zstd, xz-utils, wget and busybox: tests that skip without them;
+#   - gcc, strace, groff-base, zstd, xz-utils, wget, busybox and jq: tests that skip without them;
 #   - a user `tester` (uid 1000) in one supplementary group (testers), the user the suite runs
 #     as: the ownership tests need a user that is not root and has a group besides its own;
 #   - a directory of root's in /tmp and a searchable directory of another user under /var/lib,
@@ -17,7 +17,7 @@ set -euo pipefail
 
 apt-get update -q
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-    libclang-rt-22-dev llvm-22 gcc strace groff-base zstd xz-utils wget busybox openssl
+    libclang-rt-22-dev llvm-22 gcc strace groff-base zstd xz-utils wget busybox openssl jq
 rm -rf /var/lib/apt/lists/*
 
 groupadd --gid 2000 testers
