@@ -194,12 +194,16 @@ def test_pin_lookup() -> None:
          "f003449a05408c2e4b184f2a7abd1ea277081ff1a9100289075243ab5ed81207"),
         ("x86_64", "3.14", "3.14.10",
          "4a2823d5deacb631e21b3c8387a1ec9be57e1b0ed37b7770e2e71cfe7b94eb94"),
+        ("x86_64", "3.15", "3.15.2",
+         "3488eafeae3c25a44895df9fd52a9be1f2fa11a45cb0580279e03c2bce5339b4"),
         ("aarch64", "3.12", "3.12.16",
          "983593f8a9de59f8e25972b41851161a8ad139bb25b01766fbfa69979a15521d"),
         ("aarch64", "3.13", "3.13.18",
          "069e9ae72f35f8ac743e1dad224417b07a3728971bc8333fe08b78e4c24bee12"),
         ("aarch64", "3.14", "3.14.10",
          "2c2b62b6e02a1717b408c30d49a8bf293b280b2b4a22bb948f9b85ecc1f5ce54"),
+        ("aarch64", "3.15", "3.15.2",
+         "b3fc351d2271f6c0b3c6d2b423043771dfcb5267053512b8aebba195dad110e9"),
     ],
 )  # fmt: skip
 def test_every_version_is_pinned_to_release_20261026(
