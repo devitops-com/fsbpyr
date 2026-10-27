@@ -131,8 +131,9 @@ def runtime_id(
     the glibc the stub is linked for; the sysroot's identity is in the digest, so runtimes of
     two baselines never share an id."""
     sysroot_pin = pins.sysroot_for(pin.triple, baseline)
-    identity = "\0".join((stub.launcher_digest(sanitize=sanitize), pin.name, pin.sha256,
-                          sysroot_pin.identity, str(LAYOUT_VERSION)))  # fmt: skip
+    launcher = stub.launcher_digest(pin.triple, sanitize=sanitize)
+    identity = "\0".join((launcher, pin.name, pin.sha256, sysroot_pin.identity,
+                          str(LAYOUT_VERSION)))  # fmt: skip
     digest = hashlib.sha256(identity.encode()).hexdigest()[:12]
     suffix = "-sanitized" if sanitize else ""
     return f"cp{pin.python.replace('.', '')}-{pin.triple}-{digest}{suffix}"

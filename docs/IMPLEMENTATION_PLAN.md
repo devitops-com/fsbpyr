@@ -1801,7 +1801,9 @@ compare jobs or the short asset names, later entries below and D42 apply.
     on both targets (upstream-watch's issue #52); `.python-version` is 3.14.10. The 3.14 archives
     are still LLVM 23.1.3 bitcode. The aarch64 distributions are linked with
     `-Wl,--fix-cortex-a53-843419` (PYTHON.json's LDFLAGS), which our link does not take: it uses
-    its own literal `LINK_FLAGS` (stub.py), so the workaround does not reach the stub.
+    its own literal `LINK_FLAGS` (stub.py). So the aarch64 stub links with the flag of its own
+    (`AARCH64_LINK_FLAGS`, hashed into the runtime id; owner decision 2026-10-27): Cortex-A53
+    cores (Raspberry Pi 3 and Zero 2, many boards) are aarch64 hosts.
 
   **Steps** (a target is done when, on its own runner, the full suite passes with that
   target's skip list, the three-stage bootstrap is byte-identical and an independent rebuild

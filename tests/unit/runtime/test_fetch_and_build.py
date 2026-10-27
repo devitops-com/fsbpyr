@@ -392,7 +392,14 @@ def test_the_sanitized_runtime_has_an_identity_of_its_own() -> None:
     sanitized = registry.runtime_id(pin, sanitize=True)
 
     assert sanitized != registry.runtime_id(pin) and sanitized.endswith("-sanitized")
-    assert stub.launcher_digest(sanitize=True) != stub.launcher_digest()
+    assert stub.launcher_digest(pin.triple, sanitize=True) != stub.launcher_digest(pin.triple)
+
+
+def test_the_runtime_id_hashes_the_link_flags_of_its_target() -> None:
+    """aarch64 links with a flag of its own (the Cortex-A53 erratum fix)."""
+    aarch64 = stub.launcher_digest("aarch64-unknown-linux-gnu")
+
+    assert aarch64 != stub.launcher_digest("x86_64-unknown-linux-gnu")
 
 
 def test_component_versions_come_from_running_the_interpreter() -> None:

@@ -340,6 +340,25 @@ def test_stub_command_ends_with_the_outlined_atomics_when_given_them(tmp_path: P
     assert withatomics == [*plain, "/rt/libclang_rt.builtins-aarch64.a"]
 
 
+@pytest.mark.parametrize("sanitize", [False, True])
+def test_aarch64_links_with_the_cortex_a53_erratum_fix(tmp_path: Path, sanitize: bool) -> None:
+    """PBS links its aarch64 builds with it since 20261026; the stub is linked here from PBS's
+    bitcode, so it needs the flag of its own."""
+    dist = _fake_dist(tmp_path)
+    arm = PbsDist(dist.root, {**dist.info, "target_triple": "aarch64-unknown-linux-gnu"})
+    inputs = link_inputs(dist, set())
+    toolchain = Toolchain(clang=Path("/x/clang-22"), lld=Path("/x/ld.lld-22"), major=22,
+                          sysroot=Path("/s/sysroot"))  # fmt: skip
+
+    x86_64 = stub_command(dist, inputs, toolchain, [Path("main.c")], Path("stub"),
+                          sanitize=sanitize)  # fmt: skip
+    aarch64 = stub_command(arm, inputs, toolchain, [Path("main.c")], Path("stub"),
+                           sanitize=sanitize)  # fmt: skip
+
+    assert "-Wl,--fix-cortex-a53-843419" in aarch64
+    assert "-Wl,--fix-cortex-a53-843419" not in x86_64
+
+
 def _clang_printing(tmp_path: Path, library: Path, status: int = 0) -> Toolchain:
     clang = tmp_path / "clang-22"
     clang.write_text(f'#!/bin/sh\necho "$@" > "{tmp_path}/args"\necho {library}\nexit {status}\n')
@@ -468,7 +487,8 @@ def test_stub_command_passes_the_runtime_id_the_stub_records(tmp_path: Path) -> 
 
 def test_the_identity_flag_is_not_part_of_the_runtime_id() -> None:
     """The id is what the flag carries: it cannot depend on it."""
-    assert not any("RUNTIME_ID" in flag for flag in (*stub.COMPILE_FLAGS, *stub.LINK_FLAGS))
+    flags = (*stub.COMPILE_FLAGS, *stub.LINK_FLAGS, *stub.AARCH64_LINK_FLAGS)
+    assert not any("RUNTIME_ID" in flag for flag in flags)
 
 
 def test_a_failed_link_shows_its_output_from_a_line_start(
