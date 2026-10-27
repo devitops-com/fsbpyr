@@ -96,7 +96,17 @@ class ClassifyError(RuntimeError):
 
 
 class Uncounted(str):
-    """A warning that ``--strict`` does not count: a guess that only fs-packages silences."""
+    """A warning that ``--strict`` does not count: one about the build host, or a guess about the
+    app that only fs-packages (or a run) settles. Every kind:
+
+    - the uv that differs from the one that built this fsbpyr, and git errors (the host);
+    - the note on ``Pipfile.lock`` packages from other indexes (the host's uv);
+    - the advice about ``requirements/*.txt`` when there is no ``requirements.txt``;
+    - packages that may start helper interpreters through ``sys.executable``;
+    - the ``--hints`` guess that packages read files next to ``__file__``;
+    - shared objects no extension module loads but a package's Python code names;
+    - executables in packages.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -611,10 +621,10 @@ class _Collector:
                 first.setdefault(package, f"{rel}:{line}")
         if first:
             listed = ", ".join(f"{name} ({where})" for name, where in sorted(first.items()))
-            self.warnings.append(
+            self.warnings.append(Uncounted(
                 "these packages read files next to __file__ (a heuristic); add one to "
                 f"fs-packages only if it fails at run time: {listed}"
-            )
+            ))
 
     def _hint_unused_natives(self) -> None:
         unused: dict[str, list[str]] = {}

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from fsbpyr.build import StrictError, check_strict
 from fsbpyr.classify import ClassifyError, Uncounted, _digested, classify
 from fsbpyr.closure import ClosureError, SiteIndex, resolve_entry
 from fsbpyr.compat import process_cpu_count
@@ -804,6 +805,20 @@ def test_reads_next_to_file_are_reported_unless_fs_required(site: Path) -> None:
     assert len(hints) == 1  # one line for the whole build
     assert "datapkg (datapkg/__init__.py:2)" in hints[0] and "fs-packages" in hints[0]
     assert not [w for w in fs.warnings if "__file__" in w]
+
+
+def test_strict_does_not_count_the_file_read_guess(site: Path) -> None:
+    _dist(site, "datapkg", "1.0", {"datapkg/__init__.py": READS_DATA})
+    index = SiteIndex.scan(site)
+
+    content = classify([index.dists["datapkg"]], extension_suffixes=SUFFIXES,
+                       include_source=True, hints=True)  # fmt: skip
+
+    (hint,) = [w for w in content.warnings if "__file__" in w]
+    assert isinstance(hint, Uncounted)
+    check_strict(content.warnings)  # a guess about the app does not fail a --hints --strict build
+    with pytest.raises(StrictError):
+        check_strict([*content.warnings, "datapkg/x.py kept as data (bad, line 1)"])
 
 
 def test_file_read_hints_name_a_package_fs_packages_accepts(site: Path) -> None:

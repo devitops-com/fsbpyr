@@ -391,9 +391,7 @@ def check_hashed_requirements(project: Project, config: BuildConfig) -> None:
 
 
 def check_strict(warnings: Iterable[str]) -> None:
-    """Raise StrictError for the warnings that count. The uv mismatch and git errors describe
-    the build host, and the ctypes guess is silenced only by fs-packages, which changes how
-    the app runs: none of them counts (they are Uncounted)."""
+    """Raise StrictError for the warnings that count; the Uncounted ones (see there) do not."""
     counted = [warning for warning in warnings if not isinstance(warning, Uncounted)]
     if counted:
         raise StrictError(f"--strict: the build has {plural(len(counted), 'warning')}; "
