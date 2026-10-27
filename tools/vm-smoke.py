@@ -14,8 +14,9 @@ Each --app (an executable built for aarch64) is copied to /apps, first on PATH. 
 a shell command line run there as root in /tmp with FSBPYR_CACHE_DIR=/tmp/cache and a limit of
 --timeout seconds; it must exit 0, and with ``COMMAND => TEXT`` its output must contain TEXT.
 Without --run only the boot and the page size are checked. Exit status: 0 all passed, 1 a
-check failed, 2 the command line, a pin or a missing tool (nothing is installed for you), 3 a pinned
-download is gone. The files fetched are pinned by SHA-256 and checked on every use.
+check failed, 2 the command line, a pin or a missing tool (nothing is installed for you), 3 a
+pinned download is gone or unreachable. The files fetched are pinned by SHA-256 and checked on
+every use.
 """
 
 import argparse

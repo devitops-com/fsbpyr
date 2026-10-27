@@ -17,7 +17,7 @@ is stored under a mangled name in the same place (``check_disk.py``, ``sub_dir/`
 runs as ``__main__``; its ``__file__`` is that path next to the executable (D24,
 ``_fsbpyr_boot.py``), and the boot's path hook maps the entry ``<exe>/_fsbpyr_scripts/sub-dir``
 to ``sub_dir`` by the same rule. Dependencies come from a lock or requirements file
-(``--requirements``, requirements.txt, pylock.toml, Pipfile.lock), else from the union of the
+(``--requirements``, pylock.toml, requirements.txt, Pipfile.lock), else from the union of the
 commands' PEP 723 blocks, else from the versions the scripts' venv holds (``venvdeps``).
 """
 

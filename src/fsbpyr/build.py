@@ -536,9 +536,9 @@ def infer_dependencies(
     package: Package, project: Project, config: BuildConfig, runtime: Runtime, warnings: list[str]
 ) -> tuple[Package, Inferred | None]:
     """Rung 3 of the dependency ladder (venvdeps.py): a directory of scripts or a single script
-    (``project.bare``; a project without a build system never reads a venv) whose commands
-    import what the runtime lacks, and that declares no dependency, gets the versions
-    its venv holds of the distributions that provide those imports, pinned in its wheel. The
+    (``project.bare``; a ``[project]`` without a build system never reads a venv) whose commands
+    import what the runtime lacks, and that declares no dependency, gets the versions its venv
+    holds of the distributions that provide those imports, pinned in its wheel. The
     pins are installed fresh, nothing is copied. A warning names the venv and the command that
     declares the dependencies; --strict fails on it, before anything is staged."""
     if (venv := find_venv(project.directory)) is None:

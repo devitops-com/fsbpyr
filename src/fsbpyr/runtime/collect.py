@@ -6,7 +6,8 @@ trash and removed. What a killed process left while it worked (an extraction or 
 staging directory, a partial download) goes after a day. Only a root with the marker is
 collected: hold() writes it into one that holds nothing but our names. ``fsbpyr cache gc`` runs
 it, and every app cache it finds; ``fsbpyr build``, ``inspect``, ``runtime build`` and
-``runtime list`` check it at their start, at most once a day."""
+``runtime list`` check it at their start, at most once a day (once an hour when the file system
+has less than 10% free)."""
 
 import functools
 import os
