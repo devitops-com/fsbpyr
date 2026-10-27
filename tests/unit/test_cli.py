@@ -14,6 +14,7 @@ import pytest
 import fsbpyr
 from fsbpyr.build import BuildResult
 from fsbpyr.cli import cli, main
+from fsbpyr.project import Project
 from fsbpyr.runtime import pins, registry
 from fsbpyr.runtime.toolchain import ToolchainError
 from fsbpyr.vcs import git_state, version_string
@@ -433,3 +434,34 @@ def test_a_pipfile_lock_that_is_the_lock_source_still_picks_the_python(
     main(["build", str(tmp_path)])
 
     assert handed == ["3.12"]
+
+
+@pytest.mark.parametrize(("settings", "argv", "loads"), [
+    ("", [], [None]),
+    ("", ["--requirements", "reqs.txt"], ["reqs.txt"]),
+    ('requirements = "reqs.txt"\n', [], [None, "reqs.txt"]),
+])  # fmt: skip
+def test_the_project_is_loaded_again_only_when_the_settings_name_the_lock_source(
+    settings: str, argv: list[str], loads: list[str | None], tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A load of a directory of scripts parses each of its Python files."""
+    (tmp_path / "main.py").write_text("if __name__ == '__main__':\n    pass\n")
+    (tmp_path / "reqs.txt").write_text("")
+    (tmp_path / "pyproject.toml").write_text(f"[tool.fsbpyr]\n{settings}")
+    loaded: list[str | None] = []
+    load = Project.load
+
+    def counted(directory: Path, requirements: str | None = None) -> Project:
+        loaded.append(requirements)
+        return load(directory, requirements)
+
+    def build(project: Path, config: object, **kwargs: object) -> None:
+        raise OSError("stop here")
+
+    monkeypatch.setattr(Project, "load", counted)
+    monkeypatch.setattr("fsbpyr.build.build", build)
+
+    assert main(["build", str(tmp_path), *argv]) == 1
+    assert capsys.readouterr().err == "fsbpyr: error: stop here\n"  # the build was reached
+    assert loaded == loads
