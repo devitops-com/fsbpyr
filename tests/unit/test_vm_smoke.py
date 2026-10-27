@@ -75,12 +75,11 @@ def test_the_kernels_name_a_page_size_and_the_config_option_that_says_it() -> No
     kernels = vm.load_pins()["kernel"]
 
     assert {key: kernel["pagesize"] for key, kernel in kernels.items()} == {
-        "16k": 16384, "64k": 65536}  # fmt: skip
+        "64k": 65536}  # fmt: skip
     for key, kernel in kernels.items():
         assert kernel["option"] == f"CONFIG_ARM64_{key.upper()}_PAGES"
-        assert kernel["kind"] in ("deb", "rpm")
         assert kernel["image"].startswith("./") and kernel["config"].startswith("./")
-        assert kernel["url"].endswith(".deb" if kernel["kind"] == "deb" else ".rpm")
+        assert kernel["url"].endswith(".rpm")
 
 
 def test_the_userlands_are_debian_and_el8_with_distinct_file_names() -> None:
@@ -157,7 +156,7 @@ def test_a_file_that_is_not_an_rpm_is_refused() -> None:
 
 
 def _kernel_pin(**changes: str) -> dict[str, object]:
-    return {"kind": "rpm", "url": "https://example.test/k.rpm", "sha256": "0" * 64,
+    return {"url": "https://example.test/k.rpm", "sha256": "0" * 64,
             "image": "vmlinuz", "config": "config", "option": "CONFIG_ARM64_64K_PAGES",
             "pagesize": 65536} | changes  # fmt: skip
 
@@ -221,7 +220,7 @@ def test_a_pinned_download_that_fails_exits_with_the_pin_status(
 
     monkeypatch.setattr(vm.pbs, "download", gone)
 
-    assert vm.main(["--kernel", "16k"]) == vm.PIN_UNAVAILABLE
+    assert vm.main(["--kernel", "64k"]) == vm.PIN_UNAVAILABLE
     assert "re-pin it in tools/vm-pins.toml" in capsys.readouterr().err
 
 
@@ -236,15 +235,15 @@ def test_a_pinned_download_with_the_wrong_hash_is_a_failure_not_an_unavailable_p
 
     monkeypatch.setattr(vm.pbs, "download", tampered)
 
-    assert vm.main(["--kernel", "16k"]) == 2
+    assert vm.main(["--kernel", "64k"]) == 2
     assert "SHA-256 mismatch" in capsys.readouterr().err
 
 
 # --- The console ---
 
 CONSOLE = """[    0.1] kernel noise
-VMSMOKE-KERNEL 6.18.50
-VMSMOKE-PAGESIZE 16384
+VMSMOKE-KERNEL 4.18.0
+VMSMOKE-PAGESIZE 65536
 VMSMOKE-BEGIN 1
 hello ['x']
 VMSMOKE-END 1 0
@@ -255,10 +254,10 @@ VMSMOKE-DONE
 
 
 def test_the_console_gives_the_page_size_and_each_commands_code_and_output() -> None:
-    result = vm.parse_console(CONSOLE, "16k")
+    result = vm.parse_console(CONSOLE, "64k")
 
     assert (result.pagesize, result.commands, result.done) == (
-        16384, ((0, "hello ['x']\n"), (3, "")), True)  # fmt: skip
+        65536, ((0, "hello ['x']\n"), (3, "")), True)  # fmt: skip
 
 
 def test_a_console_without_markers_is_a_boot_that_failed() -> None:
@@ -273,32 +272,32 @@ def test_an_expectation_follows_the_arrow() -> None:
 
 
 def test_a_boot_passes_when_the_page_size_codes_and_expected_text_match() -> None:
-    result = vm.parse_console(CONSOLE.replace("END 2 3", "END 2 0"), "16k")
+    result = vm.parse_console(CONSOLE.replace("END 2 3", "END 2 0"), "64k")
 
-    assert vm.check(result, 16384, ["app x => hello", "true"]) == []
+    assert vm.check(result, 65536, ["app x => hello", "true"]) == []
 
 
 @pytest.mark.parametrize(
     ("pagesize", "specs", "problem"),
     [
-        (65536, ["a", "b"], "page size 16384, expected 65536"),
-        (16384, ["a", "b"], "`b` exited 3"),
-        (16384, ["a => nope", "b"], "`a` printed no 'nope'"),
-        (16384, ["a"], "2 of 1 commands finished"),
+        (4096, ["a", "b"], "page size 65536, expected 4096"),
+        (65536, ["a", "b"], "`b` exited 3"),
+        (65536, ["a => nope", "b"], "`a` printed no 'nope'"),
+        (65536, ["a"], "2 of 1 commands finished"),
     ],
 )
 def test_a_boot_fails_on_each_wrong_page_size_code_text_and_count(
     pagesize: int, specs: list[str], problem: str
 ) -> None:
-    result = vm.parse_console(CONSOLE, "16k")
+    result = vm.parse_console(CONSOLE, "64k")
 
     assert problem in vm.check(result, pagesize, specs)
 
 
 def test_a_guest_that_never_finished_init_fails() -> None:
-    result = vm.parse_console(CONSOLE.replace("VMSMOKE-DONE\n", ""), "16k")
+    result = vm.parse_console(CONSOLE.replace("VMSMOKE-DONE\n", ""), "64k")
 
-    assert "the guest did not reach the end of /init" in vm.check(result, 16384, ["a", "b"])
+    assert "the guest did not reach the end of /init" in vm.check(result, 65536, ["a", "b"])
 
 
 def test_the_qemu_command_has_no_network_card() -> None:
@@ -334,7 +333,7 @@ def test_a_qemu_that_exits_at_once_says_why_in_the_console_and_the_log(
 
     assert "failed to find romfile" in console
     assert log.read_text() == console
-    assert not (vm.parse_console(console, "16k").done)
+    assert not (vm.parse_console(console, "64k").done)
 
 
 def test_a_successful_boot_with_no_stderr_leaves_the_console_untouched(

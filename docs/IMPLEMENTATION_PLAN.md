@@ -1765,7 +1765,11 @@ compare jobs or the short asset names, later entries below and D42 apply.
     4K-page kernels only. Smoke-tested since 2026-10-25 (owner decision: "just smoketest with
     VM"): `tools/vm-smoke.py` (`make test-vm`, CI's `vm-smoke` job) boots Raspberry Pi 5's kernel
     (16K pages) and Rocky Linux 8.10's (64K) in `qemu-system-aarch64` under TCG and runs
-    aarch64 apps on a pinned Debian trixie root file system; the README says so.
+    aarch64 apps on a pinned Debian trixie root file system; the README says so. 16K dropped
+    2026-10-27 (owner decision: "lets drop this user base for now, this is way too small to
+    really matter"): Raspberry Pi 5's kernel hung before /init in three of four CI boots under
+    the runner's QEMU, and 16K-page systems (Pi 5's default kernel, Asahi Linux) are few; only
+    the 64K kernel is booted, and the docs say 16K is not supported for now.
   - 2026-10-22, after 0.21.0 (whose `fsbpyr-3.12`, `fsbpyr-3.13` and unlabeled
     `fsbpyr-<target>` side by side confused new users): every asset names its Python and its
     target, `fsbpyr-3.X-<target>`, the newest Python's too, with `.xz`, notices
@@ -2172,7 +2176,7 @@ library, and the README and `docs/compatibility.md` say the rest.
 | EL8 1 | An EL8 sysroot from Rocky Linux 8.10's repository packages; `fsbpyr runtime build --glibc 2.28` | `feat: an EL8 (glibc 2.28) sysroot from Rocky Linux 8.10 for fsbpyr runtime build --glibc 2.28` |
 | EL8 2 | `fsbpyr build --glibc 2.28` and `glibc = "2.28"` in `[tool.fsbpyr]`; the EL8 stub of the release's companion release (`el8-vX.Y.Z`), fetched or placed beside the fsbpyr executable | `feat: fsbpyr build --glibc 2.28 builds apps for EL8 with its release's EL8 stub, fetched or placed next to fsbpyr` |
 | EL8 3 | `.github/workflows/el8.yml`, decoupled from the release and run on the release tag (push of a tag, dispatch on the tag's ref); its tests, portability and corpus run on the default Python only (owner, 2026-10-26); publishes the stubs in the companion release `el8-vX.Y.Z` (owner, 2026-10-27) | `ci: EL8 stubs are linked, tested and attached to a release by a workflow of their own` |
-| VM | `tools/vm-smoke.py`: a smoke test of aarch64 apps in QEMU VMs with 16K- and 64K-page kernels (only a smoke test, owner decision 5; the `vm-smoke` job of `full-suite.yml` and the EL8 workflow) | `test: a QEMU VM smoke test of built apps on 16K- and 64K-page aarch64 kernels` |
+| VM | `tools/vm-smoke.py`: a smoke test of aarch64 apps in QEMU VMs with 16K- and 64K-page kernels (only a smoke test, owner decision 5; 16K dropped 2026-10-27, owner decision; the `vm-smoke` job of `full-suite.yml` and the EL8 workflow) | `test: a QEMU VM smoke test of built apps on 16K- and 64K-page aarch64 kernels` |
 | Links | `FSBPYR_INSTALL_LINKS=DIR app` links the commands (and `x.py` for script commands) into DIR on the target and exits (`_fsbpyr_rt/links.py`); the deploy recipe mentions it | `feat: FSBPYR_INSTALL_LINKS makes the command links on the target` |
 | Overlay | The files next to a script (UC6, UC8; decision 5.7(a) reversed 2026-10-25): a scripts-root module's `__file__` and `spec.origin` are next to the executable, the path hook claims those directories and serves the payload, tracebacks keep the payload source, argparse's prog stays the file's name (`fixups`), a sibling started by that path is the app's own command, the D24 note and the build's report say the file is read next to the executable | `feat: scripts see their files next to the executable: __file__ is beside the binary, the code is the payload's` |
 | UC3 foreign locks | `poetry.lock` (lock-version 1.0 to 2.1) and `pdm.lock` lock a build (`foreign.py`): the main or default group and the project's extras, markers evaluated for the target, every hash of a package listed and `--require-hashes` when every line has one; a Poetry lock that names no group (Poetry 1.5 to 1.8) is walked from the project's dependencies; a path entry installs as a regular package, a VCS entry keeps its commit, another package index, a path that is missing, a VCS entry without a commit and two versions that both apply are refused naming the entry; a content hash that is not the pyproject's is a warning (an error with `--strict`); `build_info.lock.kind` is `poetry.lock` or `pdm.lock` | `feat: poetry.lock and pdm.lock lock a build` |

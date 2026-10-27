@@ -13,6 +13,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [0.27.0] - 2026-10-27
 
 ### Changed
+- **16K-page kernels are not tested any more.** `make test-vm` and the `vm-smoke` job boot only
+  EL8's 64K-page kernel. Raspberry Pi 5's 16K-page kernel hung before `/init` in three of four
+  CI boots under the runner's QEMU, and 16K-page systems (the Pi 5's default kernel, Asahi
+  Linux on Apple Silicon) are too few to matter for now: they are not supported. A Raspberry
+  Pi 5 can boot its 4K kernel (`kernel=kernel8.img` in `config.txt`).
 - **The test suite has no timing budgets.** The startup budget test
   (`test_startup_is_within_budget_of_bare_cpython`, 1.5x bare CPython) and the wall-clock bound
   of the canonicalizer's nested-set test are removed, the detached-collector test no longer

@@ -1,13 +1,13 @@
-"""`make test-vm`: aarch64 apps run in a QEMU system VM whose kernel has 16 KiB or 64 KiB pages.
+"""`make test-vm`: aarch64 apps run in a QEMU system VM whose kernel has 64 KiB pages.
 
 fsbpyr builds for the host it runs on and CI's aarch64 runners have 4 KiB pages, so the
 page-size-dependent code (mapping and aligning the payload and the natives) is run here
 instead: qemu-system-aarch64 under TCG (`-M virt -cpu max`, no KVM) boots a pinned kernel
-(tools/vm-pins.toml: Raspberry Pi 5's, 16 KiB pages, or EL8's, 64 KiB) with an initramfs that
+(tools/vm-pins.toml: EL8's, 64 KiB pages) with an initramfs that
 holds a pinned root file system, the apps and /init, which runs the commands and powers off.
 The console is the serial port: the commands' output and exit codes are checked on the host.
 
-    vm-smoke.py [--kernel 16k|64k]... [--userland debian|el8] [--app PATH]... [--run COMMAND]...
+    vm-smoke.py [--kernel 64k]... [--userland debian|el8] [--app PATH]... [--run COMMAND]...
                 [--timeout SECONDS]
 
 Each --app (an executable built for aarch64) is copied to /apps, first on PATH. Each --run is
@@ -34,7 +34,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from fsbpyr.runtime import ar, pbs
+from fsbpyr.runtime import pbs
 
 PINS = Path(__file__).with_name("vm-pins.toml")
 QEMU = "qemu-system-aarch64"
@@ -161,25 +161,12 @@ def rpm_files(data: bytes, wanted: set[str]) -> dict[str, bytes]:
     return found
 
 
-def deb_files(data_tar: bytes, wanted: set[str]) -> dict[str, bytes]:
-    found: dict[str, bytes] = {}
-    with tarfile.open(fileobj=io.BytesIO(data_tar), mode="r:*") as tar:
-        for member in tar:
-            if member.name in wanted and (handle := tar.extractfile(member)):
-                found[member.name] = handle.read()
-    return found
-
-
 def kernel_image(pin: dict[str, object], key: str, directory: Path) -> Path:
     """The kernel of ``pin`` written into ``directory``, once its config is checked to say the
     page size the pin names."""
     package = fetch(str(pin["url"]), str(pin["sha256"]), str(pin["url"]).rpartition("/")[2])
     wanted = {str(pin["image"]), str(pin["config"])}
-    if pin["kind"] == "rpm":
-        files = rpm_files(package.read_bytes(), wanted)
-    else:
-        (payload,) = (body for name, body in ar.read(package) if name.startswith("data.tar"))
-        files = deb_files(payload, wanted)
+    files = rpm_files(package.read_bytes(), wanted)
     if len(files) != len(wanted):
         raise VmSmokeError(f"kernel {key}: {package.name} lacks {sorted(wanted - set(files))}")
     option = f"{pin['option']}=y".encode()
@@ -414,7 +401,7 @@ def main(argv: list[str]) -> int:
     except PinUnavailableError as exc:
         print(f"vm-smoke: {exc}", file=sys.stderr)
         return PIN_UNAVAILABLE
-    except (VmSmokeError, pbs.PbsError, ar.ArError, OSError) as exc:
+    except (VmSmokeError, pbs.PbsError, OSError) as exc:
         print(f"vm-smoke: {exc}", file=sys.stderr)
         return 2
     print(f"vm-smoke: {sum(passed)} of {len(passed)} boots passed")

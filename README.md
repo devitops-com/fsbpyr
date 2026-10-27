@@ -120,8 +120,10 @@ symptom and its remedy.
 - **Platform:** Linux x86-64 and Linux aarch64 (arm64), with glibc 2.34 or newer, or 2.28 or
   newer for apps built with `--glibc 2.28` ("Older systems"). Each fsbpyr builds apps
   for the platform it runs on; there are no cross builds. The aarch64 builds and tests run on
-  GitHub's arm64 runners, which have 4K pages; kernels with 16K pages (Raspberry Pi 5's) and
-  64K pages (EL8's) are smoke-tested in QEMU virtual machines (`make test-vm`), not on hardware.
+  GitHub's arm64 runners, which have 4K pages; kernels with 64K pages (EL8's) are smoke-tested
+  in a QEMU virtual machine (`make test-vm`), not on hardware. Kernels with 16K pages (the
+  Raspberry Pi 5's default kernel, Asahi Linux on Apple Silicon) are not tested and not
+  supported for now; a Raspberry Pi 5 can boot its 4K kernel (`kernel=kernel8.img`).
   On a musl system such as Alpine the glibc loader the executable names does not exist, and the
   shell reports the executable as "not found" although the file is there.
 - **Interpreter build:** CPython with the GIL only; the launcher refuses to build for a
@@ -793,7 +795,7 @@ when there is none.
 Kernels with 64K pages (EL8's on aarch64) are smoke-tested in a QEMU virtual machine, not on
 hardware: the EL8 workflow runs an app built with `--glibc 2.28` on that kernel with the EL8
 userland (`tools/vm-smoke.py --kernel 64k --userland el8`) before it publishes the aarch64
-stubs, and `make test-vm` boots the 16K and 64K kernels with a Debian userland.
+stubs, and `make test-vm` boots the 64K kernel with a Debian userland.
 
 ## Failing a build on warnings
 
