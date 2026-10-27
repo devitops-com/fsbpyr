@@ -250,7 +250,8 @@ def test_build_runtime_orchestrates_and_caches(
 
     monkeypatch.setattr(pbs, "fetch", fetch)
     components = {"openssl": "OpenSSL 3.5.9 29 Sep 2026", "sqlite": "3.53.1"}
-    monkeypatch.setattr(pbs, "component_versions", lambda interpreter: components)
+    monkeypatch.setattr(pbs, "component_versions", lambda interpreter: dict(components))
+    monkeypatch.setattr(pbs, "zstd_version", lambda dist: "1.5.7")
     suffixes = (".cpython-314-x86_64-linux-gnu.so", ".abi3.so", ".so")
     monkeypatch.setattr(pbs, "extension_suffixes", lambda interpreter: suffixes)
     monkeypatch.setattr(registry, "find_toolchain", lambda major, explicit: Toolchain(
@@ -299,7 +300,7 @@ def test_build_runtime_orchestrates_and_caches(
     other = next(b for b in pins.BASELINES if b != baseline)  # never mixed with the other
     with pytest.raises(registry.RuntimeCacheError, match=r"no runtime for Python 3\.14"):
         registry.find_runtime("3.14", cache=tmp_path, baseline=other)
-    assert runtime.components == components
+    assert runtime.components == {**components, "zstd": "1.5.7"}  # the launcher's libzstd.a
     assert runtime.extension_suffixes == suffixes  # the interpreter's, not PYTHON.json's [".so"]
     assert runtime.inputs == {
         "pbs": {"release": pin.release, "name": pin.name, "sha256": pin.sha256},
@@ -399,6 +400,37 @@ def test_component_versions_come_from_running_the_interpreter() -> None:
 
     assert set(found) == {"expat", "libmpdec", "openssl", "sqlite", "zlib"}
     assert found["openssl"].startswith("OpenSSL ") and all(found.values())
+
+
+def _ar(members: dict[str, bytes]) -> bytes:
+    """A GNU ar archive of ``members``, as libzstd.a is."""
+    out = b"!<arch>\n"
+    for name, data in members.items():
+        header = f"{name + '/':<16}{0:<12}{0:<6}{0:<6}{100644:<8}{len(data):<10}`\n"
+        out += header.encode() + data + (b"\n" if len(data) % 2 else b"")
+    return out
+
+
+def _libzstd(tmp_path: Path, members: dict[str, bytes] | None) -> pbs.PbsDist:
+    if members is not None:
+        (tmp_path / "build" / "lib").mkdir(parents=True)
+        (tmp_path / "build" / "lib" / "libzstd.a").write_bytes(_ar(members))
+    return pbs.PbsDist(tmp_path, {})
+
+
+def test_zstd_version_is_the_string_libzstd_returns(tmp_path: Path) -> None:
+    common = b"\0ZSTD_versionString\0" + b"\0001.5.7\0" + b"junk 9.9\0"
+    dist = _libzstd(tmp_path, {"pool.o": b"\0002.0.0\0", "zstd_common.o": common})
+
+    assert pbs.zstd_version(dist) == "1.5.7"
+
+
+def test_zstd_version_is_unknown_rather_than_guessed(tmp_path: Path) -> None:
+    assert pbs.zstd_version(_libzstd(tmp_path / "none", None)) is None
+    assert pbs.zstd_version(_libzstd(tmp_path / "nomember", {"pool.o": b"\0001.5.7\0"})) is None
+    assert pbs.zstd_version(_libzstd(tmp_path / "noversion", {"zstd_common.o": b"\0x\0"})) is None
+    two = {"zstd_common.o": b"\0001.5.7\0" + b"\0001.5.8\0"}
+    assert pbs.zstd_version(_libzstd(tmp_path / "two", two)) is None
 
 
 def test_component_versions_name_an_interpreter_that_fails(tmp_path: Path) -> None:

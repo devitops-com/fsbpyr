@@ -31,6 +31,7 @@ CPES = {
     "openssl": ("openssl", "openssl"),
     "sqlite": ("sqlite", "sqlite"),
     "zlib": ("zlib", "zlib"),
+    "zstd": ("facebook", "zstd"),
 }
 # dist sources that name a package on an index (a git or local one has no purl)
 INDEXED = ("registry", "built-from-sdist")

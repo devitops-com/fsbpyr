@@ -384,6 +384,9 @@ def build_runtime(  # noqa: PLR0913  # what to build, where, how to say so, whic
                                     identity=directory.name):
             log(line)  # every warning shown, not only failures
         stub_bytes = stub_path.read_bytes()
+    components = pbs.component_versions(dist.interpreter)
+    if (zstd := pbs.zstd_version(dist)) is not None:
+        components["zstd"] = zstd  # linked by the launcher, whatever the Python
     log("compiling the standard library")
     modules, files = stdlib.fragment(dist, warn=log)
     files = (*files, *notices.files(dist))
@@ -399,7 +402,7 @@ def build_runtime(  # noqa: PLR0913  # what to build, where, how to say so, whic
         files=files,
         toolchain=describe(toolchain),
         inputs=runtime_inputs(pin, baseline),
-        components=pbs.component_versions(dist.interpreter),
+        components=components,
         baseline=baseline,
     )
     runtime.save(directory)

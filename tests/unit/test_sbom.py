@@ -35,6 +35,7 @@ INSPECT: dict[str, Any] = {
             "openssl": "OpenSSL 3.5.9 8 Apr 2026",
             "sqlite": "3.53.1",
             "zlib": "1.3.2",
+            "zstd": "1.5.7",
         },
         "dists": [
             {"name": "fsbpyr", "version": "0.20.0", "source": "local"},
@@ -104,6 +105,7 @@ def test_openssl_and_sqlite_carry_cpes_with_the_recorded_versions() -> None:
     assert _component(bom, "expat")["cpe"] == (
         "cpe:2.3:a:libexpat_project:libexpat:2.7.3:*:*:*:*:*:*:*")
     assert _component(bom, "expat")["version"] == "2.7.3"
+    assert _component(bom, "zstd")["cpe"] == "cpe:2.3:a:facebook:zstd:1.5.7:*:*:*:*:*:*:*"
     libmpdec = _component(bom, "libmpdec")  # NVD has no mpdecimal product
     assert libmpdec["version"] == "4.0.1" and "cpe" not in libmpdec
 

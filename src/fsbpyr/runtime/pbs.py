@@ -25,6 +25,10 @@ _INITTAB_ENTRY = re.compile(r'\{"([A-Za-z0-9_.]+)",\s*PyInit_')
 _LLVM_BITCODE = re.compile(r"llvm-bitcode:(\d+)\.")
 _CHUNK = 1 << 20
 _LIBZSTD = "build/lib/libzstd.a"
+_ZSTD_VERSION_MEMBER = b"zstd_common.o"  # holds the string ZSTD_versionString() returns
+_AR_MAGIC = b"!<arch>\n"
+_AR_HEADER = 60
+_ZSTD_VERSION = re.compile(rb"\0(\d+\.\d+\.\d+)\0")
 _ERROR_TAIL = 500
 
 
@@ -169,6 +173,29 @@ def component_versions(interpreter: Path) -> dict[str, str]:
     if not isinstance(versions, dict):
         raise PbsError(f"{interpreter} did not report its library versions: {versions!r}")
     return {key: str(value) for key, value in versions.items()}
+
+
+def zstd_version(dist: PbsDist) -> str | None:
+    """The version of the ``libzstd.a`` the launcher links (every Python's, 3.12 and 3.13 too,
+    which have no ``_zstd`` to ask), read from the one string its ``zstd_common.o`` holds; None
+    when there is no archive, no such member or not exactly one version in it."""
+    try:
+        data = (dist.root / _LIBZSTD).read_bytes()
+    except OSError:
+        return None
+    position = len(_AR_MAGIC)
+    while data.startswith(_AR_MAGIC) and position + _AR_HEADER <= len(data):
+        name = data[position:position + 16].rstrip(b" ").removesuffix(b"/")
+        try:
+            size = int(data[position + 48:position + 58])
+        except ValueError:
+            return None
+        start = position + _AR_HEADER
+        if name == _ZSTD_VERSION_MEMBER:
+            found = set(_ZSTD_VERSION.findall(data[start:start + size]))
+            return found.pop().decode() if len(found) == 1 else None
+        position = start + size + size % 2
+    return None
 
 
 def extension_suffixes(interpreter: Path) -> tuple[str, ...]:
