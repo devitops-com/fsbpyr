@@ -422,8 +422,8 @@ fi
 step "el8 build (--glibc 2.28)"
 # The release's own fsbpyr, as a user runs it: its stub comes from the companion release, over the
 # network. Not 0.26.0's: it fetches from v0.26.0, which has no stubs (they were published in
-# el8-v0.26.0 by hand, after the fact), so the stub is placed beside the executable, as README.md
-# tells a user of 0.26.0.
+# el8-v0.26.0 by hand, after the fact), so the stub is placed beside the executable, as the
+# README of v0.26.0 tells its users.
 el8_image="docker.io/library/rockylinux:8"
 if [ "$has_el8" -eq 0 ]; then
     skip "no EL8 stubs"

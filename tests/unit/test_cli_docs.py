@@ -1,5 +1,5 @@
 """One source for the help text, the shell completions and the man page: the click commands of
-``fsbpyr.cli`` (D40). The README's option table is checked against them."""
+``fsbpyr.cli`` (D40). The README keeps only the quickstart, which is checked against them."""
 
 import os
 import re
@@ -7,6 +7,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tomllib
 from collections.abc import Iterator
 from itertools import pairwise
 from pathlib import Path
@@ -15,13 +16,11 @@ import click
 import pytest
 from click.shell_completion import ShellComplete
 
-from fsbpyr.classify import BUILTIN_FS_PACKAGES
 from fsbpyr.cli import EXAMPLES, cli, main
 from fsbpyr.config import CONFIG_KEYS, BuildConfig, ConfigError, load_config
 from fsbpyr.natives import system_libraries
 from fsbpyr.payload.format import FORMAT_VERSION
 from fsbpyr.project import Project
-from fsbpyr.runtime import pins
 
 from ..support.readme import quickstart
 
@@ -298,24 +297,7 @@ def test_man_page_is_clean_roff(capsys: pytest.CaptureFixture[str]) -> None:
     assert result.stderr == ""
 
 
-# --- README ----------------------------------------------------------------------------------
-
-
-def test_readme_option_table_is_the_build_commands_help() -> None:
-    lines = (ROOT / "README.md").read_text().splitlines()
-    start = lines.index("| Option | |") + 2
-    end = lines.index("", start)
-
-    assert lines[start:end] == _option_rows(cli.commands["build"])
-
-
-def test_readme_supported_targets_name_the_pinned_cpython() -> None:
-    readme = (ROOT / "README.md").read_text()
-    section = readme.partition("\n## Supported targets\n")[2].partition("\n## ")[0]
-    versions = [pins.pin_for(python, "x86_64-unknown-linux-gnu").version
-                for python in ("3.12", "3.13", "3.14")]  # fmt: skip
-
-    assert all(version in section for version in versions)
+# --- README and CONTRIBUTING.md ---------------------------------------------------------------
 
 
 def test_readme_quickstart_runs_command_lines_fsbpyr_accepts(
@@ -333,10 +315,22 @@ def test_readme_quickstart_runs_command_lines_fsbpyr_accepts(
         assert main(argv) == 0, argv
 
 
-def test_readme_release_verification_names_no_version() -> None:
-    """It checks the latest release: a named one goes stale or is withdrawn, as 0.18.2 was."""
+def test_readme_quickstart_project_is_the_fixture_it_is_tested_with() -> None:
+    """tests/e2e builds the hello fixture for the quickstart, so the project shown must build the
+    same way: with its build system (without one, src/ stays in the module path and the console
+    script is refused) and its console script."""
     readme = (ROOT / "README.md").read_text()
-    section = readme.partition("\n### Verifying a release\n")[2]
+    shown = tomllib.loads(readme.partition("```toml\n")[2].partition("```")[0])
+    fixture = tomllib.loads((ROOT / "tests/fixtures/projects/hello/pyproject.toml").read_text())
+
+    assert shown["build-system"] == fixture["build-system"]
+    assert shown["project"]["scripts"] == fixture["project"]["scripts"]
+
+
+def test_contributing_release_verification_names_no_version() -> None:
+    """It checks the latest release: a named one goes stale or is withdrawn, as 0.18.2 was."""
+    contributing = (ROOT / "CONTRIBUTING.md").read_text()
+    section = contributing.partition("\n## Verifying a release\n")[2]
     blocks = []
     # Blocks and headings in order: a block is matched whole, so a shell comment in it is no
     # heading; the first heading outside one ends the section.
@@ -349,32 +343,9 @@ def test_readme_release_verification_names_no_version() -> None:
     assert re.findall(r"v\d+\.\d+\.\d+", "".join(blocks)) == []
 
 
-def _readme_tool_fsbpyr_sample(directory: Path) -> BuildConfig:
-    readme = (ROOT / "README.md").read_text()
-    sample = readme.partition("```toml\n[tool.fsbpyr]\n")[2].partition("```")[0]
-    (directory / "pyproject.toml").write_text("[tool.fsbpyr]\n" + sample)
-    (directory / "a.py").write_text("")  # settings alone beside scripts: a directory of scripts
-    return load_config(Project.load(directory))
-
-
-def test_readme_tool_fsbpyr_sample_is_a_table_builds_accept(tmp_path: Path) -> None:
-    config = _readme_tool_fsbpyr_sample(tmp_path)
-
-    assert config.entry == "mytool"
-
-
-def test_readme_names_every_built_in_fs_package() -> None:
-    readme = " ".join((ROOT / "README.md").read_text().split())
-    listed = readme.partition("(plus the known ones: ")[2].partition(")")[0]
-
-    assert set(re.split(r", | and ", listed)) == BUILTIN_FS_PACKAGES
-
-
-def test_allow_system_lib_examples_name_libraries_the_build_does_not_allow_anyway(
-    tmp_path: Path,
-) -> None:
+def test_allow_system_lib_examples_name_libraries_the_build_does_not_allow_anyway() -> None:
     """Allowing a library manylinux wheels may take from the system changes nothing."""
-    sonames = list(_readme_tool_fsbpyr_sample(tmp_path).allowed_system_libs)
+    sonames = []
     for command, _ in EXAMPLES:
         argv = shlex.split(command.partition(" > ")[0])
         sonames += [value for option, value in pairwise(argv) if option == "--allow-system-lib"]
@@ -434,16 +405,6 @@ def test_compatibility_quotes_only_messages_the_sources_can_compose() -> None:
         for fragment in _PLACEHOLDER.split(quote):
             if len(fragment.strip()) >= _MIN_FRAGMENT:
                 assert fragment.strip() in sources, (quote, fragment)
-
-
-def test_readme_environment_table_has_every_variable_the_sources_read() -> None:
-    read = {name for path in (ROOT / "src" / "fsbpyr").rglob("*")
-            if path.suffix in (".py", ".c") and "vendor" not in path.parts
-            for name in ENVIRONMENT_READS.findall(path.read_text())}  # fmt: skip
-    table = (ROOT / "README.md").read_text().partition("| Variable |")[2].partition("\n\n")[0]
-    listed = set(re.findall(r"^\| `(FSBPYR_[A-Z_]+)", table, re.MULTILINE))
-
-    assert read <= listed, sorted(read - listed)
 
 
 def test_docs_name_only_source_paths_that_exist() -> None:
