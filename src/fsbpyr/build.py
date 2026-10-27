@@ -480,6 +480,16 @@ def _removed_hint(name: str) -> str:
     return f"{text}; no Python fsbpyr builds for has it, so the script needs porting{port}"
 
 
+def _shown(project: Project, venv: Path) -> str:
+    """The venv as the user knows it: relative to the project's directory when inside it."""
+    return str(venv.relative_to(project.directory) if venv.is_relative_to(project.directory)
+               else venv)  # fmt: skip
+
+
+def _freeze_command(project: Project, venv: Path) -> str:
+    return f"uv pip freeze --python {_shown(project, venv)}/bin/python"
+
+
 def _unresolved_warning(
     command: str, problems: list[Unresolved], project: Project, python: tuple[int, int]
 ) -> str:
@@ -498,15 +508,16 @@ def _unresolved_warning(
             where = "the dependencies of the script's '# /// script' block"
         hints += [f"declare it in {where} (a project's own file is found next to the script "
                   "that imports it)"]
-        if (project.directory / ".venv").is_dir():
-            command = "uv pip freeze --python .venv/bin/python"
+        if (venv := find_venv(project.directory)) is not None:
+            command = _freeze_command(project, venv)
             then = ("lists what it holds; put what the script needs in its block's dependencies"
                     if project.script is not None else
                     "writes what it holds, and the build reads requirements.txt")
             redirect = "" if project.script is not None else " > requirements.txt"
-            why = ("a .venv supplies pins only when nothing declares a dependency and it holds "
-                   "a distribution that provides the import" if project.bare
-                   else "a .venv is not read for undeclared dependencies")  # fmt: skip
+            why = ("a virtual environment supplies pins only when nothing declares a dependency "
+                   "and it holds a distribution that provides the import" if project.bare
+                   else "a virtual environment is not read for undeclared dependencies"
+                   )  # fmt: skip
             hints[-1:] = [f"{why}; `{command}{redirect}` {then}"]
     return f"{text}. {'. '.join(hints)}"
 
@@ -537,9 +548,8 @@ def infer_dependencies(
     found = infer(venv, modules, marker_environment(runtime.python_version)) if modules else None
     if found is None:
         return package, None
-    shown = (venv.relative_to(project.directory) if venv.is_relative_to(project.directory)
-             else venv)  # fmt: skip
-    command = f"uv pip freeze --python {shown}/bin/python"
+    shown = _shown(project, venv)
+    command = _freeze_command(project, venv)
     declare = (f"`{command}` lists them for the '# /// script' block's dependencies"
                if project.script is not None else f"`{command} > requirements.txt` declares them")
     listed = ", ".join(found.pins[:5]) + (" ..." if len(found.pins) > 5 else "")

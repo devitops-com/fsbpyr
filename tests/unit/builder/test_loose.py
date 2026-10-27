@@ -468,6 +468,7 @@ class _Runtime:
 def test_a_command_with_an_unresolved_import_is_skipped_with_a_warning_and_the_rest_stay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)  # the hint names it, `uv run` sets it
     package, project = _package(tmp_path, a_py="import requests\n" + GUARD, b_py=GUARD)
     monkeypatch.setattr("fsbpyr.build.runtime_module_names", lambda _: frozenset())
     warnings: list[str] = []
@@ -541,10 +542,57 @@ def test_a_venv_in_the_project_gets_the_freeze_hint_and_is_never_read(tmp_path: 
 
     _, project = _package(tmp_path, main_py=GUARD)
     (tmp_path / ".venv").mkdir()
+    (tmp_path / ".venv" / "pyvenv.cfg").write_text("")
 
     text = _unresolved_warning("tool", [Unresolved("main.py", 1, "yaml")], project, (3, 14))
 
     assert "uv pip freeze --python .venv/bin/python > requirements.txt" in text
+
+
+@pytest.mark.parametrize("name", ["venv", "env"])
+def test_the_freeze_hint_names_the_venv_the_build_would_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    from fsbpyr.importcheck import Unresolved  # noqa: PLC0415
+
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    _, project = _package(tmp_path, main_py=GUARD)
+    (tmp_path / name).mkdir()
+    (tmp_path / name / "pyvenv.cfg").write_text("")
+
+    text = _unresolved_warning("tool", [Unresolved("main.py", 1, "yaml")], project, (3, 14))
+
+    assert f"`uv pip freeze --python {name}/bin/python > requirements.txt`" in text
+
+
+def test_the_freeze_hint_names_the_active_virtual_env_by_its_absolute_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fsbpyr.importcheck import Unresolved  # noqa: PLC0415
+
+    active = tmp_path / "elsewhere"
+    active.mkdir()
+    (active / "pyvenv.cfg").write_text("")
+    monkeypatch.setenv("VIRTUAL_ENV", str(active))
+    _, project = _package(tmp_path / "app", main_py=GUARD)
+
+    text = _unresolved_warning("tool", [Unresolved("main.py", 1, "yaml")], project, (3, 14))
+
+    assert f"`uv pip freeze --python {active}/bin/python > requirements.txt`" in text
+
+
+def test_a_dot_venv_without_pyvenv_cfg_is_not_named_by_the_freeze_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fsbpyr.importcheck import Unresolved  # noqa: PLC0415
+
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    _, project = _package(tmp_path, main_py=GUARD)
+    (tmp_path / ".venv").mkdir()
+
+    text = _unresolved_warning("tool", [Unresolved("main.py", 1, "yaml")], project, (3, 14))
+
+    assert "uv pip freeze" not in text
 
 
 @pytest.mark.parametrize("source", [LockSource.UV_LOCK, LockSource.UNLOCKED, LockSource.PYLOCK])
@@ -562,6 +610,7 @@ def test_a_project_without_a_build_system_plans_no_uv_build(
 def test_a_removed_module_and_an_undeclared_one_get_both_hints(tmp_path: Path) -> None:
     _, project = _package(tmp_path, main_py=GUARD)
     (project.directory / ".venv").mkdir()
+    (project.directory / ".venv" / "pyvenv.cfg").write_text("")
     from fsbpyr.importcheck import Unresolved  # noqa: PLC0415
 
     text = _unresolved_warning(

@@ -608,6 +608,7 @@ def test_an_unresolved_import_names_the_project_file_not_the_stored_module(
         "check-disk.py": "import requests\nimport cgi\n" + GUARD, "ok.py": GUARD,
         "10-backup": SHEBANG + "import yaml\n"})  # fmt: skip
     (ops / ".venv").mkdir()
+    (ops / ".venv" / "pyvenv.cfg").write_text("")
     monkeypatch.setattr("fsbpyr.build.runtime_module_names", lambda _: frozenset())
     (tmp_path / "site").mkdir()
     warnings: list[str] = []
