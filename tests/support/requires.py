@@ -133,6 +133,22 @@ def set_id_bits(path: Path) -> None:
               "and do not run with no_new_privs")  # fmt: skip
 
 
+LONG_TARGET = "/" + "a/" * 499  # 999 bytes: test_cache_root's, as long as XFS (1024) allows
+
+
+def long_symlink_targets(path: Path) -> None:
+    """Fails unless ``path``'s file system takes a symlink target of 999 bytes, as test_cache_root
+    makes (XFS takes 1024 at most; ext4 and a tmpfs take more)."""
+    link = path / f".fsbpyr-long-target-{os.getpid()}"
+    try:
+        link.symlink_to(LONG_TARGET)
+    except OSError as exc:
+        unmet(f"{path} takes no 999-byte symlink target ({exc.strerror})",
+              "point TMPDIR (make: TESTTMP) at a file system that does, such as ext4 or XFS")
+    finally:
+        link.unlink(missing_ok=True)
+
+
 def foreign_directory() -> Path:
     """A directory of a user that is neither root nor us, which we may search."""
     for parent in map(Path, FOREIGN_PARENTS):
@@ -196,7 +212,8 @@ def _unmet_conditions() -> list[str]:
     checks: list[Callable[[], object]] = [
         partial(non_root, "the ownership tests need a user"), user_namespaces, rootless_podman,
         supplementary_group, foreign_directory, root_directory_in_tmp, glibc_host,
-        partial(set_id_bits, tmp), partial(enough_free_disk, tmp),
+        partial(set_id_bits, tmp), partial(long_symlink_targets, tmp),
+        partial(enough_free_disk, tmp),
         *(partial(uv_python, version) for version in ("3.12", "3.13", "3.14", "3.15")),
     ]
     found = []

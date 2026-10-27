@@ -71,9 +71,9 @@ jobs:
     # tasks and 14 GiB without swap (the runners have 16): a runaway app (one restarting itself
     # through sys.executable) is stopped here before it takes the runner with it; the tests
     # contain each run of an app besides (tests/support/contain.py). /var/tmp, the tests'
-    # temporary files, is a directory of the runner's own disk: no overlay file system, which
-    # fails a 999-byte symlink target (test_cache_root.py) with "File name too long", and
-    # no tmpfs, whose files would count against those 14 GiB beside 4 test processes.
+    # temporary files, is a directory of the runner's own disk, not a tmpfs, whose files would
+    # count against those 14 GiB beside 4 test processes; the step "The temporary files' file
+    # system" checks what the tests need of it first.
     container:
       image: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
       options: --privileged --pids-limit 8192 --memory 14g --memory-swap 14g
@@ -203,6 +203,17 @@ jobs:
             echo "UV_RUN=uv run --python $MATRIX_PYTHON --locked" >> "$GITHUB_ENV"
             as-tester uv python install "$MATRIX_PYTHON"
           fi
+
+      # What the tests need of /var/tmp, checked as tester before the bootstrap and the suite, so
+      # that a wrong file system fails here in minutes, not in a test among thousands: 999-byte
+      # symlink targets (test_cache_root.py) and set-id bits (tests/support/requires.py).
+      - name: The temporary files' file system
+        run: |
+          as-tester $UV_ENV $UV_RUN python -c 'from pathlib import Path
+          from tests.support import requires
+          requires.long_symlink_targets(Path("/var/tmp"))
+          requires.set_id_bits(Path("/var/tmp"))
+          print("/var/tmp: 999-byte symlink targets and set-id bits")'
 
       # The packages are present, so no sudo: the locked environment, the runtime, fsbpyr in
       # three stages and, for the default version, `make install` under tester's ~/.local.

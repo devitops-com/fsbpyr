@@ -76,6 +76,25 @@ def test_an_unmet_environment_fails_with_one_line_naming_the_change() -> None:
     )
 
 
+def test_a_file_system_that_takes_long_symlink_targets_passes(tmp_path: Path) -> None:
+    requires.long_symlink_targets(tmp_path)
+
+    assert list(tmp_path.iterdir()) == []  # the probe is gone
+
+
+def test_a_file_system_without_long_symlink_targets_fails_naming_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def too_long(self: Path, target: str) -> None:
+        raise OSError(36, "File name too long")
+
+    monkeypatch.setattr(Path, "symlink_to", too_long)
+
+    with pytest.raises(pytest.fail.Exception, match="takes no 999-byte symlink target") as failed:
+        requires.long_symlink_targets(tmp_path)
+    assert "File name too long" in str(failed.value) and "TMPDIR" in str(failed.value)
+
+
 def test_a_test_marked_with_a_missing_tool_fails_before_it_runs(
     suite: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
