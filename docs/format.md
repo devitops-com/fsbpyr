@@ -15,8 +15,8 @@ All integers are little-endian.
   bytes are inert.
 - `payload_offset` is a multiple of 65536 (4096 up to version 6), so that the payload can be
   mapped with `mmap` directly on kernels with 4K, 16K and 64K pages (version 7). Tested on
-  4K-page kernels; 16K- and 64K-page aarch64 kernels are smoke-tested in QEMU (`make test-vm`),
-  not on hardware.
+  4K-page kernels; 64K-page aarch64 kernels are smoke-tested in QEMU (`make test-vm`), not on
+  hardware; 16K-page kernels are not tested.
 - The payload ends exactly where the trailer begins:
   `payload_offset + payload_size + 64 == file_size`.
 

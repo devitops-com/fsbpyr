@@ -81,11 +81,11 @@ The tiers, from fastest to most complete:
   llvm-objdump on the host and a `make build` first (it tests that executable's builds of the
   fixtures); not part of `make test-container`. CI runs it per target and Python after the
   suite job.
-- `make test-vm`: aarch64 apps booted in QEMU system VMs (`tools/vm-smoke.py`): the kernel of a
-  Raspberry Pi 5 (16 KiB pages) and EL8's (64 KiB pages), which the aarch64 runners' 4 KiB
-  kernels cannot test. It needs `qemu-system-aarch64` (TCG, no KVM; yours to install) and
+- `make test-vm`: aarch64 apps booted in a QEMU system VM (`tools/vm-smoke.py`): EL8's kernel
+  (64 KiB pages), which the aarch64 runners' 4 KiB kernels cannot test. 16K-page kernels are
+  not tested (owner decision 2026-10-27). It needs `qemu-system-aarch64` (TCG, no KVM; yours to install) and
   aarch64 executables, because fsbpyr builds only for its host: `make test-vm VM_ARGS="--app
-  PATH... --run 'COMMAND => TEXT'..."` (without `VM_ARGS` it only boots the kernels) copies
+  PATH... --run 'COMMAND => TEXT'..."` (without `VM_ARGS` it only boots the kernel) copies
   each app into an initramfs on a pinned Debian trixie
   (or `--userland el8`, Rocky Linux 8.10) root file system, runs each command as root over the
   serial console, and fails on the wrong page size, a non-zero exit code or output without

@@ -218,13 +218,14 @@ test-el8-portability: ## Run the portability matrix with apps built for glibc 2.
 
 test-el8: test-el8-stub test-el8-portability ## Run the EL8 (glibc 2.28) test mode and its portability matrix: what el8.yml runs, without the corpus subset and the VM
 
-# aarch64 apps in a QEMU system VM (tools/vm-smoke.py) whose kernel has 16 KiB pages (Raspberry
-# Pi 5's) and 64 KiB pages (EL8's), under TCG: no KVM, about a minute per boot. fsbpyr builds for
+# aarch64 apps in a QEMU system VM (tools/vm-smoke.py) whose kernel has 64 KiB pages (EL8's),
+# under TCG: no KVM, about a minute per boot. fsbpyr builds for
 # its own host, so the apps are aarch64 executables you built on one: VM_ARGS="--app dist/hello
-# --run 'hello => hello'" (see the script's header). Without VM_ARGS only the boots are checked.
+# --run 'hello => hello'" (see the script's header). Without VM_ARGS only the boot is checked.
 # Needs qemu-system-aarch64, which is yours to install; the kernels and root file systems it
-# fetches are pinned in tools/vm-pins.toml and kept in FSBPYR_TEST_DOWNLOADS.
-test-vm: ## Run aarch64 apps in a QEMU VM with 16K and 64K page kernels (qemu-system-aarch64; VM_ARGS=...)
+# fetches are pinned in tools/vm-pins.toml and kept in FSBPYR_TEST_DOWNLOADS. 16K-page kernels are
+# not tested (owner decision 2026-10-27).
+test-vm: ## Run aarch64 apps in a QEMU VM with a 64K-page kernel (qemu-system-aarch64; VM_ARGS=...)
 	$(SCRATCHENV) $(CONTAINED) $(UVRUN) python tools/vm-smoke.py $(VM_ARGS)
 
 check: ## Static checks: ruff + mypy
