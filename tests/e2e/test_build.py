@@ -878,6 +878,18 @@ def test_a_legacy_python_script_is_the_only_command_and_runs_as_python_runs_it(
     assert [p.name for p in (project / "dist").iterdir()] == ["tool"]
 
 
+def test_a_legacy_scripts_main_guard_read_is_reported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tool = ("#!/usr/bin/env python\nimport os\n\nif __name__ == '__main__':\n"
+            "    print(open(os.path.join(os.path.dirname(__file__), 'x.conf')).read())\n")
+    project = _legacy_project(tmp_path / "lg", {"tool": tool})
+
+    assert main(["build", str(project)]) == 0
+
+    assert "tool.py:5: reads a file next to its own __file__" in capsys.readouterr().err
+
+
 def test_legacy_scripts_and_console_scripts_are_commands_of_one_executable(
     tmp_path: Path,
 ) -> None:

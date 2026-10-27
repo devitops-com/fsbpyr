@@ -196,12 +196,12 @@ def test_workers_scan_the_main_guard_of_the_commands_only(tmp_path: Path) -> Non
     info = root / "ops-0.dist-info"
     info.mkdir()
     (info / "METADATA").write_text("Metadata-Version: 2.4\nName: ops\nVersion: 0\n")
-    (info / "entry_points.txt").write_text("[fsbpyr_scripts]\ntool = _fsbpyr_scripts.tool\n")
     rows = [f"_fsbpyr_scripts/{name}.py,," for name in ("tool", "helper", "other")]
     (info / "RECORD").write_text("\n".join([*rows, f"{info.name}/METADATA,,"]) + "\n")
     dists = list(SiteIndex.scan(root).dists.values())
 
-    content = classify(dists, extension_suffixes=(".so",), include_source=True, project="ops")
+    content = classify(dists, extension_suffixes=(".so",), include_source=True, project="ops",
+                       entrypoint="_fsbpyr_scripts.tool")  # fmt: skip
 
     reads = [w.partition(": ")[0] for w in content.warnings if "reads a file next" in w]
     assert reads == ["tool.py:2"]

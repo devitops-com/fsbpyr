@@ -243,6 +243,23 @@ def test_a_file_next_to_a_script_is_read_beside_the_executable(
     assert _run(tmp_path / "out" / "app", tmp_path).stdout == '{"host": 1}\n'
 
 
+READS_BESIDE = ("import os\n\nif __name__ == '__main__':\n"
+                "    print(open(os.path.join(os.path.dirname(__file__), 'data.txt')).read())\n")
+
+
+def test_a_modules_main_guard_read_is_reported_when_entry_runs_it_and_only_then(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = _project(tmp_path, extra='[project.scripts]\ntool = "tool:run"\n',
+                       tool_py="def run():\n    pass\n", other_py=READS_BESIDE)  # fmt: skip
+
+    assert _build(project) == 0
+    assert "reads a file next to its own __file__" not in capsys.readouterr().err  # no command
+
+    assert _build(project, "--entry", "_fsbpyr_scripts.other") == 0
+    assert "other.py:4: reads a file next to its own __file__" in capsys.readouterr().err
+
+
 # --- Poetry and PDM locks (research UC3) -----------------------------------------------------
 
 LOCKED = [("poetry2", "poetry.lock"), ("pdm", "pdm.lock")]

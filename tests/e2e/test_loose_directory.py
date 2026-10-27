@@ -631,3 +631,17 @@ def test_a_file_read_next_to_a_script_is_reported_and_read_next_to_the_executabl
     assert f"{directory / 'dist'}/x.conf is missing" in result.stderr
     assert "deploy it there" in result.stderr
     assert "--fs-package" not in result.stderr
+
+
+def test_only_the_command_entry_names_has_its_main_guard_read_and_strict_builds(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = _write(tmp_path / "ops", {
+        "ok.py": "if __name__ == '__main__':\n    print('ok')\n",
+        "reader.py": "import os\n\nif __name__ == '__main__':\n"
+        "    print(open(os.path.join(os.path.dirname(__file__), 'x.conf')).read())\n",
+    })  # fmt: skip
+
+    assert _build(directory, "--entry", "ok", "--strict") == 0  # reader is no command of it
+
+    assert "reads a file next to its own __file__" not in capsys.readouterr().err

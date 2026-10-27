@@ -814,6 +814,7 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
                 runtime_modules=runtime_module_names(runtime),
                 project=dist.name,
                 origins=package.origins if package is not None else {},
+                entrypoint=entrypoint,
             )
             warnings += walk.warnings
             # a directory of scripts has no dependencies of its own: the file declares them all

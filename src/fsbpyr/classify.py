@@ -9,6 +9,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 
+from .boot._fsbpyr_rt.commands import parse
 from .closure import InstalledDist
 from .compiler import Compiled, Compiler, Job, compiled, compressed
 from .elf import ElfError, glibc_requirement, is_elf, is_executable, is_foreign
@@ -734,17 +735,15 @@ class _Collector:
         return list(found.values())
 
 
-def _mains(dists: list[InstalledDist], project: str | None) -> frozenset[str]:
-    """The files below the scripts root that run as ``__main__``: the project's commands that
-    name a module (``pkg.mod``, not ``pkg.mod:function``), a package by its ``__main__.py``."""
+def _mains(entrypoint: str) -> frozenset[str]:
+    """The files below the scripts root that run as ``__main__``: the targets of the entry point
+    (each command of a table, the one command or the module --entry names) that name a module
+    (``pkg.mod``, not ``pkg.mod:function``), a package by its ``__main__.py``."""
     mains = set()
-    for dist in dists:
-        if dist.name != project:
-            continue
-        for target in dist.commands().values():
-            path, colon, _ = target.replace(".", "/").partition(":")
-            if not colon and path.startswith(f"{ROOT}/"):
-                mains |= {f"{path}.py", f"{path}/__main__.py"}
+    for target in parse(entrypoint).values() if "\n" in entrypoint else [entrypoint]:
+        path, colon, _ = target.replace(".", "/").partition(":")
+        if not colon and path.startswith(f"{ROOT}/"):
+            mains |= {f"{path}.py", f"{path}/__main__.py"}
     return frozenset(mains)
 
 
@@ -762,15 +761,17 @@ def classify(  # noqa: PLR0913  the build options, keyword-only
     runtime_modules: frozenset[str] = frozenset(),
     project: str | None = None,
     origins: Mapping[str, str] | None = None,
+    entrypoint: str = "",
 ) -> Content:
     """With ``spill``, no file's bytes stay in memory: they are compressed into it, the
     largest a piece at a time from their files (D38); the files must outlive the build.
-    A module in ``runtime_modules`` is kept as a file, unless ``project`` installs it."""
+    A module in ``runtime_modules`` is kept as a file, unless ``project`` installs it. Of the
+    scripts root, only the modules ``entrypoint`` runs as ``__main__`` run their main guard."""
     collector = _Collector(extension_suffixes, include_source, hints=hints, level=level,
                            xz_natives=xz_natives, spill=spill, runtime_modules=runtime_modules,
                            project=project, origins=origins)  # fmt: skip
     collector.read_pth_files(dists)
-    collector.mains = _mains(dists, project)
+    collector.mains = _mains(entrypoint)
     collector.compiler = Compiler(collector.module_jobs(dists), level=level,
                                   include_source=include_source)  # fmt: skip
     try:

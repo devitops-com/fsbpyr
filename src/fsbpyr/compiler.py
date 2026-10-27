@@ -71,7 +71,8 @@ def compiled(  # noqa: PLR0913, PLR0917  a job's fields, as _work unpacks them
     except SyntaxError as exc:
         return Compiled(None, error=(exc.msg, exc.lineno))
     source = Blob.zstd(data, level=level) if include_source else None
-    # a command's main-guard code runs; that of any module only imported never does
+    # only a module run as __main__ runs its main guard (main); a module of the scripts root
+    # that starts a sibling with sys.executable runs it from the payload (script)
     script = rel.startswith(f"{ROOT}/")
     reads = tuple(file_relative_reads(data, rel, script=script, main=main)) if hints else ()
     libraries = tuple(loaded_libraries(data, rel)) if hints else ()
