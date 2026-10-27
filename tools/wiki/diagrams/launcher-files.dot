@@ -1,0 +1,70 @@
+// Which launcher source calls which (solid) and which header includes or is included where no
+// call shows it (dashed), from the #include lines and the fsb_* calls of src/fsbpyr/launcher/*.c
+// at fsbpyr v0.27.0. A ".c/.h" node is a source file with its own header. Purple: libraries the
+// stub links from python-build-standalone (and glibc, linked dynamically).
+digraph launcher_files {
+  graph [fontname="Helvetica" fontsize=11 rankdir=LR bgcolor="white" pad=0.3 nodesep=0.35 ranksep=0.5];
+  node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#eef3fb" color="#4a6fa5"];
+  edge [fontname="Helvetica" fontsize=9 color="#555555"];
+
+  node [fillcolor="#fdf1e3" color="#c77d2a"];
+  main      [label="main.c"];
+  module    [label="module.c\n(_fsbpyr)"];
+  launcher  [label="launcher.h"];
+  payload   [label="payload.c/.h"];
+  integrity [label="integrity.c/.h"];
+  parallel  [label="parallel.c/.h"];
+  cache     [label="cache.c/.h"];
+  way       [label="way.c/.h"];
+  due       [label="due.c/.h"];
+  slots     [label="slots.c/.h"];
+  glibc_c   [label="glibc.c"];
+  format    [label="format.h"];
+  zstd_h    [label="vendor/zstd/\nzstd.h, zstd_errors.h"];
+
+  node [fillcolor="#f3eefb" color="#7a5aa5"];
+  cpython   [label="CPython\n(libpython.a)"];
+  libzstd   [label="libzstd.a"];
+  liblzma   [label="liblzma"];
+  openssl   [label="OpenSSL\n(SHA-256)"];
+  glibc     [label="glibc"];
+
+  main -> payload   [label="fsb_payload_open,\nrecords, fsb_read_blob"];
+  main -> slots     [label="fsb_hold_slot"];
+  main -> due       [label="fsb_collect_when_due"];
+  main -> module    [label="PyInit__fsbpyr\n(inittab)"];
+  main -> cpython   [label="Py_InitializeFromConfig,\nPy_RunMain"];
+
+  module -> main      [label="fsb_self"];
+  module -> payload   [label="lookups, reads,\nstreams"];
+  module -> cache     [label="fsb_cache_sync,\nfsb_cache_safe"];
+  module -> integrity [label="fsb_integrity_ns"];
+  module -> cpython   [label="C API"];
+
+  payload -> integrity [label="fsb_check_integrity"];
+  payload -> parallel  [label="fsb_parallel\n(pieces)"];
+  payload -> libzstd   [label="ZSTD_*"];
+  payload -> liblzma   [label="lzma_stream_\nbuffer_decode"];
+
+  integrity -> parallel [label="fsb_parallel,\nfsb_monotonic_ns"];
+  integrity -> openssl  [label="SHA256_*"];
+
+  cache -> payload   [label="records, streams,\ndecoders"];
+  cache -> integrity [label="fsb_tree_*"];
+  cache -> parallel  [label="fsb_parallel"];
+  cache -> way       [label="fsb_way_check"];
+
+  due -> way [label="fsb_way_check"];
+
+  cpython -> glibc_c [label="hypot, _dl_find_object\n(--wrap at link; the second\ncompiled out for glibc 2.28)"];
+  glibc_c -> glibc   [label="dlvsym,\ndl_iterate_phdr"];
+
+  edge [style=dashed label="#include"];
+  main -> launcher;
+  module -> launcher;
+  launcher -> payload;
+  launcher -> cpython [label="#include\nPython.h"];
+  payload -> format;
+  integrity -> format;
+  payload -> zstd_h;
+}

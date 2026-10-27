@@ -1,0 +1,47 @@
+digraph payload_flow {
+  graph [fontname="Helvetica" fontsize=11 rankdir=LR bgcolor="white" pad=0.3 nodesep=0.35 ranksep=0.5];
+  node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#eef3fb" color="#4a6fa5"];
+  edge [fontname="Helvetica" fontsize=9 color="#555555"];
+
+  // inputs
+  wheels [label="installed distributions\n(staged with uv)" fillcolor="#f3eefb" color="#7a5aa5"];
+  cached [label="cached runtime\nstub, stdlib.fsbp" fillcolor="#eaf5ea" color="#3d8b3d"];
+  own [label="running fsbpyr\nexecutable" fillcolor="#eaf5ea" color="#3d8b3d"];
+  bootsrc [label="src/fsbpyr/boot/*.py" fillcolor="#eaf5ea" color="#3d8b3d"];
+  el8stub [label="glibc 2.28 stub of the release\n(beside fsbpyr, cached,\nor from el8-vX.Y.Z)" fillcolor="#f3eefb" color="#7a5aa5"];
+
+  // making the spec
+  classify [label="classify\nModule, File, Dist, Blob"];
+  spill [label="Spill: unlinked\ntemporary file" fillcolor="#eaf5ea" color="#3d8b3d"];
+  runtime [label="registry.Runtime\nload / from_executable\n(reader + convert)"];
+  boot [label="assemble.boot_modules"];
+  spec [label="PayloadSpec\nassemble.build_temporary"];
+
+  // writing
+  writer [label="writer.write_temporary\nvalidate, deduplicate, pack,\ntables, trailer, digest"];
+  tmp [label=".<name>.XXXX.tmp\nbeside the output" fillcolor="#eaf5ea" color="#3d8b3d"];
+  commit [label="writer.commit\n(after the smoke test)"];
+  exe [label="executable\nstub | payload | trailer" fillcolor="#eaf5ea" color="#3d8b3d"];
+
+  // reading
+  reader [label="reader.Executable\nreader.Payload\n(validates every table)"];
+  inspect [label="fsbpyr inspect\nsizes, --licenses"];
+  launcher [label="launcher (C)\nat every start" fillcolor="#fdf1e3" color="#c77d2a"];
+
+  { rank=same; writer; tmp; commit; exe; }
+
+  wheels -> classify;
+  classify -> spill [label="compressed bytes"];
+  spill -> writer [label="Extents, streamed" style=dashed];
+  classify -> spec [label="app content"];
+  cached -> runtime;
+  own -> runtime [label="self-hosting"];
+  el8stub -> runtime [label="--glibc 2.28:\nstubs.paired" style=dashed];
+  runtime -> spec [label="stub, stdlib"];
+  bootsrc -> boot;
+  boot -> spec [label="boot modules"];
+  spec -> writer;
+  writer -> tmp -> commit -> exe;
+  exe -> reader -> inspect;
+  exe -> launcher [style=dashed];
+}

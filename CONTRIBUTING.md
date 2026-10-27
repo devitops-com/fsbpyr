@@ -253,26 +253,40 @@ only when nothing but documentation changed since, and names that run. A change 
 tests, configuration (`pyproject.toml`, `uv.lock`, the workflows, the Makefile) or the release
 tools runs the full suite when it is merged.
 
-## The wiki's PDFs
+## The wiki
 
 The [wiki](https://github.com/devitops-com/fsbpyr/wiki) holds the User Guide and the
-Developer Guide, and also each of them as a PDF, made from the wiki pages by `make wiki-pdf`:
+Developer Guide: pages, images, and each guide as a PDF. It holds documents only; the tools
+that make its PDFs and images and check its pages are in `tools/wiki/`, and three targets run
+them in a checkout of the wiki:
 
 ```sh
 git clone https://github.com/devitops-com/fsbpyr.wiki.git ../fsbpyr.wiki
-make wiki-pdf                    # or: make wiki-pdf WIKI=<checkout of the wiki>
+make wiki-lint                   # or: make wiki-lint WIKI=<checkout of the wiki>
+make wiki-diagrams
+make wiki-pdf
 ```
 
-It writes `fsbpyr-User-Guide-<version>.pdf` and `fsbpyr-Developer-Guide-<version>.pdf` into
-the wiki checkout, to be committed there; `<version>` is the release the wiki's footer names.
-`_Sidebar.md` decides which pages each guide has and in which order. A page missing from the
-sidebar, a link to a page or anchor that does not exist, a page whose first heading is not
-its only H1, or raw HTML stops the build with what to fix. The title page names the wiki commit
-that last changed the guide (`-modified` while its pages have uncommitted changes), and the
-same commit gives the same file. The build needs pandoc 3, LuaLaTeX, the TeX packages
-`tools/wiki-pdf/check-toolchain.sh` lists, rsvg-convert, pdfinfo and the DejaVu fonts; a
-missing piece is named with the package to install. When the wiki moves to a new release,
-build both PDFs again and point the links on the wiki's Home page at the new files.
+The wiki describes one release, the one its footer (`_Footer.md`) names; the targets take that
+release's tree from this repository's tag.
+
+- `make wiki-lint` checks every page's wiki links, images and anchors, and that links into the
+  repository name the release's tag and point at files and lines that exist there.
+- `make wiki-diagrams` draws `images/*.svg` from the Graphviz sources in
+  `tools/wiki/diagrams/` and from the release's import graphs (`arch-subsystems`,
+  `arch-modules-*`, drawn from its `src/fsbpyr`). Needs Graphviz and rsvg-convert.
+- `make wiki-pdf` writes `fsbpyr-User-Guide-<version>.pdf` and
+  `fsbpyr-Developer-Guide-<version>.pdf`. `_Sidebar.md` decides which pages each guide has and
+  in which order. A page missing from the sidebar, a link to a page or anchor that does not
+  exist, a page whose first heading is not its only H1, or raw HTML stops the build with what
+  to fix. The title page names the wiki commit that last changed the guide (`-modified` while
+  its pages have uncommitted changes), and the same commit gives the same file. Needs pandoc 3,
+  LuaLaTeX, the TeX packages `tools/wiki/pdf/check-toolchain.sh` lists, rsvg-convert, pdfinfo
+  and the DejaVu fonts; a missing piece is named with the package to install.
+
+What the targets write goes into the wiki checkout, to be committed there. When the wiki moves
+to a new release, build both PDFs again and point the links on the wiki's Home page at the new
+files.
 
 ## Verifying a release
 

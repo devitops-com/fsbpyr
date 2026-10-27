@@ -42,7 +42,7 @@ else
 WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm check check-c release-prep release release-check wiki-pdf clean
+.PHONY: help bootstrap build install uninstall test test-ci test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm check check-c release-prep release release-check wiki-pdf wiki-diagrams wiki-lint wiki-checkout clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -260,16 +260,25 @@ release-check: ## Check the published release (VERSION=X.Y.Z, default the latest
 
 # --- Wiki ---
 
-# PDF copies of the wiki's User Guide and Developer Guide, made from a checkout of the wiki and
-# written into it, to be committed there (tools/wiki-pdf/Makefile says how). WIKI is that
-# checkout; the default is where `git clone https://github.com/devitops-com/fsbpyr.wiki.git`
-# next to this one puts it. Needs pandoc 3 and LuaLaTeX: a missing piece is named
-# (tools/wiki-pdf/check-toolchain.sh), nothing is installed for you.
+# The wiki holds documents only; its tools are in tools/wiki/, and these targets run them in a
+# checkout of the wiki (tools/wiki/Makefile says how). WIKI is that checkout; the default is
+# where `git clone https://github.com/devitops-com/fsbpyr.wiki.git` next to this one puts it.
+# The PDFs and images are written into the checkout, to be committed there. The release the
+# wiki describes (its footer names it) is taken from this repository's tag.
 WIKI ?= ../fsbpyr.wiki
+WIKI_MAKE = $(MAKE) -C '$(WIKI)' -f '$(CURDIR)/tools/wiki/Makefile'
 
-wiki-pdf: ## Build the wiki's two guides as PDFs into the wiki checkout WIKI (default ../fsbpyr.wiki)
-	@test -f '$(WIKI)/_Sidebar.md' || { echo "make wiki-pdf: $(WIKI) is no checkout of the fsbpyr wiki: git clone https://github.com/devitops-com/fsbpyr.wiki.git, or set WIKI" >&2; exit 2; }
-	$(MAKE) -C '$(WIKI)' -f '$(CURDIR)/tools/wiki-pdf/Makefile' BUILD='$(CURDIR)/dist/wiki-pdf'
+wiki-pdf: wiki-checkout ## Build the wiki's two guides as PDFs into the wiki checkout WIKI (pandoc 3, LuaLaTeX)
+	$(WIKI_MAKE) pdf
+
+wiki-diagrams: wiki-checkout ## Draw the wiki's diagrams into WIKI/images (Graphviz, rsvg-convert)
+	$(WIKI_MAKE) diagrams
+
+wiki-lint: wiki-checkout ## Check the wiki's links, images and anchors, and repository links at its release
+	$(WIKI_MAKE) lint
+
+wiki-checkout:
+	@test -f '$(WIKI)/_Sidebar.md' || { echo "make: $(WIKI) is no checkout of the fsbpyr wiki: git clone https://github.com/devitops-com/fsbpyr.wiki.git, or set WIKI" >&2; exit 2; }
 
 clean: ## Remove dist/
 	rm -rf dist

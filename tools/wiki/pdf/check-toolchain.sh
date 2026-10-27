@@ -97,8 +97,8 @@ if command -v kpsewhich >/dev/null 2>&1; then
   fi
 fi
 
-# Fonts. The typesetting is set to DejaVu (PANDOC_OPTS in the Makefile); if one of the three
-# is missing, fontspec stops the run.
+# Fonts. The typesetting is set to DejaVu (PANDOC_OPTS in tools/wiki/Makefile); if one of the
+# three is missing, fontspec stops the run.
 if command -v fc-list >/dev/null 2>&1; then
   for font in "DejaVu Serif:dejavu-serif-fonts" \
                  "DejaVu Sans:dejavu-sans-fonts" \

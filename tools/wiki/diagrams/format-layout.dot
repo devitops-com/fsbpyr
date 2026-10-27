@@ -1,0 +1,91 @@
+// Byte layout of an fsbpyr executable, format version 7 (docs/format.md,
+// src/fsbpyr/payload/format.py, src/fsbpyr/launcher/format.h). Offsets read top to bottom.
+// P is payload_offset; offset[i] is section i's offset in the header's section table, relative
+// to P. The order of the eight tables is the one fsbpyr's writer uses (writer.py _layout); the
+// format fixes only the constraints in the right column (and that sections do not overlap).
+digraph format_layout {
+  graph [fontname="Helvetica" fontsize=11 rankdir=LR bgcolor="white" pad=0.3 nodesep=0.35 ranksep=0.5];
+  node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#eef3fb" color="#4a6fa5"];
+  edge [fontname="Helvetica" fontsize=9 color="#555555"];
+
+  layout [shape=plain style="" label=<
+<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="5" COLOR="#3d8b3d" BGCOLOR="#eaf5ea">
+  <TR>
+    <TD BGCOLOR="#d6ecd6"><B>file offset</B></TD>
+    <TD BGCOLOR="#d6ecd6" COLSPAN="2"><B>part</B></TD>
+    <TD BGCOLOR="#d6ecd6"><B>size and alignment</B></TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">0</TD>
+    <TD COLSPAN="2" ALIGN="LEFT" BALIGN="LEFT">stub: an unmodified ELF (the launcher, CPython linked in);<BR/>the loader maps only its PT_LOAD segments</TD>
+    <TD ALIGN="LEFT">as linked</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">end of stub</TD>
+    <TD COLSPAN="2" ALIGN="LEFT">zero padding</TD>
+    <TD ALIGN="LEFT">up to P</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">P</TD>
+    <TD ROWSPAN="10" BGCOLOR="#d6ecd6">payload<BR/>(payload_size<BR/>bytes)</TD>
+    <TD ALIGN="LEFT" BALIGN="LEFT">header: magic FSBPYR\0H, version, header_size,<BR/>python_hexversion, bytecode magic, generation_id,<BR/>app_name, entrypoint, build_info, section table</TD>
+    <TD ALIGN="LEFT">208 B; P a multiple of 65536</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">P + offset[0]</TD>
+    <TD ALIGN="LEFT">0 STRTAB: UTF-8 strings, each NUL-terminated</TD>
+    <TD ALIGN="LEFT">count bytes; 8-aligned</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">P + offset[1]</TD>
+    <TD ALIGN="LEFT">1 BLOBS</TD>
+    <TD ALIGN="LEFT">32 B records; 8-aligned</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">P + offset[2]</TD>
+    <TD ALIGN="LEFT">2 MODULES, sorted by dotted name</TD>
+    <TD ALIGN="LEFT">40 B records; 8-aligned</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">P + offset[3]</TD>
+    <TD ALIGN="LEFT">3 FILES, sorted by path</TD>
+    <TD ALIGN="LEFT">24 B records; 8-aligned</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">P + offset[4]</TD>
+    <TD ALIGN="LEFT">4 DISTS, sorted by canonical name</TD>
+    <TD ALIGN="LEFT">24 B records; 8-aligned</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">P + offset[5]</TD>
+    <TD ALIGN="LEFT">5 CLOSURES</TD>
+    <TD ALIGN="LEFT">u32 words; 8-aligned</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">P + offset[6]</TD>
+    <TD ALIGN="LEFT">6 DIGESTS</TD>
+    <TD ALIGN="LEFT">32 B digests; 8-aligned</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">P + offset[7]</TD>
+    <TD ALIGN="LEFT">7 STARTUP</TD>
+    <TD ALIGN="LEFT">u32 words; 8-aligned</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">P + data_start</TD>
+    <TD ALIGN="LEFT" BALIGN="LEFT">blob data area, from the first byte after the last table:<BR/>startup code, module code, resources, sources, natives</TD>
+    <TD ALIGN="LEFT">each blob 16-aligned</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">file_size − 64</TD>
+    <TD ROWSPAN="2" BGCOLOR="#d6ecd6">trailer<BR/>(64 B)</TD>
+    <TD ALIGN="LEFT" BALIGN="LEFT">magic FSBPYR\0T, format_version, flags,<BR/>payload_offset (P), payload_size</TD>
+    <TD ALIGN="LEFT">32 B</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">file_size − 32</TD>
+    <TD ALIGN="LEFT">digest: integrity digest of bytes [0, file_size − 32)</TD>
+    <TD ALIGN="LEFT">32 B</TD>
+  </TR>
+</TABLE>>];
+}

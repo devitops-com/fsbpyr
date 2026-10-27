@@ -1,0 +1,82 @@
+digraph boot_startup {
+  graph [fontname="Helvetica" fontsize=11 rankdir=LR bgcolor="white" pad=0.3 nodesep=0.35 ranksep=0.5];
+  node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#fdf1e3" color="#c77d2a"];
+  edge [fontname="Helvetica" fontsize=9 color="#555555"];
+
+  // set-up, every start
+  launcher [label="launcher: Py_RunMain\nimport _fsbpyr_boot\n_fsbpyr_boot.run()"];
+  hooks [label="path hook, sys.path = [<exe>],\nPayloadMetaFinder"];
+  extras [label="excepthook, frozen sources,\nlinecache, exit / quit / help"];
+  trace [label="FSBPYR_TRACE set:\nregister trace.report"];
+
+  // before the app is chosen
+  d_links [shape=diamond label="FSBPYR_INSTALL\n_LINKS=DIR?"];
+  links [label="links.install:\nlink the commands,\nexit 0 or 1"];
+  argv0 [label="sys.argv[0]:\nthe path from AT_EXECFN"];
+  restart [label="restart idiom (an argument\nnaming this executable):\nrewrite sys.argv"];
+  table [label="entry point a table:\ncommands.parse"];
+  service [label="JOURNAL_STREAM set\nor PID 1: service.start"];
+
+  // children and maintenance
+  d_mp [shape=diamond label="multiprocessing\nchild?"];
+  mp [label="mp.run_child\n(refused unless the parent\nruns this executable)"];
+  d_re [shape=diamond label="-m, -c or a\npayload script?"];
+  reexec [label="reexec.run_child"];
+  python [label="run the module,\ncode or script"];
+  refused [label="refuse: exit 70"];
+  d_gc [shape=diamond label="FSBPYR_GC=1\nor background?"];
+  gc [label="native.collect\n(app cache)"];
+  d_nat [shape=diamond label="FSBPYR_SELFTEST\n= natives?"];
+  natives [label="selftest.natives"];
+  d_self [shape=diamond label="FSBPYR_SELFTEST\nset?"];
+  selftest [label="check every command's\ntarget, print selftest ok"];
+
+  // the app
+  d_cmd [shape=diamond label="several\ncommands?"];
+  choose [label="commands.choose:\nargv[0]'s name, else argv[1]"];
+  usage [label="list the commands,\nexit 2"];
+  scriptdir [label="script target: its directory\nfirst on sys.path"];
+  d_colon [shape=diamond label="target\nmodule:attr?"];
+  runpy [label="runpy: run the module\nas __main__"];
+  main [label="sys.exit(main())"];
+  extract [label="while the app runs: the first\nextraction into the cache (an extension,\nan fs-package, a resource as a path);\na refused cache directory: exit 70" style="rounded,filled,dashed"];
+
+  { rank=same; launcher; hooks; extras; trace; }
+  { rank=same; d_links; argv0; restart; table; service; }
+  { rank=same; d_mp; d_re; d_gc; d_nat; d_self; d_cmd; }
+  { rank=same; links; mp; reexec; gc; natives; selftest; choose; }
+  { rank=same; python; refused; usage; scriptdir; }
+
+  launcher -> hooks -> extras;
+  extras -> trace [label="if set" style=dashed];
+  extras -> d_links;
+  trace -> d_links [style=dashed];
+
+  d_links -> links [label="yes" minlen=2];
+  d_links -> argv0 [label="no"];
+  argv0 -> restart -> table -> service;
+  service -> d_mp;
+
+  d_mp -> mp [label="yes"];
+  d_mp -> d_re [label="no"];
+  d_re -> reexec [label="yes"];
+  d_re -> d_gc [label="no, or started under\na command's name"];
+  reexec -> python [label="interpreter-reexec true,\nor one of the app's\nown scripts"];
+  reexec -> refused [label="not set, and it\nasks for Python"];
+  reexec -> d_gc [label="otherwise:\nthe app" constraint=false];
+  d_gc -> gc [label="yes"];
+  d_gc -> d_nat [label="no"];
+  d_nat -> natives [label="yes"];
+  d_nat -> d_self [label="no"];
+  d_self -> selftest [label="yes"];
+  d_self -> d_cmd [label="no"];
+  d_cmd -> choose [label="yes"];
+  d_cmd -> scriptdir [label="no"];
+  choose -> usage [label="none named"];
+  choose -> scriptdir;
+  scriptdir -> d_colon;
+  d_colon -> runpy [label="no"];
+  d_colon -> main [label="yes"];
+  runpy -> extract [style=dashed];
+  main -> extract [style=dashed];
+}

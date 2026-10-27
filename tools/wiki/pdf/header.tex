@@ -2,7 +2,7 @@
 % Included by `make wiki-pdf` through pandoc -H.
 %
 % Fonts are NOT set here but through the pandoc variables mainfont/sansfont/monofont in the
-% Makefile of this directory. fontspec would otherwise load its default font first, and the
+% tools/wiki/Makefile. fontspec would otherwise load its default font first, and the
 % run stops before \setmainfont takes effect.
 %
 % check-toolchain.sh names the packages this needs.
@@ -122,7 +122,7 @@
 % Most links of the wiki lead into the repository, written as short labels, not as
 % addresses. A black label cannot be told from running text -- the reader would not see that
 % it is clickable. So a colour of their own, for web links only; cross-references within the
-% document stay black (linkcolor in the Makefile of this directory).
+% document stay black (linkcolor in tools/wiki/Makefile).
 % \AtBeginDocument, because hyperref is loaded after this header.
 \definecolor{weblink}{HTML}{1F3864}
 \AtBeginDocument{\hypersetup{urlcolor=weblink}}

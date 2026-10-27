@@ -1,0 +1,51 @@
+// What fsbpyr build starts from (v0.27.0): project.Project.load (_read, _bare, _script) decides
+// which of five kinds of input PROJECT is. The letters are the ones the step-by-step section and
+// build-pipeline.dot use.
+digraph build_inputs {
+  graph [fontname="Helvetica" fontsize=11 rankdir=LR bgcolor="white" pad=0.3 nodesep=0.35 ranksep=0.5];
+  node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#eef3fb" color="#4a6fa5"];
+  edge [fontname="Helvetica" fontsize=9 color="#555555"];
+
+  // decisions, made by Project.load at build time
+  file [shape=diamond label="a file?"];
+  script [shape=diamond label="*.py, or a\npython\nshebang?"];
+  pyproject [shape=diamond label="pyproject\n.toml?"];
+  settings [shape=diamond label="tool\nsettings\nonly?"];
+  backend [shape=diamond label="packaged\nby a build\nsystem?"];
+  setuppy [shape=diamond label="setup.py?"];
+  setupcfg [shape=diamond label="setup.cfg?"];
+  python [shape=diamond label="Python\nfiles?"];
+  lock [shape=diamond label="a lock\nsource?"];
+  notscript [label="ProjectError:\nnot a Python script"];
+  cfg [label="ProjectError:\nsetup.cfg alone"];
+  empty [label="NoPythonFiles"];
+
+  // the input on disk, and what it turns out to be
+  node [fillcolor="#eaf5ea" color="#3d8b3d"];
+  arg [label="PROJECT\n(default: .)"];
+  A [label="A  project with\na build system"];
+  B [label="B  project without\na build system"];
+  C [label="C  directory\nof scripts"];
+  D [label="D  one script"];
+  E [label="E  tool binary"];
+
+  arg -> file;
+  file -> script [label="yes"];
+  script -> D [label="yes"];
+  script -> notscript [label="no"];
+  file -> pyproject [label="no"];
+  pyproject -> settings [label="yes"];
+  settings -> backend [label="no"];
+  backend -> A [label="yes"];
+  backend -> B [label="no"];
+  settings -> python [label="yes"];
+  pyproject -> setuppy [label="no"];
+  setuppy -> A [label="yes"];
+  setuppy -> setupcfg [label="no"];
+  setupcfg -> cfg [label="yes"];
+  setupcfg -> python [label="no"];
+  python -> C [label="yes"];
+  python -> lock [label="no"];
+  lock -> E [label="yes"];
+  lock -> empty [label="no"];
+}

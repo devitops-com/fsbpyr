@@ -1,0 +1,91 @@
+// fsbpyr build, from command line to executable (v0.27.0): cli.build_command, then build.build
+// and build._build. Each phase is a box whose numbered steps run in order; an input points at the
+// step that reads it. A to E are the kinds of input of build-inputs.dot: a step marked with
+// some of them runs, or takes that branch, only for those. Steps 4 to 21 are build.build.
+// Italic lines are what a --glibc 2.28 build (EL8) does differently.
+digraph build_pipeline {
+  graph [fontname="Helvetica" fontsize=11 rankdir=LR bgcolor="white" pad=0.3 nodesep=0.35 ranksep=0.5];
+  node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#eef3fb" color="#4a6fa5"];
+  edge [fontname="Helvetica" fontsize=9 color="#555555"];
+
+  cli [shape=plain style="" label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" STYLE="rounded" BGCOLOR="#eef3fb" COLOR="#4a6fa5">
+      <TR><TD COLSPAN="2"><B>command line</B></TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s1">1</TD><TD ALIGN="LEFT" BALIGN="LEFT">cli.build_command</TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s2">2</TD><TD ALIGN="LEFT" BALIGN="LEFT">project.Project.load: A to E,<BR/>config.load_config</TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s3">3</TD><TD ALIGN="LEFT" BALIGN="LEFT">pyversion.resolve; another<BR/>Python: dispatch.run</TD></TR>
+    </TABLE>>];
+
+  checks [shape=plain style="" label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" STYLE="rounded" BGCOLOR="#eef3fb" COLOR="#4a6fa5">
+      <TR><TD COLSPAN="2"><B>checks</B></TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s4">4</TD><TD ALIGN="LEFT" BALIGN="LEFT">build.check_before_staging</TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s5">5</TD><TD ALIGN="LEFT" BALIGN="LEFT">B, C, D: loose.Package.load;<BR/>E: Package.tool_binary</TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s6">6</TD><TD ALIGN="LEFT" BALIGN="LEFT">staging.find_uv, uv_version</TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s7">7</TD><TD ALIGN="LEFT" BALIGN="LEFT">build.python_warnings</TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s8">8</TD><TD ALIGN="LEFT" BALIGN="LEFT">runtime.registry.select_runtime,<BR/>Project.check_python;<BR/><I>2.28: runtime.stubs.paired</I></TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s9">9</TD><TD ALIGN="LEFT" BALIGN="LEFT">Project.lock_source; C, D:<BR/>build.infer_dependencies;<BR/>build.lock_warnings</TD></TR>
+    </TABLE>>];
+
+  staging [shape=plain style="" label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" STYLE="rounded" BGCOLOR="#eef3fb" COLOR="#4a6fa5">
+      <TR><TD COLSPAN="2"><B>staging</B></TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s10">10</TD><TD ALIGN="LEFT" BALIGN="LEFT">staging.staging_plan, run_plan:<BR/>A: uv build; B to E:<BR/>Package.write_wheel;<BR/>manylinux_2_34 wheels,<BR/><I>2.28: manylinux_2_28</I></TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s11">11</TD><TD ALIGN="LEFT" BALIGN="LEFT">closure.SiteIndex.scan,<BR/>check_no_editable</TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s12">12</TD><TD ALIGN="LEFT" BALIGN="LEFT">build.rebuild_on_baseline<BR/>(only when needed),<BR/><I>2.28: the EL8 sysroot</I></TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s13">13</TD><TD ALIGN="LEFT" BALIGN="LEFT">A: legacy.attach;<BR/>E: tools.tool_scripts</TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s14">14</TD><TD ALIGN="LEFT" BALIGN="LEFT">SiteIndex.walk; B, C, D:<BR/>build.check_script_imports;<BR/>closure.resolve_entry</TD></TR>
+    </TABLE>>];
+
+  content [shape=plain style="" label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" STYLE="rounded" BGCOLOR="#eef3fb" COLOR="#4a6fa5">
+      <TR><TD COLSPAN="2"><B>content</B></TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s15">15</TD><TD ALIGN="LEFT" BALIGN="LEFT">classify.classify</TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s16">16</TD><TD ALIGN="LEFT" BALIGN="LEFT">build.glibc_report,<BR/>system.system_report;<BR/><I>2.28: glibc 2.28 and the</I><BR/><I>manylinux_2_28 limits</I></TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s17">17</TD><TD ALIGN="LEFT" BALIGN="LEFT">build_info (manifest, vcs),<BR/>assemble.App;<BR/><I>2.28: glibc_baseline</I></TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s18">18</TD><TD ALIGN="LEFT" BALIGN="LEFT">build._check_entry_module,<BR/>check_strict</TD></TR>
+    </TABLE>>];
+
+  writing [shape=plain style="" label=<
+    <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" STYLE="rounded" BGCOLOR="#eef3fb" COLOR="#4a6fa5">
+      <TR><TD COLSPAN="2"><B>writing</B></TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s19">19</TD><TD ALIGN="LEFT" BALIGN="LEFT">assemble.build_temporary</TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s20">20</TD><TD ALIGN="LEFT" BALIGN="LEFT">build.smoke_test, smoke_run</TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s21">21</TD><TD ALIGN="LEFT" BALIGN="LEFT">payload.writer.commit;<BR/>several commands:<BR/>links.make_links</TD></TR>
+    </TABLE>>];
+
+  cli -> checks -> staging -> content -> writing;
+
+  // external inputs
+  node [fillcolor="#f3eefb" color="#7a5aa5"];
+  uv [label="uv"];
+  index [label="package index\nwheels, sdists"];
+  sysroot [label="glibc sysroot: Debian 12's\npackages (2.36), or for 2.28\nRocky Linux 8.10's RPMs"];
+  el8 [label="release el8-vA.B.C:\nfsbpyr-stub-X.Y-TARGET-\nglibc2.28.xz, SHA256SUMS-glibc2.28"];
+
+  // data on disk
+  node [fillcolor="#eaf5ea" color="#3d8b3d"];
+  projdir [label="project directory\nor script (A to E)"];
+  lock [label="uv.lock, pylock.toml,\nrequirements, script.lock,\npoetry.lock, pdm.lock,\nPipfile.lock"];
+  venv [label="the scripts' venv\n(C, D; read as files)"];
+  runtime [label="runtime: this fsbpyr's\nown, or the cache"];
+  stub [label="2.28 stub: beside the\nfsbpyr executable,\nor cached"];
+  out [label="executable (-o, or\ndist/NAME) and a\nlink per command"];
+
+  projdir -> cli:s2:w;
+  uv -> checks:s6:w;
+  runtime -> checks:s8:w;
+  stub -> checks:s8:w;
+  el8 -> checks:s8:w;
+  venv -> checks:s9:w;
+  lock -> checks:s9:w;
+  uv -> staging:s10:w;
+  lock -> staging:s10:w;
+  index -> staging:s10:w;
+  index -> staging:s12:w;
+  sysroot -> staging:s12:w;
+  writing -> out;
+
+  { rank=same; projdir; cli; }
+  { rank=same; out; writing; }
+}

@@ -1,0 +1,55 @@
+digraph G {
+  graph [fontname="Helvetica" fontsize=11 rankdir=TB bgcolor="white" pad=0.3 nodesep=0.3 ranksep=0.45 compound=true newrank=true];
+  node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#eef3fb" color="#4a6fa5"];
+  edge [fontname="Helvetica" fontsize=9 color="#555555" arrowsize=0.7];
+
+  subgraph cluster_inputs {
+    label="Inputs"; style="rounded"; color="#bbbbbb";
+    project [label="Project, scripts or\nrequirements file\npyproject.toml, locks, *.py" fillcolor="#eaf5ea" color="#3d8b3d"];
+    uv [label="uv\n+ package index (wheels)" fillcolor="#f3eefb" color="#7a5aa5"];
+    pbs [label="python-build-standalone\nCPython archive (pinned)" fillcolor="#f3eefb" color="#7a5aa5"];
+    llvm [label="clang + lld 23,\nDebian 12 sysroot" fillcolor="#f3eefb" color="#7a5aa5"];
+  }
+
+  subgraph cluster_build {
+    label="Build machine: fsbpyr (Python)"; style="rounded"; color="#4a6fa5";
+    cli [label="cli / dispatch\ncommand line, Python variant"];
+    pipeline [label="build pipeline\nfind commands, stage,\nanalyse, compile"];
+    writer [label="payload writer\n(payload/)"];
+    registry [label="runtime registry\n(runtime/)"];
+    runtimecache [label="runtime:\nlauncher stub + compiled stdlib\n(embedded or cached)" fillcolor="#eaf5ea" color="#3d8b3d"];
+  }
+
+  subgraph cluster_exe {
+    label="The executable (one file)"; style="rounded"; color="#3d8b3d";
+    exe [shape=record fillcolor="#eaf5ea" color="#3d8b3d" style="filled"
+         label="{ELF stub: C launcher + static CPython|zero padding to 64 KiB|payload header|index: modules, files, distributions|stdlib + boot modules (bytecode)|app and dependencies: bytecode, sources, resources, natives|trailer: digest}"];
+  }
+
+  links [label="dist/<command>\na symlink per command" fillcolor="#eaf5ea" color="#3d8b3d"];
+
+  subgraph cluster_target {
+    label="Target machine"; style="rounded"; color="#c77d2a";
+    launcher [label="launcher (C)\nintegrity check, CPython init" fillcolor="#fdf1e3" color="#c77d2a"];
+    boot [label="boot (Python)\ncommand, import hooks,\nresources, helper processes" fillcolor="#fdf1e3" color="#c77d2a"];
+    app [label="entry point or script\n(__main__)" fillcolor="#fdf1e3" color="#c77d2a"];
+    cache [label="per-app cache\nnative files, fs-packages" fillcolor="#eaf5ea" color="#3d8b3d"];
+  }
+
+  project -> cli;
+  cli -> pipeline;
+  uv -> pipeline [label="locked distributions"];
+  pipeline -> writer;
+  registry -> runtimecache;
+  pbs -> registry [label="fsbpyr runtime build"];
+  llvm -> registry;
+  runtimecache -> writer [label="stub, stdlib"];
+  writer -> exe [lhead=cluster_exe];
+  pipeline -> links [label="several commands"];
+  links -> exe [lhead=cluster_exe style=dashed label="points to"];
+  exe -> launcher [ltail=cluster_exe label="execve"];
+  launcher -> boot;
+  boot -> app;
+  boot -> cache [label="first use"];
+  cache -> app [style=dashed label="dlopen"];
+}

@@ -1,0 +1,35 @@
+// How fsbpyr build picks the Python and hands the build to another fsbpyr (v0.27.0):
+// cli.build_command, config.load_config, pyversion.resolve, then dispatch.run, variant, _own_tag
+// and _fetch. The variant gets the same arguments, --glibc included.
+digraph build_dispatch {
+  graph [fontname="Helvetica" fontsize=11 rankdir=LR bgcolor="white" pad=0.3 nodesep=0.35 ranksep=0.5];
+  node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#eef3fb" color="#4a6fa5"];
+  edge [fontname="Helvetica" fontsize=9 color="#555555"];
+
+  resolve [label="cli.build_command:\nconfig.load_config checks\nglibc; pyversion.resolve\nchooses X.Y"];
+  own [shape=diamond label="this\nfsbpyr's\nPython?"];
+  build [label="build.build\nin this process"];
+  dev [label="DispatchError:\nmake build PYTHON=X.Y"];
+  cached [shape=diamond label="in the\ncache?"];
+  fetch [label="dispatch._fetch: selfupdate.unpack,\ninspection.read(verify=True),\nselfupdate.check_glibc, rename"];
+  run [label="dispatch.run: the variant\nruns the same ARGS, --glibc\nincluded; for 2.28 it takes\nthe EL8 stub of its Python"];
+
+  node [fillcolor="#f3eefb" color="#7a5aa5"];
+  release [label="release vA.B.C:\nfsbpyr-X.Y-TARGET.xz"];
+
+  node [fillcolor="#eaf5ea" color="#3d8b3d"];
+  file [label="cache: downloads/\nfsbpyr-X.Y-TARGET-vA.B.C"];
+
+  resolve -> own;
+  own -> build [label="yes"];
+  own -> dev [label="no; developer build\n(dispatch._own_tag)"];
+  own -> cached [label="no; release vA.B.C"];
+  cached -> file [label="yes"];
+  cached -> fetch [label="no"];
+  release -> fetch;
+  fetch -> file;
+  file -> run;
+
+  { rank=same; release; cached; }
+  { rank=same; fetch; file; }
+}
