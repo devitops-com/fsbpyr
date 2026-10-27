@@ -10,6 +10,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-27
+
 ### Changed
 - **The test suite has no timing budgets.** The startup budget test
   (`test_startup_is_within_budget_of_bare_cpython`, 1.5x bare CPython) and the wall-clock bound
