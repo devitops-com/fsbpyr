@@ -27,7 +27,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ..dispatch import DEFAULT_DOWNLOADS, DOWNLOADS_VARIABLE
+from ..dispatch import DEFAULT_DOWNLOADS, DISPATCHED_BY_VARIABLE, DOWNLOADS_VARIABLE
 from ..selfupdate import REPO, NotFound, UpdateError, download_text, release_numbers, unpack
 from ..targets import host_target
 from ..vcs import own_version, release_stub_asset, release_stub_sums, release_stub_tag
@@ -54,11 +54,15 @@ def own_tag() -> str | None:
 
 def own_paths(argv0: str | None = None, real: str | None = None) -> list[Path]:
     """Where this executable is: the path it was run by (looked up on PATH when run by name;
-    links kept, so a file placed beside a link is found) and, if it differs, its real path."""
+    links kept, so a file placed beside a link is found) and, if it differs, its real path. A
+    variant run by ``dispatch.run`` first has the paths of the fsbpyr that dispatched to it,
+    where the user places stubs (absolute entries only)."""
     argv0 = sys.argv[0] if argv0 is None else argv0
     ran = argv0 if "/" in argv0 else shutil.which(argv0)
     found: list[Path] = []
-    for path in (ran, os.path.realpath("/proc/self/exe") if real is None else real):
+    dispatched = os.environ.get(DISPATCHED_BY_VARIABLE, "").split(os.pathsep)
+    for path in (*(entry for entry in dispatched if entry.startswith("/")), ran,
+                 os.path.realpath("/proc/self/exe") if real is None else real):
         if path and (absolute := Path(os.path.abspath(path))) not in found:
             found.append(absolute)
     return found

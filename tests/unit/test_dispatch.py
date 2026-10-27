@@ -330,3 +330,24 @@ def test_a_cached_variants_name_is_not_one_the_cache_collector_removes() -> None
         for target in TARGETS:
             name = f"{release_asset(version, target.name)}-v1.2.0"
             assert not collect.NAMES[collect.DOWNLOADS].fullmatch(name)
+
+
+def test_the_variant_is_told_where_the_dispatcher_is(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from fsbpyr.runtime import stubs  # noqa: PLC0415
+
+    seen: list[dict[str, str]] = []
+
+    def run(command: list[str], **kwargs: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
+        seen.append(kwargs["env"])
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(dispatch, "variant", lambda *_a, **_k: tmp_path / "variant")
+    monkeypatch.setattr(stubs, "own_paths", lambda: [tmp_path / "link", tmp_path / "real"])
+    monkeypatch.setattr(subprocess, "run", run)
+
+    assert dispatch.run(OTHER, ["build"]) == 0
+
+    expected = os.pathsep.join([str(tmp_path / "link"), str(tmp_path / "real")])
+    assert seen[0][dispatch.DISPATCHED_BY_VARIABLE] == expected

@@ -3,8 +3,10 @@ from (a file placed beside the executable, the cache, a download from the compan
 the tag served by a fake server on localhost), that it is proven to be this fsbpyr's own, and
 what is said when there is none."""
 
+import functools
 import hashlib
 import lzma
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -13,6 +15,7 @@ import pytest
 from fsbpyr import dispatch
 from fsbpyr.runtime import collect, pins, registry, stubs
 from fsbpyr.runtime.stub import IDENTITY_MARKER, stub_identity
+from fsbpyr.runtime.stubs import own_paths as real_own_paths
 from fsbpyr.targets import host_target
 from fsbpyr.vcs import release_stub_asset, release_stub_sums, release_stub_tag
 
@@ -391,6 +394,69 @@ def test_own_paths_look_a_bare_name_up_on_path(
     monkeypatch.setenv("PATH", str(tool.parent))
 
     assert stubs.own_paths("fsbpyr", "/opt/real")[0] == tool
+
+
+# --- a dispatched variant looks where the dispatching fsbpyr looks ----------------------------
+
+def _variant_in_the_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The variant's view: it was run from the cache; returns the dispatcher's directory."""
+    variant = tmp_path / "cache" / "downloads" / "fsbpyr-3.13-v1.2.0"
+    monkeypatch.setattr(stubs, "own_paths", functools.partial(real_own_paths, str(variant),
+                                                              str(variant)))
+    return tmp_path / "bin"
+
+
+def test_own_paths_add_the_dispatchers_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    one, two = tmp_path / "one" / "fsbpyr", tmp_path / "two" / "fsbpyr"
+    monkeypatch.setenv(dispatch.DISPATCHED_BY_VARIABLE, f"{one}{os.pathsep}{two}")
+
+    assert real_own_paths("/c/variant", "/c/variant") == [one, two, Path("/c/variant")]
+
+
+@pytest.mark.parametrize("value", ["", os.pathsep, f"{os.pathsep}{os.pathsep}", "relative/fsbpyr"])
+def test_own_paths_ignore_an_empty_or_relative_dispatcher_value(
+    value: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(dispatch.DISPATCHED_BY_VARIABLE, value)
+
+    assert real_own_paths("/c/variant", "/c/variant") == [Path("/c/variant")]
+
+
+def test_a_variant_finds_the_stub_placed_beside_the_dispatcher(
+    releases: FakeReleases, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    beside = _variant_in_the_cache(tmp_path, monkeypatch)
+    monkeypatch.setenv(dispatch.DISPATCHED_BY_VARIABLE, str(beside / "fsbpyr"))
+    (beside / ASSET).write_bytes(make_stub())
+
+    assert get(tmp_path) == make_stub()
+    assert releases.requests == []
+
+
+def test_a_stub_beside_the_dispatcher_still_has_to_carry_the_runtime_id(
+    releases: FakeReleases, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    beside = _variant_in_the_cache(tmp_path, monkeypatch)
+    monkeypatch.setenv(dispatch.DISPATCHED_BY_VARIABLE, str(beside / "fsbpyr"))
+    (beside / ASSET).write_bytes(make_stub("cp314-x86_64-unknown-linux-gnu-000000000000"))
+
+    with pytest.raises(stubs.StubError, match=f"expects {EXPECTED}"):
+        get(tmp_path)
+
+
+def test_a_variant_names_the_place_beside_the_dispatcher_not_the_cache(
+    releases: FakeReleases, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    beside = _variant_in_the_cache(tmp_path, monkeypatch)
+    monkeypatch.setenv(dispatch.DISPATCHED_BY_VARIABLE, str(beside / "fsbpyr"))
+
+    with pytest.raises(stubs.StubError) as error:
+        stubs.stub_for(PYTHON, BASELINE, TAG, tmp_path / "cache", offline=True)
+
+    assert f"next to {beside / 'fsbpyr'}" in str(error.value)
+    assert "downloads" not in str(error.value)
 
 
 # --- pairing with the executable's own runtime ------------------------------------------------
