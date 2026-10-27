@@ -1,7 +1,7 @@
 name: Attest example
 
 # An example for app builders: build an app with fsbpyr and attach a GitHub provenance
-# attestation to it (README, "Attesting and verifying your app"). Manual runs only; it builds
+# attestation to it (the wiki's "Running a built app"). Manual runs only; it builds
 # tests/fixtures/projects/hello, checks the attestation as whoever downloads the app would, and
 # keeps the app as the run's artifact `hello`. It has its own write permissions and uses no
 # cache, so nothing it builds can be poisoned by another run; the other workflows stay read-only.
@@ -49,7 +49,7 @@ jobs:
         with:
           subject-path: ${{ runner.temp }}/hello
 
-      # What whoever downloads the app runs (README).
+      # What whoever downloads the app runs.
       - name: Verify the attestation
         env:
           GH_TOKEN: ${{ github.token }}

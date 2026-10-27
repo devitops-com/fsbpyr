@@ -55,8 +55,8 @@ file it names (a malformed value or another file does nothing), and as process 1
 the default SIGTERM into `SystemExit(143)`; neither reads a path or runs anything.
 
 At run time, extracted files are loaded as code, so the cache root and every directory
-leading to it must be owned by root or by the user and writable by nobody else (README,
-"At run time"); the launcher checks each file's digest before it is loaded.
+leading to it must be owned by root or by the user and writable by nobody else ([Running](https://github.com/devitops-com/fsbpyr/wiki/User-Running#the-cache)
+in the wiki); the launcher checks each file's digest before it is loaded.
 
 ## Known limits
 
@@ -65,9 +65,9 @@ leading to it must be owned by root or by the user and writable by nobody else (
   provenance and SBOM attestations (made by release.yml, checked with `gh attestation
   verify`; the EL8 stubs, published in the companion release `el8-vX.Y.Z`, are attested by el8.yml, a
   workflow of its own whose only writing job is `publish`, checked with `--signer-workflow
-  .../el8.yml --source-ref refs/tags/vX.Y.Z`, README "Older systems: EL8 and glibc 2.28"), the installer (`install.sh` checks each download against the SHA-256 the release
+  .../el8.yml --source-ref refs/tags/vX.Y.Z`), the installer (`install.sh` checks each download against the SHA-256 the release
   recorded and runs `fsbpyr inspect --verify`; `FSBPYR_VERIFY=1` adds the attestation) and the
-  reproduction steps in the README ("Verifying a release"). A signature checked with an outside
+  reproduction steps in [CONTRIBUTING.md](../CONTRIBUTING.md#verifying-a-release). A signature checked with an outside
   key (D31) comes with signed releases, after the MVP.
 - **EL8 stubs** (D46). A stub is the launcher of every app built with `--glibc 2.28`. A
   download comes from the companion release `el8-vX.Y.Z` and is checked against
@@ -83,7 +83,7 @@ leading to it must be owned by root or by the user and writable by nobody else (
   Python or target, not a tampered one, because anyone who can write the file can write the id.
   Whoever can write the directory of the fsbpyr executable or `downloads/` in the cache can put
   code into every EL8 app built there; D20 keeps the cache to the user, and a placed file
-  should be checked against the sums first (README, "Older systems: EL8 and glibc 2.28").
+  should be checked against the sums first.
 - **Self update** verifies the new executable's digest (`inspect --verify`) and refuses one
   whose glibc baseline is newer than the host's before replacing anything; that is a guard
   against a broken install, not a trust check. Stubs placed beside the executable are not

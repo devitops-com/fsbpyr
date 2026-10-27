@@ -7,7 +7,7 @@ name: EL8
 # `SHA256SUMS-glibc2.28`. This workflow makes them, and it is OUTSIDE the release gate (owner,
 # 2026-10-25): release.yml, which full-suite.yml gates through tools/release/green-run.sh,
 # neither waits for it nor depends on it, and a release may have EL8 stubs or not. A release
-# without them is complete; `--glibc 2.28` says so plainly (README, "Older systems").
+# without them is complete; `--glibc 2.28` says so plainly.
 # The stubs are not assets of the release itself: releases are immutable (REL-1), so vX.Y.Z takes
 # none once published. They are the assets of the companion release el8-vX.Y.Z, on the same
 # commit, which is not the latest release (`self update` and install.sh read that as vX.Y.Z).

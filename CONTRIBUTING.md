@@ -10,6 +10,100 @@ adds a fixture or corpus test that fails without the fix: a project under
 `tests/fixtures/projects/` that the end-to-end tests build and run, or an app in the corpus
 (`tests/corpus`, with the rules in its README). A bug found once stays tested.
 
+## Building from source
+
+A checkout needs `make` and [uv](https://docs.astral.sh/uv/). On Debian trixie it also needs
+the Python that `.python-version` pins (`uv python install "$(cat .python-version)"`), `curl`
+and `zstd`; on any other Linux x86-64 or aarch64 host, [podman](https://podman.io) instead. No
+target installs or updates a tool: a missing one is named, and the target stops. `make help`
+lists the targets. To install a release instead, see
+[Installing](https://github.com/devitops-com/fsbpyr/wiki/User-Installing).
+
+```
+make bootstrap   # once: from source to an installed fsbpyr
+make build       # dist/fsbpyr, built by the installed fsbpyr
+make install     # dist/fsbpyr, its man page and completions under ~/.local
+```
+
+The runtime's launcher is linked with clang and lld 23 or newer: the pinned
+python-build-standalone release is LLVM 23 bitcode, and trixie ships clang 22. `make bootstrap`
+and the targets that build a runtime fetch, once and with `curl`, the LLVM release tarball for
+the host's architecture that `tools/release/llvm23` pins (its version, then the SHA-256 of the
+x86-64 and of the aarch64 tarball), check its SHA-256, and unpack what linking needs, about
+600 MB, with `zstd` into `${XDG_CACHE_HOME:-~/.cache}/fsbpyr/toolchains`. With
+`FSBPYR_LLVM23=0` they use a clang and lld 23 or newer on `PATH` instead.
+
+**`make bootstrap`** (`tools/bootstrap.sh`) takes a checkout to an installed fsbpyr:
+
+1. It checks for uv and the Python of `.python-version`; uv may not download that Python
+   itself (`UV_PYTHON_DOWNLOADS=never`).
+2. It installs the locked dependencies into the checkout's `.venv` and builds the runtime
+   (`fsbpyr runtime build`): the pinned CPython from python-build-standalone and a Debian 12
+   sysroot (glibc 2.36) are downloaded and checked against their SHA-256, the launcher is
+   linked with clang and lld 23 (on aarch64 with compiler-rt's builtins, which have the
+   outlined atomics that CPython's aarch64 objects call), and the standard library is
+   compiled. This takes a minute or two, once: the runtime is cached in
+   `${XDG_CACHE_HOME:-~/.cache}/fsbpyr`.
+3. fsbpyr builds itself in three stages: fsbpyr run from source builds `dist/stage1/fsbpyr`,
+   that executable builds `dist/stage2/fsbpyr`, and that one builds `dist/stage3/fsbpyr`. Each
+   stage must pass `fsbpyr inspect --verify` (its digest is recomputed over the whole file),
+   and stages 2 and 3 must be identical byte for byte: builds are reproducible, so a difference
+   means fsbpyr does not build itself faithfully, and bootstrap stops there. Stage 3 is copied
+   to `dist/fsbpyr`.
+4. It runs `make install`.
+
+On Debian trixie all four steps run on the host. On any other host steps 1 to 3 run in a
+Debian trixie podman image of the host's architecture, the `Containerfile`'s `build` stage
+(Debian's packages and the uv that `tools/release/uv.version` names, checked against its
+SHA-256; that uv installs the Python of `.python-version` there), on the checkout mounted into
+it; step 4 runs on the host. The container is IPv4-only (`--network pasta:-4`):
+on podman's default network, TLS handshakes from Python with GitHub's download host time out.
+The podman volume `fsbpyr-cache` keeps uv's cache, its Python, the runtime and clang and lld 23
+between runs. `FSBPYR_BOOTSTRAP=podman make bootstrap` uses the container on trixie too.
+
+**`make build`** builds the checkout with the installed fsbpyr (`~/.local/bin/fsbpyr`, else
+`fsbpyr` on `PATH`) into `dist/fsbpyr`; like every `fsbpyr build`, it runs the new executable
+once as a smoke test before it replaces the old one. The installed executable carries its own
+runtime, so this needs no compiler, only uv. Without an installed fsbpyr it stops and says to
+run `make bootstrap`. The new executable's `--version` is `X.Y.Z-<commit>` when HEAD carries
+the tag `vX.Y.Z`, else `untagged-<commit>` (the commit's first 8 hex digits).
+
+**`make install`** installs `dist/fsbpyr` (running `make build` first when it is missing), with
+the man page and shell completions it prints:
+
+| File | Installed as |
+|---|---|
+| the executable | `~/.local/bin/fsbpyr` |
+| man page | `~/.local/share/man/man1/fsbpyr.1` (`man fsbpyr` finds it when `~/.local/bin` is on `PATH`) |
+| bash completion | `~/.local/share/bash-completion/completions/fsbpyr` (loaded by bash-completion) |
+| zsh completion | `~/.local/share/zsh/site-functions/_fsbpyr` (add the directory to `fpath` before `compinit`) |
+| fish completion | `~/.local/share/fish/vendor_completions.d/fsbpyr.fish` |
+
+`PREFIX=/usr/local` (as root) installs under another prefix; `BINDIR`, `MANDIR`,
+`BASH_COMPLETION_DIR`, `ZSH_COMPLETION_DIR` and `FISH_COMPLETION_DIR` set one location each, and
+`DESTDIR` is put before every path, for a staged install. `make uninstall` removes the same
+files and takes the same variables; `make bootstrap` passes them on to its `make install`.
+
+**Other Pythons.** `PYTHON=3.12` (3.12 to 3.15, on the command line only) makes `make build`
+build that Python's runtime (cached after the first run), then `dist/fsbpyr-3.12` with fsbpyr
+run from source in the locked environment `.venv-3.12`. `make bootstrap PYTHON=3.12`
+(`tools/bootstrap.sh --python 3.12`) runs steps 1 to 3 for it, into `dist/stage1-3.12` to
+`dist/stage3-3.12` and `dist/fsbpyr-3.12`. Neither installs it, and `make install` refuses
+`PYTHON`. uv must find that Python and may not download it: install it first
+(`uv python install 3.12`). The checks and the tests take `PYTHON` too
+([Running the tests](#running-the-tests)).
+
+**Runtimes.** `fsbpyr runtime list` lists the runtime embedded in the running fsbpyr, if any,
+then the runtimes in the cache, each with its Python and the glibc its launcher is linked for:
+2.34 by default (linked against Debian 12's glibc 2.36, the launcher needs no symbol newer than
+2.34), or 2.28 (`fsbpyr runtime build --glibc 2.28`, against Rocky Linux 8.10's sysroot, for
+EL8 hosts). fsbpyr run from a checkout or a wheel, not as its own executable, always needs a
+runtime in the cache, and a new fsbpyr version may need a new one: a runtime's id covers the
+launcher's sources and flags and the pinned downloads. The build then names the
+`fsbpyr runtime build` to run. In a checkout,
+`uv run --locked fsbpyr runtime build --clang "$(bash tools/bootstrap.sh --llvm23)"` builds the
+default Python's runtime with the pinned clang.
+
 ## Running the tests
 
 `make check` runs the static checks (ruff and mypy), `make test-ci` the core of the suite,
@@ -20,8 +114,8 @@ checks or tests but `make test-vm` takes `PYTHON=3.X` (3.12 to 3.15, on the comm
 to run on that Python's variant. The end-to-end tests
 use a cached runtime or build one, which needs clang and lld 23 or newer: the `make` targets
 put LLVM's clang and lld 23 that `tools/release/llvm23` pins first on PATH (fetched once, see
-the README's "Building from source"); run directly, pytest skips them without a clang 23 on
-PATH. `make test-ci` also fails when branch coverage falls below `fail_under` in
+[Building from source](#building-from-source)); run directly, pytest skips them without a
+clang 23 on PATH. `make test-ci` also fails when branch coverage falls below `fail_under` in
 `pyproject.toml`. That value comes from a run with the end-to-end tests, so a run where they
 skip can fail on coverage alone.
 
@@ -150,10 +244,116 @@ corpus included. Never put a CI skip instruction (`[skip ci]` and the like) in a
 message instead: GitHub applies it to a tag pushed on that commit too, so release.yml would not
 run, and `make release` refuses such a commit. Before merging, run the tests that read
 documentation: `uv run pytest tests/unit/test_cli_docs.py`
-(the README's and `docs/compatibility.md`'s tables against the code), and `uv run pytest
+(the README's quickstart and `docs/compatibility.md`'s tables against the code, and that the
+commands under [Verifying a release](#verifying-a-release) name no version), and `uv run pytest
 tests/e2e/test_build.py -k quickstart` when the README's quickstart changed. A release made
 from such a commit stands on the run of the newest commit before it that full-suite.yml ran
 for: `tools/release/green-run.sh`, which `make release` and the publish job use, accepts it
 only when nothing but documentation changed since, and names that run. A change to code,
 tests, configuration (`pyproject.toml`, `uv.lock`, the workflows, the Makefile) or the release
 tools runs the full suite when it is merged.
+
+## Verifying a release
+
+A release's executables are built by GitHub Actions from its `vX.Y.Z` tag (`release.yml`, which
+runs `build.yml`) and attested there. A pushed tag never moves, and every release from 0.19.0 on
+stays published as it is: a version whose release fails is burned, and the fix comes as the
+next version. The steps below take the latest release's `fsbpyr-3.14-x86_64-linux-gnu`; another
+asset works the same. They need curl, git, gh, uv and python3, and the rebuilds run only on a
+machine of the asset's architecture, since fsbpyr builds for its host.
+
+The attestation comes first, before anything runs the file. It shows that this repository's
+release workflow built the file from the tag:
+
+```
+asset=fsbpyr-3.14-x86_64-linux-gnu   # or another, such as fsbpyr-3.12-aarch64-linux-gnu
+tag="$(gh release view --repo devitops-com/fsbpyr --json tagName --jq .tagName)"
+curl -fLo "$asset" "https://github.com/devitops-com/fsbpyr/releases/download/$tag/$asset"
+gh attestation verify "$asset" --repo devitops-com/fsbpyr \
+  --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml --source-ref "refs/tags/$tag"
+```
+
+If it fails, stop there. `make release-check` makes the same check for every executable of a
+release.
+
+**(a) The executable rebuilds itself** from the tag, with the uv that built it. uv builds the
+project's wheel, stamping its own version into the wheel's metadata, and installs every
+distribution, so another uv can give other bytes from identical sources; an fsbpyr executable
+that builds with another uv warns. The executable records its uv (`uv` in `fsbpyr inspect`,
+`.uv` in `--json`), the one that the tag's `tools/release/uv.version` names. If yours differs,
+`sh src/tools/release/install-uv.sh DIR` installs that uv into `DIR`, checked against its
+SHA-256: put `DIR` first on `PATH` and run the rest again. uv also needs the asset's Python
+(`uv python install 3.14`).
+
+```
+chmod +x "$asset"
+git clone --branch "$tag" https://github.com/devitops-com/fsbpyr.git src
+want="$(./"$asset" inspect "$asset" | awk '$1 == "uv" { print $2; exit }')"
+[ "$(uv --version | cut -d' ' -f2)" = "$want" ] || echo "install uv $want first: this uv differs"
+python="${asset#fsbpyr-}"; python="${python%%-*}"   # the asset's Python: 3.14, 3.12, ...
+(cd src && ../"$asset" build . --python "$python" -o ../rebuilt)
+cmp "$asset" rebuilt && echo identical
+```
+
+`--python` makes the executable rebuild itself with the runtime it carries. Without it the
+checkout's `.python-version` decides, and an executable of another Python hands the build to
+that Python's executable of the same release, which it fetches. This checks the payload:
+fsbpyr's code and its dependencies are what the tag says. It cannot vouch for the launcher,
+CPython and the standard library: an fsbpyr executable builds with the runtime it carries,
+copying them from itself ([D4](docs/IMPLEMENTATION_PLAN.md#2-key-decisions)), so a changed
+launcher would pass.
+
+**(b) An independent rebuild from source** checks those too. It compiles the launcher from the
+tag's sources and links it with the clang and lld that the tag pins (`tools/release/llvm23`);
+CPython, which the launcher links in, and the standard library, which is compiled to bytecode,
+come from the python-build-standalone archive that the tag pins by SHA-256. So (b) proves the
+launcher, and that CPython and the standard library are that pinned build; it does not compile
+CPython. `tools/bootstrap.sh --from-source` runs steps 1 to 3 of `make bootstrap`
+([Building from source](#building-from-source)) and installs nothing. With `FSBPYR_UV_VERSION`
+it refuses any other uv. A new `XDG_CACHE_HOME` makes it fetch everything again and link the
+runtime in this run: a runtime already cached under the same id would be reused, and the id
+does not cover the clang that linked it. uv must find, without downloading it, the Python of
+the tag's `.python-version` for the default asset (`uv python install "$(cat src/.python-version)"`)
+or any patch release of the asset's Python for another (`uv python install 3.12`); curl and
+zstd fetch clang and lld.
+
+```
+if [ "$python" = "$(cut -d. -f1,2 src/.python-version)" ]; then variant=; else variant="-$python"; fi
+XDG_CACHE_HOME="$PWD/cache" FSBPYR_UV_VERSION="$want" \
+  bash src/tools/bootstrap.sh --from-source ${variant:+--python "$python"}
+cmp "$asset" "src/dist/stage3$variant/fsbpyr" && echo identical
+```
+
+The full suite runs the same rebuild in `build.yml`'s `reproduce` job, in a Debian trixie
+container, for every Python and both targets, as another user, from another path, with other
+caches and umask 077; its `compare` job checks the result against the build byte for byte. A
+release is made only from a commit whose full suite passed, and its build (`make bootstrap`
+on the tag, then `make build` for the default Python) differs from the full suite's only in the
+tag it records. The release build's log lists the image digest, the uv version, the LLVM pin
+and the version of `xz-utils`; it installs nothing from Debian but ca-certificates, git, curl,
+xz-utils, make and zstd. The launcher's bytes depend on the clang and lld that link it:
+`fsbpyr inspect` lists the launcher's `.comment` lines, which name them, as `toolchain`.
+
+An executable also records the version of the fsbpyr that built it (`built with` in
+`fsbpyr inspect`), so an fsbpyr of another version, or of an untagged commit, gives a different
+file from the same sources; such a build works the same, only the bytes differ. For the
+releases from 0.19.0 to 0.27.0, the README.md of the tag describes how to verify that release.
+
+Each executable also has an SBOM, `<asset>.cdx.json` (CycloneDX 1.6, made by
+`tools/release/sbom.py` from `fsbpyr inspect --verify --json`). It lists the executable with its
+SHA-256, fsbpyr, CPython, the libraries the runtime links statically (OpenSSL, SQLite, expat and
+zlib with the CPEs that vulnerability scanners match them by, and libmpdec) and the
+distributions from an index with their SHA-256. `release.yml` attests it to its executable:
+
+```
+curl -fLO "https://github.com/devitops-com/fsbpyr/releases/download/$tag/$asset.cdx.json"
+gh attestation verify "$asset" --repo devitops-com/fsbpyr --predicate-type https://cyclonedx.org/bom \
+  --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml --source-ref "refs/tags/$tag"
+./"$asset" inspect --verify --json "$asset" | python3 src/tools/release/sbom.py - | cmp - "$asset.cdx.json"
+```
+
+The last line makes the SBOM again from the executable, with the tag's `sbom.py` (standard
+library only), and compares it with the published file. `make release-check` makes the
+attestation check for every executable, and the full suite's `compare` job checks that the
+rebuild's SBOM, made the same way, is the build's byte for byte; nothing in the repository runs
+the last line against a published release.

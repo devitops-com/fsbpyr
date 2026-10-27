@@ -113,8 +113,8 @@ a single command stays the plain target. The launcher treats the entrypoint as a
 At start the boot code picks the command from `argv[0]`'s basename (also without `.py`), else
 from `argv[1]` as an exact name, which it removes from `sys.argv`. A start that names no command lists them on stderr (`usage: NAME COMMAND [ARGUMENT...]`) and exits with status 2; an argument that is a path is never a command (it is the restart idiom or a file argument). `argv[0]` is the name a link was started under.
 
-**Scripts.** A target below the module `_fsbpyr_scripts` (a project without a build system, a directory of scripts or a single script, README
-"Projects without a build system", "A directory of scripts", "A single script") is started after the boot code puts the target's module
+**Scripts.** A target below the module `_fsbpyr_scripts` (a project without a build system, a directory of scripts or a single script,
+[Scripts and tools](https://github.com/devitops-com/fsbpyr/wiki/User-Scripts) in the wiki) is started after the boot code puts the target's module
 directory (`<exe>/` and the dotted name's path without its last part) first on `sys.path`; a
 target without `:attr` is run as `__main__` and the selftest only finds it, never imports it. A
 directory below `_fsbpyr_scripts` whose name is no Python name (`sub-dir`) is recorded under its
