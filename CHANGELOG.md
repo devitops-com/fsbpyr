@@ -10,6 +10,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-10-28
+
 No code changes since 0.28.0: this release carries 0.28.0's code under a new version, so that its
 wiki can be published from the repository (`make wiki-publish` publishes release tags, and
 v0.28.0 predates the repository's `wiki/`).
