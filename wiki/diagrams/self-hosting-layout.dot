@@ -7,13 +7,16 @@
 // with fsbpyr's payload reader).
 // Green: the checkout's. Purple: the release's, or what differs from stage 2 because of it.
 // Yellow: the same content as in stage 2 at other string offsets, because a string before it has
-// another length. White: the same in the stages it spans.
+// another length. White: the same in the stages it spans. The fills are stronger than the
+// wiki's node fills because the cells have no coloured borders; the last row is the key.
+// class="landscape": the PDF shows the figure on a landscape page of its own (wiki.lua); the
+// web page is not affected.
 digraph self_hosting_layout {
-  graph [fontname="Helvetica" fontsize=11 bgcolor="white" pad=0.3];
+  graph [fontname="Helvetica" fontsize=11 bgcolor="white" pad=0.3 class="landscape"];
   node [fontname="Helvetica" fontsize=10 shape=plain];
 
   layout [label=<
-<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="5" COLOR="#888888">
+<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3" COLOR="#888888">
   <TR>
     <TD BGCOLOR="#f4f4f4" ROWSPAN="2"><B>part (Layout)</B></TD>
     <TD BGCOLOR="#f4f4f4" ROWSPAN="2"><B>its bytes come from</B></TD>
@@ -31,17 +34,17 @@ digraph self_hosting_layout {
   <TR>
     <TD ALIGN="LEFT" BALIGN="LEFT">stub ELF: the launcher,<BR/>CPython linked in</TD>
     <TD ALIGN="LEFT">the runtime the builder uses</TD>
-    <TD COLSPAN="3" BGCOLOR="#eaf5ea">linked from the checkout's launcher sources and pins</TD>
-    <TD COLSPAN="3" BGCOLOR="#f3eefb">the release's, copied from builder to build</TD>
+    <TD COLSPAN="3" BGCOLOR="#cfe8cf">linked from the checkout's launcher sources and pins</TD>
+    <TD COLSPAN="3" BGCOLOR="#e2d5f5">the release's, copied from builder to build</TD>
   </TR>
   <TR>
     <TD ALIGN="LEFT">zero padding</TD>
     <TD ALIGN="LEFT">the stub's length</TD>
-    <TD COLSPAN="3" BGCOLOR="#eaf5ea">up to the next 64 KiB</TD>
-    <TD COLSPAN="3" BGCOLOR="#f3eefb">up to the next 64 KiB</TD>
+    <TD COLSPAN="3" BGCOLOR="#cfe8cf">up to the next 64 KiB</TD>
+    <TD COLSPAN="3" BGCOLOR="#e2d5f5">up to the next 64 KiB</TD>
   </TR>
   <TR>
-    <TD ALIGN="LEFT" BALIGN="LEFT">header: magic, version, size, Python,<BR/>bytecode magic, generation_id,<BR/>app name, entry point</TD>
+    <TD ALIGN="LEFT" BALIGN="LEFT">header: magic, version, size, Python, bytecode<BR/>magic, generation_id, app name, entry point</TD>
     <TD ALIGN="LEFT" BALIGN="LEFT">the format, the runtime's Python,<BR/>the project</TD>
     <TD COLSPAN="6">the same in every stage</TD>
   </TR>
@@ -49,53 +52,53 @@ digraph self_hosting_layout {
     <TD ALIGN="LEFT" BALIGN="LEFT">header: lengths of STRTAB and<BR/>build_info, section offsets, counts</TD>
     <TD ALIGN="LEFT" BALIGN="LEFT">the writer, from the tables</TD>
     <TD COLSPAN="3">the same</TD>
-    <TD BGCOLOR="#f3eefb" BALIGN="LEFT">other lengths; BLOBS + 1,<BR/>later tables 32 B on</TD>
+    <TD BGCOLOR="#e2d5f5" BALIGN="LEFT">other lengths; BLOBS + 1,<BR/>later tables 32 B on</TD>
     <TD COLSPAN="2">the same</TD>
   </TR>
   <TR>
     <TD ALIGN="LEFT" BALIGN="LEFT">build_info: fsbpyr_version</TD>
     <TD ALIGN="LEFT">the builder's version</TD>
-    <TD COLSPAN="3" BGCOLOR="#eaf5ea">the checkout's (untagged-&lt;commit&gt;)</TD>
-    <TD BGCOLOR="#f3eefb">the release's<BR/>(0.28.0-b9b1144d)</TD>
-    <TD COLSPAN="2" BGCOLOR="#eaf5ea">the checkout's (stage 1's)</TD>
+    <TD COLSPAN="3" BGCOLOR="#cfe8cf">the checkout's (untagged-&lt;commit&gt;)</TD>
+    <TD BGCOLOR="#e2d5f5">the release's<BR/>(0.28.0-b9b1144d)</TD>
+    <TD COLSPAN="2" BGCOLOR="#cfe8cf">the checkout's (stage 1's)</TD>
   </TR>
   <TR>
     <TD ALIGN="LEFT" BALIGN="LEFT">build_info: runtime, stub_sha256</TD>
     <TD ALIGN="LEFT">the runtime</TD>
-    <TD COLSPAN="3" BGCOLOR="#eaf5ea">the new runtime id and stub</TD>
-    <TD COLSPAN="3" BGCOLOR="#f3eefb">the release's runtime id and stub</TD>
+    <TD COLSPAN="3" BGCOLOR="#cfe8cf">the new runtime id and stub</TD>
+    <TD COLSPAN="3" BGCOLOR="#e2d5f5">the release's runtime id and stub</TD>
   </TR>
   <TR>
     <TD ALIGN="LEFT" BALIGN="LEFT">build_info: git, project, lock, dists</TD>
     <TD ALIGN="LEFT">the checkout</TD>
-    <TD COLSPAN="6" BGCOLOR="#eaf5ea">the checkout's</TD>
+    <TD COLSPAN="6" BGCOLOR="#cfe8cf">the checkout's</TD>
   </TR>
   <TR>
     <TD ALIGN="LEFT">0 STRTAB</TD>
     <TD ALIGN="LEFT" BALIGN="LEFT">build_info and every name</TD>
     <TD COLSPAN="3">the same</TD>
-    <TD BGCOLOR="#f3eefb">other build_info</TD>
+    <TD BGCOLOR="#e2d5f5">other build_info</TD>
     <TD COLSPAN="2">the same</TD>
   </TR>
   <TR>
     <TD ALIGN="LEFT">1 BLOBS</TD>
     <TD ALIGN="LEFT" BALIGN="LEFT">one record per distinct blob<BR/>and one per block</TD>
     <TD COLSPAN="3">the same</TD>
-    <TD BGCOLOR="#f3eefb" BALIGN="LEFT">one more: the release's<BR/>copy of the changed<BR/>boot module's source</TD>
+    <TD BGCOLOR="#e2d5f5" BALIGN="LEFT">one more: the release's copy of<BR/>the changed boot module's source</TD>
     <TD COLSPAN="2">the same</TD>
   </TR>
   <TR>
     <TD ALIGN="LEFT" BALIGN="LEFT">2 MODULES, 3 FILES</TD>
     <TD ALIGN="LEFT" BALIGN="LEFT">names as STRTAB offsets,<BR/>blobs as BLOBS indices</TD>
     <TD COLSPAN="3">the same</TD>
-    <TD BGCOLOR="#f3eefb" BALIGN="LEFT">other string offsets<BR/>and blob indices</TD>
+    <TD BGCOLOR="#e2d5f5" BALIGN="LEFT">other string offsets<BR/>and blob indices</TD>
     <TD COLSPAN="2">the same</TD>
   </TR>
   <TR>
     <TD ALIGN="LEFT">4 DISTS</TD>
     <TD ALIGN="LEFT" BALIGN="LEFT">names as STRTAB offsets</TD>
     <TD COLSPAN="3">the same</TD>
-    <TD BGCOLOR="#fff6d5">other string offsets</TD>
+    <TD BGCOLOR="#fbe7a1">other string offsets</TD>
     <TD COLSPAN="2">the same</TD>
   </TR>
   <TR>
@@ -106,26 +109,26 @@ digraph self_hosting_layout {
   <TR>
     <TD ALIGN="LEFT" BALIGN="LEFT">blob data: the standard library,<BR/>with 4 of the 5 startup modules</TD>
     <TD ALIGN="LEFT">the runtime</TD>
-    <TD COLSPAN="3" BGCOLOR="#eaf5ea" BALIGN="LEFT">compiled by the CPython of the pin</TD>
-    <TD COLSPAN="3" BGCOLOR="#f3eefb">the release's</TD>
+    <TD COLSPAN="3" BGCOLOR="#cfe8cf" BALIGN="LEFT">compiled by the CPython of the pin</TD>
+    <TD COLSPAN="3" BGCOLOR="#e2d5f5">the release's</TD>
   </TR>
   <TR>
-    <TD ALIGN="LEFT" BALIGN="LEFT">blob data: the boot packages<BR/>_fsbpyr_boot (5th startup module),<BR/>_fsbpyr_rt</TD>
+    <TD ALIGN="LEFT" BALIGN="LEFT">blob data: the boot packages _fsbpyr_boot<BR/>(the 5th startup module), _fsbpyr_rt</TD>
     <TD ALIGN="LEFT" BALIGN="LEFT">the builder's own fsbpyr.boot</TD>
-    <TD COLSPAN="3" BGCOLOR="#eaf5ea">the checkout's</TD>
-    <TD BGCOLOR="#f3eefb">the release's</TD>
-    <TD COLSPAN="2" BGCOLOR="#eaf5ea">the checkout's (stage 1's)</TD>
+    <TD COLSPAN="3" BGCOLOR="#cfe8cf">the checkout's</TD>
+    <TD BGCOLOR="#e2d5f5">the release's</TD>
+    <TD COLSPAN="2" BGCOLOR="#cfe8cf">the checkout's (stage 1's)</TD>
   </TR>
   <TR>
     <TD ALIGN="LEFT" BALIGN="LEFT">blob data: fsbpyr, click, packaging<BR/>(code, sources, dist-info)</TD>
     <TD ALIGN="LEFT" BALIGN="LEFT">the checkout and uv.lock,<BR/>installed by uv</TD>
-    <TD COLSPAN="6" BGCOLOR="#eaf5ea">the checkout's</TD>
+    <TD COLSPAN="6" BGCOLOR="#cfe8cf">the checkout's</TD>
   </TR>
   <TR>
     <TD ALIGN="LEFT">trailer: payload size, digest</TD>
     <TD ALIGN="LEFT">every byte before it</TD>
     <TD COLSPAN="3">the same</TD>
-    <TD BGCOLOR="#f3eefb">its own</TD>
+    <TD BGCOLOR="#e2d5f5">its own</TD>
     <TD COLSPAN="2">the same</TD>
   </TR>
   <TR>
@@ -134,6 +137,19 @@ digraph self_hosting_layout {
     <TD COLSPAN="3">bd865477… in all three</TD>
     <TD>b98cdb8c…</TD>
     <TD COLSPAN="2">9e7ee8e7… in both</TD>
+  </TR>
+  <TR>
+    <TD COLSPAN="8" ALIGN="LEFT">
+      <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="4" CELLPADDING="3" COLOR="#888888">
+        <TR>
+          <TD BORDER="0"><B>key</B></TD>
+          <TD BGCOLOR="#cfe8cf">the checkout's</TD>
+          <TD BGCOLOR="#e2d5f5">the release's, or what differs from stage 2 because of it</TD>
+          <TD BGCOLOR="#fbe7a1">the same content as in stage 2 at other string offsets</TD>
+          <TD>the same in the stages it spans</TD>
+        </TR>
+      </TABLE>
+    </TD>
   </TR>
 </TABLE>>];
 }

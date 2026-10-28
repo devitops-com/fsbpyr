@@ -324,7 +324,9 @@ never edited by hand.
   import graphs (`images/arch-subsystems.svg`, `images/arch-modules-*.svg`) are drawn from
   `src/fsbpyr`. Nothing drawn is kept: images and PDFs are made when the wiki is built, and
   git ignores PNGs and PDFs under `wiki/`. An image that is not drawn goes in `wiki/images/`,
-  as an SVG.
+  as an SVG. A diagram too wide for the text width of a portrait page asks for a landscape page
+  of its own in the PDFs with `graph [class="landscape"]` in its source; the wiki shows it as
+  it is.
 - `make wiki-lint` checks that every link of the pages has its target: the page and heading,
   the file or directory and the lines, the diagram. `tests/unit/test_wiki.py` runs the same
   check, so a broken link fails the tests.
