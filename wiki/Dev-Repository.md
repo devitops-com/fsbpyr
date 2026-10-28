@@ -2,7 +2,8 @@
 
 The wiki describes how fsbpyr works. Plans, decisions, the continuous integration setup and the
 release process live in the repository, versioned with the code. This page points to them. Links
-go to the `v@VERSION@` tag; the `main` branch has the current state.
+go to the commit the wiki was published from, whose code is that of v@VERSION@; the `main` branch
+has the current state.
 
 Repository: <https://github.com/devitops-com/fsbpyr>
 

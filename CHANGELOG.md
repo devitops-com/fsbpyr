@@ -10,6 +10,22 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Changed
+- **The wiki is published without a release.** `make wiki-publish` without `VERSION` publishes
+  main as GitHub has it, as long as nothing of what goes into a release changed since the
+  newest release tag (`src/`, `pyproject.toml`, `uv.lock`, `.python-version`, `tools/release/`);
+  otherwise it refuses, naming the first such file. Changes to the documentation, the Makefile,
+  the tests, CI or `tools/wiki/` never need a release before the wiki is published. The pages'
+  links into the repository point at the commit of main they come from. `VERSION=X.Y.Z` still
+  publishes a release tag's own wiki, but not over pages of the same release from main, which
+  would undo documentation changes, unless `FORCE=1`.
+
+### Fixed
+- **The self-hosting layout table can be read in the PDF.** It stood across the width of a
+  portrait page with its text at about 4.7 pt; it now has a landscape page of its own, at about
+  7 pt, which any diagram can ask for with `graph [class="landscape"]`. Its cells have stronger
+  colours, which showed hardly at all on GitHub's dark page, and a key.
+
 ## [0.28.1] - 2026-10-28
 
 No code changes since 0.28.0: this release carries 0.28.0's code under a new version, so that its

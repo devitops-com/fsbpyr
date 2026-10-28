@@ -5,7 +5,7 @@ what the machine that runs it must provide, which distributions, libraries and r
 applications it is tested on, and what to do when it fails, with links to the code behind each
 behaviour. It carries over
 [docs/compatibility.md](../docs/compatibility.md)
-at v@VERSION@, checked against the code; the supported targets are in
+as published with this wiki, checked against the code; the supported targets are in
 [What the target must provide](#what-the-target-must-provide) below and on
 [User-Running](User-Running.md#what-the-target-needs). For a user's view of the same failures see
 [User-Troubleshooting](User-Troubleshooting.md).

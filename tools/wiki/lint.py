@@ -13,7 +13,7 @@ when the wiki is built:
                                      graph, or an SVG in wiki/images/
   fsbpyr-User-Guide.pdf, ...         the PDFs the build makes
 A link into the repository pinned to a tag (blob/vX.Y.Z/...) is a problem: the build pins
-every relative link to the tag it publishes.
+every relative link to the tag or commit it publishes.
 """
 
 import re

@@ -13,7 +13,8 @@ curl -LsSf https://github.com/devitops-com/fsbpyr/releases/latest/download/insta
 ```
 
 > This wiki describes **fsbpyr @VERSION@**. Links into the repository point at the
-> [`v@VERSION@`](../) tag. For a later release, the
+> [commit](../) the wiki was published from, whose code is that of v@VERSION@. For a later
+> release, the
 > repository's [changelog](https://github.com/devitops-com/fsbpyr/blob/main/CHANGELOG.md) says
 > what changed.
 
