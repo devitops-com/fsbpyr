@@ -72,6 +72,7 @@ if command -v kpsewhich >/dev/null 2>&1; then
   sty booktabs   texlive-booktabs    texlive-latex-extra
   sty float      texlive-float       texlive-latex-extra
   sty graphicx   texlive-graphics    texlive-latex-recommended
+  sty pdflscape  texlive-pdflscape   texlive-latex-recommended
   sty caption    texlive-caption     texlive-latex-recommended
   sty mdframed   texlive-mdframed    texlive-latex-extra
   # mdframed loads needspace.

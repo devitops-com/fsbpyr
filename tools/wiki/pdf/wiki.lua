@@ -20,7 +20,9 @@ What changes for the PDF:
     (the other guide, Home) become links to the wiki on GitHub. A link to a page or anchor
     that does not exist is an error.
   - An image alone in a paragraph becomes a numbered figure. Its alt text is the caption;
-    the list of figures gets the alt text up to the first ": ", "; " or ". ".
+    the list of figures gets the alt text up to the first ": ", "; " or ". ". A drawn
+    diagram whose graph has class="landscape" (graph [class="landscape"] in its .dot source)
+    stands on a landscape page of its own (header.tex's landscapefigure).
 --]]
 
 local stringify = pandoc.utils.stringify
@@ -148,6 +150,19 @@ local function short_caption(alt)
   return alt:sub(1, cut - 1)
 end
 
+--- Whether a drawn diagram asks for a landscape page: Graphviz writes graph [class=...] into
+--- the class of the SVG's top group, `<g id="graph0" class="graph landscape" ...>`. The
+--- images are in the built wiki, the directory pandoc runs in.
+local function landscape(src)
+  if not src:match('%.svg$') then return false end
+  local file = io.open(src, 'r')
+  if not file then return false end
+  local head = file:read(4096) or ''
+  file:close()
+  local classes = head:match('<g id="graph0" class="([^"]*)"')
+  return classes ~= nil and (' ' .. classes .. ' '):find(' landscape ', 1, true) ~= nil
+end
+
 local function figures(blocks)
   local count = 0
   local result = blocks:walk({
@@ -156,10 +171,13 @@ local function figures(blocks)
       local image = p.content[1]
       local alt = stringify(image.caption)
       count = count + 1
-      return pandoc.Figure(
+      local figure = pandoc.Figure(
         { pandoc.Plain { image } },
         { long = { pandoc.Plain(image.caption) },
           short = { pandoc.Str(short_caption(alt)) } })
+      if not landscape(image.src) then return figure end
+      return { pandoc.RawBlock('latex', '\\begin{landscapefigure}'), figure,
+               pandoc.RawBlock('latex', '\\end{landscapefigure}') }
     end,
   })
   return result, count

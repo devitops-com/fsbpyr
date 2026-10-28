@@ -8,7 +8,7 @@ large files, the launcher's cache sync, building a runtime, known effects, a com
 PyInstaller, pex and PyApp, and where to look when a start gets slower. Every number comes from
 [docs/performance.md](../docs/performance.md)
 or [docs/executable-parts.md](../docs/executable-parts.md)
-at v@VERSION@ and is given with the fsbpyr version or commit it was measured with. The mechanisms measured
+as published with this wiki and is given with the fsbpyr version or commit it was measured with. The mechanisms measured
 here are described on [Dev-Launcher](Dev-Launcher.md), [Dev-Executable-Format](Dev-Executable-Format.md)
 and [Dev-Security](Dev-Security.md).
 

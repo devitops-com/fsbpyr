@@ -324,13 +324,16 @@ never edited by hand.
   import graphs (`images/arch-subsystems.svg`, `images/arch-modules-*.svg`) are drawn from
   `src/fsbpyr`. Nothing drawn is kept: images and PDFs are made when the wiki is built, and
   git ignores PNGs and PDFs under `wiki/`. An image that is not drawn goes in `wiki/images/`,
-  as an SVG.
+  as an SVG. A diagram too wide for the text width of a portrait page asks for a landscape page
+  of its own in the PDFs with `graph [class="landscape"]` in its source; the wiki shows it as
+  it is.
 - `make wiki-lint` checks that every link of the pages has its target: the page and heading,
   the file or directory and the lines, the diagram. `tests/unit/test_wiki.py` runs the same
   check, so a broken link fails the tests.
 - `make wiki-build` builds the wiki of this checkout into `dist/wiki/site` as it would be
-  published: the pages with wiki links and with links into the repository at the tag
-  `v<version>`, the drawn diagrams, and `fsbpyr-User-Guide.pdf` and
+  published: the pages with wiki links and with links into the repository (at the tag
+  `v<version>` here; a wiki published from main links at its commit), the drawn diagrams, and
+  `fsbpyr-User-Guide.pdf` and
   `fsbpyr-Developer-Guide.pdf`. A page missing from the sidebar, a page whose first heading is
   not its only H1, or raw HTML stops the build. It needs Graphviz, rsvg-convert, pandoc 3,
   LuaLaTeX with the TeX packages `tools/wiki/pdf/check-toolchain.sh` lists, pdfinfo and the
@@ -338,23 +341,36 @@ never edited by hand.
 
 ### Publishing the wiki
 
-An admin publishes the wiki once a release is out, from a checkout that can push to both
-wikis (SSH):
+An admin publishes the wiki from a checkout that can push to both wikis (SSH). Publishing
+needs no release: the wiki describes the code of a release, and documentation changes on main
+are published whenever they are ready.
 
 ```sh
-make wiki-publish                # the newest release tag; VERSION=X.Y.Z for another
+make wiki-publish                # main, when it ships the newest release's code
+make wiki-publish VERSION=X.Y.Z  # the wiki of the release tag vX.Y.Z
 make wiki-publish DRY_RUN=1      # build and commit, but push nothing
 ```
 
-It builds from the release tag's own tree (`git archive`), with that tag's tools, so the wiki
-describes exactly that release; it refuses a tag GitHub does not have and a tag whose tree has
-no `wiki/`. The same build goes to the GitHub and the GitLab wiki; only names differ where the
-wikis need them (GitLab's front page and sidebar are `home.md` and `_sidebar.md`, copies of
-`Home.md` and `_Sidebar.md`). Nothing is pushed until both are ready; then GitLab is pushed,
-then GitHub. A wiki that already has the build gets no commit: the same tag gives the same
-files.
+Without `VERSION` it builds main as GitHub has it, when nothing of what goes into a release
+changed since the newest release tag: `src/`, `pyproject.toml`, `uv.lock`, `.python-version`
+and `tools/release/`, Markdown files there excepted (`RELEASED` in `tools/wiki/publish.py`). Then main ships that release's
+code, and the wiki describes it. Otherwise it refuses, naming the first such file; main's wiki
+is then published after the next release, and the release's own wiki can still be published
+with `VERSION`. Changes anywhere else (the documentation, the Makefile, the tests, CI, the
+wiki's tools) never need a release before the wiki is published. The pages' links into the
+repository point at the commit of main they come from. With `VERSION=X.Y.Z` it builds from the
+tag's own tree, with that tag's tools, so the wiki describes exactly that release; it refuses a
+tag whose tree has no `wiki/`. Both build with the tree's own tools (`git archive`) and refuse
+a release tag GitHub does not have. The same build goes to the GitHub and the GitLab wiki; only
+names differ where the wikis need them (GitLab's front page and sidebar are `home.md` and
+`_sidebar.md`, copies of `Home.md` and `_Sidebar.md`). Nothing is pushed until both are ready;
+then GitLab is pushed, then GitHub. A wiki that already has the build gets no commit: the same
+commit gives the same files.
 
-Every publish commit ends with `Published-From: vX.Y.Z <commit>`. A wiki with a commit after
+Every publish commit ends with `Published-From: vX.Y.Z <commit>`: the release whose code the
+wiki describes and the commit its pages come from. `VERSION=X.Y.Z` does not publish the tag's
+own pages over pages of the same release from main, which would undo the documentation changes
+made since the tag, unless `FORCE=1`. A wiki with a commit after
 the last of those was changed by hand: `make wiki-publish` lists those commits and stops.
 Make the change in `wiki/` instead, or publish with `FORCE=1` to replace them; `FORCE=1` is
 needed once, for a wiki that was never published this way. It also stops before publishing an

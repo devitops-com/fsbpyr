@@ -274,10 +274,12 @@ release-check: ## Check the published release (VERSION=X.Y.Z, default the latest
 # The wiki's pages are wiki/ here, edited with the code they describe; the GitHub and GitLab
 # wikis are their published copy (tools/wiki/publish.py says how). wiki-lint checks the pages
 # (the tests do too); wiki-build builds the wiki of this checkout into dist/wiki/site to look at.
-# wiki-publish, run by an admin once a release is out, builds the wiki of the release tag
-# (VERSION=X.Y.Z, default the newest) with its PDFs and drawn diagrams and pushes it to both
-# wikis; it stops if either was changed by hand (FORCE=1 replaces such changes), and DRY_RUN=1
-# stops before pushing. Building needs Graphviz, rsvg-convert, pandoc 3 and LuaLaTeX
+# wiki-publish, run by an admin, builds the wiki of main as GitHub has it, when main ships the
+# newest release's code (src/, pyproject.toml, uv.lock, .python-version and tools/release/
+# unchanged since its tag), or of the release tag VERSION=X.Y.Z, with its PDFs and drawn
+# diagrams, and pushes it to both wikis; publishing documentation needs no release. It stops
+# if either wiki was changed by hand (FORCE=1 replaces such changes), and DRY_RUN=1 stops
+# before pushing. Building needs Graphviz, rsvg-convert, pandoc 3 and LuaLaTeX
 # (tools/wiki/pdf/check-toolchain.sh names what is missing). Only a VERSION, FORCE=1 and
 # DRY_RUN=1 given on the make command line count: an exported FORCE never replaces anything.
 wiki_flag = $(and $(filter command line,$(origin $(1))),$(filter 1,$($(1))))
@@ -287,7 +289,7 @@ wiki-lint: ## Check the wiki pages in wiki/: links, anchors, images, repository 
 wiki-build: ## Build the wiki of this checkout into dist/wiki/site (pages, diagrams, PDFs) to look at
 	@python3 -I tools/wiki/publish.py build
 
-wiki-publish: ## Publish the wiki of release VERSION=X.Y.Z (default the newest) to the GitHub and GitLab wikis
+wiki-publish: ## Publish the wiki of main (shipping the newest release's code) or of release VERSION=X.Y.Z to the GitHub and GitLab wikis
 	@python3 -I tools/wiki/publish.py publish$(if $(filter command line,$(origin VERSION)), --version '$(VERSION)')$(if $(call wiki_flag,FORCE), --force)$(if $(call wiki_flag,DRY_RUN), --dry-run)
 
 clean: ## Remove dist/

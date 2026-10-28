@@ -140,6 +140,17 @@ def test_the_published_page_links_as_the_wiki_does_and_pins_the_repository_to_th
     )
 
 
+def test_published_from_main_the_repository_links_point_at_its_commit(tmp_path: Path) -> None:
+    root = _repo(tmp_path, {"Home": ""})
+    text = "[f](../src/a.py#L2), [r](../), fsbpyr @VERSION@\n"
+
+    published = site.publish_text(text, root, {"Home"}, "1.2.3", "0123abcd")
+
+    repo = "https://github.com/devitops-com/fsbpyr"
+    assert published == f"[f]({repo}/blob/0123abcd/src/a.py#L2), [r]({repo}/tree/0123abcd), " \
+                        "fsbpyr 1.2.3\n"  # fmt: skip
+
+
 def test_the_import_graphs_the_build_draws_are_the_ones_the_lint_knows(tmp_path: Path) -> None:
     graph = tmp_path / "modgraph.json"
     python = [sys.executable, "-I"]
@@ -283,3 +294,108 @@ def test_only_force_and_dry_run_given_to_make_as_1_count(
     printed = subprocess.run(make, capture_output=True, text=True, check=True).stdout
 
     assert printed.strip() == f"python3 -I tools/wiki/publish.py publish{flags}"
+
+
+@pytest.fixture
+def source(wiki: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A checkout whose release v1.2.3 and main are on its GitHub (a bare repository here),
+    and the work directory publish.py extracts into."""
+    monkeypatch.setattr(publish, "WORK", tmp_path / "work")
+    repo = tmp_path / "checkout"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "src" / "fsbpyr").mkdir(parents=True)
+    _commit(repo, "src/fsbpyr/__init__.py", '__version__ = "1.2.3"\n')
+    (repo / "wiki").mkdir()
+    _commit(repo, "wiki/Home.md", "# Home\n")
+    _git(repo, "tag", "-a", "-m", "release", "v1.2.3")
+    github = tmp_path / "github.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(github)], check=True)  # noqa: S607
+    monkeypatch.setattr(publish, "SOURCE", str(github))
+    _git(repo, "push", "-q", str(github), "main", "v1.2.3")
+    return repo
+
+
+def _change(repo: Path, name: str) -> str:
+    (repo / name).parent.mkdir(parents=True, exist_ok=True)
+    _commit(repo, name, f"changed {name}\n")
+    _git(repo, "push", "-q", publish.SOURCE, "main")
+    return _git(repo, "rev-parse", "HEAD")
+
+
+@pytest.mark.parametrize("name", ["src/fsbpyr/build.py", "pyproject.toml", "uv.lock",
+                                  ".python-version", "tools/release/install.sh.in"])  # fmt: skip
+def test_what_goes_into_a_release_is_released_code(source: Path, name: str) -> None:
+    for other in ("wiki/Home.md", "tools/wiki/site.py", "docs/notes.txt", "CHANGELOG.md",
+                  "Makefile", "tests/unit/test_wiki.py", ".github/workflows/build.yml",
+                  "tools/bootstrap.sh", "src/fsbpyr/README.md"):  # fmt: skip
+        commit = _change(source, other)
+    assert publish.released_changes("v1.2.3", commit, source) == []
+
+    commit = _change(source, name)
+
+    assert publish.released_changes("v1.2.3", commit, source) == [name]
+
+
+def test_a_file_moved_out_of_what_goes_into_a_release_is_released_code(source: Path) -> None:
+    (source / "tools").mkdir()
+    _git(source, "mv", "src/fsbpyr/__init__.py", "tools/moved.py")
+    _git(source, "commit", "-q", "-m", "moved")
+
+    assert publish.released_changes("v1.2.3", "HEAD", source) == ["src/fsbpyr/__init__.py"]
+
+
+def test_the_newest_release_is_looked_up_on_github(source: Path) -> None:
+    _git(source, "tag", "v1.2.10")
+    _git(source, "push", "-q", publish.SOURCE, "v1.2.10")
+
+    assert publish.newest_on_github(source) == "v1.2.10"
+
+
+def test_main_is_published_while_its_code_is_the_newest_releases(source: Path) -> None:
+    commit = _change(source, "wiki/Home.md")
+    assert publish.released("v1.2.3", source) == _git(source, "rev-parse", "v1.2.3^{commit}")
+
+    tree, published = publish.main_tree("v1.2.3", source)
+
+    assert published == commit
+    assert (tree / "wiki" / "Home.md").read_text() == "changed wiki/Home.md\n"
+
+
+def test_main_with_code_not_released_is_not_published(source: Path) -> None:
+    _change(source, "wiki/Home.md")
+    _change(source, "src/fsbpyr/build.py")
+
+    with pytest.raises(publish.PublishError, match=r"changed src/fsbpyr/build\.py since v1\.2\.3"):
+        publish.main_tree("v1.2.3", source)
+
+
+def test_a_wiki_published_from_main_says_so_and_names_the_release(
+    remote: Path, tmp_path: Path
+) -> None:
+    target: tuple[str, str, dict[str, str], str] = ("Test", str(remote), {}, "master")
+
+    clone = publish.prepare(target, _site(tmp_path, "# Home\n"), "v1.2.3", "abc", force=True,
+                            origin="main at abc (the code of v1.2.3)")  # fmt: skip
+
+    assert clone is not None
+    message = _git(clone, "log", "-1", "--format=%B")
+    assert "from main at abc (the code of v1.2.3)" in message
+    assert f"{publish.TRAILER}v1.2.3 abc" in message
+
+
+def test_a_tags_pages_over_pages_of_the_same_release_from_main_need_force(
+    remote: Path, tmp_path: Path
+) -> None:
+    target: tuple[str, str, dict[str, str], str] = ("Test", str(remote), {}, "master")
+    clone = publish.prepare(target, _site(tmp_path, "# Home, fixed\n"), "v1.2.3", "main1",
+                            force=True, origin="main at main1")  # fmt: skip
+    assert clone is not None
+    _git(clone, "push", "-q", "origin", "HEAD:refs/heads/master")
+
+    with pytest.raises(publish.PublishError, match=r"published from main at main1"):
+        publish.prepare(target, _site(tmp_path, "# Home\n"), "v1.2.3", "tag1", force=False)
+    assert publish.prepare(target, _site(tmp_path, "# Home, newest\n"), "v1.2.3", "main2",
+                           force=False, origin="main at main2") is not None  # fmt: skip
+    assert publish.prepare(target, _site(tmp_path, "# The home\n"), "v1.2.3", "tag1",
+                           force=True) is not None  # fmt: skip
