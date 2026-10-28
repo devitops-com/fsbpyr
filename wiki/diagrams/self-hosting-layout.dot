@@ -1,0 +1,139 @@
+// The parts of an fsbpyr executable (wiki/Dev-Executable-Format.md, Layout) in the three
+// stages of fsbpyr's self-hosting build (wiki/Dev-Self-Hosting.md): where each part's bytes
+// come from, from source (make bootstrap) and from a released fsbpyr whose launcher sources and
+// boot code differ from the checkout's. Measured on 2026-10-28 with the 0.28.0 release for
+// CPython 3.14 on x86-64 and a scratch commit on main that changed a boot module's docstring and
+// added a comment line to launcher/main.c (every header field, table record and blob compared
+// with fsbpyr's payload reader).
+// Green: the checkout's. Purple: the release's, or what differs from stage 2 because of it.
+// Yellow: the same content as in stage 2 at other string offsets, because a string before it has
+// another length. White: the same in the stages it spans.
+digraph self_hosting_layout {
+  graph [fontname="Helvetica" fontsize=11 bgcolor="white" pad=0.3];
+  node [fontname="Helvetica" fontsize=10 shape=plain];
+
+  layout [label=<
+<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="5" COLOR="#888888">
+  <TR>
+    <TD BGCOLOR="#f4f4f4" ROWSPAN="2"><B>part (Layout)</B></TD>
+    <TD BGCOLOR="#f4f4f4" ROWSPAN="2"><B>its bytes come from</B></TD>
+    <TD BGCOLOR="#f4f4f4" COLSPAN="3"><B>make bootstrap (from source)</B></TD>
+    <TD BGCOLOR="#f4f4f4" COLSPAN="3"><B>from a released fsbpyr</B></TD>
+  </TR>
+  <TR>
+    <TD BGCOLOR="#f4f4f4"><B>stage 1</B></TD>
+    <TD BGCOLOR="#f4f4f4"><B>stage 2</B></TD>
+    <TD BGCOLOR="#f4f4f4"><B>stage 3</B></TD>
+    <TD BGCOLOR="#f4f4f4"><B>stage 1</B></TD>
+    <TD BGCOLOR="#f4f4f4"><B>stage 2</B></TD>
+    <TD BGCOLOR="#f4f4f4"><B>stage 3</B></TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT" BALIGN="LEFT">stub ELF: the launcher,<BR/>CPython linked in</TD>
+    <TD ALIGN="LEFT">the runtime the builder uses</TD>
+    <TD COLSPAN="3" BGCOLOR="#eaf5ea">linked from the checkout's launcher sources and pins</TD>
+    <TD COLSPAN="3" BGCOLOR="#f3eefb">the release's, copied from builder to build</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">zero padding</TD>
+    <TD ALIGN="LEFT">the stub's length</TD>
+    <TD COLSPAN="3" BGCOLOR="#eaf5ea">up to the next 64 KiB</TD>
+    <TD COLSPAN="3" BGCOLOR="#f3eefb">up to the next 64 KiB</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT" BALIGN="LEFT">header: magic, version, size, Python,<BR/>bytecode magic, generation_id,<BR/>app name, entry point</TD>
+    <TD ALIGN="LEFT" BALIGN="LEFT">the format, the runtime's Python,<BR/>the project</TD>
+    <TD COLSPAN="6">the same in every stage</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT" BALIGN="LEFT">header: lengths of STRTAB and<BR/>build_info, section offsets, counts</TD>
+    <TD ALIGN="LEFT" BALIGN="LEFT">the writer, from the tables</TD>
+    <TD COLSPAN="3">the same</TD>
+    <TD BGCOLOR="#f3eefb" BALIGN="LEFT">other lengths; BLOBS + 1,<BR/>later tables 32 B on</TD>
+    <TD COLSPAN="2">the same</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT" BALIGN="LEFT">build_info: fsbpyr_version</TD>
+    <TD ALIGN="LEFT">the builder's version</TD>
+    <TD COLSPAN="3" BGCOLOR="#eaf5ea">the checkout's (untagged-&lt;commit&gt;)</TD>
+    <TD BGCOLOR="#f3eefb">the release's<BR/>(0.28.0-b9b1144d)</TD>
+    <TD COLSPAN="2" BGCOLOR="#eaf5ea">the checkout's (stage 1's)</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT" BALIGN="LEFT">build_info: runtime, stub_sha256</TD>
+    <TD ALIGN="LEFT">the runtime</TD>
+    <TD COLSPAN="3" BGCOLOR="#eaf5ea">the new runtime id and stub</TD>
+    <TD COLSPAN="3" BGCOLOR="#f3eefb">the release's runtime id and stub</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT" BALIGN="LEFT">build_info: git, project, lock, dists</TD>
+    <TD ALIGN="LEFT">the checkout</TD>
+    <TD COLSPAN="6" BGCOLOR="#eaf5ea">the checkout's</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">0 STRTAB</TD>
+    <TD ALIGN="LEFT" BALIGN="LEFT">build_info and every name</TD>
+    <TD COLSPAN="3">the same</TD>
+    <TD BGCOLOR="#f3eefb">other build_info</TD>
+    <TD COLSPAN="2">the same</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">1 BLOBS</TD>
+    <TD ALIGN="LEFT" BALIGN="LEFT">one record per distinct blob<BR/>and one per block</TD>
+    <TD COLSPAN="3">the same</TD>
+    <TD BGCOLOR="#f3eefb" BALIGN="LEFT">one more: the release's<BR/>copy of the changed<BR/>boot module's source</TD>
+    <TD COLSPAN="2">the same</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT" BALIGN="LEFT">2 MODULES, 3 FILES</TD>
+    <TD ALIGN="LEFT" BALIGN="LEFT">names as STRTAB offsets,<BR/>blobs as BLOBS indices</TD>
+    <TD COLSPAN="3">the same</TD>
+    <TD BGCOLOR="#f3eefb" BALIGN="LEFT">other string offsets<BR/>and blob indices</TD>
+    <TD COLSPAN="2">the same</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">4 DISTS</TD>
+    <TD ALIGN="LEFT" BALIGN="LEFT">names as STRTAB offsets</TD>
+    <TD COLSPAN="3">the same</TD>
+    <TD BGCOLOR="#fff6d5">other string offsets</TD>
+    <TD COLSPAN="2">the same</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT" BALIGN="LEFT">5 CLOSURES, 6 DIGESTS, 7 STARTUP</TD>
+    <TD ALIGN="LEFT" BALIGN="LEFT">native files; startup modules</TD>
+    <TD COLSPAN="6">CLOSURES and DIGESTS empty (no native files on 3.14); STARTUP the same five modules</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT" BALIGN="LEFT">blob data: the standard library,<BR/>with 4 of the 5 startup modules</TD>
+    <TD ALIGN="LEFT">the runtime</TD>
+    <TD COLSPAN="3" BGCOLOR="#eaf5ea" BALIGN="LEFT">compiled by the CPython of the pin</TD>
+    <TD COLSPAN="3" BGCOLOR="#f3eefb">the release's</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT" BALIGN="LEFT">blob data: the boot packages<BR/>_fsbpyr_boot (5th startup module),<BR/>_fsbpyr_rt</TD>
+    <TD ALIGN="LEFT" BALIGN="LEFT">the builder's own fsbpyr.boot</TD>
+    <TD COLSPAN="3" BGCOLOR="#eaf5ea">the checkout's</TD>
+    <TD BGCOLOR="#f3eefb">the release's</TD>
+    <TD COLSPAN="2" BGCOLOR="#eaf5ea">the checkout's (stage 1's)</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT" BALIGN="LEFT">blob data: fsbpyr, click, packaging<BR/>(code, sources, dist-info)</TD>
+    <TD ALIGN="LEFT" BALIGN="LEFT">the checkout and uv.lock,<BR/>installed by uv</TD>
+    <TD COLSPAN="6" BGCOLOR="#eaf5ea">the checkout's</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT">trailer: payload size, digest</TD>
+    <TD ALIGN="LEFT">every byte before it</TD>
+    <TD COLSPAN="3">the same</TD>
+    <TD BGCOLOR="#f3eefb">its own</TD>
+    <TD COLSPAN="2">the same</TD>
+  </TR>
+  <TR>
+    <TD ALIGN="LEFT" BALIGN="LEFT"><B>measured SHA-256</B><BR/>(the scratch commit)</TD>
+    <TD ALIGN="LEFT"></TD>
+    <TD COLSPAN="3">bd865477… in all three</TD>
+    <TD>b98cdb8c…</TD>
+    <TD COLSPAN="2">9e7ee8e7… in both</TD>
+  </TR>
+</TABLE>>];
+}

@@ -47,6 +47,8 @@ The whole guide as one PDF: [fsbpyr-Developer-Guide.pdf](fsbpyr-Developer-Guide.
    [runtime](Dev-Runtime-Modules.md), [boot (inside the executable)](Dev-Boot-Modules.md)
 4. [The C launcher](Dev-Launcher.md)
 5. [Executable format](Dev-Executable-Format.md)
-6. [Compatibility](Dev-Compatibility.md), [Performance](Dev-Performance.md), [Security](Dev-Security.md)
-7. [Testing](Dev-Testing.md)
-8. [The repository](Dev-Repository.md): plans, CI and releases, other documents
+6. [Self-hosting](Dev-Self-Hosting.md): fsbpyr builds itself in three stages, from source or
+   from a release
+7. [Compatibility](Dev-Compatibility.md), [Performance](Dev-Performance.md), [Security](Dev-Security.md)
+8. [Testing](Dev-Testing.md)
+9. [The repository](Dev-Repository.md): plans, CI and releases, other documents

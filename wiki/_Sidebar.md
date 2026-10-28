@@ -23,6 +23,7 @@
 - [Boot modules](Dev-Boot-Modules.md)
 - [Launcher](Dev-Launcher.md)
 - [Executable format](Dev-Executable-Format.md)
+- [Self-hosting](Dev-Self-Hosting.md)
 - [Compatibility](Dev-Compatibility.md)
 - [Performance](Dev-Performance.md)
 - [Security](Dev-Security.md)

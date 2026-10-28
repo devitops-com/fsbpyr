@@ -65,7 +65,7 @@ executables. How users verify a download is in
 
 | Target | Does |
 |---|---|
-| `make bootstrap` | from source to an installed fsbpyr: runtime, three-stage build, install |
+| `make bootstrap` | from source to an installed fsbpyr: runtime, three-stage build, install ([Self-hosting](Dev-Self-Hosting.md)) |
 | `make build` | build `dist/fsbpyr` with the installed fsbpyr (`PYTHON=3.X`: a variant from source) |
 | `make install`, `make uninstall` | install or remove `dist/fsbpyr`, its man page and completions |
 | `make check` | ruff and mypy |

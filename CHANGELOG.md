@@ -10,6 +10,21 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-10-28
+
+No code changes since 0.28.0: this release carries 0.28.0's code under a new version, so that its
+wiki can be published from the repository (`make wiki-publish` publishes release tags, and
+v0.28.0 predates the repository's `wiki/`).
+
+### Fixed
+- **The wiki explains how fsbpyr builds itself.** A new Developer Guide chapter, Self-hosting
+  (`wiki/Dev-Self-Hosting.md`, chapter 9 of the PDF), describes the three stages from C and
+  Python sources (`make bootstrap`) and from a released fsbpyr without a compiler, which parts of
+  an executable change from stage to stage, and why stages 2 and 3 must be the same bytes.
+- **The wiki no longer says that `make release-check` rebuilds a release.** It checks a
+  published release as its users get it; a rebuild from the tag is check (a) of CONTRIBUTING.md's
+  "Verifying a release".
+
 ## [0.28.0] - 2026-10-27
 
 ### Changed

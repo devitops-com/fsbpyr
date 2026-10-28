@@ -184,12 +184,13 @@ safe from other users ([Security](Dev-Security.md)).
   interpreter's flags or hash seed, the wheel fsbpyr writes for a project without a build system
   has fixed timestamps and a sorted record, and the launcher links reproducibly. Tests build the same
   project from another path, user mask, cache and CPU count and require identical bytes, and
-  fsbpyr's three bootstrap stages must be byte-identical
-  ([Testing: determinism checks](Dev-Testing.md#determinism-checks)). The zstd library version is
-  part of the input and is recorded in the build information.
+  fsbpyr's bootstrap stages must be byte-identical: stages 2 and 3 in `make bootstrap`, all
+  three in the test suite ([Testing: determinism checks](Dev-Testing.md#determinism-checks)).
+  The zstd library version is part of the input and is recorded in the build information.
 - **Self-hosting.** fsbpyr's own executable is built by fsbpyr. A released fsbpyr takes the stub
   and standard library from itself when it builds for its own Python (`registry`), so it needs no
-  compiler.
+  compiler. [Self-hosting](Dev-Self-Hosting.md) describes the three stages, from source and from
+  a release.
 - **One definition, several outputs.** The click command definitions produce `--help`, the shell
   completions and the man page; the list of `[tool.fsbpyr]` keys in `config.py` drives parsing,
   error messages and the man page's configuration section.

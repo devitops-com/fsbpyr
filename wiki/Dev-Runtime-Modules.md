@@ -173,7 +173,8 @@ run it outside an executable.
 ## Embedded and cached runtimes
 
 A released fsbpyr is itself a single-file executable built by fsbpyr: its stub and its
-standard library are a runtime. `registry.running_executable` returns `/proc/self/exe` when
+standard library are a runtime, which it hands on to what it builds, a new fsbpyr included
+([Self-hosting](Dev-Self-Hosting.md)). `registry.running_executable` returns `/proc/self/exe` when
 `_fsbpyr` is a built-in module, that is, when the code runs inside such an executable, and
 `None` otherwise.
 

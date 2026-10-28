@@ -1,0 +1,59 @@
+// fsbpyr builds itself in three stages, two ways in (wiki/Dev-Self-Hosting.md). Left: make
+// bootstrap (tools/bootstrap.sh --from-source, then make install): the runtime is linked from
+// the launcher's C sources and the pinned CPython, and fsbpyr run from source in the
+// checkout's venv builds stage 1. Right: a released fsbpyr executable builds stage 1 with the
+// runtime it carries; no make target runs this. In both, stage 1 builds stage 2 and stage 2
+// builds stage 3 with the runtime embedded in the builder, every build runs in the checkout
+// (fsbpyr build .: its code, uv.lock, commit and tag; the dotted edges into the two clusters),
+// and stages 2 and 3 must be the same bytes. Colours follow the wiki's convention:
+// blue for build-time code, green for files on disk, purple for external inputs.
+digraph self_hosting_stages {
+  graph [fontname="Helvetica" fontsize=11 rankdir=TB bgcolor="white" pad=0.3 nodesep=0.3 ranksep=0.35 compound=true];
+  node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#eef3fb" color="#4a6fa5"];
+  edge [fontname="Helvetica" fontsize=9 color="#555555"];
+
+  checkout [label="the checkout\nsrc/fsbpyr (Python, C), uv.lock,\nits git commit and tag;\nevery build runs in it: fsbpyr build ." fillcolor="#eaf5ea" color="#3d8b3d"];
+
+  subgraph cluster_source {
+    label="make bootstrap: from C and Python sources"; color="#bbbbbb"; style="rounded"; fontsize=10;
+    pbs [label="python-build-standalone archive\n(pinned by SHA-256)" fillcolor="#f3eefb" color="#7a5aa5"];
+    sysroot [label="glibc sysroot packages\n(pinned by SHA-256)" fillcolor="#f3eefb" color="#7a5aa5"];
+    llvm [label="clang/lld 23\n(tools/release/llvm23)" fillcolor="#f3eefb" color="#7a5aa5"];
+    rtbuild [label="fsbpyr runtime build\n(from source, in the venv):\nlinks the stub,\ncompiles the stdlib"];
+    runtime [label="runtimes/<id>/ in the cache\nstub, stdlib.fsbp, runtime.json" fillcolor="#eaf5ea" color="#3d8b3d"];
+    venv [label="fsbpyr build .\n(from source, in the venv)"];
+    a1 [label="dist/stage1/fsbpyr" fillcolor="#eaf5ea" color="#3d8b3d"];
+    a2 [label="dist/stage2/fsbpyr" fillcolor="#eaf5ea" color="#3d8b3d"];
+    a3 [label="dist/stage3/fsbpyr" fillcolor="#eaf5ea" color="#3d8b3d"];
+    acmp [label="cmp: stage 2 = stage 3;\nstage 3 becomes dist/fsbpyr,\nmake install" shape=note fillcolor="#ffffff" color="#888888"];
+  }
+
+  subgraph cluster_release {
+    label="from a released fsbpyr:\nno compiler, no runtime in the cache"; color="#bbbbbb"; style="rounded"; fontsize=10;
+    release [label="released executable\nfsbpyr-3.X-<target>\n(attested by release.yml)" fillcolor="#f3eefb" color="#7a5aa5"];
+    b1 [label="stage1/fsbpyr" fillcolor="#eaf5ea" color="#3d8b3d"];
+    b2 [label="stage2/fsbpyr" fillcolor="#eaf5ea" color="#3d8b3d"];
+    b3 [label="stage3/fsbpyr" fillcolor="#eaf5ea" color="#3d8b3d"];
+    bcmp [label="cmp: stage 2 = stage 3" shape=note fillcolor="#ffffff" color="#888888"];
+  }
+
+  pbs -> rtbuild;
+  sysroot -> rtbuild;
+  llvm -> rtbuild;
+  rtbuild -> runtime;
+  runtime -> venv [label=" find_runtime"];
+  venv -> a1 [label=" build"];
+  a1 -> a2 [label=" build, its\n embedded runtime"];
+  a2 -> a3 [label=" build, its\n embedded runtime"];
+  a3 -> acmp [style=dashed arrowhead=none];
+
+  release -> b1 [label=" build, its\n embedded runtime"];
+  b1 -> b2 [label=" build, its\n embedded runtime"];
+  b2 -> b3 [label=" build, its\n embedded runtime"];
+  b3 -> bcmp [style=dashed arrowhead=none];
+
+  checkout -> rtbuild [style=dotted label="launcher sources, pins"];
+  checkout -> venv [style=dotted lhead=cluster_source label=" every build:\n code, uv.lock,\n commit and tag"];
+  checkout -> b1 [style=dotted lhead=cluster_release label=" every build:\n code, uv.lock,\n commit and tag"];
+  runtime -> release [style=invis];  // stage n of both ways in one column
+}

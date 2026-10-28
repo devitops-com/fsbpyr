@@ -198,10 +198,12 @@ deliberate rewrite. Origin is checked outside the file:
 
 - **Attestations.** fsbpyr's releases are attested by GitHub Actions; `gh attestation verify`
   shows that this repository's release workflow built the file from its tag
-  ([Verifying a download](User-Installing.md#verifying-a-download)); `make release-check` also
-  rebuilds a release's executables for the machine's target from the tag and compares them
-  byte for byte (`rebuild` in
-  [`tools/release/check-release.sh`](../tools/release/check-release.sh)).
+  ([Verifying a download](User-Installing.md#verifying-a-download)). `make release-check`
+  ([`tools/release/check-release.sh`](../tools/release/check-release.sh)) checks a published
+  release as its users get it, its attestations among the rest; it does not rebuild it. A
+  rebuild from the tag, compared byte for byte, is check (a) of
+  [Verifying a release](../CONTRIBUTING.md#verifying-a-release)
+  ([Self-hosting](Dev-Self-Hosting.md#from-a-released-fsbpyr)).
   The glibc 2.28 stubs are attested by their own workflow,
   [`.github/workflows/el8.yml`](../.github/workflows/el8.yml).
   An app can be attested the same way:
@@ -654,8 +656,8 @@ sdist, which runs its build code; dependencies are out of scope as above.
   same file. Only checking from outside catches that: a release's provenance and SBOM
   attestations (checked with `gh attestation verify`), the installer (SHA-256 of each download
   and `fsbpyr inspect --verify`; `FSBPYR_VERIFY=1` adds the attestation) and a rebuild from the
-  tag compared byte for byte (`make release-check`). No signature checked with a key from outside the
-  file exists at v@VERSION@.
+  tag compared byte for byte ([Verifying a release](../CONTRIBUTING.md#verifying-a-release)). No
+  signature checked with a key from outside the file exists at v@VERSION@.
 - **glibc 2.28 stubs** (D46). A downloaded stub is checked against the sums of its companion
   release, which catches a damaged or swapped file but not a release whose stubs and sums were
   both replaced; the attestations of

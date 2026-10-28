@@ -593,9 +593,10 @@ Several tests require the same bytes from the same inputs:
   from each lock source builds to the same bytes with an active `VIRTUAL_ENV` and
   `UV_VENV_SEED=1`, and from another checkout path with umask 077, other cache directories and
   one CPU core.
-- `test_self_hosting_reaches_a_fixed_point`: fsbpyr built from the venv (stage 1), stage 1
-  building fsbpyr (stage 2) and stage 2 building it (stage 3), with only uv and git on `PATH`
-  and an empty cache: all three are the same bytes.
+- `test_self_hosting_reaches_a_fixed_point`: fsbpyr built from the venv in the test process
+  (stage 1), then stage 1 building fsbpyr (stage 2) and stage 2 building it (stage 3) with only
+  uv and git on `PATH` and an empty cache: all three are the same bytes
+  ([Self-hosting](Dev-Self-Hosting.md)).
 - `test_build_interpreter_optimization_does_not_change_the_output`: `PYTHONOPTIMIZE=2` for the
   building interpreter changes nothing.
 - `test_two_builds_are_the_same_bytes` (`tests/e2e/test_scripts.py`): two builds of the
