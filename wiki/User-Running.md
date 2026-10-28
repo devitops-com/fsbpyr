@@ -185,7 +185,8 @@ fsbpyr selftest ok: corpus-pandas-csv
 - Linux x86-64 or aarch64 with the glibc and the libraries the build listed as `target needs:`
   (`fsbpyr inspect` shows them again as `needs`): glibc 2.34 or newer, or 2.28 or newer for an
   app built with `--glibc 2.28` ([Building for EL8](User-Building.md#building-for-el8-glibc-228)),
-  newer still when bundled native code needs it.
+  newer still when bundled native code needs it. The distributions this is tested on are listed
+  in [Supported Linux distributions](User-Overview.md#supported-linux-distributions).
 - On aarch64, a kernel with 4K or 64K pages. Kernels with 16K pages (the Raspberry Pi 5's
   default kernel, Asahi Linux on Apple Silicon) are not tested and not supported.
 - A mounted `/proc`: the executable finds itself through `/proc/self/exe`.

@@ -4,17 +4,48 @@ fsbpyr turns a Python command-line program into **one executable file**: a packa
 project without a build system, a directory of scripts, a single script, or the tools a
 requirements file names. The file carries CPython (3.12, 3.13, 3.14 or 3.15), the program and
 every dependency, native extensions included. The machine that runs it needs only Linux
-x86-64 or aarch64 with glibc 2.34 or newer (tested on Rocky Linux 9, AlmaLinux 10, Amazon Linux
-2023, Ubuntu 22.04, 24.04 and 26.04, Debian 12 and 13, SLES 15 SP7, openSUSE Leap 16.0, Fedora,
-and Arch Linux on x86-64), or glibc 2.28 for an app built with `--glibc 2.28` (EL8: tested on
-Rocky Linux 8 and AlmaLinux 8), and the few system libraries its native dependencies link,
-which the build names. It needs no Python, no virtual environment and no installation step.
+x86-64 or aarch64 with glibc 2.34 or newer, or glibc 2.28 or newer for an app built with
+`--glibc 2.28` (the distributions are listed [below](#supported-linux-distributions)), and
+the few system libraries its native dependencies link, which the build names. It needs no
+Python, no virtual environment and no installation step.
 
 ```sh
 fsbpyr build            # in a project with a console script: writes dist/<script>
 dist/<script> --help    # runs anywhere the target requirements above are met
 fsbpyr build report.py  # one script: writes dist/report
 ```
+
+## Supported Linux distributions
+
+The launcher at the start of every executable is linked against one of two sysroots, and
+that decides where the app runs. fsbpyr @VERSION@ is tested on the distributions of the first
+table for every Python (3.12 to 3.15), and `--glibc 2.28` builds on those of the second for
+the default Python, 3.14. Other distributions on x86-64 or aarch64 with glibc 2.34 or newer
+(2.28 or newer for a `--glibc 2.28` build) are supported but not tested.
+
+**Default build**, the launcher linked against Debian 12's sysroot: glibc 2.34 or newer.
+
+| Distribution | Versions | glibc | x86-64 | aarch64 |
+|---|---|---|---|---|
+| Red Hat Enterprise Linux and its rebuilds | 9 (tested on Rocky Linux 9), 10 (tested on AlmaLinux 10) | 2.34, 2.39 | yes | yes |
+| Amazon Linux | 2023 | 2.34 | yes | yes |
+| Ubuntu | 22.04, 24.04, 26.04 | 2.35, 2.39, 2.43 | yes | yes |
+| Debian | 12, 13 | 2.36, 2.41 | yes | yes |
+| SUSE Linux Enterprise Server | 15 SP7 (tested on SUSE's BCI base image 15.7) | 2.38 | yes | yes |
+| openSUSE Leap | 16.0 | 2.40 | yes | yes |
+| Fedora | the current release (the tests use `fedora:latest`) | 2.43 or newer | yes | yes |
+| Arch Linux | rolling release | 2.44 or newer | yes | no (no aarch64 image to test on) |
+
+**`fsbpyr build --glibc 2.28`**, the launcher linked against Rocky Linux 8.10's sysroot:
+glibc 2.28 or newer ([Building for EL8](User-Building.md#building-for-el8-glibc-228)).
+
+| Distribution | Versions | glibc | x86-64 | aarch64 |
+|---|---|---|---|---|
+| Red Hat Enterprise Linux and its rebuilds | 8 (tested on Rocky Linux 8 and AlmaLinux 8) | 2.28 | yes | yes |
+| Every distribution of the first table | as there | as there | yes | as there |
+
+What else a target needs, and what is not supported (musl-based distributions such as Alpine,
+aarch64 kernels with 16K pages), is in [What the target needs](User-Running.md#what-the-target-needs).
 
 ## Main goals
 
