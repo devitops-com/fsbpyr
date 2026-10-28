@@ -121,9 +121,9 @@ Then the file's own digest, which every start checks as well:
 ~/.local/bin/fsbpyr inspect --verify ~/.local/bin/fsbpyr
 ```
 
-A release can also be rebuilt from its tag and compared byte for byte:
-[`tools/release/check-release.sh`](../tools/release/check-release.sh)
-(`make release-check`) does that among its checks of a published release.
+A release can also be rebuilt from its tag and compared byte for byte: check (a) of
+[Verifying a release](../CONTRIBUTING.md#verifying-a-release);
+[Self-hosting](Dev-Self-Hosting.md#from-a-released-fsbpyr) shows it too.
 
 ## Updating
 
@@ -157,4 +157,6 @@ For contributors: `make bootstrap` takes a checkout to an installed fsbpyr. It n
 and on Debian trixie the pinned Python, `curl` and `zstd`; elsewhere podman. The steps are
 described at the top of
 [`tools/bootstrap.sh`](../tools/bootstrap.sh);
-see also the [Developer Guide](Dev-Overview.md).
+see also [Self-hosting](Dev-Self-Hosting.md) in the Developer Guide, which also shows how to
+run the three stages from a released fsbpyr, without a compiler (that way checks fsbpyr's Python
+code, not its runtime).

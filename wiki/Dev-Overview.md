@@ -39,6 +39,7 @@ Where to read on:
 | Code that runs inside the executable (`boot/`) | [Boot modules](Dev-Boot-Modules.md) |
 | The C launcher | [Launcher](Dev-Launcher.md) |
 | The byte layout of an executable | [Executable format](Dev-Executable-Format.md) |
+| How fsbpyr builds itself in three stages, from source or from a release | [Self-hosting](Dev-Self-Hosting.md) |
 | How an app differs from a venv, what is tested, every corpus app | [Compatibility](Dev-Compatibility.md) |
 | Startup and build measurements | [Performance](Dev-Performance.md) |
 | Threat model and defences | [Security](Dev-Security.md) |
@@ -55,7 +56,7 @@ How the code meets each one in @VERSION@:
 |---|---|---|
 | **One command.** A project maintained with uv or pip becomes one executable with `fsbpyr build` | uv installs every project, pip projects too, from `uv.lock`, `pylock.toml` or a requirements file; Poetry, PDM and Pipenv locks are converted to requirements for uv; a released fsbpyr carries its runtime, so no compiler is needed | `build.py`, `staging.py`, `foreign.py`, `pipenv.py` ([Build modules](Dev-Build-Modules.md)) |
 | **No questions.** What the build is given decides what it builds, without a choice to make | several console scripts become one executable with a command table and a link per command; a project with no script gets an inferred entry; a project without a build system, a directory of scripts and a single script are packaged from their Python files by a wheel fsbpyr writes itself; a directory of only a requirements file builds the tools it names; dependencies nothing declares come from the venv's metadata | `entry.py`, `links.py`, `loose.py`, `legacy.py`, `tools.py`, `venvdeps.py`, `importcheck.py`; `_fsbpyr_rt/commands.py` |
-| **Self-hosting.** fsbpyr builds its own executable | `make bootstrap` runs fsbpyr from source to build stage 1, which builds stage 2, which builds stage 3; stages 2 and 3 must be byte-identical | `tools/bootstrap.sh` ([Repository](Dev-Repository.md)) |
+| **Self-hosting.** fsbpyr builds its own executable | `make bootstrap` runs fsbpyr from source to build stage 1, which builds stage 2, which builds stage 3; stages 2 and 3 must be byte-identical; a released fsbpyr can start the three stages without a compiler | `tools/bootstrap.sh` ([Self-hosting](Dev-Self-Hosting.md), [Repository](Dev-Repository.md)) |
 | **One file.** Only the loader, glibc and explicitly allowed system libraries stay outside | every distribution's modules, data and native files go into the payload; native files that need other libraries stop the build unless `allow-system-libs` names them | `natives.py`, `classify.py` |
 | **Startup scales with what runs.** Startup work follows the import path, not the size of the dependencies | an index of modules and files is searched by name, and only what is imported is decompressed | [Executable format](Dev-Executable-Format.md), [Boot modules](Dev-Boot-Modules.md) |
 | **Independently addressable compression.** No whole-file compression; what is never asked for is never decompressed | zstd frames per blob, with small blobs packed into shared blocks; xz for native files only with `--best-compression` | `payload/writer.py`, `payload/spec.py` |

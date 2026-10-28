@@ -583,7 +583,8 @@ The same spec always encodes to the same bytes with the same zstd library versio
 version is part of the build environment and is recorded in `build_info` (`zstd`). A
 self-hosted fsbpyr binary carries its own statically linked libzstd, so the check that fsbpyr's
 second and third bootstrap stages are byte-identical (`make bootstrap`, step 3 of
-[`tools/bootstrap.sh`](../tools/bootstrap.sh))
+[`tools/bootstrap.sh`](../tools/bootstrap.sh);
+[Self-hosting](Dev-Self-Hosting.md))
 is not affected.
 
 ## What executables share
