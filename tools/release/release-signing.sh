@@ -2,12 +2,14 @@
 #
 # release-signing.sh — fsbpyr's release keys and the signature of a release's SHA256SUMS, made
 # and checked with the openssl command alone (docs/signing.md). release.yml's and el8.yml's sign
-# jobs run it, so the job that holds the release key runs no fsbpyr; `make release-check` checks
-# with it; the admin makes the release keys with it.
+# jobs run it, so the job that holds the release key runs no fsbpyr, and check the new signature
+# with it against the keys the previous release and this one pin; `make release-check` checks
+# with it; the admin makes the release keys with it and signs with R by hand.
 #
 #     bash tools/release/release-signing.sh new-key NAME         NAME.key and NAME.pub
 #     bash tools/release/release-signing.sh sign KEY FILE        FILE.sig, signed as fsbpyr
-#     bash tools/release/release-signing.sh verify FILE PUB...   FILE.sig against any PUB
+#     bash tools/release/release-signing.sh verify FILE PUB...   FILE.sig against any PUB; a PUB
+#                                                                that is not a .pub is skipped
 #
 # The files, as fsbpyr's `key new`, `sign` and `verify` write and read them (docs/signing.md §2):
 #   NAME.key  two encrypted PKCS#8 PEM blocks under one passphrase, Ed25519 then ML-DSA-65;
@@ -16,10 +18,11 @@
 #   FILE.sig  the Ed25519 signature (64 bytes), then the ML-DSA-65 one (3309 bytes), both over
 #             the statement "fsbpyr-signature 1\nsubject fsbpyr\nsha256 <FILE's SHA-256>\n".
 #
-# The passphrase comes from FSBPYR_SIGNING_PASSPHRASE, or is asked for on the terminal. Nothing
-# that exists is replaced. Needs OpenSSL 3.5 or newer and sha256sum. Exit status: 0 done or
-# VERIFIED, 1 NOT VERIFIED, 2 usage or setup error.
-set -euo pipefail
+# The passphrase comes from FSBPYR_SIGNING_PASSPHRASE, or is asked for on the terminal, as typed
+# (spaces too). Nothing that exists is replaced. Needs OpenSSL 3.5 or newer and sha256sum. Exit
+# status: 0 done or VERIFIED, 1 NOT VERIFIED, 2 anything else (usage, setup, a failed step).
+set -Eeuo pipefail
+trap 'exit 2' ERR  # a failed step is never 1, which says NOT VERIFIED
 umask 077
 export LC_ALL=C
 
@@ -28,6 +31,7 @@ ALGORITHMS=(ED25519 ML-DSA-65)
 SIG_SIZES=(64 3309)
 
 die() { printf '%s\n' "$2" >&2; exit "$1"; }
+warn() { printf '%s\n' "$1" >&2; }
 
 usage() {
     cat >&2 <<'EOF'
@@ -54,9 +58,9 @@ passphrase() {
     [[ -z "${FSBPYR_SIGNING_PASSPHRASE-}" ]] || return 0
     { : </dev/tty; } 2>/dev/null || die 2 'no passphrase: set FSBPYR_SIGNING_PASSPHRASE or run this on a terminal'
     local again
-    read -rsp 'Passphrase: ' FSBPYR_SIGNING_PASSPHRASE </dev/tty; echo >&2
+    IFS= read -rsp 'Passphrase: ' FSBPYR_SIGNING_PASSPHRASE </dev/tty; echo >&2
     if [[ "$1" == new ]]; then
-        read -rsp 'Passphrase again: ' again </dev/tty; echo >&2
+        IFS= read -rsp 'Passphrase again: ' again </dev/tty; echo >&2
         [[ "$again" == "$FSBPYR_SIGNING_PASSPHRASE" ]] || die 2 'the passphrases differ'
     fi
     [[ -n "$FSBPYR_SIGNING_PASSPHRASE" ]] || die 2 'the passphrase is empty'
@@ -72,19 +76,19 @@ split_pem() {
 }
 
 # check_public PUB DIR: PUB holds exactly the two public keys, Ed25519 then ML-DSA-65, as openssl
-# writes them. DIR is scratch space.
+# writes them; otherwise it says why and fails. DIR is scratch space.
 check_public() {
     local pub=$1 dir=$2 i
-    [[ -f "$pub" && -r "$pub" ]] || die 2 "cannot read the public key $pub"
-    split_pem "$pub" "$dir/p.0" "$dir/p.1"
+    [[ -f "$pub" && -r "$pub" ]] || { warn "cannot read the public key $pub"; return 1; }
+    split_pem "$pub" "$dir/p.0" "$dir/p.1" || return 1
     : >"$dir/canonical"
     for i in 0 1; do
         [[ "$(openssl pkey -pubin -in "$dir/p.$i" -text_pub -noout 2>/dev/null | sed -n 1p)" == "${ALGORITHMS[i]} Public-Key:" ]] ||
-            die 2 "$pub: key $((i + 1)) is not an ${ALGORITHMS[i]} public key"
-        openssl pkey -pubin -in "$dir/p.$i" -pubout >>"$dir/canonical"
+            { warn "$pub: key $((i + 1)) is not an ${ALGORITHMS[i]} public key"; return 1; }
+        openssl pkey -pubin -in "$dir/p.$i" -pubout >>"$dir/canonical" || return 1
     done
     [[ "$(sha256sum <"$dir/canonical")" == "$(sha256sum <"$pub")" ]] ||
-        die 2 "$pub holds more than the two public keys"
+        { warn "$pub holds more than the two public keys"; return 1; }
 }
 
 # statement FILE OUT: the statement that both signatures sign.
@@ -119,7 +123,7 @@ new_key() {
         [[ ! -e "$file" && ! -L "$file" ]] || die 2 "$file exists; nothing replaced"
     done
     passphrase new
-    tmp=$(mktemp -d "$(dirname -- "$name")/.release-signing.XXXXXXXX")
+    tmp=$(mktemp -d "$(dirname -- "$name")/.release-signing.XXXXXXXX") || die 2 "cannot write beside $name"
     : >"$tmp/key"
     : >"$tmp/pub"
     for i in 0 1; do
@@ -130,7 +134,7 @@ new_key() {
         openssl pkey -in "$tmp/k.$i" -passin env:FSBPYR_SIGNING_PASSPHRASE -pubout >>"$tmp/pub"
         cat "$tmp/k.$i" >>"$tmp/key"
     done
-    check_public "$tmp/pub" "$tmp"
+    check_public "$tmp/pub" "$tmp" || exit 2
     place "$tmp/key" "$name.key" 600
     place "$tmp/pub" "$name.pub" 644
     printf 'wrote %s (keep it secret) and %s\nfingerprint %s\n' "$name.key" "$name.pub" "$(fingerprint "$name.pub")"
@@ -144,7 +148,7 @@ sign() {
     [[ "$(grep -c '^-----BEGIN ENCRYPTED PRIVATE KEY-----$' "$key")" == 2 ]] ||
         die 2 "$key does not hold two encrypted keys"
     passphrase old
-    tmp=$(mktemp -d "$(dirname -- "$sig")/.release-signing.XXXXXXXX")
+    tmp=$(mktemp -d "$(dirname -- "$sig")/.release-signing.XXXXXXXX") || die 2 "cannot write beside $file"
     statement "$file" "$tmp/statement"
     split_pem "$key" "$tmp/k.0" "$tmp/k.1"
     : >"$tmp/pub"
@@ -154,7 +158,7 @@ sign() {
         openssl pkeyutl -sign -rawin -inkey "$tmp/k.$i" -passin env:FSBPYR_SIGNING_PASSPHRASE \
             -in "$tmp/statement" -out "$tmp/s.$i"
     done
-    check_public "$tmp/pub" "$tmp"
+    check_public "$tmp/pub" "$tmp" || exit 2
     cat "$tmp/s.0" "$tmp/s.1" >"$tmp/sig"
     verify_with "$tmp/statement" "$tmp/sig" "$tmp/pub" "$tmp" ||
         die 2 'the new signature does not verify; nothing written'
@@ -163,22 +167,24 @@ sign() {
 }
 
 verify() {
-    local file=$1 sig=$1.sig pub size
+    local file=$1 sig=$1.sig pub size usable=0
     shift
     [[ -f "$file" && -r "$file" ]] || die 2 "cannot read $file"
     [[ -f "$sig" && -r "$sig" ]] || die 1 "NOT VERIFIED: $file: no $sig"
     size=$(wc -c <"$sig")
     ((size == SIG_SIZES[0] + SIG_SIZES[1])) ||
         die 1 "NOT VERIFIED: $file: $sig has $((size)) bytes, not the $((SIG_SIZES[0] + SIG_SIZES[1])) of a signature"
-    tmp=$(mktemp -d)
+    tmp=$(mktemp -d) || die 2 'cannot make a temporary directory'
     statement "$file" "$tmp/statement"
     for pub in "$@"; do
-        check_public "$pub" "$tmp"
+        check_public "$pub" "$tmp" || continue  # said why; the others may still match
+        usable=1
         if verify_with "$tmp/statement" "$sig" "$pub" "$tmp"; then
-            printf 'VERIFIED  %s  (%s, Ed25519 + ML-DSA-65, %s %s)\n' "$file" "$SUBJECT" "$pub" "$(fingerprint "$pub")"
+            printf 'VERIFIED  %s  (project %s, Ed25519 + ML-DSA-65, key %s %s)\n' "$file" "$SUBJECT" "$pub" "$(fingerprint "$pub")"
             return 0
         fi
     done
+    ((usable)) || die 2 "no usable public key among $*"
     die 1 "NOT VERIFIED: $file: $sig does not match $*"
 }
 
