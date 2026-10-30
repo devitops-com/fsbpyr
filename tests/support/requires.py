@@ -61,7 +61,8 @@ TOOLS = {
     "busybox": Tool(("busybox",), "busybox", "install.sh's tests run it under busybox sh"),
     "dash": Tool(("dash",), "dash", "install.sh's tests run it under dash"),
     "bash": Tool(("bash",), "bash", "the completion and install.sh tests run it"),
-    "openssl": Tool(("openssl",), "openssl", "install.sh's tests make their TLS certificate"),
+    "openssl": Tool(("openssl",), "openssl", "install.sh's tests make their TLS certificate; "
+                    "release-signing.sh's tests need its ML-DSA-65 (OpenSSL 3.5 or newer)"),
     "ls": Tool(("ls",), "coreutils", "a host binary whose glibc requirement a test reads"),
 }
 
@@ -184,6 +185,23 @@ def uv_python(version: str) -> None:
         unmet(f"Python {version} is not installed with uv", f"uv python install {version}")
 
 
+def openssl_with_ml_dsa() -> None:
+    """Fails unless the openssl command signs with ML-DSA-65, which takes OpenSSL 3.5 or newer:
+    a tool's presence does not say so."""
+    listed = subprocess.run([tool("openssl"), "list", "-signature-algorithms"],
+                            capture_output=True, text=True, check=False)  # fmt: skip
+    if "ML-DSA-65" not in listed.stdout:
+        unmet("the openssl command has no ML-DSA-65",
+              "install OpenSSL 3.5 or newer (Debian 13 has 3.5.7), or run make test-container")
+
+
+def openssl_headers() -> None:
+    """Fails without OpenSSL 3.5's headers, which sig.c's declarations are compared with."""
+    if not Path("/usr/include/openssl/evp.h").is_file():
+        unmet("OpenSSL's headers are not installed",
+              "install libssl-dev 3.5 or newer (Debian 13 has 3.5.7), or run make test-container")
+
+
 def glibc_host() -> None:
     from fsbpyr.targets import host_target  # noqa: PLC0415
 
@@ -213,7 +231,7 @@ def _unmet_conditions() -> list[str]:
         partial(non_root, "the ownership tests need a user"), user_namespaces, rootless_podman,
         supplementary_group, foreign_directory, root_directory_in_tmp, glibc_host,
         partial(set_id_bits, tmp), partial(long_symlink_targets, tmp),
-        partial(enough_free_disk, tmp),
+        partial(enough_free_disk, tmp), openssl_with_ml_dsa, openssl_headers,
         *(partial(uv_python, version) for version in ("3.12", "3.13", "3.14", "3.15")),
     ]
     found = []

@@ -18,11 +18,13 @@
  *   sync(root, chain, files, checked, resources[, written]) -> number of files written (cache.h,
  *                         D35); their site-relative paths are appended to ``written``; the first
  *                         sync into a tree takes it for the process's life (D38)
+ *   _sha256, _key_new, _sign, _verify  private: docs/signing.md's crypto, in sig.c
  */
 #include "launcher.h"
 
 #include "cache.h"
 #include "integrity.h"
+#include "sig.h"
 
 #include <string.h>
 #include <sys/auxv.h>
@@ -817,6 +819,10 @@ static struct PyModuleDef module = {
 PyMODINIT_FUNC PyInit__fsbpyr(void) {
     PyObject *m = PyModule_Create(&module);
     if (m == NULL) return NULL;
+    if (PyModule_AddFunctions(m, fsb_sig_methods) < 0) {
+        Py_DECREF(m);
+        return NULL;
+    }
     StreamType = (PyTypeObject *)PyType_FromSpec(&stream_spec);
     if (StreamType == NULL || PyModule_AddObjectRef(m, "Stream", (PyObject *)StreamType) < 0) {
         Py_DECREF(m);

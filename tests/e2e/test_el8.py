@@ -31,7 +31,9 @@ from fsbpyr.targets import host_target
 from fsbpyr.vcs import release_stub_asset, release_stub_sums, release_stub_tag
 
 from ..support import contain, requires
-from ..support.releases import FakeReleases
+from ..support.releases import FakeReleases, sums_of
+from ..support.signing import release_signature, signed_as_release, use_stand_in
+from .conftest import ReleaseKeys, built_release
 
 pytestmark = pytest.mark.slow
 
@@ -267,25 +269,44 @@ def test_the_projects_own_extension_is_rebuilt_against_the_el8_sysroot(
 # --- a release fsbpyr -------------------------------------------------------------------------
 
 
+@pytest.fixture(scope="module")
+def signed_stub(
+    el8_runtime: registry.Runtime, release_keys: ReleaseKeys,
+    tmp_path_factory: pytest.TempPathFactory
+) -> dict[str, bytes]:
+    """The companion release of v1.2.0: the EL8 stub of the tests' Python, as a ``.xz``, its sums
+    file with the lines el8.yml writes, and the signature of that file by the test key K."""
+    packed = lzma.compress(el8_runtime.stub)
+    sums = sums_of({ASSET: el8_runtime.stub, f"{ASSET}.xz": packed})
+    signature = signed_as_release(release_keys.k.key, SUMS, sums, tmp_path_factory.mktemp("sums"))
+    return {f"/{COMPANION}/{ASSET}.xz": packed, f"/{COMPANION}/{SUMS}": sums,
+            f"/{COMPANION}/{SUMS}.sig": signature}  # fmt: skip
+
+
 @pytest.fixture
-def releases(el8_runtime: registry.Runtime) -> Iterator[FakeReleases]:
-    """The companion release of v1.2.0, which publishes the EL8 stub of the tests' Python."""
+def releases(signed_stub: dict[str, bytes]) -> Iterator[FakeReleases]:
     fake = FakeReleases()
-    fake.files[f"/{COMPANION}/{ASSET}.xz"] = lzma.compress(el8_runtime.stub)
-    fake.files[f"/{COMPANION}/{SUMS}"] = (
-        f"{hashlib.sha256(el8_runtime.stub).hexdigest()}  {ASSET}\n".encode())
+    fake.files.update(signed_stub)
     yield fake
     fake.close()
 
 
 def test_a_release_builds_for_el8_with_its_stdlib_and_the_downloaded_stub(
-    releases: FakeReleases, built: dict[str, Path], runtime: registry.Runtime,
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    el8_runtime: registry.Runtime, built: dict[str, Path], runtime: registry.Runtime,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest,
     tmp_path_factory: pytest.TempPathFactory
 ) -> None:
     """The embedded runtime stands in for the executable's (monkeypatched, so this builds no
-    executable): the stdlib of the default runtime and the stub of the EL8 asset make the very
-    app the cache's EL8 runtime does, whose stdlib is the same."""
+    executable, and the stand-in for the C checks its signature): the stdlib of the default
+    runtime and the stub of the EL8 asset make the very app the cache's EL8 runtime does, whose
+    stdlib is the same."""
+    use_stand_in(monkeypatch)
+    releases = FakeReleases(release_signature)
+    request.addfinalizer(releases.close)
+    packed = lzma.compress(el8_runtime.stub)
+    releases.files[f"/{COMPANION}/{ASSET}.xz"] = packed
+    releases.files[f"/{COMPANION}/{SUMS}"] = sums_of({ASSET: el8_runtime.stub,
+                                                      f"{ASSET}.xz": packed})  # fmt: skip
     monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv(dispatch.DOWNLOADS_VARIABLE, releases.base)
     monkeypatch.setattr(stubs, "own_version", lambda: f"{TAG[1:]}-abcdef12")
@@ -295,38 +316,22 @@ def test_a_release_builds_for_el8_with_its_stdlib_and_the_downloaded_stub(
 
     _build(_hello(tmp_path_factory, "hello-release"), out, "--glibc", BASELINE)
 
-    assert releases.requests == [f"/{COMPANION}/{SUMS}", f"/{COMPANION}/{ASSET}.xz"]
+    assert releases.requests == [f"/{COMPANION}/{SUMS}", f"/{COMPANION}/{SUMS}.sig",
+                                 f"/{COMPANION}/{ASSET}.xz"]  # fmt: skip
     assert out.read_bytes() == built["hello"].read_bytes()
     expected = registry.runtime_id(pins.pin_for(TARGET_PYTHON, host_target().triple),
                                    baseline=BASELINE)  # fmt: skip
     assert (tmp_path / "cache" / "downloads" / f"{ASSET}-{expected}").is_file()  # not by tag
 
 
-def _tagged_copy(directory: Path) -> Path:
-    """This checkout's sources as a git repository with a commit tagged v1.2.0: built, it is a
-    release fsbpyr."""
-    copy = directory / "fsbpyr"
-    copy.mkdir()
-    for name in ("pyproject.toml", "uv.lock", "LICENSE", "README.md", ".python-version"):
-        shutil.copy2(ROOT / name, copy / name)
-    shutil.copytree(ROOT / "src", copy / "src",
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))  # fmt: skip
-    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.org", "-C", str(copy)]
-    for command in (["init", "-q", "-b", "main"], ["add", "-A"],
-                    ["commit", "-q", "-m", "release"], ["tag", TAG]):  # fmt: skip
-        subprocess.run([*git, *command], check=True, capture_output=True)
-    return copy
-
-
 @pytest.fixture(scope="module")
 def release_fsbpyr(
-    tmp_path_factory: pytest.TempPathFactory, runtime: registry.Runtime
+    tmp_path_factory: pytest.TempPathFactory, runtime: registry.Runtime, release_keys: ReleaseKeys
 ) -> Path:
-    """fsbpyr built from the tagged copy: an executable that reports itself as release 1.2.0."""
-    requires.tool("git")
-    copy = _tagged_copy(tmp_path_factory.mktemp("release-src"))
-    out = tmp_path_factory.mktemp("release-bin") / "fsbpyr"
-    _build(copy, out)
+    """fsbpyr built from the tagged copy: an executable that reports itself as release 1.2.0, and
+    pins the tests' keys."""
+    out = built_release(tmp_path_factory.mktemp("release"), TAG, release_keys.k.pub,
+                        release_keys.r.pub)  # fmt: skip
     assert _info(out)["git"]["tag"] == TAG  # type: ignore[index]  # its own_version says 1.2.0
     return out
 
@@ -351,7 +356,8 @@ def test_a_real_release_downloads_the_el8_stub_and_builds_the_same_app(
     result = _release_build(release_fsbpyr, project, out, tmp_path / "cache", releases.base)
 
     assert result.returncode == 0, result.stderr
-    assert releases.requests == [f"/{COMPANION}/{SUMS}", f"/{COMPANION}/{ASSET}.xz"]
+    assert releases.requests == [f"/{COMPANION}/{SUMS}", f"/{COMPANION}/{SUMS}.sig",
+                                 f"/{COMPANION}/{ASSET}.xz"]  # fmt: skip
     assert_same_app(out, built["hello"])
 
 

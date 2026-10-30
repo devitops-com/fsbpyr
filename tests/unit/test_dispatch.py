@@ -1,6 +1,7 @@
 """fsbpyr build for another Python than the running fsbpyr's: the variant of its own release,
 fetched from a fake release server on localhost (nothing reaches GitHub)."""
 
+import hashlib
 import lzma
 import os
 import subprocess
@@ -20,6 +21,7 @@ from fsbpyr.targets import TARGETS, host_target
 from fsbpyr.vcs import release_asset
 
 from ..support.releases import FakeReleases
+from ..support.signing import fake_pub, release_signature, use_stand_in
 from .boot.conftest import FAKE_RUNTIME
 
 pytestmark = pytest.mark.version_rule
@@ -28,6 +30,7 @@ OTHER = next(version for version in reversed(supported()) if version != DEFAULT_
 HOST = host_target().name
 ASSET = release_asset(OTHER, HOST)
 PATH = f"/v1.2.0/{ASSET}.xz"
+CHECKED = ["/v1.2.0/SHA256SUMS", "/v1.2.0/SHA256SUMS.sig"]  # before any asset is fetched
 
 
 class Ran:
@@ -40,7 +43,8 @@ class Ran:
 
 @pytest.fixture
 def releases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeReleases]:
-    fake = FakeReleases()
+    fake = FakeReleases(release_signature)
+    use_stand_in(monkeypatch)
     monkeypatch.setenv(dispatch.DOWNLOADS_VARIABLE, fake.base)
     monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr(dispatch, "own_version", lambda: "1.2.0-abcdef12")
@@ -70,9 +74,10 @@ def project(tmp_path: Path) -> Path:
     return directory
 
 
-def _release(tmp_path: Path) -> bytes:
+def _release(tmp_path: Path, *, asset: str = ASSET, tag: str = "v1.2.0") -> bytes:
     out = tmp_path / "variant"
-    build_executable(FAKE_RUNTIME, App("fsbpyr", "fsbpyr.cli:main", dists=()), out)
+    info = (("release_asset", asset), ("git", {"commit": "abcdef1234567890", "tag": tag}))
+    build_executable(FAKE_RUNTIME, App("fsbpyr", "fsbpyr.cli:main", dists=(), build_info=info), out)
     return out.read_bytes()
 
 
@@ -96,7 +101,7 @@ def test_a_project_for_another_python_runs_the_variant_with_the_same_arguments(
     assert cached.read_bytes() == binary
     assert cached.stat().st_mode & 0o777 == 0o755
     assert _cached(tmp_path) == [cached.name]  # no temporary file left
-    assert releases.requests == [PATH]
+    assert releases.requests == [*CHECKED, PATH]
     assert f"running {cached}" in capsys.readouterr().out
 
 
@@ -108,11 +113,11 @@ def test_the_url_and_the_cache_name_carry_the_hosts_target(
     monkeypatch.setattr(dispatch, "host_target", lambda: other)
     asset = release_asset(OTHER, other.name)
     assert asset.endswith(f"-{other.name}") and asset != ASSET
-    releases.files[f"/v1.2.0/{asset}.xz"] = lzma.compress(_release(tmp_path))
+    releases.files[f"/v1.2.0/{asset}.xz"] = lzma.compress(_release(tmp_path, asset=asset))
 
     assert main(["build", str(project)]) == 0
 
-    assert releases.requests == [f"/v1.2.0/{asset}.xz"]
+    assert releases.requests == [*CHECKED, f"/v1.2.0/{asset}.xz"]
     assert _cached(tmp_path) == [f"{asset}-v1.2.0"]  # not the host's
 
 
@@ -135,7 +140,7 @@ def test_a_cached_variant_is_not_fetched_again_and_works_offline(
     assert main(["build", str(project), "-o", str(tmp_path / "again")]) == 0
 
     assert len(ran.commands) == 2
-    assert releases.requests == [PATH]
+    assert releases.requests == [*CHECKED, PATH]
 
 
 def test_offline_runs_a_cached_variant_without_the_network(
@@ -148,7 +153,7 @@ def test_offline_runs_a_cached_variant_without_the_network(
     assert main(["build", str(project), "--offline"]) == 0
 
     assert ran.commands[1][1:] == ["build", str(project), "--offline"]
-    assert releases.requests == [PATH]
+    assert releases.requests == [*CHECKED, PATH]
 
 
 def test_offline_does_not_fetch_a_variant_and_says_how_to_get_it(
@@ -352,3 +357,120 @@ def test_the_variant_is_told_where_the_dispatcher_is(
 
     expected = os.pathsep.join([str(tmp_path / "link"), str(tmp_path / "real")])
     assert seen[0][dispatch.DISPATCHED_BY_VARIABLE] == expected
+
+
+# --- a variant is checked as an update is (docs/signing.md §5.5) ---------------------------------
+
+
+def _refused(project: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], ran: Ran) -> str:
+    assert main(["build", str(project)]) == 1
+    assert ran.commands == []
+    assert _cached(tmp_path) == []  # nothing is kept, not even a temporary file
+    return capsys.readouterr().err
+
+
+def test_a_release_without_a_signature_runs_no_variant(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    releases.files[PATH] = lzma.compress(_release(tmp_path))
+    releases.files["/v1.2.0/SHA256SUMS"] = b""
+    releases.signer = None
+
+    assert "release v1.2.0 is not signed" in _refused(project, tmp_path, capsys, ran)
+    assert PATH not in releases.requests
+
+
+def test_a_signature_by_no_pinned_key_runs_no_variant(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    releases.files[PATH] = lzma.compress(_release(tmp_path))
+    releases.signer = lambda sums: release_signature(sums, fake_pub("not pinned"))
+
+    assert "not signed by a key this fsbpyr pins" in _refused(project, tmp_path, capsys, ran)
+    assert PATH not in releases.requests
+
+
+def test_an_xz_that_does_not_match_its_line_runs_no_variant(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    genuine = lzma.compress(_release(tmp_path))
+    releases.files["/v1.2.0/SHA256SUMS"] = (
+        f"{hashlib.sha256(genuine).hexdigest()}  {ASSET}.xz\n".encode())
+    releases.files[PATH] = genuine + b"\0"
+
+    assert "does not match the checksum" in _refused(project, tmp_path, capsys, ran)
+
+
+def test_another_python_s_asset_under_this_name_runs_no_variant(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    releases.files[PATH] = lzma.compress(_release(tmp_path, asset="fsbpyr-3.99-x86_64-linux-gnu"))
+
+    assert f"not {ASSET}" in _refused(project, tmp_path, capsys, ran)
+
+
+@pytest.mark.parametrize("tag", ["v1.1.0", "v1.3.0"])
+def test_a_variant_of_another_version_runs_no_variant(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str], tag: str
+) -> None:
+    """A variant must be this very release: an older release's files, genuine and signed, are
+    refused here, where ``self update`` asks for newer."""
+    releases.files[PATH] = lzma.compress(_release(tmp_path, tag=tag))
+
+    assert "is not fsbpyr v1.2.0" in _refused(project, tmp_path, capsys, ran)
+
+
+def test_from_source_nothing_is_fetched_even_in_a_tagged_checkout(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path,
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkout at a tag is a release to ``own_version``, but it cannot check a signature."""
+    monkeypatch.setattr(dispatch, "available", lambda: False)
+    releases.files[PATH] = lzma.compress(_release(tmp_path))
+
+    assert main(["build", str(project)]) == 1
+
+    assert releases.requests == [] and ran.commands == []
+    assert "a developer build" in capsys.readouterr().err
+
+
+def test_from_source_a_cached_variant_still_runs(
+    releases: FakeReleases, ran: Ran, project: Path, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    releases.files[PATH] = lzma.compress(_release(tmp_path))
+    assert main(["build", str(project)]) == 0
+    monkeypatch.setattr(dispatch, "available", lambda: False)
+
+    assert main(["build", str(project)]) == 0
+
+    assert len(ran.commands) == 2
+
+
+def test_the_variant_alone_gets_the_signing_variables(
+    releases: FakeReleases, project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    releases.files[PATH] = lzma.compress(_release(tmp_path))
+    monkeypatch.setenv("FSBPYR_SIGNING_KEY", "/keys/k.key")
+    monkeypatch.setenv("FSBPYR_SIGNING_PASSPHRASE", "a passphrase")
+    seen: list[dict[str, str]] = []
+    outside: list[dict[str, str]] = []
+
+    def run(command: list[str], **kwargs: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
+        seen.append(kwargs["env"])
+        outside.append(dict(os.environ))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    assert main(["build", str(project)]) == 0
+
+    assert seen[-1]["FSBPYR_SIGNING_KEY"] == "/keys/k.key"
+    assert seen[-1]["FSBPYR_SIGNING_PASSPHRASE"] == "a passphrase"  # noqa: S105
+    assert "FSBPYR_SIGNING_PASSPHRASE" not in outside[-1]
+    assert "FSBPYR_SIGNING_KEY" not in outside[-1]

@@ -37,6 +37,7 @@ GROUPS = {
     "Assembling": ["assemble"],
     "Reading executables": ["inspection", "sizes", "licensing"],
     "Tool upkeep": ["selfupdate", "manpage"],
+    "Signatures": ["signing"],
     "Shared helpers": ["fsbpyr", "targets", "compat", "text"],
 }
 SUBPACKAGES = {"payload": "payload/", "runtime": "runtime/", "boot": "boot/ (in the executable)"}

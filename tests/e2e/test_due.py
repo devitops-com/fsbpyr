@@ -46,6 +46,19 @@ def _start(probe: Path, out: Path, app: str = "x", cwd: Path | None = None,
                           cwd=cwd, env={**clean, "PROBE_OUT": str(out), **env})  # fmt: skip
 
 
+def test_the_process_it_starts_has_no_signing_variable(probe: Path, tmp_path: Path) -> None:
+    """It may outlive a build, and starts before Python, so before the build removes them
+    (docs/signing.md §3.1)."""
+    out = tmp_path / "report"
+    root = _cache(tmp_path / "cache", stamp=2 * DAY)
+
+    _start(probe, out, FSBPYR_CACHE_DIR=str(root), FSBPYR_SIGNING_KEY="/keys/k.key",
+           FSBPYR_SIGNING_PASSPHRASE="a passphrase")  # noqa: S106  # fmt: skip
+
+    reports = _reports(out)
+    assert len(reports) == 1 and reports[0]["signing"] == "0"
+
+
 def _claimed(root: Path) -> bool:
     """Whether a start claimed a run: the stamp was touched just now."""
     stamp = root / gc.STAMP

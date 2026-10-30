@@ -7,11 +7,9 @@ import lzma
 import os
 import stat
 import sys
-import threading
 import types
 import urllib.request
 from collections.abc import Callable, Iterator
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -22,62 +20,42 @@ from fsbpyr.assemble import App, build_executable
 from fsbpyr.cli import main
 from fsbpyr.targets import target_named
 
-from ..support.releases import FakeReleases
+from ..support.releases import FakeGitHub, FakeReleases
+from ..support.signing import (
+    RELEASE_PUB,
+    SIGNATURE_SIZE,
+    fake_pub,
+    fake_signature,
+    release_signature,
+    statement,
+    use_stand_in,
+)
 from .boot.conftest import FAKE_RUNTIME
 
 OWN = "fsbpyr-3.14-x86_64-linux-gnu"  # the asset the 'running' executable was released as
 RUNNING = f"{sys.version_info.major}.{sys.version_info.minor}"  # the Python this test runs on
-
-
-class FakeGitHub:
-    """The release document at /api and the files below /files, from ``routes``."""
-
-    def __init__(self) -> None:
-        self.tag = "v1.2.0"
-        self.assets = {f"{OWN}.xz": b""}
-        self.api_status = 200
-        self.requests: list[str] = []
-        fake = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self) -> None:
-                fake.requests.append(self.path)
-                if self.path == "/api":
-                    body = json.dumps({
-                        "tag_name": fake.tag,
-                        "assets": [{"name": n, "browser_download_url": f"{fake.base}/files/{n}"}
-                                   for n in fake.assets],
-                    }).encode()  # fmt: skip
-                    status = fake.api_status
-                elif self.path.startswith("/files/") and self.path[7:] in fake.assets:
-                    body, status = fake.assets[self.path[7:]], 200
-                else:
-                    body, status = b"", 404
-                self.send_response(status)
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-
-            def log_message(self, *args: object) -> None:
-                pass
-
-        self.server = HTTPServer(("127.0.0.1", 0), Handler)
-        self.base = f"http://127.0.0.1:{self.server.server_port}"
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+CHECKED = ["/api", "/files/SHA256SUMS", "/files/SHA256SUMS.sig"]  # before any asset is fetched
 
 
 @pytest.fixture
 def github(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeGitHub]:
-    fake = FakeGitHub()
+    fake = FakeGitHub(release_signature)
+    fake.assets[f"{OWN}.xz"] = b""
+    use_stand_in(monkeypatch)
     monkeypatch.setenv(selfupdate.API_VARIABLE, f"{fake.base}/api")
     yield fake
-    fake.server.shutdown()
-    fake.server.server_close()
+    fake.close()
 
 
-def _release_binary(tmp_path: Path, name: str = "new") -> bytes:
+def _release_binary(
+    tmp_path: Path, name: str = "new", *, asset: str = OWN, tag: str = "v1.2.0",
+    glibc: str | None = None,
+) -> bytes:
+    """An executable as a release builds it: its asset and version are in its build info."""
     out = tmp_path / name
-    build_executable(FAKE_RUNTIME, App("fsbpyr", "fsbpyr.cli:main", dists=()), out)
+    info = (("release_asset", asset), ("git", {"commit": "abcdef1234567890", "tag": tag}),
+            ("glibc", glibc))  # fmt: skip
+    build_executable(FAKE_RUNTIME, App("fsbpyr", "fsbpyr.cli:main", dists=(), build_info=info), out)
     return out.read_bytes()
 
 
@@ -115,7 +93,8 @@ def test_a_variant_updates_to_its_own_variant_of_the_newer_release(
     github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(selfupdate, "own_asset", lambda: "fsbpyr-3.12-x86_64-linux-gnu")
-    variant, other = _release_binary(tmp_path, "variant"), b"another Python's"
+    variant = _release_binary(tmp_path, "variant", asset="fsbpyr-3.12-x86_64-linux-gnu")
+    other = b"another Python's"
     github.assets = {"fsbpyr-3.14-x86_64-linux-gnu.xz": lzma.compress(other),
                      "fsbpyr-3.13-x86_64-linux-gnu.xz": lzma.compress(other),
                      "fsbpyr-3.12-x86_64-linux-gnu.xz": lzma.compress(variant)}  # fmt: skip
@@ -123,7 +102,7 @@ def test_a_variant_updates_to_its_own_variant_of_the_newer_release(
     assert main(["self", "update"]) == 0
 
     assert installed.read_bytes() == variant
-    assert github.requests == ["/api", "/files/fsbpyr-3.12-x86_64-linux-gnu.xz"]
+    assert github.requests == [*CHECKED, "/files/fsbpyr-3.12-x86_64-linux-gnu.xz"]
 
 
 def test_the_newest_pythons_build_stays_on_its_python_when_a_newer_one_is_released(
@@ -136,7 +115,7 @@ def test_the_newest_pythons_build_stays_on_its_python_when_a_newer_one_is_releas
     assert main(["self", "update"]) == 0
 
     assert installed.read_bytes() == binary
-    assert github.requests == ["/api", f"/files/{OWN}.xz"]
+    assert github.requests == [*CHECKED, f"/files/{OWN}.xz"]
 
 
 def test_the_curl_hint_runs_the_installer_for_the_running_python() -> None:
@@ -362,7 +341,7 @@ COMPANION = "el8-v1.2.0"
 @pytest.fixture
 def companion(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeReleases]:
     """The downloads server of the new release's companion, with no stubs published yet."""
-    fake = FakeReleases()
+    fake = FakeReleases(release_signature)
     monkeypatch.setenv(dispatch.DOWNLOADS_VARIABLE, fake.base)
     yield fake
     fake.close()
@@ -389,7 +368,8 @@ def test_a_placed_el8_stub_the_new_release_lists_is_not_named(
     _update(github, tmp_path)
 
     assert "--glibc" not in capsys.readouterr().err
-    assert companion.requests == [f"/{COMPANION}/SHA256SUMS-glibc2.28"]
+    assert companion.requests == [f"/{COMPANION}/SHA256SUMS-glibc2.28",
+                                  f"/{COMPANION}/SHA256SUMS-glibc2.28.sig"]  # fmt: skip
 
 
 def test_a_placed_el8_stub_the_new_release_does_not_list_is_named_in_a_warning(
@@ -525,10 +505,7 @@ def _host_glibc(monkeypatch: pytest.MonkeyPatch, version: str) -> None:
 
 
 def _binary_needing(tmp_path: Path, glibc: str) -> bytes:
-    out = tmp_path / "needs"
-    build_executable(FAKE_RUNTIME, App("fsbpyr", "fsbpyr.cli:main", dists=(),
-                                       build_info=(("glibc", glibc),)), out)  # fmt: skip
-    return out.read_bytes()
+    return _release_binary(tmp_path, "needs", glibc=glibc)
 
 
 def test_an_asset_needing_a_newer_glibc_than_the_hosts_is_never_installed(
@@ -603,10 +580,10 @@ class _CutShort:
     "fetch",
     [
         lambda tmp: selfupdate.latest_release(OWN),
-        lambda tmp: selfupdate.unpack("https://example.invalid/x.xz", tmp / "x"),
-        lambda tmp: selfupdate.download_text("https://example.invalid/sums"),
+        lambda tmp: selfupdate.fetch_checked("https://example.invalid/x.xz", "0" * 64, tmp / "x"),
+        lambda tmp: selfupdate.download_bytes("https://example.invalid/sums", 100),
     ],
-    ids=["latest-release", "unpack", "download-text"],
+    ids=["latest-release", "fetch", "download-bytes"],
 )
 def test_a_body_cut_short_is_an_update_error(
     fetch: Callable[[Path], object], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -619,9 +596,189 @@ def test_a_body_cut_short_is_an_update_error(
         fetch(tmp_path)
 
 
-def test_unpack_stops_at_its_limit(tmp_path: Path) -> None:
+def test_unpacking_stops_at_its_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    use_stand_in(monkeypatch)
     packed = tmp_path / "big.xz"
     packed.write_bytes(lzma.compress(b"\0" * 1_000_000))
+    digest = hashlib.sha256(packed.read_bytes()).hexdigest()
 
     with pytest.raises(selfupdate.UpdateError, match="unpacks to more than 1000 bytes"):
-        selfupdate.unpack(packed.as_uri(), tmp_path / "out", 1000)
+        selfupdate.fetch_checked(packed.as_uri(), digest, tmp_path / "out", 1000)
+
+
+# --- a release is checked before any of it is used (docs/signing.md §5.5) ------------------------
+
+
+def _refused(installed: Path, capsys: pytest.CaptureFixture[str]) -> str:
+    """``self update`` fails, and the executable and its directory are as they were."""
+    assert main(["self", "update"]) == 1
+    assert installed.read_bytes() == b"old"
+    assert sorted(p.name for p in installed.parent.iterdir()) == ["fsbpyr"]
+    return capsys.readouterr().err
+
+
+def _no_lzma(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fails(*args: object, **kwargs: object) -> None:
+        raise AssertionError("lzma saw a download that had not passed its check")
+
+    monkeypatch.setattr(lzma, "LZMADecompressor", fails)
+
+
+def test_a_release_without_a_signature_is_refused(
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _no_lzma(monkeypatch)
+    github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
+    github.assets["SHA256SUMS"] = b""
+    github.signer = None
+
+    err = _refused(installed, capsys)
+
+    assert "release v1.2.0 is not signed; nothing was changed" in err
+    assert f"/files/{OWN}.xz" not in github.requests
+
+
+def test_a_release_without_a_sums_file_is_refused(
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
+    github.signer = None
+
+    assert "release v1.2.0 is not signed" in _refused(installed, capsys)
+
+
+@pytest.mark.parametrize("signature", [
+    fake_signature(fake_pub("not pinned"), statement("fsbpyr", b"anything")),
+    bytes(SIGNATURE_SIZE), b"", bytes(SIGNATURE_SIZE - 1), bytes(SIGNATURE_SIZE + 1),
+], ids=["another key", "zeros", "empty", "a byte short", "a byte more"])
+def test_a_signature_by_no_pinned_key_is_refused(
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch, signature: bytes
+) -> None:
+    _no_lzma(monkeypatch)
+    github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
+    github.signer = lambda sums: signature
+
+    err = _refused(installed, capsys)
+
+    assert f"/files/{OWN}.xz" not in github.requests
+    assert "bytes" in err or "either the release keys changed" in err
+
+
+def test_a_key_not_pinned_says_it_cannot_tell_a_key_change_from_a_forgery(
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
+    github.signer = lambda sums: release_signature(sums, fake_pub("the next release key"))
+
+    err = _refused(installed, capsys)
+
+    assert "release v1.2.0 is not signed by a key this fsbpyr pins" in err
+    assert "#release-keys" in err and "Nothing was changed" in err
+
+
+def test_a_signature_of_other_sums_is_refused(
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    binary = _release_binary(tmp_path)
+    github.assets[f"{OWN}.xz"] = lzma.compress(binary)
+    github.assets["SHA256SUMS.sig"] = release_signature(b"the sums of another release")
+
+    assert "either the release keys changed" in _refused(installed, capsys)
+
+
+def test_an_xz_that_does_not_match_its_line_never_reaches_lzma(
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _no_lzma(monkeypatch)
+    genuine = lzma.compress(_release_binary(tmp_path))
+    github.assets["SHA256SUMS"] = f"{hashlib.sha256(genuine).hexdigest()}  {OWN}.xz\n".encode()
+    github.assets[f"{OWN}.xz"] = genuine + b"\0"  # a mirror's
+
+    assert "does not match the checksum of its release" in _refused(installed, capsys)
+
+
+def test_a_sums_file_that_does_not_list_the_asset_is_refused(
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
+    github.assets["SHA256SUMS"] = f"{'0' * 64}  another-file\n".encode()
+
+    assert f"list no {OWN}.xz" in _refused(installed, capsys)
+
+
+def test_another_file_of_the_signed_release_is_not_taken_for_the_asset(
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The sums list every file of a release, an xz of another Python's fsbpyr among them, each
+    under its own name: its line is good, and the build info tells them apart."""
+    other = lzma.compress(_release_binary(tmp_path, asset="fsbpyr-3.13-x86_64-linux-gnu"))
+    github.assets[f"{OWN}.xz"] = other
+    github.assets["SHA256SUMS"] = f"{hashlib.sha256(other).hexdigest()}  {OWN}.xz\n".encode()
+
+    assert f"not {OWN}" in _refused(installed, capsys)
+
+
+@pytest.mark.parametrize("version", ["v1.0.0", "v0.9.9"])
+def test_a_replayed_older_release_is_refused(
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    version: str
+) -> None:
+    """An older release's files, with its genuine signature, under a newer tag: a statement holds
+    no version, so the build info's decides."""
+    github.tag = "v9.9.9"
+    github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path, tag=version))
+
+    assert "not newer than this fsbpyr" in _refused(installed, capsys)
+
+
+def test_a_download_too_large_is_cut_off(
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _no_lzma(monkeypatch)
+    monkeypatch.setattr(selfupdate, "_MAX_PACKED", 1000)
+    github.assets[f"{OWN}.xz"] = b"x" * 5 * (1 << 20)
+
+    assert "larger than 1000 bytes" in _refused(installed, capsys)
+
+
+def test_a_release_build_info_that_is_not_a_string_is_refused() -> None:
+    with pytest.raises(selfupdate.UpdateError, match="not asset"):
+        selfupdate.check_release_identity({"release_asset": ["asset"]}, "asset")
+
+
+def test_a_build_info_without_a_release_is_refused() -> None:
+    with pytest.raises(selfupdate.UpdateError, match="records no release"):
+        selfupdate.check_release_identity({"release_asset": "asset"}, "asset")
+
+
+def test_three_pinned_keys_pass_a_release_of_a_key_change(
+    github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    new = fake_pub("the new release key")
+    use_stand_in(monkeypatch, RELEASE_PUB, new, fake_pub("the recovery key"))
+    binary = _release_binary(tmp_path)
+    github.assets[f"{OWN}.xz"] = lzma.compress(binary)
+    github.signer = lambda sums: release_signature(sums, new)
+
+    assert main(["self", "update"]) == 0
+    assert installed.read_bytes() == binary
+
+
+def test_a_placed_stub_whose_new_sums_fail_their_check_only_warns(
+    github: FakeGitHub, installed: Path, tmp_path: Path, companion: FakeReleases,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    stub = installed.parent / STUB
+    stub.write_bytes(b"stub")
+    _publish_stubs(companion, b"stub")
+    companion.signer = lambda sums: release_signature(sums, fake_pub("not pinned"))
+
+    _update(github, tmp_path)
+
+    err = capsys.readouterr().err
+    assert str(stub) in err and "could not be checked against the stubs" in err
+    assert stub.read_bytes() == b"stub"

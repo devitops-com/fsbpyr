@@ -28,7 +28,16 @@ import tempfile
 from pathlib import Path
 
 from ..dispatch import DEFAULT_DOWNLOADS, DISPATCHED_BY_VARIABLE, DOWNLOADS_VARIABLE
-from ..selfupdate import REPO, NotFound, UpdateError, download_text, release_numbers, unpack
+from ..selfupdate import (
+    REPO,
+    NotFound,
+    UpdateError,
+    fetch_checked,
+    listed_digest,
+    release_numbers,
+    signed_sums,
+)
+from ..signing import sums_lines
 from ..targets import host_target
 from ..vcs import own_version, release_stub_asset, release_stub_sums, release_stub_tag
 from . import pins, registry
@@ -38,7 +47,6 @@ RELEASES = f"https://github.com/{REPO}/releases"
 _PLACED_STUBS = "fsbpyr-stub-*-glibc*"  # what a user places beside the executable
 _PLACED_NAME = re.compile(r"fsbpyr-stub-\d+\.\d+-[\w-]+-glibc(\d+\.\d+)(\.xz)?")
 _PLACED_SUFFIXES = ("", ".xz")  # the asset as it is, or as the release compresses it
-_SHA256_HEX = 64
 _MAX_STUB = 256 * 1024 * 1024  # a stub is a few MB; a larger one is no stub (or a bomb)
 
 
@@ -132,11 +140,18 @@ def _digest(path: Path) -> str | None:
     return hashlib.sha256(data).hexdigest()
 
 
+def _companion_sums(base: str, release: str, baseline: str) -> bytes:
+    """The checked sums file of companion release ``release``: nothing of it is used before."""
+    sums = f"{base}/{release}/{release_stub_sums(baseline)}"
+    return signed_sums(sums, f"{sums}.sig", release)
+
+
 def refused_after_update(tag: str, paths: list[Path]) -> tuple[list[Path], bool]:
     """The stubs placed beside ``paths`` (as ``own_paths``) that the fsbpyr of release ``tag``
     would refuse, and whether that is known. The new fsbpyr's runtime id cannot be computed
     here, so a stub is current when the SHA-256 the companion release publishes lists it; with
-    no companion or no network all placed stubs are returned, unknown."""
+    no companion, no network or a sums file that fails its check all placed stubs are returned,
+    unknown."""
     directories = dict.fromkeys(path.parent for path in paths)
     placed = {found: match[1] for directory in directories
               for found in sorted(directory.glob(_PLACED_STUBS))
@@ -147,9 +162,9 @@ def refused_after_update(tag: str, paths: list[Path]) -> tuple[list[Path], bool]
     for path, baseline in placed.items():
         try:
             if baseline not in listed:
-                sums = download_text(f"{base}/{release_stub_tag(baseline, tag)}/"
-                                     f"{release_stub_sums(baseline)}")
-                listed[baseline] = {line.partition(" ")[0].lower() for line in sums.splitlines()}
+                sums = _companion_sums(base, release_stub_tag(baseline, tag), baseline)
+                text = sums.decode("utf-8", "replace")
+                listed[baseline] = {digest for digest, _ in sums_lines(text)}
         except (UpdateError, ValueError):  # unreadable: unknown
             return list(placed), False
         if _digest(path) not in listed[baseline]:
@@ -157,27 +172,17 @@ def refused_after_update(tag: str, paths: list[Path]) -> tuple[list[Path], bool]
     return refused, True
 
 
-def _published(base: str, release: str, baseline: str, asset: str) -> str:
-    """The SHA-256 the companion release publishes for ``asset``; NotFound when it publishes
-    none."""
-    sums = download_text(f"{base}/{release}/{release_stub_sums(baseline)}")
-    for line in sums.splitlines():
-        digest, _, name = line.partition(" ")
-        if name.lstrip(" *") == asset and len(digest) == _SHA256_HEX:
-            return digest.lower()
-    raise NotFound(f"{release_stub_sums(baseline)} of release {release} lists no {asset}")
-
-
 def _download(directory: Path, base: str, release: str, baseline: str, asset: str) -> bytes:
-    """The companion release's stub, unpacked and checked against the published SHA-256."""
-    published = _published(base, release, baseline, asset)
+    """The companion release's stub, its ``.xz`` checked against the signed sums before lzma sees
+    it, and unpacked, against its own line."""
+    sums = _companion_sums(base, release, baseline)
+    published = listed_digest(sums, asset, release)
+    packed = listed_digest(sums, f"{asset}.xz", release)
     handle, name = tempfile.mkstemp(dir=directory, prefix=f".{asset}.")
     os.close(handle)
     new = Path(name)
     try:
-        unpack(f"{base}/{release}/{asset}.xz", new, _MAX_STUB)
-        if new.stat().st_size > _MAX_STUB:
-            raise StubError(f"the {asset} of release {release} is larger than {_MAX_STUB >> 20} MB")
+        fetch_checked(f"{base}/{release}/{asset}.xz", packed, new, _MAX_STUB)
         data = new.read_bytes()
     finally:
         with contextlib.suppress(OSError):
