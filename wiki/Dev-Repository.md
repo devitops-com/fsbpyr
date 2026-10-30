@@ -60,6 +60,40 @@ a commit whose full run passed, and the release workflow builds, attests and pub
 executables. How users verify a download is in
 [Installing](User-Installing.md#verifying-a-download).
 
+## Release keys
+
+[`docs/signing.md`](../docs/signing.md) §5 is the whole procedure. Each release signs `SHA256SUMS`,
+and each EL8 companion `SHA256SUMS-glibc2.28`, with the release key K, in the job `sign` of
+[`release.yml`](../.github/workflows/release.yml) and
+[`el8.yml`](../.github/workflows/el8.yml). `prepare` runs built code with a read-only token and no
+secret, `sign` holds K and runs no built code, and `publish` writes and runs no built code. A
+release that cannot be signed, or whose signature the clients would refuse, is not published.
+
+- **K** signs in CI only, from secrets of the GitHub environment `release-signing`. **R**, the
+  recovery key, never enters CI. Both come from `bash tools/release/release-signing.sh new-key
+  NAME`; R preferably on a machine that is offline. fsbpyr stores no private key.
+- **The pins** are the `.pub` files in [`src/fsbpyr/release-keys/`](../src/fsbpyr/); a signature by
+  any of them passes. `make release` refuses a tree without any, which would burn the version.
+  Each change of them changes the "Release keys" section of
+  [Installing](User-Installing.md#release-keys) too, which the suite compares with them.
+- **One-time setup**: make K and R; give the environment `release-signing` one deployment rule,
+  the tag pattern `v*`, before any secret is in it; set `FSBPYR_RELEASE_KEY` and
+  `FSBPYR_SIGNING_PASSPHRASE` in it; pin both keys, with the first signed version in
+  [`tools/release/first-signed-release`](../tools/release/first-signed-release); and remove the
+  organization's GitHub App's access to this repository, or trust it as below.
+- **A planned change of K** takes two releases. Release N pins old K, new K and R, and is signed by
+  the old K, with its companion. Then the new K goes into the secrets, and N+1 drops the old K.
+- **K lost or stolen**: release N pins a new K and R and drops the old K, so only R is pinned by
+  both N and the release before it. Set the repository variable `FSBPYR_RECOVERY=1`: `sign` is
+  skipped, and `publish` makes drafts. Check each sums file's attestation, sign it with `R` by hand,
+  run `tools/release/check-signature.sh` against both sets of pins, upload the `.sig` and publish
+  the draft; the companion with `gh release edit el8-vX.Y.Z --draft=false --latest=false`.
+- **R lost**: the next release pins a new R. **Both lost**: users reinstall.
+
+**Everyone with write access is trusted as the admin is.** A push to main sets what K signs next:
+the pins, the code that checks them and the workflows. Against mistakes the suite compares the pins
+with the wiki; against a writer who means harm, no check does.
+
 ## Developer tasks
 
 `make help` in a checkout:

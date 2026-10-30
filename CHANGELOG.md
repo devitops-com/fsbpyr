@@ -10,7 +10,25 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Added
+- **Signatures.** `fsbpyr key new`, `key trust`, `sign` and `verify` sign any file, with Ed25519 and
+  ML-DSA-65, always both, in a detached `FILE.sig`; `fsbpyr build` signs its output when a key is
+  set (`--signing-key`, `FSBPYR_SIGNING_KEY`). The crypto is launcher C, on the OpenSSL every
+  fsbpyr carries, so checks need nothing installed.
+- **Signed releases.** Each release signs `SHA256SUMS`, and each EL8 companion
+  `SHA256SUMS-glibc2.28`, with a release key that only the job that signs them holds. `self
+  update`, dispatch to another Python and the EL8 stubs check those files against the keys fsbpyr
+  pins, and each `.xz` against its line before it is unpacked. A release that is not signed, or
+  not by a pinned key, is refused, with no fallback. The first update from a release before this
+  one runs old code and is not checked.
+- `make release` refuses a tree that pins no release keys, which would burn the version.
+
 ### Changed
+- `SHA256SUMS-glibc2.28` lists each stub's `.xz` too.
+- From source, even in a checkout at a tag, `fsbpyr build` never fetches another Python's variant:
+  it cannot check a signature. A variant already in the cache still runs.
+- `make release-check` needs jq and OpenSSL 3.5 or newer, and checks the signatures of a signed
+  release.
 - **The wiki is published without a release.** `make wiki-publish` without `VERSION` publishes
   main as GitHub has it, as long as nothing of what goes into a release changed since the
   newest release tag (`src/`, `pyproject.toml`, `uv.lock`, `.python-version`, `tools/release/`);

@@ -247,8 +247,8 @@ test that lacks something fails with a line that names the Debian package or the
 full-suite container, and `make test-prereqs` lists what this machine lacks.
 
 Tools (Debian package in parentheses; on Debian trixie `apt-get install git make gcc binutils
-llvm-22 strace groff-base zstd tar xz-utils curl wget openssl dash bash busybox util-linux
-coreutils podman uidmap passt` installs all of them but uv and LLVM 23):
+llvm-22 strace groff-base zstd tar xz-utils curl wget openssl libssl-dev jq dash bash busybox
+util-linux coreutils podman uidmap passt` installs all of them but uv and LLVM 23):
 
 - `git` (git) and `make` (make);
 - `uv` at the version `tools/release/uv.version` names (not packaged), with the Pythons 3.12 to
@@ -258,8 +258,8 @@ coreutils podman uidmap passt` installs all of them but uv and LLVM 23):
   put fsbpyr's own (`bash tools/bootstrap.sh --llvm23`) there;
 - `cc` (gcc), `readelf` and `objdump` (binutils), `llvm-objdump` (llvm-22, or LLVM 23's own);
 - `strace` (strace) and `groff` (groff-base);
-- `zstd` (zstd), `tar` (tar), `xz` (xz-utils), `curl` (curl), `wget` (wget) and `openssl`
-  (openssl);
+- `zstd` (zstd), `tar` (tar), `xz` (xz-utils), `curl` (curl), `wget` (wget) and `jq` (jq);
+- `openssl` (openssl) and its headers (libssl-dev), both 3.5 or newer (Debian 13 has 3.5.7);
 - `dash` (dash), `bash` (bash) and `busybox` (busybox), which install.sh's tests run it under;
 - `unshare` and `prlimit` (util-linux), and `ls` (coreutils);
 - `podman` (podman, with uidmap and passt), rootless: your user needs ranges in `/etc/subuid`

@@ -10,19 +10,29 @@
 # was there before. `make release-check` runs it in a directory under ~/tmp and in a cgroup with
 # a task and memory limit, as the tests run. Checks, each reported as ok, FAIL or skip:
 #
+#   signed        a release is signed if its tag pins keys (src/fsbpyr/release-keys/): the
+#                 checks that say "signed" run for those, and a tag that pins keys must have them
 #   assets        every (Python, target) of the tag's build.yml has its executable, .xz, SBOM
-#                 and licence notices; install.sh and SHA256SUMS; nothing else (the EL8 stubs
-#                 are not assets of the release: releases are immutable, see below)
+#                 and licence notices; install.sh and SHA256SUMS, and if signed SHA256SUMS.sig;
+#                 nothing else (the EL8 stubs are not assets of the release: releases are
+#                 immutable, see below)
 #   checksums     SHA256SUMS lists every other asset, and every one matches: what is downloaded,
 #                 and each executable as its .xz unpacks; the executables themselves are not
 #                 downloaded (the .xz has the same bytes in a third of the size), GitHub's
 #                 digest of every asset must be the one SHA256SUMS lists
 #   attestations  each executable's provenance and SBOM attestations, by release.yml from the
-#                 tag (gh attestation verify, 8 at once, with one fetch of the trusted root)
+#                 tag (gh attestation verify, 8 at once, with one fetch of the trusted root); if
+#                 signed, SHA256SUMS's by release.yml too, which fails a release someone with
+#                 write access published by hand
+#   signatures    if signed: each sums file's signature against the keys this tag pins and those
+#                 of the previous release (check-signature.sh, as the sign job does), and every
+#                 executable with the released fsbpyr's own `verify`, its reader on the script's
+#                 files
 #   el8 stubs     the companion release el8-<tag>, which el8.yml publishes after the release
 #                 and which not every release has (skip: no EL8 stubs): published (no draft, no
 #                 prerelease), immutable, not the latest release, its tag on the tag's commit,
-#                 exactly SHA256SUMS-glibc2.28 and every (Python, target)'s stub .xz; each unpacks
+#                 exactly SHA256SUMS-glibc2.28 (if signed with its .sig, and with a line for each
+#                 .xz too, which must match) and every (Python, target)'s stub .xz; each unpacks
 #                 to the digest listed, with a provenance attestation by el8.yml from
 #                 refs/tags/<tag> (el8.yml runs on the tag)
 #   el8 build     with EL8 stubs: the default Python's executable builds the hello fixture with
@@ -40,11 +50,12 @@
 #   other-target  the other target's executables under podman (QEMU), when podman runs it
 #   installed     the fsbpyr on PATH, or in ~/.local/bin: its version (information only)
 #
-# Exit 0 when nothing failed, 1 otherwise. Needs gh (authenticated), git, curl, uv, cmp,
-# sha256sum and xz; podman for the other target and the EL8 app.
+# Exit 0 when nothing failed, 1 otherwise. Needs gh (authenticated), git, curl, jq, uv, cmp,
+# sha256sum, xz and OpenSSL 3.5 or newer; podman for the other target and the EL8 app.
 set -uo pipefail
 
 REPO="devitops-com/fsbpyr"
+TOOLS="$(dirname -- "${BASH_SOURCE[0]}")"
 SIGNER="$REPO/.github/workflows/release.yml"
 EL8_SIGNER="$REPO/.github/workflows/el8.yml"
 EL8_SUMS="SHA256SUMS-glibc2.28"
@@ -57,8 +68,14 @@ skip() { echo "  skip  $*"; skipped=$((skipped + 1)); }
 step() { echo "==> $*"; }
 
 [ $# -le 1 ] || { echo "usage: check-release.sh [X.Y.Z]" >&2; exit 2; }
-for tool in gh git curl uv cmp sha256sum xz; do
+for tool in gh git curl jq uv cmp sha256sum xz openssl; do
     command -v "$tool" >/dev/null || { echo "ERROR: $tool is not installed" >&2; exit 2; }
+done
+# command -v cannot see a version: an OpenSSL 3.0 would fail each signature check later
+algorithms="$(openssl list -signature-algorithms 2>/dev/null)"
+for algorithm in ED25519 ML-DSA-65; do
+    grep -qw -- "$algorithm" <<<"$algorithms" \
+        || { echo "ERROR: $(openssl version) has no $algorithm: OpenSSL 3.5 or newer is needed" >&2; exit 2; }
 done
 if [ $# -eq 1 ]; then
     [[ "$1" =~ $XYZ ]] || { echo "ERROR: '$1' is not a version X.Y.Z" >&2; exit 2; }
@@ -140,10 +157,16 @@ if [ "${#PYTHONS[@]}" -eq 0 ] || [ "${#TARGETS[@]}" -eq 0 ]; then
     exit 1
 fi
 ok "$TAG is ${COMMIT:0:8}: Pythons ${PYTHONS[*]} (default $DEFAULT), targets ${TARGETS[*]}"
+# Signed if the tag pins keys: its sign job fails otherwise, and in a recovery the admin signs by
+# hand, so a tag that pins keys must have signatures, and no list of versions is needed.
+signed=0
+compgen -G "$work/src/src/fsbpyr/release-keys/*.pub" >/dev/null && signed=1
+[ "$signed" -eq 1 ] || echo "  info  $TAG pins no release keys: released before signing"
 
 # --- Assets, checksums, attestations ----------------------------------------------------------
 step "assets"
 expected=(install.sh SHA256SUMS)
+[ "$signed" -eq 0 ] || expected+=(SHA256SUMS.sig)
 for py in "${PYTHONS[@]}"; do
     for target in "${TARGETS[@]}"; do
         expected+=("fsbpyr-$py-$target" "fsbpyr-$py-$target.xz" "fsbpyr-$py-$target.cdx.json"
@@ -159,7 +182,7 @@ extra="$(comm -13 <(printf '%s\n' "${expected[@]}" | sort) <(echo "$published"))
 step "checksums"
 # Everything but the executables, which their .xz give: the network is the slow part.
 if gh release download "$TAG" --repo "$REPO" --dir "$work/assets" --pattern '*.xz' \
-        --pattern '*.json' --pattern '*.txt' --pattern install.sh --pattern SHA256SUMS \
+        --pattern '*.json' --pattern '*.txt' --pattern install.sh --pattern 'SHA256SUMS*' \
         >/dev/null 2>&1; then
     for py in "${PYTHONS[@]}"; do
         for target in "${TARGETS[@]}"; do
@@ -167,7 +190,7 @@ if gh release download "$TAG" --repo "$REPO" --dir "$work/assets" --pattern '*.x
         done
     done
     listed="$(awk '{ sub(/^\*/, "", $2); print $2 }' "$work/assets/SHA256SUMS" | sort)"
-    unlisted="$(comm -23 <(echo "$published" | grep -vx SHA256SUMS) <(echo "$listed"))"
+    unlisted="$(comm -23 <(echo "$published" | grep -vxE 'SHA256SUMS(\.sig)?') <(echo "$listed"))"
     [ -z "$unlisted" ] && ok "SHA256SUMS lists every other asset" || fail "not in SHA256SUMS: $(echo $unlisted)"
     if (cd "$work/assets" && sha256sum --quiet -c SHA256SUMS >/dev/null 2>&1); then
         ok "$(echo "$listed" | wc -l) files match SHA256SUMS (the executables as their .xz unpack)"
@@ -176,7 +199,7 @@ if gh release download "$TAG" --repo "$REPO" --dir "$work/assets" --pattern '*.x
     fi
     # what GitHub serves: its digest of every asset, the executables' too
     served="$(gh release view "$TAG" --repo "$REPO" --json assets \
-        --jq '.assets[] | select(.name != "SHA256SUMS") | "\(.digest // "none" | ltrimstr("sha256:"))  \(.name)"' | sort -k2)"
+        --jq '.assets[] | select(.name != "SHA256SUMS" and .name != "SHA256SUMS.sig") | "\(.digest // "none" | ltrimstr("sha256:"))  \(.name)"' | sort -k2)"
     differ="$(comm -13 <(awk '{ sub(/^\*/, "", $2); print $1 "  " $2 }' "$work/assets/SHA256SUMS" | sort -k2) \
         <(echo "$served") | awk '{ print $2 }')"
     [ -z "$differ" ] && ok "GitHub's digest of every asset is the one SHA256SUMS lists" \
@@ -196,6 +219,7 @@ for py in "${PYTHONS[@]}"; do
             --predicate-type https://cyclonedx.org/bom
     done
 done
+[ "$signed" -eq 0 ] || verify "$work/assets/SHA256SUMS" --signer-workflow "$SIGNER" --source-ref "refs/tags/$TAG"
 wait
 n=$first
 for py in "${PYTHONS[@]}"; do
@@ -208,6 +232,10 @@ for py in "${PYTHONS[@]}"; do
         n=$((n + 2))
     done
 done
+if [ "$signed" -eq 1 ]; then
+    verified $n && ok "SHA256SUMS: provenance" \
+        || fail "SHA256SUMS: no provenance attestation by release.yml from refs/tags/$TAG"
+fi
 
 step "EL8 stubs ($COMPANION)"
 # The stubs are no assets of the release (releases are immutable: it took none after its
@@ -246,6 +274,7 @@ else
     fi
     stubs_published="$(gh release view "$COMPANION" --repo "$REPO" --json assets --jq '.assets[].name' | sort)"
     wanted_assets="$(printf '%s\n' "$EL8_SUMS" "${el8[@]}" | sort)"
+    [ "$signed" -eq 0 ] || wanted_assets="$(printf '%s\n' "$wanted_assets" "$EL8_SUMS.sig" | sort)"
     missing="$(comm -23 <(echo "$wanted_assets") <(echo "$stubs_published"))"
     extra="$(comm -13 <(echo "$wanted_assets") <(echo "$stubs_published"))"
     [ -z "$missing" ] && ok "$COMPANION has all ${#el8[@]} stubs and $EL8_SUMS" || fail "$COMPANION misses: $(echo $missing)"
@@ -263,8 +292,17 @@ if [ "$has_el8" -eq 1 ]; then
     sums="$el8_dir/$EL8_SUMS"
     listed="$(awk '{ sub(/^\*/, "", $2); print $2 }' "$sums" | sort)"
     wanted="$(printf '%s\n' "${el8[@]%.xz}" | sort)"
+    [ "$signed" -eq 0 ] || wanted="$(printf '%s\n' "${el8[@]%.xz}" "${el8[@]}" | sort)"
     [ "$listed" = "$wanted" ] && ok "$EL8_SUMS lists the ${#el8[@]} stubs" \
         || fail "$EL8_SUMS lists '$(echo $listed)', not the stubs of every Python and target"
+    if [ "$signed" -eq 1 ]; then
+        # each .xz against its own line, before it is unpacked below: what stubs.py checks
+        if (cd "$el8_dir" && sha256sum --quiet --ignore-missing -c "$EL8_SUMS" >/dev/null 2>&1); then
+            ok "each .xz matches its line of $EL8_SUMS"
+        else
+            fail "a .xz does not match its line of $EL8_SUMS"
+        fi
+    fi
     first=$((verifying + 1))
     for asset in "${el8[@]}" "$EL8_SUMS"; do
         verify "$el8_dir/$asset" --signer-workflow "$EL8_SIGNER" --source-ref "refs/tags/$TAG"
@@ -283,6 +321,45 @@ if [ "$has_el8" -eq 1 ]; then
     done
     verified $n && ok "$EL8_SUMS: provenance" \
         || fail "$EL8_SUMS: no provenance attestation by el8.yml from refs/tags/$TAG"
+fi
+
+# --- Signatures, as the clients and the sign job check them ------------------------------------
+# The published release with the highest version below this one, which the tag's sign job checked
+# against too. Not GitHub's order of releases: createdAt does not follow the version.
+previous="$(GH_TOKEN="${GH_TOKEN:-$(gh auth token 2>/dev/null)}" \
+    bash "$TOOLS/previous-release.sh" "$TAG" 2>"$work/previous.err")" \
+    || { fail "cannot find the release before $TAG: $(tail -1 "$work/previous.err")"; previous=""; }
+if [ "$signed" -eq 1 ]; then
+    step "signatures"
+    if [ -n "$previous" ]; then
+        git -C "$work/src" fetch -q --depth 1 origin "refs/tags/$previous:refs/tags/$previous" 2>/dev/null \
+            || fail "cannot fetch the tag $previous"
+    fi
+    if bash "$TOOLS/check-signature.sh" "$work/src" "$work/assets/SHA256SUMS" "$TAG" "$previous" \
+            >"$work/signature.log" 2>&1; then
+        ok "SHA256SUMS is signed by keys that $TAG and ${previous:-no earlier release} pin"
+    else
+        fail "SHA256SUMS: $(tail -1 "$work/signature.log")"
+    fi
+    if [ "$has_el8" -eq 1 ]; then
+        if bash "$TOOLS/check-signature.sh" "$work/src" "$el8_dir/$EL8_SUMS" "$TAG" "$previous" \
+                >"$work/signature.log" 2>&1; then
+            ok "$EL8_SUMS is signed by keys that $TAG and ${previous:-no earlier release} pin"
+        else
+            fail "$EL8_SUMS: $(tail -1 "$work/signature.log")"
+        fi
+    fi
+    # the released fsbpyr's reader, on the script's files: beside SHA256SUMS, each file is what
+    # the line it is listed under says
+    verifier="$work/assets/fsbpyr-$DEFAULT-$HOST"
+    for py in "${PYTHONS[@]}"; do
+        for target in "${TARGETS[@]}"; do
+            asset="fsbpyr-$py-$target"
+            shown="$(isolated "$verifier" verify --project fsbpyr "$work/assets/$asset" 2>&1)"
+            [[ "$shown" == VERIFIED*"listed as $asset in SHA256SUMS"* ]] && ok "$asset: fsbpyr verify" \
+                || fail "$asset: fsbpyr verify says '$shown'"
+        done
+    done
 fi
 
 # --- This target's executables ----------------------------------------------------------------
@@ -358,11 +435,6 @@ EOF
 fi
 
 step "self update"
-# versions only: a companion el8-vX.Y.Z has its release's commit, so its date, and sorts beside it
-previous="$(gh release list --repo "$REPO" --exclude-drafts --exclude-pre-releases --limit 50 \
-    --json tagName,createdAt --jq 'sort_by(.createdAt) | reverse | .[].tagName' \
-    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-    | awk -v tag="$TAG" 'found { print; exit } $0 == tag { found = 1 }')"
 if [ "$TAG" != "$LATEST" ]; then
     skip "$TAG is not the latest release ($LATEST): self update would install that one"
 elif [ -z "$previous" ]; then

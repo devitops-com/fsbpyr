@@ -6,9 +6,16 @@ stand-in for ``_fsbpyr`` does no signing crypto, and is reached through ``fsbpyr
 seams: never through ``sys.modules``, where vcs.py and build.py would take it for a built fsbpyr.
 """
 
+import fcntl
 import hashlib
 import os
+import pty
+import select
+import struct
 import subprocess
+import termios
+import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import NamedTuple
 
@@ -25,6 +32,7 @@ SIGNATURE_SIZE = 3373
 ED25519_SIZE = 64
 PUB_SIZE = 2839
 KEY_SIZE = 6088
+TERMINAL_TIMEOUT = 300
 
 
 class Key(NamedTuple):
@@ -102,6 +110,45 @@ def run_openssl(*args: str | Path, stdin: bytes | None = None) -> bytes:
                           capture_output=True, check=False)  # fmt: skip
     assert done.returncode == 0, done.stderr.decode(errors="replace")
     return done.stdout
+
+
+def on_a_terminal(
+    command: Sequence[str | Path], env: dict[str, str], *typed: bytes, interrupt: bool = False,
+) -> tuple[int, bytes, list[int]]:
+    """``command`` on a terminal of its own: its exit status, what it printed there, and the
+    terminal's local flags at the end. Each ``typed`` goes in when a prompt shows; Ctrl-C after
+    them with ``interrupt``."""
+    primary, secondary = pty.openpty()
+    fcntl.ioctl(secondary, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+
+    def own_terminal() -> None:
+        os.setsid()
+        fcntl.ioctl(secondary, termios.TIOCSCTTY, 0)
+
+    process = subprocess.Popen([str(part) for part in command], stdin=secondary, stdout=secondary,
+                               stderr=secondary, env=env, preexec_fn=own_terminal)  # noqa: PLW1509
+    printed, pending, interrupted, answered = b"", list(typed), False, 0
+    deadline = time.monotonic() + TERMINAL_TIMEOUT
+    while process.poll() is None and time.monotonic() < deadline:
+        ready, _, _ = select.select([primary], [], [], 0.1)
+        if ready:
+            try:
+                printed += os.read(primary, 4096)
+            except OSError:
+                break
+        if printed.count(b"Passphrase") > answered:
+            answered += 1
+            time.sleep(0.05)  # echo goes off before the read
+            if pending:
+                os.write(primary, pending.pop(0) + b"\n")
+            elif interrupt and not interrupted:
+                os.write(primary, b"\x03")
+                interrupted = True
+    flags = termios.tcgetattr(secondary)[3]
+    code = process.wait(timeout=30)
+    os.close(primary)
+    os.close(secondary)
+    return code, printed, [flags]
 
 
 def fingerprint(pub: bytes) -> str:

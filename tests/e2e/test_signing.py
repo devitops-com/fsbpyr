@@ -5,19 +5,13 @@ tests `key new` and `sign` first meet the real C at users, and the script is wha
 A built fsbpyr is built from a tagged copy of the checkout that pins test keys
 (tests/e2e/conftest.py); it runs contained, as every built executable here."""
 
-import fcntl
 import hashlib
 import json
 import os
-import pty
-import select
 import shutil
 import stat
-import struct
 import subprocess
 import termios
-import time
-from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -34,6 +28,7 @@ from ..support.signing import (
     SIGNATURE_SIZE,
     fingerprint,
     new_key,
+    on_a_terminal,
     script,
     sign,
     statement,
@@ -336,53 +331,12 @@ def test_a_damaged_executable_never_passes(
 # --- the passphrase -----------------------------------------------------------------------------
 
 
-def _pty_run(
-    command: Sequence[str | Path], env: dict[str, str], *typed: bytes, interrupt: bool = False,
-    timeout: float = TIMEOUT,
-) -> tuple[int, bytes, list[int]]:
-    """``command`` on a terminal of its own: its exit status, what it printed there, and the
-    terminal's local flags at the end. Each ``typed`` goes in when a prompt shows; Ctrl-C after
-    them with ``interrupt``."""
-    primary, secondary = pty.openpty()
-    fcntl.ioctl(secondary, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
-
-    def own_terminal() -> None:
-        os.setsid()
-        fcntl.ioctl(secondary, termios.TIOCSCTTY, 0)
-
-    process = subprocess.Popen([str(part) for part in command], stdin=secondary, stdout=secondary,
-                               stderr=secondary, env=env, preexec_fn=own_terminal)  # noqa: PLW1509
-    printed, pending, interrupted = b"", list(typed), False
-    deadline = time.monotonic() + timeout
-    answered = 0
-    while process.poll() is None and time.monotonic() < deadline:
-        ready, _, _ = select.select([primary], [], [], 0.1)
-        if ready:
-            try:
-                printed += os.read(primary, 4096)
-            except OSError:
-                break
-        if printed.count(b"Passphrase") > answered:
-            answered += 1
-            time.sleep(0.05)  # echo goes off before the read
-            if pending:
-                os.write(primary, pending.pop(0) + b"\n")
-            elif interrupt and not interrupted:
-                os.write(primary, b"\x03")
-                interrupted = True
-    flags = termios.tcgetattr(secondary)[3]
-    code = process.wait(timeout=30)
-    os.close(primary)
-    os.close(secondary)
-    return code, printed, [flags]
-
-
 def test_a_new_key_asks_twice_on_the_terminal_and_keeps_spaces(
     fsbpyr: Path, tmp_path: Path, env: dict[str, str]
 ) -> None:
     typed = b"  a passphrase with spaces  "
 
-    code, printed, _ = _pty_run([fsbpyr, "key", "new", tmp_path / "k"], env, typed, typed)
+    code, printed, _ = on_a_terminal([fsbpyr, "key", "new", tmp_path / "k"], env, typed, typed)
 
     assert code == 0, printed
     assert typed not in printed  # echo was off
@@ -395,7 +349,7 @@ def test_a_new_key_asks_twice_on_the_terminal_and_keeps_spaces(
 def test_two_different_passphrases_write_nothing(
     fsbpyr: Path, tmp_path: Path, env: dict[str, str]
 ) -> None:
-    code, printed, _ = _pty_run([fsbpyr, "key", "new", tmp_path / "k"], env, b"one", b"two")
+    code, printed, _ = on_a_terminal([fsbpyr, "key", "new", tmp_path / "k"], env, b"one", b"two")
 
     assert code == 2 and b"the passphrases differ" in printed
     assert not (tmp_path / "k.key").exists()
@@ -409,7 +363,7 @@ def test_a_build_asks_after_the_smoke_test_and_ctrl_c_keeps_the_output_unsigned(
     shutil.copytree(HELLO, project)
     out = tmp_path / "hello-out"
 
-    code, printed, flags = _pty_run(
+    code, printed, flags = on_a_terminal(
         [fsbpyr, "build", project, "-o", out, "--python", TARGET_PYTHON, "--signing-key", key],
         env, interrupt=True)  # fmt: skip
 
@@ -427,7 +381,7 @@ def test_a_build_typed_on_the_terminal_signs(
     shutil.copytree(HELLO, project)
     out = tmp_path / "hello-out"
 
-    code, printed, _ = _pty_run(
+    code, printed, _ = on_a_terminal(
         [fsbpyr, "build", project, "-o", out, "--python", TARGET_PYTHON, "--signing-key", key],
         env, PASSPHRASE.encode())  # fmt: skip
 
@@ -641,7 +595,7 @@ def test_no_stale_signature_stays_if_the_build_is_stopped_at_the_prompt(
     out = tmp_path / "hello-out"
     out.with_name("hello-out.sig").write_bytes(b"of the file before")
 
-    code, printed, _ = _pty_run(
+    code, printed, _ = on_a_terminal(
         [fsbpyr, "build", project, "-o", out, "--python", TARGET_PYTHON, "--signing-key", key],
         env, interrupt=True)  # fmt: skip
 

@@ -568,11 +568,11 @@ it. `stub_for` takes the first of:
    is not found and costs one more download). A file there that does not carry the expected
    runtime id is deleted and fetched again.
 3. **A download** from `<base>/el8-vX.Y.Z/`, where `<base>` is `FSBPYR_RELEASE_DOWNLOADS` or
-   else `https://github.com/devitops-com/fsbpyr/releases/download`. `_published` reads
-   `SHA256SUMS-glibc2.28` and takes the line of the asset; `_download` unpacks
-   `<asset>.xz` as it arrives into a temporary file in `downloads/`, with the same 256 MB
-   limit, and compares the SHA-256 of the unpacked stub with the listed one: on a mismatch
-   nothing is kept. A stub that passes both checks is written to
+   else `https://github.com/devitops-com/fsbpyr/releases/download`. `_download` reads
+   `SHA256SUMS-glibc2.28`, checks its signature against the pinned keys before it uses a line,
+   downloads `<asset>.xz` and checks it against its line before lzma sees it, unpacks it into a
+   temporary file in `downloads/`, with the same 256 MB limit, and compares the SHA-256 of the
+   unpacked stub with the listed one: on a mismatch nothing is kept. A stub that passes both checks is written to
    `downloads/<asset>-<runtime id>` whole or not at all (`_keep`, a rename). A build with
    `--offline` never downloads: without a placed or cached stub it stops with `--offline: the
    <asset> is not placed or cached, and nothing is downloaded; place <asset> (or <asset>.xz)
@@ -656,13 +656,12 @@ sdist, which runs its build code; dependencies are out of scope as above.
   same file. Only checking from outside catches that: a release's provenance and SBOM
   attestations (checked with `gh attestation verify`), the installer (SHA-256 of each download
   and `fsbpyr inspect --verify`; `FSBPYR_VERIFY=1` adds the attestation) and a rebuild from the
-  tag compared byte for byte ([Verifying a release](../CONTRIBUTING.md#verifying-a-release)). No
-  signature checked with a key from outside the file exists at v@VERSION@.
+  tag compared byte for byte ([Verifying a release](../CONTRIBUTING.md#verifying-a-release)). And
+  a signature checked with a key from outside the file: see
+  [Signatures](#signatures).
 - **glibc 2.28 stubs** (D46). A downloaded stub is checked against the sums of its companion
-  release, which catches a damaged or swapped file but not a release whose stubs and sums were
-  both replaced; the attestations of
-  [`el8.yml`](../.github/workflows/el8.yml)
-  would, and fsbpyr does not check them. A stub placed beside the fsbpyr executable, or kept in
+  release, whose signature by a pinned key is checked first, so a release whose stubs and sums
+  were both replaced is refused too. A stub placed beside the fsbpyr executable, or kept in
   `downloads/` of its cache, is accepted on the runtime id it embeds, which anyone who can
   write the file can write too: whoever can write either directory can put code into every
   EL8 app built there. See [The glibc 2.28 stub](#the-glibc-228-stub).
@@ -707,3 +706,42 @@ sdist, which runs its build code; dependencies are out of scope as above.
 - [Dev-Performance](Dev-Performance.md): what the checks cost.
 - [User-Running](User-Running.md) and [User-Installing](User-Installing.md): the same checks from a
   user's side.
+
+## Signatures
+
+[`docs/signing.md`](../docs/signing.md) is the design, with what each choice rests on;
+[Signing](User-Signing.md) says how to use them. Ed25519 and ML-DSA-65, always both, sign a short
+statement holding a file's SHA-256 and its project.
+
+The crypto is in [`launcher/sig.c`](../src/fsbpyr/launcher/sig.c), on the OpenSSL every fsbpyr
+carries. Each call makes a library context of its own and loads no configuration into it, so
+openssl.cnf changes no result of a check, and each leaves the thread's error queue as it found it,
+since CPython's `_ssl` reads that queue. A public key file is taken only as the exact bytes OpenSSL
+writes for its two keys, and a key file only as two encrypted blocks with nothing around them:
+OpenSSL's readers alone take far more. [`signing.py`](../src/fsbpyr/signing.py) handles the rest.
+
+A name read from a file is not trusted: a forged executable can name anything, and its D31 digest
+passes, since the forger writes it. So a name from build info is checked before it is used or
+printed, is never normalized, and only a checked name is joined into a path.
+
+| Threat | Result |
+|---|---|
+| A file changed after signing | Stopped: its SHA-256 is signed |
+| A signature for project A presented as project B's | Stopped: the project is in the statement |
+| A genuine file of another trusted project, served under this app's name | Stopped with `verify --project`; without it, `verify` passes and prints the other project's name |
+| Another file of the same release, or an older release's file with its own sums file, served under an asset's name | Not stopped by `verify` through a sums file, whose line says what the file is listed as. `self update` checks the asset and the version |
+| A forged executable whose build info names a path or a terminal escape | Stopped: refused unprinted, never joined into a path |
+| A relative `XDG_CONFIG_HOME` that brings trusted keys in a download | Stopped: ignored, as a relative `HOME` is; a trust store another user can write is refused |
+| Ed25519 broken, or a flaw in the ML-DSA-65 code | Stopped: both must pass |
+| The first fsbpyr download tampered with | Not stopped: it is trusted as GitHub serves it |
+| A malicious mirror or TLS interception, for updates | Stopped, as far as `prepare`'s code cannot replace the run's artifacts after it ended, which nobody has tried; `publish` checks its files against the sums in any case |
+| Updates withheld, rollback of apps | Not stopped |
+| Rollback of fsbpyr through an update | Stopped: the version must be newer |
+| A malicious workflow file at a tag, or a key pushed to main by someone with write access | Not stopped: K signs what the admin tags. Write access is only for those the admin trusts as they trust themselves |
+| A poisoned build | Gets a signed release. K is never in a job that runs built code, and the sign job writes the sums again, so the built code in `prepare` cannot get digests of unpublished files signed |
+| A CI secret holding the wrong key | Stopped: the sign job checks against the pins of this release and of the previous published one |
+| Stolen K | Partly: R signs the key change; clients that do not update stay exposed |
+| The passphrase logged by code that runs during `build` | Stopped: the build's processes lack both variables in their environments |
+| The passphrase and the key file taken by code that runs during `build` and looks for them | Not stopped: sign in a separate job, on a machine or account the build never ran on |
+| fsbpyr's cache, or stubs placed beside fsbpyr, changed by someone who can write them | Not stopped: they can replace fsbpyr itself |
+| `OPENSSL_CONF`, `OPENSSL_MODULES` or `LD_PRELOAD` set by an attacker | Not stopped: they load code. A config that loads no code changes no check's result, but can choose the randomness of `key new` and `sign` |

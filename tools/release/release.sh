@@ -87,6 +87,15 @@ if gh release view "$TAG" >/dev/null 2>&1; then
     echo "ERROR: a GitHub release for $TAG already exists" >&2; exit 1
 fi
 
+# A release is signed, and the sign job refuses one that pins no keys: tagged, the version would
+# be burned. docs/signing.md §5.2 says how the keys are made and pinned.
+compgen -G 'src/fsbpyr/release-keys/*.pub' >/dev/null || {
+    echo "ERROR: src/fsbpyr/release-keys/ pins no release keys, and the sign job would refuse" \
+         "$TAG after its tag burned the version: make K and R and pin them first" \
+         "(docs/signing.md, One-time setup)" >&2
+    exit 1
+}
+
 # The release workflow publishes the version's section as the release notes; a change under
 # [Unreleased] is in the tagged commit but would be in no release's notes.
 bash tools/release/release-notes.sh "$VERSION" "$CHANGELOG" >/dev/null \

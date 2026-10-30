@@ -19,16 +19,19 @@
 #             the statement "fsbpyr-signature 1\nsubject fsbpyr\nsha256 <FILE's SHA-256>\n".
 #
 # The passphrase comes from FSBPYR_SIGNING_PASSPHRASE, or is asked for on the terminal, as typed
-# (spaces too). Nothing that exists is replaced. Needs OpenSSL 3.5 or newer and sha256sum. Exit
-# status: 0 done or VERIFIED, 1 NOT VERIFIED, 2 anything else (usage, setup, a failed step).
+# (spaces too), 1 to 1024 bytes. Nothing that exists is replaced. Needs OpenSSL 3.5 or newer and
+# sha256sum. Exit status: 0 done or VERIFIED, 1 NOT VERIFIED, 2 anything else (usage, setup, a
+# failed step).
 set -Eeuo pipefail
 trap 'exit 2' ERR  # a failed step is never 1, which says NOT VERIFIED
 umask 077
 export LC_ALL=C
+export OPENSSL_CONF=/dev/null  # a config can choose the ML-DSA key's format, and shrink the .key
 
 SUBJECT=fsbpyr
 ALGORITHMS=(ED25519 ML-DSA-65)
 SIG_SIZES=(64 3309)
+MAX_PASSPHRASE=1024
 
 die() { printf '%s\n' "$2" >&2; exit "$1"; }
 warn() { printf '%s\n' "$1" >&2; }
@@ -55,15 +58,18 @@ need_tools() {
 
 # passphrase new|old: FSBPYR_SIGNING_PASSPHRASE, or asked for on the terminal (twice for a new key).
 passphrase() {
-    [[ -z "${FSBPYR_SIGNING_PASSPHRASE-}" ]] || return 0
-    { : </dev/tty; } 2>/dev/null || die 2 'no passphrase: set FSBPYR_SIGNING_PASSPHRASE or run this on a terminal'
-    local again
-    IFS= read -rsp 'Passphrase: ' FSBPYR_SIGNING_PASSPHRASE </dev/tty; echo >&2
-    if [[ "$1" == new ]]; then
-        IFS= read -rsp 'Passphrase again: ' again </dev/tty; echo >&2
-        [[ "$again" == "$FSBPYR_SIGNING_PASSPHRASE" ]] || die 2 'the passphrases differ'
+    if [[ -z "${FSBPYR_SIGNING_PASSPHRASE-}" ]]; then
+        { : </dev/tty; } 2>/dev/null || die 2 'no passphrase: set FSBPYR_SIGNING_PASSPHRASE or run this on a terminal'
+        local again
+        IFS= read -rsp 'Passphrase: ' FSBPYR_SIGNING_PASSPHRASE </dev/tty; echo >&2
+        if [[ "$1" == new ]]; then
+            IFS= read -rsp 'Passphrase again: ' again </dev/tty; echo >&2
+            [[ "$again" == "$FSBPYR_SIGNING_PASSPHRASE" ]] || die 2 'the passphrases differ'
+        fi
     fi
     [[ -n "$FSBPYR_SIGNING_PASSPHRASE" ]] || die 2 'the passphrase is empty'
+    # OpenSSL's PEM reader takes no longer one, and says so only as a failure to read the key
+    ((${#FSBPYR_SIGNING_PASSPHRASE} <= MAX_PASSPHRASE)) || die 2 "the passphrase is longer than $MAX_PASSPHRASE bytes"
     export FSBPYR_SIGNING_PASSPHRASE
 }
 
@@ -73,6 +79,20 @@ fingerprint() { local digest; digest=$(sha256sum <"$1"); printf 'SHA256:%s\n' "$
 split_pem() {
     sed -n '1,/^-----END /p' "$1" >"$2"
     sed '1,/^-----END /d' "$1" >"$3"
+}
+
+# check_key KEY: exactly two encrypted blocks, each ending in an LF, with nothing before or between
+# them and only LFs after them; the last LF may be missing, as a key copied through a secret may
+# lose it. openssl's reader would take text around a block, and a block that is not encrypted.
+check_key() {
+    [[ "$(tr -d '\000\r' <"$1" | wc -c)" == "$(wc -c <"$1")" ]] || return 1
+    awk -v begin='-----BEGIN ENCRYPTED PRIVATE KEY-----' -v end='-----END ENCRYPTED PRIVATE KEY-----' '
+        state == 4 { if ($0 != "") bad = 1; next }
+        state == 0 || state == 2 { if ($0 != begin) bad = 1; state++; next }
+        $0 == end { state++; next }
+        !/^[A-Za-z0-9+\/=]+$/ { bad = 1 }
+        END { exit bad || state != 4 }
+    ' "$1"
 }
 
 # check_public PUB DIR: PUB holds exactly the two public keys, Ed25519 then ML-DSA-65, as openssl
@@ -110,11 +130,12 @@ verify_with() {
     done
 }
 
-# place TMP FINAL MODE: TMP gets the name FINAL, which must not exist.
+# place TMP FINAL MODE: TMP gets the name FINAL, which must not exist. -T: a directory that appears
+# there is refused, and the file does not go inside it.
 place() {
-    [[ ! -e "$2" && ! -L "$2" ]] || die 2 "$2 exists; nothing replaced"
+    [[ ! -e "$2" && ! -L "$2" ]] || { warn "$2 exists; nothing replaced"; return 1; }
     chmod "$3" "$1"
-    ln -- "$1" "$2" || die 2 "cannot write $2"
+    ln -T -- "$1" "$2" || { warn "cannot write $2"; return 1; }
 }
 
 new_key() {
@@ -135,8 +156,8 @@ new_key() {
         cat "$tmp/k.$i" >>"$tmp/key"
     done
     check_public "$tmp/pub" "$tmp" || exit 2
-    place "$tmp/key" "$name.key" 600
-    place "$tmp/pub" "$name.pub" 644
+    place "$tmp/key" "$name.key" 600 || exit 2
+    place "$tmp/pub" "$name.pub" 644 || { rm -f -- "$name.key"; exit 2; }
     printf 'wrote %s (keep it secret) and %s\nfingerprint %s\n' "$name.key" "$name.pub" "$(fingerprint "$name.pub")"
 }
 
@@ -145,8 +166,7 @@ sign() {
     [[ -f "$key" && -r "$key" ]] || die 2 "cannot read the key $key"
     [[ -f "$file" && -r "$file" ]] || die 2 "cannot read $file"
     [[ ! -e "$sig" && ! -L "$sig" ]] || die 2 "$sig exists; nothing replaced"
-    [[ "$(grep -c '^-----BEGIN ENCRYPTED PRIVATE KEY-----$' "$key")" == 2 ]] ||
-        die 2 "$key does not hold two encrypted keys"
+    check_key "$key" || die 2 "$key does not hold two encrypted keys and nothing else"
     passphrase old
     tmp=$(mktemp -d "$(dirname -- "$sig")/.release-signing.XXXXXXXX") || die 2 "cannot write beside $file"
     statement "$file" "$tmp/statement"
@@ -162,7 +182,7 @@ sign() {
     cat "$tmp/s.0" "$tmp/s.1" >"$tmp/sig"
     verify_with "$tmp/statement" "$tmp/sig" "$tmp/pub" "$tmp" ||
         die 2 'the new signature does not verify; nothing written'
-    place "$tmp/sig" "$sig" 644
+    place "$tmp/sig" "$sig" 644 || exit 2
     printf 'signed %s as %s with key %s\nwrote %s\n' "$file" "$SUBJECT" "$(fingerprint "$tmp/pub")" "$sig"
 }
 

@@ -2,6 +2,7 @@
 of a page, the import graphs the build draws, and how publishing treats the wikis' history.
 Building the PDFs needs pandoc and LuaLaTeX and is not tested here (make wiki-build)."""
 
+import hashlib
 import importlib.util
 import subprocess
 import sys
@@ -399,3 +400,15 @@ def test_a_tags_pages_over_pages_of_the_same_release_from_main_need_force(
                            force=False, origin="main at main2") is not None  # fmt: skip
     assert publish.prepare(target, _site(tmp_path, "# The home\n"), "v1.2.3", "tag1",
                            force=True) is not None  # fmt: skip
+
+
+def test_the_pinned_keys_are_the_ones_the_wiki_lists() -> None:
+    """A test key, or a key change without its wiki entry, fails here: the pins are only as safe
+    as main, and this is the check against mistakes (docs/signing.md §5.1)."""
+    text = (ROOT / "wiki" / "User-Installing.md").read_text(encoding="utf-8")
+    section = text.split("## Release keys\n", 1)[1].split("\n## ", 1)[0]
+    listed = section.split("```text\n", 1)[1].split("```", 1)[0].split()
+    pins = sorted((ROOT / "src" / "fsbpyr" / "release-keys").glob("*.pub"))
+
+    assert sorted(listed) == sorted(f"SHA256:{hashlib.sha256(pin.read_bytes()).hexdigest()}"
+                                    for pin in pins)  # fmt: skip

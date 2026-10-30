@@ -222,6 +222,8 @@ def test_every_example_is_a_command_line_fsbpyr_accepts(monkeypatch: pytest.Monk
 
 
 ENVIRONMENT_READS = re.compile(r'(?:getenv|environ\.get)\(b?"(FSBPYR_\w+)"')
+# read through constants and removed, so that ENVIRONMENT_READS does not find them
+SIGNING_VARIABLES = ("FSBPYR_SIGNING_KEY", "FSBPYR_SIGNING_PASSPHRASE")
 
 
 def _man_page(capsys: pytest.CaptureFixture[str]) -> str:
@@ -267,7 +269,7 @@ def test_man_page_documents_every_variable_the_sources_read(
 
     assert read >= {"FSBPYR_CACHE_DIR", "FSBPYR_GC", "FSBPYR_TRACE", "FSBPYR_IMPORTTIME",
                     "FSBPYR_SELFTEST"}  # fmt: skip
-    for name in read:
+    for name in {*read, *SIGNING_VARIABLES}:
         assert f"\\fB{name.replace('-', '\\-')}\\fR" in environment, name
 
 

@@ -63,6 +63,7 @@ TOOLS = {
     "bash": Tool(("bash",), "bash", "the completion and install.sh tests run it"),
     "openssl": Tool(("openssl",), "openssl", "install.sh's tests make their TLS certificate; "
                     "release-signing.sh's tests need its ML-DSA-65 (OpenSSL 3.5 or newer)"),
+    "jq": Tool(("jq",), "jq", "previous-release.sh reads GitHub's release list with it"),
     "ls": Tool(("ls",), "coreutils", "a host binary whose glibc requirement a test reads"),
 }
 

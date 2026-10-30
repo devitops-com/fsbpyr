@@ -52,12 +52,12 @@ def test_it_runs_on_the_release_tag_and_on_request_without_inputs_only() -> None
 def test_no_job_runs_anything_but_the_commit_that_started_the_run() -> None:
     """CodeQL: a workflow in the default branch's context that checks out another ref (the tag
     of a workflow_run, an input) is an untrusted checkout. Here the ref is the run's own."""
-    assert len(re.findall(r"uses: actions/checkout@", EL8)) == 7
+    assert len(re.findall(r"uses: actions/checkout@", EL8)) == 8
     assert not re.search(r"^\s+ref:", EL8, re.MULTILINE)
     assert "workflow_run" not in EL8 and "inputs." not in EL8
     published = 'gh release download "$COMPANION" --pattern SHA256SUMS'  # the idempotence check
     assert "gh release download" not in EL8.replace(published, "")
-    assert EL8.count("persist-credentials: false") == 7
+    assert EL8.count("persist-credentials: false") == 8
 
 
 def test_the_release_and_its_gate_know_nothing_of_it() -> None:
@@ -104,7 +104,7 @@ def test_the_plan_reads_the_default_python_of_the_tag() -> None:
     assert 'echo "python=" >> "$GITHUB_OUTPUT"' in plan  # no tag, no Python
     for name in ("portability", "vm-smoke"):  # the stub and the executable of the entry must exist
         assert "needs: [plan, stub, build]" in JOBS[name]
-    stubs = re.search(r"for python in ([0-9. ]+); do", JOBS["publish"])
+    stubs = re.search(r"for python in ([0-9. ]+); do", JOBS["prepare"])
     assert stubs and stubs.group(1).split() == [
         "{}.{}".format(*version) for version in sorted(SUPPORTED_PYTHON)]  # publish: all of them
 
@@ -114,7 +114,7 @@ def test_the_image_is_the_builds_by_digest() -> None:
     build = re.findall(r"debian:trixie@sha256:([0-9a-f]{64})",
                        (WORKFLOWS / "build.yml").read_text(encoding="utf-8"))  # fmt: skip
 
-    assert len(digests) == 4  # stub, build, tests and corpus
+    assert len(digests) == 5  # stub, build, tests, corpus and sign
     assert set(digests) == set(build) and len(set(build)) == 1
 
 
@@ -130,18 +130,21 @@ def test_every_action_is_pinned_by_commit_as_the_other_workflows_pin_it() -> Non
         assert others.get(action) == sha, action
 
 
-def test_only_publish_writes_and_it_needs_every_other_job() -> None:
-    assert re.findall(r"^ +permissions:", EL8, re.MULTILINE) == ["    permissions:"]
+def test_only_publish_writes_and_prepare_needs_every_other_job() -> None:
+    assert len(re.findall(r"^ +permissions:", EL8, re.MULTILINE)) == 3  # prepare, sign, publish
     assert "permissions:\n  contents: read\n" in EL8
     publish = JOBS["publish"]
     header = publish.split("    steps:", 1)[0]
+    prepare = JOBS["prepare"].split("    steps:", 1)[0]
 
     assert "      contents: write" in header
     assert "      id-token: write" in header and "      attestations: write" in header
     assert "actions:" not in header
-    assert re.search(r"needs: \[plan, stub, build, tests, portability, corpus, vm-smoke\]", header)
+    assert re.search(r"needs: \[plan, stub, build, tests, portability, corpus, vm-smoke\]", prepare)
+    assert "needs: [plan, prepare, sign]" in header
+    assert "      contents: read" in prepare and "write" not in prepare
     assert set(JOBS) - {"publish"} == {"plan", "stub", "build", "tests", "portability", "corpus",
-                                       "vm-smoke"}  # fmt: skip
+                                       "vm-smoke", "prepare", "sign"}  # fmt: skip
     assert "continue-on-error" not in EL8
     assert "checkout" not in publish  # it runs nothing of the tag's
 
@@ -213,11 +216,12 @@ def test_the_tag_is_the_ref_through_the_environment_and_is_a_version() -> None:
     assert '[ "$REF" != "refs/tags/$REF_NAME" ]' in plan  # a branch dispatch does nothing
     assert 'echo "tag=" >> "$GITHUB_OUTPUT"' in plan
     assert 'echo "python=" >> "$GITHUB_OUTPUT"' in plan
-    for job in ("stub", "build", "tests", "portability", "corpus", "vm-smoke", "publish"):
+    for job in ("stub", "build", "tests", "portability", "corpus", "vm-smoke", "prepare"):
         assert "if: needs.plan.outputs.tag != ''" in JOBS[job], job
-    for job in set(JOBS) - {"plan", "publish"}:
+    for job in set(JOBS) - {"plan", "sign", "publish"}:
         assert "${{ needs.plan.outputs.tag }}" not in JOBS[job], job
     assert "TAG: ${{ needs.plan.outputs.tag }}" in JOBS["publish"]
+    assert "TAG: ${{ needs.plan.outputs.tag }}" in JOBS["sign"]
 
 
 def test_publish_waits_for_the_release_of_the_tag() -> None:
@@ -303,6 +307,7 @@ class Publish:
         gh.chmod(0o755)
         (root / "dist").mkdir()
         (root / "dist" / SUMS).write_text(SUMS_TEXT, encoding="utf-8")
+        (root / "dist" / f"{SUMS}.sig").write_bytes(b"a signature")
         for name in STUBS:
             (root / "dist" / name).write_bytes(b"xz")
         (root / "out").write_text("", encoding="utf-8")
@@ -311,8 +316,9 @@ class Publish:
         sleep.chmod(0o755)
 
     def release(self, *, draft: bool, sums: str = SUMS_TEXT, assets: list[str] | None = None,
-                with_sums: bool = True) -> None:  # fmt: skip
-        names = [*([SUMS] if with_sums else []), *(STUBS if assets is None else assets)]
+                with_sums: bool = True, with_signature: bool = True) -> None:  # fmt: skip
+        names = [*([SUMS] if with_sums else []), *([f"{SUMS}.sig"] if with_signature else []),
+                 *(STUBS if assets is None else assets)]  # fmt: skip
         (self.state / "draft").write_text(f"{str(draft).lower()}\n", encoding="utf-8")
         (self.state / "assets").write_text("".join(f"{name}\n" for name in names), encoding="utf-8")
         (self.state / "sums").write_text(sums, encoding="utf-8")
@@ -322,7 +328,7 @@ class Publish:
                        "FAKE_STATE": str(self.state), "TAG": TAG, "COMPANION": COMPANION,
                        "GH_REPO": "devitops-com/fsbpyr", "GITHUB_SHA": "a" * 40,
                        "GITHUB_OUTPUT": str(self.root / "out"), "RUNNER_TEMP": str(self.root),
-                       **env}  # fmt: skip
+                       "SIGNED": "true", **env}  # fmt: skip
         bash = requires.tool("bash")
         return subprocess.run([bash, "-e", "-c", step_script(step)], cwd=self.root, env=environment,
                               capture_output=True, text=True, check=False)  # fmt: skip
@@ -408,8 +414,44 @@ def test_the_companion_is_created_as_a_draft_and_published_not_latest(publish: P
     assert create.startswith(f"release create {COMPANION} --verify-tag --draft --latest=false ")
     assert "--target" not in create  # the token cannot make the tag: make release pushed it
     assert f"--title EL8 stubs for {TAG}" in create
-    assert all(f"dist/{name}" in create for name in [*STUBS, SUMS])
+    assert all(f"dist/{name}" in create for name in [*STUBS, SUMS, f"{SUMS}.sig"])
     assert edit == f"release edit {COMPANION} --draft=false --latest=false"
+
+
+def test_in_a_recovery_publish_stops_at_a_draft_without_a_signature(publish: Publish) -> None:
+    """R signs by hand: the sums, once their attestation is checked, then the draft is published
+    with `gh release edit --draft=false --latest=false`."""
+    (publish.root / "dist" / f"{SUMS}.sig").unlink()
+
+    result = publish.run("Publish the companion release", SIGNED="false")
+
+    assert result.returncode == 0, result.stderr
+    assert len(publish.calls) == 1  # no `release edit`: it is not published
+    assert publish.calls[0].startswith(f"release create {COMPANION} --verify-tag --draft ")
+    assert f"{SUMS}.sig" not in publish.calls[0]
+
+
+def test_a_published_companion_without_a_signature_fails(publish: Publish) -> None:
+    """It cannot be repaired, and the stubs need a new version; before, it was "nothing to
+    publish", exit 0."""
+    publish.release(draft=False, with_signature=False)
+
+    result = publish.run("Is it published")
+
+    assert result.returncode == 1
+    assert "is published with other stubs" in result.stdout
+    assert not [call for call in publish.calls if "delete" in call or "create" in call]
+
+
+def test_in_a_recovery_a_draft_is_left_alone(publish: Publish) -> None:
+    """It may be the one that waits for R's signature, which a re-run must not delete."""
+    publish.release(draft=True, with_signature=False)
+
+    result = publish.run("Is it published", SIGNED="false")
+
+    assert result.returncode == 1
+    assert f"::error::{COMPANION} is a draft" in result.stdout
+    assert not [call for call in publish.calls if "delete" in call or "create" in call]
 
 
 def test_the_wait_goes_on_until_the_release_of_the_tag_is_published(publish: Publish) -> None:

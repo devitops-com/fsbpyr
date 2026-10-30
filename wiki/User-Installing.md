@@ -121,6 +121,9 @@ Then the file's own digest, which every start checks as well:
 ~/.local/bin/fsbpyr inspect --verify ~/.local/bin/fsbpyr
 ```
 
+With `SHA256SUMS` and `SHA256SUMS.sig` of the release beside the file, a fsbpyr you already have
+checks its signature ([Signing](User-Signing.md#checking-fsbpyrs-own-downloads)).
+
 A release can also be rebuilt from its tag and compared byte for byte: check (a) of
 [Verifying a release](../CONTRIBUTING.md#verifying-a-release);
 [Self-hosting](Dev-Self-Hosting.md#from-a-released-fsbpyr) shows it too.
@@ -131,13 +134,35 @@ A release can also be rebuilt from its tag and compared byte for byte: check (a)
 fsbpyr self update
 ```
 
-asks GitHub for the latest release and, when it is newer, downloads the same Python's build of
-it, checks it as `inspect --verify` does before anything runs it, and renames it over the
-running executable. It refuses a build that needs a newer glibc than this machine has, naming
+asks GitHub for the latest release and, when it is newer, checks its `SHA256SUMS` against the
+keys this fsbpyr pins, downloads the same Python's build of it, checks that `.xz` against its line
+before it is unpacked, checks that the result is the same asset and a newer version, checks it as
+`inspect --verify` does before anything runs it, and renames it over the running executable. A
+release that is not signed, or not by a pinned key, is refused, and nothing is changed; there is
+no fallback. It refuses a build that needs a newer glibc than this machine has, naming
 both versions, before anything is replaced. It never moves to another Python: run the installer
 with `--python` for that. The man page and completions that were installed under the same prefix are written again.
 A developer build (`fsbpyr --version` starts with `untagged`) refuses to update itself. The
 update does not check the attestation; `gh attestation verify` still does.
+
+The variants that a build fetches for another Python are checked the same way, with a version
+equal to this fsbpyr's, and so are the EL8 stubs. Files already in the cache are not checked
+again: whoever can write your fsbpyr cache can also replace fsbpyr itself.
+
+## Release keys
+
+fsbpyr pins the public keys that may sign a release. Their fingerprints:
+
+```text
+```
+
+A release that changes the keys is signed so that the fsbpyr before it can still update to it. A
+fsbpyr that skipped such a release refuses every later one, since it cannot tell a key change from
+a forgery: "release vX.Y.Z is not signed by a key this fsbpyr pins: either the release keys changed
+in a release this fsbpyr did not install, or the download is not genuine". Check here which keys
+changed, in which release, then update through that release, or reinstall.
+
+No key has changed yet.
 
 ## Versions
 

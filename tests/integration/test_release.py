@@ -217,6 +217,8 @@ def make_release_repo(
     (repo / "README.md").write_text("fsbpyr\n")
     (repo / ".gitignore").write_text("dist/\n")
     (repo / "CHANGELOG.md").write_text(changelog_text or promoted_changelog(PREPARED_DAY, version))
+    (repo / "src" / "fsbpyr" / "release-keys").mkdir(parents=True)
+    (repo / "src" / "fsbpyr" / "release-keys" / "k.pub").write_text("a pinned key\n")
     run_script(["git", "init", "-q", "--bare", "-b", "main", str(origin)], env)
     git(repo.parent, "init", "-q", "-b", "main", str(repo), env=env)
     git(repo, "add", ".", env=env)
@@ -310,6 +312,22 @@ def test_release_refuses_to_run_off_main(tmp_path: Path, release_env: dict[str, 
     assert "not on 'main' (currently on 'feature')" in result.stderr
     git(repo, "checkout", "-q", "main", env=release_env)
     assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
+
+
+def test_release_refuses_a_tree_that_pins_no_keys(
+    tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    """The sign job would refuse it after the tag burned the version."""
+    repo = make_release_repo(tmp_path, release_env)
+    git(repo, "rm", "-q", "-r", "src/fsbpyr/release-keys", env=release_env)
+    git(repo, "commit", "-q", "-m", "no keys", env=release_env)
+    git(repo, "push", "-q", "hub", "main", env=release_env)
+
+    result = run_script(["bash", str(repo / "tools" / "release" / "release.sh")], release_env,
+                        cwd=repo)  # fmt: skip
+
+    assert result.returncode == 1 and "pins no release keys" in result.stderr
+    assert git(repo, "tag", "--list", env=release_env) == ""
 
 
 def test_release_refuses_a_dirty_tree(tmp_path: Path, release_env: dict[str, str]) -> None:
@@ -1414,7 +1432,7 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
     workflow = "".join((ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
                        for name in ("build.yml", "release.yml"))  # fmt: skip
     jobs = _jobs()
-    build, publish = jobs["build"], jobs["publish"]
+    build, prepare, publish = jobs["build"], jobs["prepare"], jobs["publish"]
     assert "make bootstrap $MAKE_ARGS" in build
     assert 'echo "MAKE_ARGS=PYTHON=$MATRIX_PYTHON"' in build
     assert "xz $filter --lzma2=preset=9e --threads=1 --keep dist/fsbpyr$SUFFIX" in build
@@ -1437,19 +1455,20 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
     assert 'release_asset\\": \\"$ASSET\\"' in build  # each records its asset
     assert 'built="built/$ASSET"' in jobs["compare"]
     assert "pattern: built-*" in publish and "merge-multiple: true" in publish
-    assert "sha256sum fsbpyr* THIRD_PARTY_LICENSES*.txt install.sh > SHA256SUMS" in publish
+    assert "sha256sum fsbpyr* THIRD_PARTY_LICENSES*.txt install.sh > SHA256SUMS" in prepare
     assert "dist/fsbpyr*\n            dist/THIRD_PARTY_LICENSES*.txt" in publish  # attested
     assert "dist/fsbpyr* dist/THIRD_PARTY_LICENSES*.txt dist/install.sh dist/SHA256SUMS" in publish
     # install.sh is made from the downloaded assets before they are attested, and attested too
-    assert 'make-install.sh "${TAG#v}" dist dist/install.sh\n' in publish
-    assert publish.index("make-install.sh") < publish.index("attest-build-provenance")
+    assert 'make-install.sh "${TAG#v}" dist dist/install.sh\n' in prepare
+    assert "make-install.sh" not in publish  # built code runs in prepare, before publish
     assert "dist/THIRD_PARTY_LICENSES*.txt\n            dist/install.sh" in publish
 
 
 def _jobs() -> dict[str, str]:
-    """build.yml's build, reproduce and compare, and release.yml's sbom and publish."""
+    """build.yml's build, reproduce and compare, and release.yml's sbom, prepare and publish."""
     release = workflow_jobs("release.yml")
-    return workflow_jobs("build.yml") | {"sbom": release["sbom"], "publish": release["publish"]}
+    return workflow_jobs("build.yml") | {"sbom": release["sbom"], "prepare": release["prepare"],
+                                         "publish": release["publish"]}  # fmt: skip
 
 
 def test_build_and_reproduce_make_the_sbom_from_their_executable_and_compare_compares_them(
@@ -1487,7 +1506,8 @@ def test_each_sbom_is_attested_to_its_executable_by_a_pinned_action_and_publishe
     assert re.search(r"uses: actions/attest-sbom@[0-9a-f]{40} # v\d+\.\d+\.\d+\n", sbom)
     assert "subject-path: built/${{ env.ASSET }}\n" in sbom
     assert "sbom-path: built/${{ env.ASSET }}.cdx.json" in sbom
-    assert "needs: [build, sbom]" in publish  # nothing is released unattested
+    assert "needs: [build, sbom]" in jobs["prepare"]  # nothing is released unattested
+    assert "needs: [prepare, sign]" in publish
     assert "id-token: write" in publish  # still its own provenance
     assert "dist/fsbpyr*" in publish  # the SBOMs travel with the executables
     assert "actions/attest-sbom" in workflow and workflow.count("attest-sbom@") == 1
@@ -1713,7 +1733,7 @@ def test_make_runs_on_the_python_given_on_its_command_line_only() -> None:
     assert "bootstrap.sh --python 3.14" in dry_run("bootstrap", "PYTHON=3.14")
 
 
-def test_publish_job_makes_the_inspector_executable_before_building_install_sh() -> None:
+def test_prepare_job_makes_the_inspector_executable_before_building_install_sh() -> None:
     """download-artifact drops the executable bit, and make-install.sh runs the inspector."""
     workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     step = workflow.split("- name: Make install.sh", 1)[1].split("\n      # ", 1)[0]
@@ -1763,7 +1783,8 @@ def test_a_run_needs_every_job_to_pass_for_the_commit_to_be_released() -> None:
         for job, text in workflow_jobs(name).items():
             header = text.split("    steps:", 1)[0]
             assert "continue-on-error" not in header, (name, job)
-    assert "needs: [build, sbom]" in workflow_jobs("release.yml")["publish"]
+    assert "needs: [build, sbom]" in workflow_jobs("release.yml")["prepare"]
+    assert "needs: [prepare, sign]" in workflow_jobs("release.yml")["publish"]
     assert "needs: suite" in workflow_jobs("full-suite.yml")["portability"]
     gate = GREEN_RUN_SH.read_text(encoding="utf-8")
     assert "completed/success) ;;" in gate and "--jobs" not in gate
@@ -1951,19 +1972,9 @@ def test_the_release_check_refuses_a_companion_release_as_the_latest(
     assert "the latest release is el8-v1.2.3, not a version tag" in result.stderr
 
 
-def test_the_release_before_a_release_is_the_one_of_a_version_not_a_companion(
-        tmp_path: Path) -> None:  # fmt: skip
-    """A companion has its release's commit, so its date: the list has it right beside its
-    release, as it had el8-v0.26.0 beside v0.26.0."""
+def test_the_release_before_a_release_is_looked_up_as_the_sign_job_looks_it_up() -> None:
+    """tests/integration/test_release_signing.py tests the lookup. `gh release list` is ordered by
+    createdAt, which does not follow the version."""
     script = CHECK_RELEASE_SH.read_text(encoding="utf-8")
-    match = re.search(r'^previous="\$\(gh release list .*?\)"$', script, re.MULTILINE | re.DOTALL)
-    assert match, "the previous-release lookup is gone"
-    write_program(tmp_path / "gh", "printf '%s\\n' el8-v0.3.0 v0.3.0 v0.2.0 el8-v0.2.0 v0.1.0\n")
-    bash = requires.tool("bash")
 
-    result = subprocess.run([bash, "-c", f'{match.group(0)}\necho "$previous"'],
-                            env={"PATH": f"{tmp_path}:/usr/bin:/bin", "TAG": "v0.2.0",
-                                 "REPO": "x/y"},
-                            capture_output=True, text=True, check=True)  # fmt: skip
-
-    assert result.stdout.split() == ["v0.1.0"]
+    assert "previous-release.sh" in script and "gh release list" not in script

@@ -323,6 +323,7 @@ script that is not Python (a shell script) is not packaged, and the build warns,
 
 | Option | `[tool.fsbpyr]` key | What it does |
 |---|---|---|
+| `--signing-key KEY` | — | sign the output with this `.key` file after the smoke test, writing `OUTPUT.sig` (default: `FSBPYR_SIGNING_KEY`, else unsigned); a key that cannot be used gives a warning and an unsigned build ([Signing](User-Signing.md)) |
 | `--python X.Y` | `python` | the Python to build for, 3.12 to 3.15, inside `requires-python` ([above](#which-python)) |
 | `--glibc X.Y` | `glibc` | the glibc the app is built for: `2.34` (the default) or `2.28`, for EL8 hosts ([below](#building-for-el8-glibc-228)) |
 | `--entry NAME` | `entry` | a console script name, `module` or `module:function` (default: the only script, else all of them as one executable, else the inferred `__main__` package or guarded module) |
