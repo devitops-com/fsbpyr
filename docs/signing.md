@@ -1,7 +1,8 @@
 # Signed fsbpyr releases and signed apps: concept
 
 Status: implemented, 2026-10-30, on branch `signing-openssl`, as §14 says; no real release keys are
-pinned yet (§5.2), so nothing can be released until the admin makes them. The concept was written
+pinned yet (§5.2), so nothing can be released until the admin makes them. The release path was
+rehearsed on GitHub in a test repository (§14). The concept was written
 on 2026-10-29 at fadc3d9, revised the same day after an independent review, and on 2026-10-30 after
 a test round of every open gap (§11.1). It replaces the earlier concept on branch `signing-concept`
 (SSHSIG signatures embedded in the executable), which is dropped.
@@ -979,27 +980,11 @@ The results are in the sections they changed. The suite runs as a normal user
 
 None of these was run. Those marked [A] where the text states them rest on inference. The others
 were read in docs or source, or are steps no run has tried yet; a run could still contradict them.
-- **The environment's tag rule** (§5.2) refuses a run on a branch named `v…`, pushed or
-  dispatched (`gh workflow run el8.yml --ref v1`). A test repository with a tag rule `v*` and a
-  branch `v1` answers it.
-- **`gh secret set`** reads K from standard input and asks for the passphrase (§5.2).
-- **The secret returns K's bytes** (§5.3 step 4, §6 step 3): no CR and nothing before the first
-  block. A lost or an extra final LF passes §2.3's rule; the script today takes both and refuses
-  a CRLF key file (measured).
-- **A job step has no terminal**, and an unset secret expands to an empty string. Then the
-  script exits 2 on /dev/tty and the release stops (measured with podman without `-t`).
 - **The write role** (§5.2, §5.4, §8), from GitHub's docs, with no second account to try it: it
   sets `FSBPYR_RECOVERY`, publishes a draft, and may release on an existing `v*` tag (§5.2). A
-  `.sig` cannot be added after publication.
 - **RepositoryRole 5** is the admin role (§5.2): the API shows only the id.
 - **Run artifacts**: whether `prepare`'s code can use the artifact token after `prepare` ended
   (§5.3, §8), and that anyone can download a public repository's run artifacts.
-- **The workflows on GitHub**: the sign job in the pinned image, and `publish`'s condition
-  (§5.3). §11.3 reads the files and runs steps' shell only.
-- **A planned change of K and a recovery**, end to end, on a test repository (§5.4).
-- **aarch64 hardware**: the C ran under qemu-user only (§4), and a real CPU may take other code
-  paths. The suite's aarch64 jobs run on `ubuntu-24.04-arm` runners (full-suite.yml:67), taken
-  to be arm64 machines; then the probe covers it.
 - **Yama scope 1** does not guard /proc/PID/environ (§3.1): read in the kernel source.
 - **A typed passphrase is encoded with `os.fsencode`** (§2.3).
 - **A CPU with a broken RDRAND**, under the rdrand engine (§4): keys and ML-DSA signatures would
@@ -1009,6 +994,10 @@ were read in docs or source, or are steps no run has tried yet; a run could stil
 - **Today's stubs hold the ML-DSA, PBES2 and PEM code** because `_ssl` and `_hashlib` pull it in.
 - **§5.5's paths check after the response is read and closed**, clear of §4's error-queue case.
 - **uv refuses a Name outside PEP 508**, so honest builds record only names of §2.1's form.
+
+The rehearsal of §14 settled what this list held about the environment's tag rule, `gh secret set`,
+K's bytes, a job step's terminal, a `.sig` after publication, the workflows on GitHub, a planned
+change of K and a recovery; and the full suite settled aarch64 hardware.
 
 ### 11.3 Tests the implementation adds
 
@@ -1456,6 +1445,34 @@ All of §12, on branch `signing-openssl`. What differs from the text above, or a
 - **Fault injection.** `EVP_DigestVerify` is wrapped in the probe to return what no input can make
   it return, which is the only way to test that a negative result is no pass.
 
-Not run, as §11.2 says: everything on GitHub itself. The workflows are read and their steps' shell
-run by the tests, but no release has gone through them, and the environment's rule, K's secret and
-a planned change of K are the admin's to try on a test repository first.
+### The rehearsal, 2026-10-30
+
+The release path ran on GitHub in a test repository, devitops-com/fsbpyr-signing-test, with
+immutable releases on, throwaway keys and fake assets: `prepare`, `sign` and `publish` of both
+workflows as they are here, with only what builds and tests replaced, and `FSBPYR_RELEASES_API` set
+in the check of the clients. What it showed:
+
+- **The tag rule.** A job of the environment on `main`, and on a branch named `v1`, stopped with
+  "Branch … is not allowed to deploy to release-signing"; on the tag it ran. So a rule `v*` of type
+  tag does not match a branch of that name.
+- **Secrets.** `gh secret set` took K from standard input and the passphrase from a pipe. The secret
+  returned K without its last LF (6087 bytes, the digest of the file without it), which §2.3 allows.
+- **The first signed release** passed against its own pins alone, in the pinned image: 35 assets
+  with `SHA256SUMS.sig`, the attestation of `SHA256SUMS` from the tag, and a companion with its
+  `.sig` and `--latest=false`.
+- **A planned change of K** took v0.3.0 signed by old K with three pins, then v0.4.0 signed by new K.
+- **A wrong key in the secret** signed, and the check of the clients stopped the job; **a failed
+  build and an unset secret** also published nothing, and the tag was burned.
+- **A recovery**: `FSBPYR_RECOVERY=1` skipped `sign` and left drafts, the draft's sums had the tag
+  run's attestation, R's signature passed both sets of pins, and both were published by hand. The
+  next release was signed by the new K.
+- **A `.sig` after publication** is refused: HTTP 422, "Cannot upload assets to an immutable release".
+- **A built fsbpyr** with the throwaway keys pinned took the signature of GitHub's sign job, and
+  refused a changed file and sums signed by a key it does not pin.
+- **A re-run after a change of K** (`gh workflow run el8.yml --ref v0.2.0`, with a K that tag does
+  not pin) failed in `sign`, NOT VERIFIED, and published nothing, as §5.3 says.
+- **`attest-build-provenance` failed once**, in `publish` after `sign`: "error fetching tlog entry
+  - (404) Not Found", during a degradation of GitHub's service. Nothing was published. In release.yml
+  the same failure would burn the version, as it can today.
+
+Not rehearsed: `make release-check`, whose repository is fixed; anything of the write role (§11.2).
