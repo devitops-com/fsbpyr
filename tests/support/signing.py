@@ -11,6 +11,7 @@ import hashlib
 import os
 import pty
 import select
+import signal
 import struct
 import subprocess
 import termios
@@ -124,6 +125,8 @@ def on_a_terminal(
     def own_terminal() -> None:
         os.setsid()
         fcntl.ioctl(secondary, termios.TIOCSCTTY, 0)
+        # a run started in the background has SIGINT ignored, and a child inherits that
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     process = subprocess.Popen([str(part) for part in command], stdin=secondary, stdout=secondary,
                                stderr=secondary, env=env, preexec_fn=own_terminal)  # noqa: PLW1509
