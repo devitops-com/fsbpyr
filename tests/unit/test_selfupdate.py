@@ -840,10 +840,24 @@ def test_a_release_document_too_large_is_refused(
     github: FakeGitHub, installed: Path, capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A valid one, so that only its size refuses it."""
     monkeypatch.setattr(selfupdate, "_MAX_DOCUMENT", 1000)
-    monkeypatch.setattr(github, "answer", lambda path: (200, b'"' + b"x" * 5000 + b'"'))
+    body = json.dumps({"tag_name": "v9.9.9", "assets": [], "padding": "x" * 5000}).encode()
+    monkeypatch.setattr(github, "answer", lambda path: (200, body))
 
-    assert "cannot read the latest release" in _refused(installed, capsys)
+    assert "larger than 1000 bytes" in _refused(installed, capsys)
+
+
+@pytest.mark.parametrize("url", ["file:///dev/stdin", "ftp://example.invalid/x", "data:,x"])
+def test_only_http_and_https_reach_urllib(url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refused or not, what fails later says nothing of this: urllib must not open it at all."""
+    opened: list[object] = []
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: opened.append(args))
+
+    with pytest.raises(selfupdate.UpdateError, match="no http or https URL"):
+        selfupdate.download_bytes(url, 100)
+
+    assert opened == []
 
 
 def test_text_from_the_network_cannot_rewrite_the_terminal(
