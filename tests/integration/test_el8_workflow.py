@@ -5,6 +5,7 @@ or runs anything but the commit that started the run), and run the shell of the 
 against a fake `gh`."""
 
 import fnmatch
+import hashlib
 import os
 import re
 import subprocess
@@ -429,6 +430,43 @@ def test_in_a_recovery_publish_stops_at_a_draft_without_a_signature(publish: Pub
     assert len(publish.calls) == 1  # no `release edit`: it is not published
     assert publish.calls[0].startswith(f"release create {COMPANION} --verify-tag --draft ")
     assert f"{SUMS}.sig" not in publish.calls[0]
+
+
+def _stubs_for_the_check(publish: Publish) -> str:
+    """stubs/ as publish downloads it, with sums that list each file in it."""
+    stubs = publish.root / "stubs"
+    stubs.mkdir()
+    lines = []
+    for name in STUBS:
+        (stubs / name).write_bytes(b"an xz")
+        lines.append(f"{hashlib.sha256(b'an xz').hexdigest()}  {name}\n")
+    (publish.root / "dist" / SUMS).write_text("".join(lines), encoding="utf-8")
+    return "Check the stubs against the sums"
+
+
+def test_stubs_that_match_their_sums_go_on(publish: Publish) -> None:
+    step = _stubs_for_the_check(publish)
+
+    result = publish.run(step)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert all((publish.root / "dist" / name).is_file() for name in STUBS)
+
+
+def test_a_stub_that_does_not_match_its_line_stops_publish(publish: Publish) -> None:
+    step = _stubs_for_the_check(publish)
+    (publish.root / "stubs" / STUBS[0]).write_bytes(b"another")
+
+    assert publish.run(step).returncode != 0
+
+
+def test_a_file_too_many_among_the_stubs_stops_publish(publish: Publish) -> None:
+    step = _stubs_for_the_check(publish)
+    (publish.root / "stubs" / "fsbpyr-stub-evil.xz").write_bytes(b"not listed")
+
+    result = publish.run(step)
+
+    assert result.returncode == 1 and "exactly the files the sums list" in result.stdout
 
 
 def test_a_published_companion_without_a_signature_fails(publish: Publish) -> None:

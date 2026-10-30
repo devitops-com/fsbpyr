@@ -89,7 +89,7 @@ fi
 
 # A release is signed, and the sign job refuses one that pins no keys: tagged, the version would
 # be burned. docs/signing.md §5.2 says how the keys are made and pinned.
-compgen -G 'src/fsbpyr/release-keys/*.pub' >/dev/null || {
+git ls-tree -r --name-only HEAD -- src/fsbpyr/release-keys/ | grep '\.pub$' >/dev/null || {
     echo "ERROR: src/fsbpyr/release-keys/ pins no release keys, and the sign job would refuse" \
          "$TAG after its tag burned the version: make K and R and pin them first" \
          "(docs/signing.md, One-time setup)" >&2

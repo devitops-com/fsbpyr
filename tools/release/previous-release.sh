@@ -29,7 +29,8 @@ page=1
 while :; do
     body=$(curl -fsSL "${headers[@]}" "$API?per_page=$PER_PAGE&page=$page") ||
         { echo "ERROR: cannot read page $page of the release list" >&2; exit 2; }
-    listed=$(jq -r 'length' <<<"$body") ||
+    listed=$(jq -er 'if type == "array" then length else error end' <<<"$body" 2>/dev/null) &&
+        [[ "$listed" =~ ^[0-9]+$ ]] ||
         { echo "ERROR: page $page of the release list is no JSON list" >&2; exit 2; }
     names+=$(jq -r '.[] | select(.draft == false and .prerelease == false) | .tag_name' <<<"$body")$'\n'
     ((listed == PER_PAGE)) || break

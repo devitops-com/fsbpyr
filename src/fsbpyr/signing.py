@@ -21,7 +21,7 @@ import stat
 import tempfile
 import termios
 from collections.abc import Iterable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -45,6 +45,9 @@ _MAX_SUMS = 16 << 20
 _NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _FINGERPRINT = re.compile(r"SHA256:([0-9a-fA-F]{64})")
 _SHA256_HEX = 64
+_NAME_AT = _SHA256_HEX + 2
+_SEPARATORS = ("  ", " *")
+_DIGEST = re.compile(r"[0-9a-fA-F]{64}")
 _PUBLIC_MODE = 0o644
 _PRIVATE_MODE = 0o600
 _NO_PASSPHRASE = f"no passphrase: set {PASSPHRASE_VARIABLE} or run this on a terminal"
@@ -264,11 +267,15 @@ def _read_signature(path: Path, label: str) -> bytes | None:
 
 
 def sums_lines(text: str) -> Iterator[tuple[str, str]]:
-    """(lowercase digest, name) of each line of a checksums file as `sha256sum` writes it."""
-    for line in text.splitlines():
-        digest, _, name = line.partition(" ")
-        if len(digest) == _SHA256_HEX:
-            yield digest.lower(), name.lstrip(" *")
+    """(lowercase digest, name) of each line of a checksums file as `sha256sum` writes it: the
+    digest, a space, a space or the binary marker, the name. A name stays exactly what follows, and
+    only LF ends a line: str.splitlines also cuts at U+2028 and others, which sha256sum leaves as
+    they are in a name, so that a file's name could add a line, with the digest of its choice, to
+    a sums file someone signs."""
+    for line in text.split("\n"):
+        digest, separator, name = line[:_SHA256_HEX], line[_SHA256_HEX:_NAME_AT], line[_NAME_AT:]
+        if name and separator in _SEPARATORS and _DIGEST.fullmatch(digest):
+            yield digest.lower(), name
 
 
 def listed_names(text: str, digest: str) -> tuple[str, ...]:
@@ -435,6 +442,8 @@ def _place(content: bytes, final: Path, mode: int) -> None:
 def key_new(name: Path, given: bytes | None = None) -> str:
     """NAME.key and NAME.pub (§2.3); the fingerprint. Nothing that exists is replaced."""
     crypto()
+    if not name.name:
+        raise SigningError(f"{shown(name)} names no file")
     key, pub = name.with_name(f"{name.name}.key"), name.with_name(f"{name.name}.pub")
     for path in (key, pub):
         if os.path.lexists(path):
@@ -585,7 +594,7 @@ class BuildSigning:
 
     key: Path | None = None
     key_variable: bytes | None = None
-    passphrase: bytes | None = None
+    passphrase: bytes | None = field(default=None, repr=False)
 
     @property
     def wanted(self) -> bool:

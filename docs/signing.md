@@ -741,7 +741,7 @@ All of them run in C, against the pinned keys, with subject `fsbpyr`.
      before lzma sees it. Today the `.xz` streams into lzma (selfupdate.py:152), so this is a
      restructure.
   3. Unpack it. The build info's `release_asset` must equal its own, and the version must be newer
-     than its own.
+     than its own and the tag's.
   4. Continue as today: `inspect --verify`, then the rename. `inspect --verify` stays the D31
      check and does not change: the signature covers `SHA256SUMS`, not the executable.
 
@@ -1432,6 +1432,19 @@ All of §12, on branch `signing-openssl`. What differs from the text above, or a
   Nothing else differs, and K is still in no step but `Sign`.
 - **Both the `prepare` and `sign` sums are written with `LC_ALL=C`**, so the globs sort alike on
   the runner and in the image.
+- **`publish` writes the sums again and compares**, rather than `sha256sum -c`, so that a file too
+  many stops it as well: the steps after it take what the globs find. el8.yml's `publish` checks
+  its stubs too, and the sign job checks that the build's files are exactly the expected assets,
+  since `pattern: built-*` takes any artifact of the run of such a name.
+- **A label is not trusted either.** `_sign` refuses a block that never asked for the passphrase,
+  which a plain key under the label of an encrypted one does not, and the script checks for PBES2.
+- **`self update` also requires the version of the tag it asked for**, or the message would name a
+  release that was not installed. It gives no freshness: the release document is not signed.
+- **Sums files are split at LF alone**, with one marker before the name, since `str.splitlines`
+  also cuts at characters that `sha256sum` leaves as they are in a name, which would let a file's
+  name add a line to a sums file someone signs. §3 says they are read as stubs.py read them.
+- **Download URLs are http or https**, with limits on the release document, whose text reaches the
+  terminal through `shown`.
 - **`verify` and `sign` follow links alike**: `sign` writes beside the file a link leads to, where
   `verify` looks.
 - **A dispatched build is tested as a subprocess**, the fsbpyr that dispatches built from the same

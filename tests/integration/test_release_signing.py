@@ -5,6 +5,7 @@ would not stop root. Passphrases are typed on a pty.
 
 What fsbpyr reads from these files is in tests/e2e/test_signing.py."""
 
+import base64
 import json
 import os
 import shutil
@@ -75,6 +76,13 @@ def blocks(key: Path) -> tuple[str, str]:
 
 def plain_block(algorithm: str) -> str:
     return run_openssl("genpkey", "-algorithm", algorithm).decode()
+
+
+def mislabeled(algorithm: str) -> str:
+    """A key that is not encrypted, under the label of one."""
+    text = base64.b64encode(run_openssl("genpkey", "-algorithm", algorithm, "-outform", "DER"))
+    lines = [text[at:at + 64].decode() for at in range(0, len(text), 64)]
+    return BEGIN + "\n".join(lines) + "\n" + END
 
 
 def encrypted(algorithm: str, passphrase: str = PASSPHRASE) -> str:
@@ -166,6 +174,8 @@ def test_a_key_copied_through_a_secret_may_lose_or_gain_lfs(
 
 BAD_KEYS: dict[str, Callable[[str, str], str]] = {
     "both unencrypted": lambda _, __: plain_block("ED25519") + plain_block("ML-DSA-65"),
+    "plain keys under the label": lambda _, __: mislabeled("ED25519") + mislabeled("ML-DSA-65"),
+    "a plain second key under the label": lambda ed, _: ed + mislabeled("ML-DSA-65"),
     "the second unencrypted": lambda ed, _: ed + plain_block("ML-DSA-65"),
     "three encrypted": lambda ed, ml: ed + ml + ed,
     "a third block unencrypted": lambda ed, ml: ed + ml + plain_block("ML-DSA-65"),
@@ -471,6 +481,29 @@ def test_a_usage_error_is_exit_2(arguments: tuple[str, ...]) -> None:
     assert script(*arguments).returncode == 2
 
 
+def test_a_name_like_an_option_is_a_name(tmp_path: Path, k: Key) -> None:
+    """A verdict on `-f` that came from `head`'s usage message would be no verdict."""
+    file = tmp_path / "-f"
+    file.write_text("a file\n")
+
+    signed = script("sign", k.key, "-f", cwd=tmp_path)
+    checked = script("verify", "-f", k.pub, cwd=tmp_path)
+
+    assert signed.returncode == 0, signed.stderr
+    assert checked.returncode == 0, checked.stderr
+
+
+def test_the_pinned_keys_are_public_key_files(tmp_path: Path) -> None:
+    """A file that is no key passes the guard of `make release`, and stops the sign job after the
+    tag has burned the version."""
+    file = tmp_path / "file"
+    file.write_text("x\n")
+    Path(f"{file}.sig").write_bytes(bytes(SIGNATURE_SIZE))
+
+    for pin in sorted((ROOT / "src" / "fsbpyr" / "release-keys").glob("*.pub")):
+        assert script("verify", file, pin).returncode == 1, pin  # not 2: no usable key
+
+
 def test_no_temporary_directory_is_left(file: Path, k: Key) -> None:
     sign(k.key, file)
     script("verify", file, k.pub)
@@ -574,10 +607,15 @@ def test_a_failed_call_stops_it(tmp_path: Path) -> None:
     assert done.returncode == 2 and done.stdout == ""
 
 
-def test_a_page_that_is_no_list_stops_it(tmp_path: Path) -> None:
+@pytest.mark.parametrize("body", [
+    '{"message": "API rate limit exceeded"}', "", "null", "7", '"text"', "not json",
+    "[" + ",".join(['{"tag_name": "v9.0.0", "draft": false, "prerelease": false}'] * 100) + "]\n[]",
+], ids=["an object", "empty", "null", "a number", "a string", "no JSON", "two documents"])
+def test_a_page_that_is_no_list_stops_it(tmp_path: Path, body: str) -> None:
+    """A list cut short must not read as the last page: an older release's pins would be used."""
     served = tmp_path / "pages"
     served.mkdir()
-    (served / "1").write_text('{"message": "API rate limit exceeded"}')
+    (served / "1").write_text(body)
     fake(tmp_path / "bin", "curl", f'exec cat "{served}/1"\n')
 
     done = subprocess.run([requires.tool("bash"), PREVIOUS, "v0.3.0"], capture_output=True,

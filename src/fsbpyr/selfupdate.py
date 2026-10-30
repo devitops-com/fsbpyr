@@ -51,6 +51,7 @@ _TIMEOUT_S = 60
 _CHUNK = 1 << 20
 _MAX_PACKED = 256 << 20  # an asset's .xz has a few MB; a larger one is no asset of a release
 _MAX_SUMS = 1 << 20
+_MAX_DOCUMENT = 4 << 20  # a release document has some 100 KB
 _RELEASE = re.compile(r"v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 _ACCEPT = {"Accept": "application/vnd.github+json", "User-Agent": "fsbpyr-self-update"}
 
@@ -132,17 +133,33 @@ def own_asset() -> str:
     return release_asset(_running_python(), host_target().name)
 
 
+def _open(url: str) -> http.client.HTTPResponse:
+    """``url``, which a release document or a mirror may have chosen: http or https alone. urllib
+    takes file: and ftp: as well, and its timeout does not hold there: /dev/stdin blocks."""
+    if not url.startswith(("https://", "http://")):
+        raise ValueError(f"{shown(url)} is no http or https URL")
+    request = urllib.request.Request(url, headers=_ACCEPT)  # noqa: S310  checked above
+    response: http.client.HTTPResponse = urllib.request.urlopen(request, timeout=_TIMEOUT_S)  # noqa: S310
+    return response
+
+
 def latest_release(asset: str) -> Release:
-    """The latest release and the URL of its ``asset``.xz."""
+    """The latest release and the URL of its ``asset``.xz. Nothing in this document is trusted:
+    it says where to look, and what is found there is checked."""
     api = os.environ.get(API_VARIABLE) or DEFAULT_API
     try:
-        request = urllib.request.Request(api, headers=_ACCEPT)  # noqa: S310  https, or a test's
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
-            document = json.load(response)
+        with _open(api) as response:
+            body = response.read(_MAX_DOCUMENT + 1)
+        if len(body) > _MAX_DOCUMENT:
+            raise ValueError(f"it is larger than {_MAX_DOCUMENT} bytes")
+        document = json.loads(body)
         tag = document["tag_name"]
-        assets = {a["name"]: a["browser_download_url"] for a in document["assets"]}
-    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as exc:
-        raise UpdateError(f"cannot read the latest release from {api}: {exc}") from exc
+        assets = {a["name"]: a["browser_download_url"] for a in document["assets"]
+                  if isinstance(a["browser_download_url"], str)}  # fmt: skip
+    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError,
+            RecursionError) as exc:  # fmt: skip
+        raise UpdateError(f"cannot read the latest release from {shown(api)}: {shown(exc)}"
+                          ) from exc
     numbers = release_numbers(tag) if isinstance(tag, str) else None
     if numbers is None:
         raise UpdateError(f"the latest release has no vX.Y.Z tag ({tag!r})")
@@ -156,7 +173,7 @@ def latest_release(asset: str) -> Release:
 
 def _failed(url: str, exc: Exception) -> UpdateError:
     missing = isinstance(exc, urllib.error.HTTPError) and exc.code == 404
-    return (NotFound if missing else UpdateError)(f"downloading {url} failed: {exc}")
+    return (NotFound if missing else UpdateError)(f"downloading {shown(url)} failed: {shown(exc)}")
 
 
 def download_bytes(url: str, limit: int) -> bytes:
@@ -164,13 +181,12 @@ def download_bytes(url: str, limit: int) -> bytes:
     is closed when this returns: a failed check must not sit between urlopen() and read(), where
     OpenSSL's error queue would reach _ssl (docs/signing.md §4)."""
     try:
-        request = urllib.request.Request(url, headers=_ACCEPT)  # noqa: S310  the release's URL
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
+        with _open(url) as response:
             body: bytes = response.read(limit + 1)
-    except (OSError, http.client.HTTPException) as exc:
+    except (OSError, http.client.HTTPException, ValueError) as exc:
         raise _failed(url, exc) from exc
     if len(body) > limit:
-        raise UpdateError(f"{url} is larger than {limit} bytes")
+        raise UpdateError(f"{shown(url)} is larger than {limit} bytes")
     return body
 
 
@@ -184,7 +200,11 @@ def signed_sums(url: str, signature_url: str | None, tag: str) -> bytes:
         signature = download_bytes(signature_url, signing.SIGNATURE_SIZE + 1)
     except NotFound:
         raise UpdateError(f"release {tag} is not signed; nothing was changed") from None
-    if not signing.check_release_file(sums, signature):
+    try:
+        passed = signing.check_release_file(sums, signature)
+    except signing.SigningError as exc:  # a pin this fsbpyr carries is damaged: nothing passes
+        raise UpdateError(str(exc)) from exc
+    if not passed:
         raise UpdateError(signing.not_pinned_message(tag))
     return sums
 
@@ -200,13 +220,12 @@ def listed_digest(sums: bytes, name: str, tag: str) -> str:
 def _download(url: str, out: BinaryIO) -> None:
     """``url`` into the file ``out``, of at most _MAX_PACKED bytes."""
     try:
-        request = urllib.request.Request(url, headers=_ACCEPT)  # noqa: S310  the release's URL
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
+        with _open(url) as response:
             while chunk := response.read(_CHUNK):
                 out.write(chunk)
                 if out.tell() > _MAX_PACKED:
-                    raise UpdateError(f"{url} is larger than {_MAX_PACKED} bytes")
-    except (OSError, http.client.HTTPException) as exc:
+                    raise UpdateError(f"{shown(url)} is larger than {_MAX_PACKED} bytes")
+    except (OSError, http.client.HTTPException, ValueError) as exc:
         raise _failed(url, exc) from exc
 
 
@@ -218,11 +237,11 @@ def _unpack(packed: BinaryIO, url: str, target: Path, limit: int | None) -> None
             while chunk := packed.read(_CHUNK):
                 out.write(decoder.decompress(chunk))
                 if limit is not None and out.tell() > limit:
-                    raise UpdateError(f"{url} unpacks to more than {limit} bytes")
+                    raise UpdateError(f"{shown(url)} unpacks to more than {limit} bytes")
     except (OSError, lzma.LZMAError, EOFError) as exc:
-        raise UpdateError(f"unpacking {url} failed: {exc}") from exc
+        raise UpdateError(f"unpacking {shown(url)} failed: {exc}") from exc
     if not decoder.eof:
-        raise UpdateError(f"{url} ended before the end of its xz stream")
+        raise UpdateError(f"{shown(url)} ended before the end of its xz stream")
 
 
 def fetch_checked(url: str, digest: str, target: Path, limit: int | None = None) -> None:
@@ -233,8 +252,8 @@ def fetch_checked(url: str, digest: str, target: Path, limit: int | None = None)
         packed.flush()
         got = signing.crypto()._sha256(packed.fileno()).hex()
         if got != digest:
-            raise UpdateError(f"{url} does not match the checksum of its release; nothing was "
-                              "changed")  # fmt: skip
+            raise UpdateError(f"{shown(url)} does not match the checksum of its release; nothing "
+                              "was changed")  # fmt: skip
         packed.seek(0)
         _unpack(packed, url, target, limit)
 
@@ -374,9 +393,12 @@ def update(
         except InspectError as exc:
             raise UpdateError(f"the download failed verification, nothing was changed: {exc}"
                               ) from exc
-        if check_release_identity(report.info, asset) <= own:
+        numbers = check_release_identity(report.info, asset)
+        if numbers <= own:
             raise UpdateError(f"the download is not newer than this fsbpyr ({own_version()}); "
                               "nothing was changed")  # fmt: skip
+        if numbers != release.numbers:
+            raise UpdateError(f"the download is not fsbpyr {release.tag}; nothing was changed")
         check_glibc(report.info.get("glibc"))
         staged = _stage_extras(executable, new, warn)
         new.rename(executable)

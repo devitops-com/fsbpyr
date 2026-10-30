@@ -598,12 +598,15 @@ def test_a_body_cut_short_is_an_update_error(
 
 def test_unpacking_stops_at_its_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     use_stand_in(monkeypatch)
-    packed = tmp_path / "big.xz"
-    packed.write_bytes(lzma.compress(b"\0" * 1_000_000))
-    digest = hashlib.sha256(packed.read_bytes()).hexdigest()
+    server = FakeReleases()
+    server.files["/big.xz"] = lzma.compress(b"\0" * 1_000_000)
+    digest = hashlib.sha256(server.files["/big.xz"]).hexdigest()
 
-    with pytest.raises(selfupdate.UpdateError, match="unpacks to more than 1000 bytes"):
-        selfupdate.fetch_checked(packed.as_uri(), digest, tmp_path / "out", 1000)
+    try:
+        with pytest.raises(selfupdate.UpdateError, match="unpacks to more than 1000 bytes"):
+            selfupdate.fetch_checked(f"{server.base}/big.xz", digest, tmp_path / "out", 1000)
+    finally:
+        server.close()
 
 
 # --- a release is checked before any of it is used (docs/signing.md §5.5) ------------------------
@@ -782,3 +785,82 @@ def test_a_placed_stub_whose_new_sums_fail_their_check_only_warns(
     err = capsys.readouterr().err
     assert str(stub) in err and "could not be checked against the stubs" in err
     assert stub.read_bytes() == b"stub"
+
+
+def test_a_build_of_another_version_than_the_tag_is_refused(
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Newer than this fsbpyr and genuine, but not what the document says: the message would name
+    a release that was not installed."""
+    github.tag = "v9.9.9"
+    github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path, tag="v1.2.0"))
+
+    assert "is not fsbpyr v9.9.9" in _refused(installed, capsys)
+
+
+@pytest.mark.parametrize("url", ["file:///dev/stdin", "ftp://example.invalid/x", "data:,x",
+                                 "no scheme", "http://[", 7, None])  # fmt: skip
+def test_a_url_in_the_release_document_is_http_or_https(
+    github: FakeGitHub, installed: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch, url: object
+) -> None:
+    """urllib takes file: and ftp: too, and its timeout does not hold there: /dev/stdin blocks."""
+    original = github.answer
+
+    def answer(path: str) -> tuple[int, bytes]:
+        status, body = original(path)
+        if path != "/api":
+            return status, body
+        document = json.loads(body)
+        for asset in document["assets"]:
+            asset["browser_download_url"] = url
+        return status, json.dumps(document).encode()
+
+    monkeypatch.setattr(github, "answer", answer)
+
+    err = _refused(installed, capsys)
+
+    assert "Traceback" not in err and "internal error" not in err
+
+
+@pytest.mark.parametrize("body", [b"[" * 100000, b"{}", b"7", b"not json", b'{"tag_name": []}',
+                                  b'{"tag_name": "v9.9.9", "assets": [7]}'], ids=repr)  # fmt: skip
+def test_a_hostile_release_document_is_an_update_error(
+    github: FakeGitHub, installed: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch, body: bytes
+) -> None:
+    monkeypatch.setattr(github, "answer", lambda path: (200, body))
+
+    err = _refused(installed, capsys)
+
+    assert "Traceback" not in err and "internal error" not in err
+
+
+def test_a_release_document_too_large_is_refused(
+    github: FakeGitHub, installed: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(selfupdate, "_MAX_DOCUMENT", 1000)
+    monkeypatch.setattr(github, "answer", lambda path: (200, b'"' + b"x" * 5000 + b'"'))
+
+    assert "cannot read the latest release" in _refused(installed, capsys)
+
+
+def test_text_from_the_network_cannot_rewrite_the_terminal(
+    github: FakeGitHub, installed: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = github.answer
+
+    def answer(path: str) -> tuple[int, bytes]:
+        status, body = original(path)
+        if path != "/api":
+            return 404, b""
+        document = json.loads(body)
+        for asset in document["assets"]:
+            asset["browser_download_url"] += "\x1b]0;x\x07"
+        return status, json.dumps(document).encode()
+
+    monkeypatch.setattr(github, "answer", answer)
+
+    assert "\x1b" not in _refused(installed, capsys)

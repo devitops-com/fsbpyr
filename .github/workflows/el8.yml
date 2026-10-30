@@ -786,8 +786,14 @@ jobs:
           name: el8-signature
           path: dist
 
-      - name: The stubs' .xz
-        run: cp stubs/*.xz dist/
+      # Before anything is attested or uploaded: every file listed, and none that is not. A later
+      # job can replace an earlier job's artifact of the same run.
+      - name: Check the stubs against the sums
+        run: |
+          (cd stubs && sha256sum --quiet -c ../dist/SHA256SUMS-glibc2.28)
+          [ "$(ls stubs | wc -l)" = "$(wc -l < dist/SHA256SUMS-glibc2.28)" ] \
+            || { echo "::error::stubs/ does not hold exactly the files the sums list"; exit 1; }
+          cp stubs/*.xz dist/
 
       # release.yml publishes the release of this tag in parallel and may be slower than every job
       # above. Up to an hour, every 30 seconds (the release run's build takes at most 75 minutes,

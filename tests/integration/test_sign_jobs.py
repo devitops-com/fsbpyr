@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from fsbpyr.bytecode import SUPPORTED_PYTHON
+
 from ..support import requires
 from ..support.signing import PASSPHRASE, Key, new_key
 
@@ -145,8 +147,12 @@ def signing_tree(tmp_path: Path) -> Path:
     built, prepared = tmp_path / "signed", tmp_path / "prepared"
     built.mkdir()
     prepared.mkdir()
-    (built / "fsbpyr-3.14-x86_64-linux-gnu").write_bytes(b"an executable")
-    (built / "THIRD_PARTY_LICENSES-3.14-x86_64-linux-gnu.txt").write_bytes(b"licences")
+    for python in ("3.12", "3.13", "3.14", "3.15"):
+        for target in ("x86_64-linux-gnu", "aarch64-linux-gnu"):
+            asset = f"fsbpyr-{python}-{target}"
+            for name in (asset, f"{asset}.xz", f"{asset}.cdx.json",
+                         f"THIRD_PARTY_LICENSES-{python}-{target}.txt"):  # fmt: skip
+                (built / name).write_text(f"the file {name}\n")
     (prepared / "install.sh").write_bytes(b"#!/bin/sh\n")
     work = built / "work"
     shutil.copytree(built, work)
@@ -190,6 +196,40 @@ def test_sums_prepare_chose_stop_the_job_before_k_is_there(
     assert "prepare's SHA256SUMS is not the sums of the build job's files" in done.stdout
 
 
+def test_the_sign_jobs_list_of_assets_is_every_pythons_and_targets() -> None:
+    step = step_text(jobs("release.yml")["sign"], "Write the sums again")
+    listed = re.search(r"for python in ([0-9. ]+); do", step)
+    targets = re.search(r"for target in ([a-z0-9_ -]+); do", step)
+    built = re.search(r'target: \[(.*?)\]', jobs("release.yml")["sbom"])
+
+    assert listed and targets and built
+    assert listed.group(1).split() == ["{}.{}".format(*version)
+                                       for version in sorted(SUPPORTED_PYTHON)]  # fmt: skip
+    assert targets.group(1).split() == built.group(1).replace('"', "").replace(",", "").split()
+
+
+@pytest.mark.parametrize("name", ["fsbpyr-evil", "built-evil", "fsbpyr-3.14-x86_64-linux-gnu.evil"])
+def test_a_file_too_many_among_the_build_jobs_stops_the_job(
+    signing_tree: Path, name: str
+) -> None:
+    """`pattern: built-*` takes any artifact of the run of such a name, and prepare, which could
+    upload one, would list it in its own sums."""
+    (signing_tree / "signed" / name).write_bytes(b"not an asset")
+    work = bash(f"sha256sum {name} >> ../prepared/SHA256SUMS", signing_tree / "signed")
+    assert work.returncode == 0, work.stderr
+
+    done = _write_again(signing_tree)
+
+    assert done.returncode == 1
+    assert "the build job's files are not the assets expected" in done.stdout
+
+
+def test_an_asset_missing_from_the_build_jobs_stops_the_job(signing_tree: Path) -> None:
+    (signing_tree / "signed" / "fsbpyr-3.14-x86_64-linux-gnu").unlink()
+
+    assert _write_again(signing_tree).returncode == 1
+
+
 def test_the_compare_comes_before_the_key() -> None:
     sign = jobs("release.yml")["sign"]
 
@@ -204,12 +244,14 @@ def publishing(tmp_path: Path) -> Path:
     dist = tmp_path / "dist"
     dist.mkdir()
     (dist / "fsbpyr-3.14-x86_64-linux-gnu").write_bytes(b"an executable")
+    (dist / "THIRD_PARTY_LICENSES-3.14-x86_64-linux-gnu.txt").write_bytes(b"licences")
     prepared, signed = tmp_path / "prepared", tmp_path / "signed"
     prepared.mkdir()
     signed.mkdir()
     (prepared / "install.sh").write_bytes(b"#!/bin/sh\n")
-    command = "cp ../prepared/install.sh . && sha256sum fsbpyr* install.sh && rm install.sh"
-    lines = bash(command, dist)
+    command = ("cp ../prepared/install.sh . && sha256sum fsbpyr* THIRD_PARTY_LICENSES*.txt "
+               "install.sh && rm install.sh")
+    lines = bash(command, dist, LC_ALL="C")
     assert lines.returncode == 0, lines.stderr
     (signed / "SHA256SUMS").write_text(lines.stdout)
     (signed / "SHA256SUMS.sig").write_bytes(b"a signature")
@@ -219,7 +261,7 @@ def publishing(tmp_path: Path) -> Path:
 
 def _check_files(tree: Path, signed: bool) -> subprocess.CompletedProcess[str]:
     step = step_script(jobs("release.yml")["publish"], "Check the files against the sums")
-    return bash(step, tree, SIGNED="true" if signed else "false")
+    return bash(step, tree, SIGNED="true" if signed else "false", LC_ALL="C")
 
 
 @pytest.mark.parametrize("signed", [True, False], ids=["signed", "a recovery"])
@@ -233,6 +275,13 @@ def test_publish_takes_files_that_match_the_sums(publishing: Path, signed: bool)
 def test_publish_stops_at_a_file_that_does_not_match(publishing: Path) -> None:
     """A later job can replace an earlier job's artifact of the same run."""
     (publishing / "dist" / "fsbpyr-3.14-x86_64-linux-gnu").write_bytes(b"a replaced file")
+
+    assert _check_files(publishing, True).returncode != 0
+
+
+def test_publish_stops_at_a_file_too_many(publishing: Path) -> None:
+    """The steps after it take what the globs find: this one would be attested and uploaded."""
+    (publishing / "dist" / "fsbpyr-extra").write_bytes(b"not signed")
 
     assert _check_files(publishing, True).returncode != 0
 
@@ -392,7 +441,11 @@ def test_a_release_other_than_the_first_needs_a_previous_release_that_pins_keys(
     checkout: Path, k: Key, tmp_path: Path
 ) -> None:
     """A lookup that goes wrong finds nothing: it stops the release, not the check."""
-    (checkout / "tools" / "release" / "first-signed-release").write_text("9.9.9\n")
+    first = checkout / "tools" / "release" / "first-signed-release"
+    first.write_text("9.9.9\n")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.org", "-C", str(checkout)]
+    for command in (["add", "-A", "tools"], ["commit", "-q", "-m", "y"], ["tag", "-f", "v1.2.0"]):
+        subprocess.run([*git, *command], check=True, capture_output=True)
     assert _sign(checkout, k.key.read_text()).returncode == 0
 
     done = _check_as_clients(checkout, tmp_path)

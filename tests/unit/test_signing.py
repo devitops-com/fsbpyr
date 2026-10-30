@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -1041,3 +1042,83 @@ def test_a_build_without_a_key_wants_no_signature(monkeypatch: pytest.MonkeyPatc
     assert not signing.take_build_variables(None).wanted
     assert signing.take_build_variables(Path("k.key")).wanted
     assert json.dumps(signing.take_build_variables(None).environment()) == "{}"
+
+
+# --- a name in a sums file cannot add a line ------------------------------------------------------
+
+EVIL = hashlib.sha256(b"evil").hexdigest()
+SEPARATORS = ("\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
+
+
+@pytest.mark.parametrize("separator", SEPARATORS, ids=repr)
+def test_a_file_name_cannot_add_a_line_to_a_sums_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], separator: str
+) -> None:
+    """A publisher runs `sha256sum *` in a directory where someone else chose one name, and signs
+    the result. GNU's sha256sum does not escape these characters, and str.splitlines cuts at them,
+    so this name would add a line with the digest of an unsigned file."""
+    trust()
+    file = tmp_path / "evil"
+    file.write_bytes(b"evil")
+    _sums(tmp_path, f"{hashlib.sha256(b'x').hexdigest()}  a{separator}{EVIL}  note\n")
+
+    code, out, _ = command("verify", "--project", "myapp", str(file), capsys=capsys)
+
+    assert (code, out) == (1, "")
+
+
+def test_a_file_name_cannot_add_a_line_through_the_real_sha256sum(tmp_path: Path) -> None:
+    (tmp_path / "myapp").write_bytes(b"genuine")
+    (tmp_path / f"a\u2028{EVIL}  note").write_bytes(b"anything")
+    listed = subprocess.run(["sha256sum", *sorted(p.name for p in tmp_path.iterdir())],  # noqa: S607
+                            cwd=tmp_path, capture_output=True, text=True, check=True).stdout
+
+    names = [name for _, name in signing.sums_lines(listed)]
+
+    assert signing.listed_names(listed, EVIL) == ()
+    assert len(names) == 2
+
+
+@pytest.mark.parametrize("separator", SEPARATORS, ids=repr)
+def test_a_name_cannot_put_a_digest_in_front_of_an_asset(separator: str) -> None:
+    """In fsbpyr's own paths the first line of an asset's name wins."""
+    real = "a" * 64
+    sums = f"{'b' * 64}  a{separator}{EVIL}  asset.xz\n{real}  asset.xz\n"
+
+    assert signing.asset_digest(sums.encode(), "asset.xz") == real
+
+
+@pytest.mark.parametrize(("line", "listed"), [
+    (f"{EVIL}  name", "name"),
+    (f"{EVIL} *name", "name"),  # the binary marker
+    (f"{EVIL.upper()}  name", "name"),
+    (f"{EVIL}  *name", "*name"),  # a file of that name: only one marker counts
+    (f"{EVIL}   name", " name"),
+    (f"{EVIL} **name", "*name"),
+])
+def test_a_line_is_a_digest_a_marker_and_a_name(line: str, listed: str) -> None:
+    assert list(signing.sums_lines(f"{line}\n")) == [(EVIL, listed)]
+
+
+@pytest.mark.parametrize("line", [
+    "", "name", f"{EVIL} name", f"{EVIL}\tname", f"{EVIL}  ", f"\\{EVIL}  a\\nb",
+    f"g{EVIL[1:]}  name", f"{EVIL}0  name", f"{EVIL[:-1]}  name",
+])
+def test_anything_else_is_no_line(line: str) -> None:
+    assert list(signing.sums_lines(f"{line}\n")) == []
+
+
+def test_a_crlf_line_lists_no_such_name() -> None:
+    assert signing.asset_digest(f"{EVIL}  name\r\n".encode(), "name") is None
+
+
+def test_a_name_that_names_no_file_is_a_usage_error(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(signing.PASSPHRASE_VARIABLE, "x")
+
+    assert command("key", "new", "/", capsys=capsys)[0] == 2
+
+
+def test_the_passphrase_is_not_in_a_repr() -> None:
+    assert "hunter2" not in repr(signing.BuildSigning(None, b"/k.key", b"hunter2"))

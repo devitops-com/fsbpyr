@@ -49,7 +49,7 @@ if [[ -n "$previous" ]]; then
     pinned=$(pubs_in "$work/previous")
 fi
 if [[ -z "$pinned" ]]; then
-    first=$(cat -- "$source/$FIRST") || { echo "ERROR: no $FIRST" >&2; exit 2; }
+    first=$(git -C "$source" show "$tag:$FIRST") || { echo "ERROR: $tag has no $FIRST" >&2; exit 2; }
     [[ "v$first" == "$tag" ]] || {
         echo "ERROR: the release before $tag (${previous:-none found}) pins no keys, and only $FIRST ($first) may have none" >&2
         exit 2

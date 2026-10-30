@@ -330,6 +330,22 @@ def test_release_refuses_a_tree_that_pins_no_keys(
     assert git(repo, "tag", "--list", env=release_env) == ""
 
 
+def test_release_refuses_a_pin_git_does_not_hold(
+    tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    """A file a local rule ignores is in the tree here, and not in the tag."""
+    repo = make_release_repo(tmp_path, release_env)
+    git(repo, "rm", "-q", "-r", "--cached", "src/fsbpyr/release-keys", env=release_env)
+    git(repo, "commit", "-q", "-m", "no keys", env=release_env)
+    git(repo, "push", "-q", "hub", "main", env=release_env)
+    (repo / ".git" / "info" / "exclude").write_text("*.pub\n")
+
+    result = run_script(["bash", str(repo / "tools" / "release" / "release.sh")], release_env,
+                        cwd=repo)  # fmt: skip
+
+    assert result.returncode == 1 and "pins no release keys" in result.stderr
+
+
 def test_release_refuses_a_dirty_tree(tmp_path: Path, release_env: dict[str, str]) -> None:
     repo = make_release_repo(tmp_path, release_env)
     (repo / "README.md").write_text("# edited\n")

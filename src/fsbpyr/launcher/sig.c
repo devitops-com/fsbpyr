@@ -74,7 +74,8 @@ static const char *const ALGORITHMS[HALVES] = {"ED25519", "ML-DSA-65"};
 static const size_t HALF_SIZES[HALVES] = {FSB_SIG_ED25519_SIZE, FSB_SIG_MLDSA65_SIZE};
 
 /* Each function below between ERR_set_mark() and ERR_pop_to_mark() leaves the error queue as it
- * was: on an empty queue the first sets no mark and returns 0, and the second then empties it. */
+ * was: on an empty queue the first sets no mark and returns 0, and the second then empties it. The
+ * queue has 15 places: errors pushed past them are lost, as they are to any other OpenSSL call. */
 
 /* The base64 lines of a PEM body: the alphabet, its padding and LFs. */
 static bool base64_lines(const uint8_t *body, size_t size) {
@@ -85,10 +86,11 @@ static bool base64_lines(const uint8_t *body, size_t size) {
     return true;
 }
 
-/* The two blocks of a .key (docs/signing.md §2.3): each one exactly what a writer leaves, with
+/* The two blocks of a .key (docs/signing.md §2.3): an encrypted label and base64 lines, with
  * nothing before or between them and only LFs after them; the last LF may be missing, as a key
  * copied through a secret may lose it. OpenSSL's reader would take text around a block, a block
- * that is not encrypted (and ignore the passphrase), and anything that follows. */
+ * that is not encrypted (and ignore the passphrase), and anything that follows. That what the label
+ * says is true only the reader can tell: see sign_half. */
 static bool key_blocks(const uint8_t *pem, size_t size, const uint8_t *blocks[HALVES],
                        size_t sizes[HALVES]) {
     const size_t begin = sizeof BEGIN_KEY - 1, end = sizeof END_KEY - 1;
@@ -113,21 +115,34 @@ static bool key_blocks(const uint8_t *pem, size_t size, const uint8_t *blocks[HA
 struct passphrase {
     const uint8_t *bytes;
     size_t size;
+    bool asked; /* the block being read did ask for it */
 };
 
 /* Given as a callback, never as NULL: without one OpenSSL asks on the terminal itself. */
 static int give_passphrase(char *buffer, int size, int rwflag, void *userdata) {
     (void)rwflag;
-    const struct passphrase *given = userdata;
+    struct passphrase *given = userdata;
+    given->asked = true;
     if (given->size > (size_t)size) return -1;
     memcpy(buffer, given->bytes, given->size);
     return (int)given->size;
 }
 
+/* For a .pub, which needs none. Its parser runs before the canonical check can refuse a file, and
+ * a block with legacy encryption headers would have OpenSSL ask on the terminal, and read standard
+ * input without one. */
+static int no_passphrase(char *buffer, int size, int rwflag, void *userdata) {
+    (void)buffer;
+    (void)size;
+    (void)rwflag;
+    (void)userdata;
+    return -1;
+}
+
 /* A public key of ``pem`` as ``half``'s algorithm, read from ``in``, written again to ``out``;
  * NULL if it is another, or none. */
 static EVP_PKEY *public_key(OSSL_LIB_CTX *library, BIO *in, BIO *out, unsigned half) {
-    EVP_PKEY *key = PEM_read_bio_PUBKEY_ex(in, NULL, NULL, NULL, library, NULL);
+    EVP_PKEY *key = PEM_read_bio_PUBKEY_ex(in, NULL, no_passphrase, NULL, library, NULL);
     if (key != NULL && EVP_PKEY_is_a(key, ALGORITHMS[half]) == 1 &&
         PEM_write_bio_PUBKEY_ex(out, key, library, NULL) == 1)
         return key;
@@ -271,14 +286,16 @@ enum fsb_sig_status fsb_sig_key_new(const uint8_t *passphrase, size_t passphrase
 
 /* One half of a new signature, and its public key written to ``pub_pem``. */
 static enum fsb_sig_status sign_half(OSSL_LIB_CTX *library, unsigned half, const uint8_t *block,
-                                     size_t block_size, const struct passphrase *given,
+                                     size_t block_size, struct passphrase *given,
                                      EVP_PKEY **pair, const uint8_t *statement,
                                      size_t statement_size, uint8_t *signature, BIO *pub_pem) {
     BIO *in = BIO_new_mem_buf(block, (int)block_size);
     if (in == NULL) return FSB_SIG_FAILED;
-    *pair = PEM_read_bio_PrivateKey_ex(in, NULL, give_passphrase, (void *)given, library, NULL);
+    given->asked = false;
+    *pair = PEM_read_bio_PrivateKey_ex(in, NULL, give_passphrase, given, library, NULL);
     BIO_free(in);
     if (*pair == NULL) return FSB_SIG_BAD_PASSPHRASE;
+    if (!given->asked) return FSB_SIG_BAD_KEY_FILE; /* a label of ENCRYPTED on a plain key */
     if (EVP_PKEY_is_a(*pair, ALGORITHMS[half]) != 1) return FSB_SIG_BAD_KEY_TYPE;
     EVP_MD_CTX *signing = EVP_MD_CTX_new();
     size_t size = HALF_SIZES[half];
@@ -301,7 +318,7 @@ enum fsb_sig_status fsb_sig_sign(const uint8_t *key, size_t key_size, const uint
     if (!key_blocks(key, key_size, blocks, sizes)) return FSB_SIG_BAD_KEY_FILE;
     if (!valid_passphrase(passphrase_size)) return FSB_SIG_BAD_PASSPHRASE;
     (void)ERR_set_mark();
-    struct passphrase given = {passphrase, passphrase_size};
+    struct passphrase given = {passphrase, passphrase_size, false};
     OSSL_LIB_CTX *library = OSSL_LIB_CTX_new();
     BIO *pub_pem = BIO_new(BIO_s_mem());
     EVP_PKEY *pairs[HALVES] = {NULL, NULL};

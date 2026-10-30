@@ -170,15 +170,27 @@ jobs:
           path: prepared
 
       # prepare ran the built fsbpyr on a runner with passwordless sudo, so its files are that
-      # code's to choose. Without this compare K would sign whatever lines it wrote, digests of
-      # files never published among them. With it, every line but install.sh's names a file of
-      # the build job, and install.sh is published and attested. It does not stop a poisoned
-      # build: the build job ran the same code.
+      # code's to choose, and the pattern above would take an artifact it uploaded under a name of
+      # its own: so the files must be exactly the assets of every (Python, target). Without this
+      # compare K would sign whatever lines prepare wrote, digests of files never published among
+      # them. With it, every line but install.sh's names an asset the release expects, and
+      # install.sh is published and attested. It does not stop a poisoned build: the build job ran
+      # the same code.
       - name: Write the sums again
         env:
           LC_ALL: C
         shell: bash
         run: |
+          expected=()
+          for python in 3.12 3.13 3.14 3.15; do
+            for target in x86_64-linux-gnu aarch64-linux-gnu; do
+              expected+=("fsbpyr-$python-$target" "fsbpyr-$python-$target.xz"
+                         "fsbpyr-$python-$target.cdx.json" "THIRD_PARTY_LICENSES-$python-$target.txt")
+            done
+          done
+          found="$(cd signed && ls | sort)"
+          [ "$found" = "$(printf '%s\n' "${expected[@]}" | sort)" ] \
+            || { echo "::error::the build job's files are not the assets expected:"; echo "$found"; exit 1; }
           cp prepared/install.sh signed/
           (cd signed && sha256sum fsbpyr* THIRD_PARTY_LICENSES*.txt install.sh > SHA256SUMS)
           cmp signed/SHA256SUMS prepared/SHA256SUMS \
@@ -278,16 +290,21 @@ jobs:
 
       # Before anything is attested or uploaded. A later job can replace an earlier job's
       # artifact of the same run, so these are checked, not assumed: against sign's copy of the
-      # sums, or in a recovery against prepare's, whose attestation the admin checks by hand.
+      # sums, or in a recovery against prepare's, whose attestation the admin checks by hand. The
+      # sums are written again, so a file too many stops it as well as a file that differs: the
+      # steps below take what the globs find.
       - name: Check the files against the sums
+        env:
+          LC_ALL: C
         run: |
           cp prepared/install.sh dist/
+          (cd dist && sha256sum fsbpyr* THIRD_PARTY_LICENSES*.txt install.sh) > found
           if [ "$SIGNED" = true ]; then
             cp signed/SHA256SUMS signed/SHA256SUMS.sig dist/
           else
             cp prepared/SHA256SUMS dist/
           fi
-          (cd dist && sha256sum --quiet -c SHA256SUMS)
+          cmp found dist/SHA256SUMS
 
       - name: Release notes from CHANGELOG.md
         env:

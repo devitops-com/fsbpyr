@@ -381,7 +381,13 @@ BAD_PUBS: dict[str, Callable[[bytes, bytes], bytes]] = {
     "a byte after the Ed25519 key": lambda ed, ml: _with_trailing_byte(ed) + ml,
     "a byte after the ML-DSA key": lambda ed, ml: ed + _with_trailing_byte(ml),
     "an RSA PUBLIC KEY label": lambda ed, ml: ed.replace(b"PUBLIC KEY", b"RSA PUBLIC KEY") + ml,
+    "legacy encryption headers": lambda ed, ml: _with_encryption_headers(ed) + ml,
 }
+
+
+def _with_encryption_headers(pem: bytes) -> bytes:
+    return pem.replace(b"-----\n", b"-----\nProc-Type: 4,ENCRYPTED\n"
+                       b"DEK-Info: AES-256-CBC,00112233445566778899AABBCCDDEEFF\n\n", 1)
 
 
 def _pem_wrapped(pem: bytes, width: int) -> bytes:
@@ -445,6 +451,14 @@ def _encrypted_block(algorithm: str, passphrase: str = PASSPHRASE) -> str:
                        "1000", "-passout", f"pass:{passphrase}", stdin=plain).decode()  # fmt: skip
 
 
+def _mislabeled(algorithm: str) -> str:
+    """A key that is not encrypted, under the label of one: only the reader can tell, and without
+    this check it would sign under any passphrase."""
+    text = base64.b64encode(run_openssl("genpkey", "-algorithm", algorithm, "-outform", "DER"))
+    lines = [text[at:at + 64].decode() for at in range(0, len(text), 64)]
+    return BEGIN + "\n".join(lines) + "\n" + END
+
+
 def _in_the_body(block: str, text: str, at: int = 20) -> str:
     """``block`` with ``text`` ``at`` characters into its base64."""
     position = len(BEGIN) + at
@@ -478,6 +492,8 @@ BAD_KEY_FILES: dict[str, Callable[[str, str], str]] = {
     "a NUL": lambda ed, ml: ed + ml + "\0",
     "a public key file's label": lambda ed, ml: (ed + ml).replace("ENCRYPTED PRIVATE KEY",
                                                                   "PUBLIC KEY"),
+    "plain keys under the label": lambda _, __: _mislabeled("ED25519") + _mislabeled("ML-DSA-65"),
+    "a plain second key under the label": lambda ed, _: ed + _mislabeled("ML-DSA-65"),
 }
 
 
@@ -561,6 +577,35 @@ def test_an_empty_passphrase_is_refused_without_a_prompt(
 
     assert out.split() == [str(BAD_PASSPHRASE).encode()]
     assert printed == b""
+
+
+def test_a_pub_with_encryption_headers_asks_nothing(
+    probe: Path, pair: Pair, tmp_path: Path
+) -> None:
+    """The parser runs before the canonical check can refuse the file, and it would ask on the
+    terminal itself, or read standard input: `key trust` hands it a file from outside."""
+    ed25519, ml_dsa = (f"{pem}-----END PUBLIC KEY-----\n".encode()
+                       for pem in pair.pub.read_text().split("-----END PUBLIC KEY-----\n")[:2])
+    bad = tmp_path / "bad.pub"
+    bad.write_bytes(_with_encryption_headers(ed25519) + ml_dsa)
+    primary, secondary = pty.openpty()
+    args = [str(part) for part in (probe, "verify", bad, pair.message, pair.signature)]
+    done = subprocess.Popen(args, stdin=secondary, stdout=subprocess.PIPE, stderr=secondary,
+                            start_new_session=True)  # fmt: skip
+    os.close(secondary)
+    out, _ = done.communicate(timeout=30)
+    readable, _, _ = select.select([primary], [], [], 0.2)
+    printed = b""
+    with contextlib.suppress(OSError):
+        printed = os.read(primary, 4096) if readable else b""
+    os.close(primary)
+
+    assert out.split() == [b"-1"]
+    assert printed == b""
+
+    piped = subprocess.run(args, input=b"a line\nanother\n", capture_output=True, timeout=30,
+                           start_new_session=True, check=True)  # fmt: skip
+    assert piped.stdout.split() == [b"-1"] and piped.stderr == b""
 
 
 def test_keys_of_the_c_code_and_the_script_work_both_ways(

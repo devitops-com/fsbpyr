@@ -173,6 +173,9 @@ sign() {
     split_pem "$key" "$tmp/k.0" "$tmp/k.1"
     : >"$tmp/pub"
     for i in 0 1; do
+        # the label says encrypted, and only this can tell: a plain key ignores any passphrase
+        openssl asn1parse -in "$tmp/k.$i" 2>/dev/null | grep ':PBES2' >/dev/null ||
+            die 2 "$key does not hold two encrypted keys and nothing else"
         openssl pkey -in "$tmp/k.$i" -passin env:FSBPYR_SIGNING_PASSPHRASE -pubout >>"$tmp/pub" 2>/dev/null ||
             die 2 "cannot open $key: wrong passphrase?"
         openssl pkeyutl -sign -rawin -inkey "$tmp/k.$i" -passin env:FSBPYR_SIGNING_PASSPHRASE \
@@ -213,9 +216,18 @@ trap '[[ -z "$tmp" ]] || rm -rf -- "$tmp"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-case "${1-}:$#" in
-    new-key:2) need_tools; new_key "$2" ;;
-    sign:3) need_tools; sign "$2" "$3" ;;
-    verify:*) (($# >= 3)) || usage; need_tools; shift; verify "$@" ;;
+# Paths, none of which may read as an option of the tools below.
+command=${1-}
+arguments=()
+for argument in "${@:2}"; do
+    [[ "$argument" != -* ]] || argument=./$argument
+    arguments+=("$argument")
+done
+set -- "${arguments[@]}"
+
+case "$command:$#" in
+    new-key:1) need_tools; new_key "$1" ;;
+    sign:2) need_tools; sign "$1" "$2" ;;
+    verify:*) (($# >= 2)) || usage; need_tools; verify "$@" ;;
     *) usage ;;
 esac
