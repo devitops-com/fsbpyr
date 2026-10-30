@@ -1,16 +1,17 @@
 # Signed fsbpyr releases and signed apps: concept
 
-Status: concept, 2026-10-29, at fadc3d9, revised the same day after an independent review, and on
-2026-10-30 after a test round of every open gap (§11.1). It replaces the earlier concept on branch
-`signing-concept` (SSHSIG signatures embedded in the executable), which is dropped. Implemented so
-far: `tools/release/release-signing.sh` only. The test round found bugs in it, recorded in §11.4
-and not fixed yet.
+Status: implemented, 2026-10-30, on branch `signing-openssl`, as §14 says; no real release keys are
+pinned yet (§5.2), so nothing can be released until the admin makes them. The concept was written
+on 2026-10-29 at fadc3d9, revised the same day after an independent review, and on 2026-10-30 after
+a test round of every open gap (§11.1). It replaces the earlier concept on branch `signing-concept`
+(SSHSIG signatures embedded in the executable), which is dropped.
 
 Facts without a mark were run or read while this concept was made. "Measured" for fsbpyr's part
 means a scratch program or a stand-in, on the bundled libcrypto or on fadc3d9's code, since none of
 it is implemented. **[A]** marks an assumption that nobody has checked; §11.2 lists those still
 open, and the facts that were only read where a run would settle them. **[Pn]** marks a choice
-made in the test round of 2026-10-30, not by the owner; §13 lists each with its alternatives.
+made in the test round of 2026-10-30, which the owner accepted on 2026-10-30; §13 lists each with
+the alternatives it was weighed against.
 
 ## 1. Summary
 
@@ -956,8 +957,8 @@ design:
 - a `verify --project` that differs from the file's project is NOT VERIFIED (§3);
 - `SHA256SUMS-glibc2.28` lists each stub's `.xz` too (§5.5).
 
-The test round of 2026-10-30 decided nothing. Its choices are marked [Pn] and listed in §13 for
-the owner.
+The test round of 2026-10-30 decided nothing. Its choices are marked [Pn] and listed in §13. The
+owner accepted all of them as written on 2026-10-30, and asked for Wycheproof's cases as well.
 
 ## 11. Tests
 
@@ -1210,7 +1211,7 @@ The cases that came with the review fail with the script before it: the VERIFIED
 project, a bad `.pub` that stopped `verify`, exit 1 when `mktemp` fails, and typed passphrases
 that lost their spaces.
 
-Script bugs these cases found, to fix with the script's test (§11.3); not fixed yet:
+Script bugs these cases found, fixed with the script's test (§11.3):
 1. `sign` counts only the lines that begin an encrypted block (release-signing.sh:148), and
    `split_pem` takes everything after the first block as the second key (:73-76). So a key file
    with a third block that is not encrypted, or text before, between or after the two, is used;
@@ -1311,9 +1312,10 @@ Found outside signing, for the owner:
      - docs/security.md:70-71, docs/format.md:66, wiki/Dev-Executable-Format.md:109 and
        wiki/Dev-Security.md:660.
 
-## 13. Proposed in the test round, not decided
+## 13. Proposed in the test round, accepted by the owner
 
-The test round made these choices where §10 left the matter open; the owner decides each.
+The test round made these choices where §10 left the matter open. The owner accepted all of them
+as written on 2026-10-30.
 
 - **P1 The build's processes.** The variables leave fsbpyr's environment, and nothing more is
   done in the process; §3.1 states the limits, and untrusted builds sign in a separate job.
@@ -1407,3 +1409,40 @@ The test round made these choices where §10 left the matter open; the owner dec
 - **P26 The script's pytest test** with a requires.py condition, and no shellcheck step (§11.3,
   §11.4). Instead: rely on the script's exit 2; a minimum version in `Tool`; shellcheck in `make
   check`, which then needs it everywhere.
+
+## 14. What was built
+
+All of §12, on branch `signing-openssl`. What differs from the text above, or adds to it:
+
+- **`_sha256`'s hashing is in integrity.c** (`fsb_sha256_file`, `fsb_sha256_bytes`), beside the
+  declarations of the low-level SHA-256 it uses; sig.c holds the wrapper. So sig.c declares only
+  what compiles against the real headers: SHA256_Init's context is opaque here on purpose.
+- **Python-less builds of sig.c.** `FSB_SIG_NO_PYTHON` leaves the wrappers out, for the probe.
+  `fsb_sig_half` is the check of one half that §11.3 asks for.
+- **The trust store goes through `secure_directory`**, as the cache does: another user who can write
+  on the way to it could plant a key, which §3 does not mention and which an absolute
+  `XDG_CONFIG_HOME` under a shared directory allows.
+- **Two scripts more.** `tools/release/previous-release.sh` is §5.3's lookup, and
+  `tools/release/check-signature.sh` is its check against both sets of pins, both used by the sign
+  jobs and by check-release.sh, so that there is one of each.
+- **`make release` refuses a tree that pins no keys**: the sign job would refuse it after the tag
+  burned the version. That is not P18's pin guard, which is about a writer who means harm.
+- **The sign jobs install their packages before the checkout**, not after it as §5.3's order has
+  it: the image has no git, and without git the checkout takes a tarball, with no tags in it.
+  Nothing else differs, and K is still in no step but `Sign`.
+- **Both the `prepare` and `sign` sums are written with `LC_ALL=C`**, so the globs sort alike on
+  the runner and in the image.
+- **`verify` and `sign` follow links alike**: `sign` writes beside the file a link leads to, where
+  `verify` looks.
+- **A dispatched build is tested as a subprocess**, the fsbpyr that dispatches built from the same
+  tagged copy as the variant, not in-process from source as §11.3 has it: with §4's rule, from
+  source never fetches, so the in-process form would test a stand-in.
+- **`tests/fixtures/signing/`**: Wycheproof's two files (Apache-2.0, with their licence), the
+  independent vectors, and a fixed `.pub` with two signatures, whose key was thrown away, so that a
+  later change of the format fails the suite.
+- **Fault injection.** `EVP_DigestVerify` is wrapped in the probe to return what no input can make
+  it return, which is the only way to test that a negative result is no pass.
+
+Not run, as §11.2 says: everything on GitHub itself. The workflows are read and their steps' shell
+run by the tests, but no release has gone through them, and the environment's rule, K's secret and
+a planned change of K are the admin's to try on a test repository first.

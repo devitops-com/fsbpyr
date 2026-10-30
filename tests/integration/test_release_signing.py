@@ -176,7 +176,9 @@ BAD_KEYS: dict[str, Callable[[str, str], str]] = {
     "an empty line between": lambda ed, ml: ed + "\n" + ml,
     "CRLF": lambda ed, ml: (ed + ml).replace("\n", "\r\n"),
     "a CR at the end": lambda ed, ml: ed + ml + "\r",
-    "a space in the base64": lambda ed, ml: ed.replace("\n", " \n", 2) + ml,
+    "a space in the base64": lambda ed, ml: ed[:60] + " " + ed[60:] + ml,
+    "a byte in place of the LF between": lambda ed, ml: ed[:-1] + "x" + ml,
+    "a byte in place of the last LF": lambda ed, ml: ed + ml[:-1] + "x",
     "one block": lambda ed, _: ed,
     "nothing": lambda _, __: "",
 }
@@ -520,6 +522,13 @@ def test_a_companion_is_not_a_release(tmp_path: Path) -> None:
                                           _release("el8-v0.3.0")])  # fmt: skip
 
     assert done.stdout == "v0.2.0\n"
+
+
+def test_a_companion_alone_is_no_previous_release(tmp_path: Path) -> None:
+    """Its name sorts below every vX.Y.Z, so without the filter it would be taken for one."""
+    done = _previous(tmp_path, "v0.1.0", [_release("el8-v0.1.0"), _release("nightly")])
+
+    assert (done.returncode, done.stdout) == (0, "")
 
 
 def test_the_tag_itself_is_not_its_previous_release(tmp_path: Path) -> None:

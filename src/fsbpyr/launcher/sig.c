@@ -101,7 +101,6 @@ static bool key_blocks(const uint8_t *pem, size_t size, const uint8_t *blocks[HA
         size_t stop = (size_t)(ended - pem) + end;
         if (!base64_lines(pem + at + begin, (size_t)(ended - pem) - at - begin)) return false;
         if (stop < size && pem[stop] != '\n') return false;
-        if (stop == size && i == 0) return false; /* only the last block may lose its LF */
         blocks[i] = pem + at;
         sizes[i] = stop - at;
         at = stop + (stop < size);

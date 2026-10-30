@@ -49,7 +49,7 @@ pytestmark = pytest.mark.slow
 ROOT = Path(__file__).parents[2]
 PROBE = ROOT / "tests" / "probes" / "sig.c"
 FIXTURES = ROOT / "tests" / "fixtures" / "signing"
-OK, BAD_KEY_FILE, BAD_PASSPHRASE, BAD_KEY_TYPE = 0, 1, 2, 3
+OK, BAD_KEY_FILE, BAD_PASSPHRASE, BAD_KEY_TYPE, FAILED = 0, 1, 2, 3, 4
 BEGIN, END = "-----BEGIN ENCRYPTED PRIVATE KEY-----\n", "-----END ENCRYPTED PRIVATE KEY-----\n"
 PBKDF2_ITERATIONS = 600000
 ED25519_ORDER = 2**252 + 27742317777372353535851937790883648493
@@ -60,7 +60,7 @@ FLIPS = 400  # bits of the ML-DSA half: the sweep over all of them takes a minut
 def probe(launcher_build: LauncherBuild, tmp_path_factory: pytest.TempPathFactory) -> Path:
     out = tmp_path_factory.mktemp("probe") / "sig"
     ssl = launcher_build.libs[-1].with_name("libssl.a")
-    flags = ("-DFSB_SIG_NO_PYTHON", "-fsanitize=address,undefined",
+    flags = ("-DFSB_SIG_NO_PYTHON", "-Wl,--wrap=EVP_DigestVerify", "-fsanitize=address,undefined",
              "-fno-sanitize-recover=undefined")  # fmt: skip
     return launcher_build.compile(out, [PROBE, "sig.c", "integrity.c", "parallel.c", ssl], *flags)
 
@@ -121,6 +121,30 @@ def test_the_files_sha256_is_hashlibs(probe: Path, tmp_path: Path) -> None:
         path.write_bytes(data)
 
         assert run(probe, "sha256", path) == [hashlib.sha256(data).hexdigest()]
+
+
+@pytest.mark.parametrize("result", ["0", "-1", "-2", "2"])
+def test_only_a_result_of_1_from_openssl_is_a_good_signature(
+    probe: Path, pair: Pair, result: str
+) -> None:
+    """Its verify returns a negative value for an error, which reads as true in C, and no input
+    makes it do so: this is the one way to test it, and a mistake here passes every vector."""
+    env = {**os.environ, "PROBE_VERIFY_RESULT": result}
+
+    assert run(probe, "verify", pair.pub, pair.message, pair.signature, env=env) == ["0"]
+
+
+def test_a_new_signature_that_does_not_verify_is_not_returned(
+    probe: Path, pair: Pair, tmp_path: Path
+) -> None:
+    """The self-check: a key whose halves do not sign what they should gives no signature."""
+    env = {**os.environ, "PROBE_VERIFY_RESULT": "0"}
+    new, pub = tmp_path / "new.sig", tmp_path / "new.pub"
+
+    done = run(probe, "sign", pair.key, PASSPHRASE, pair.message, new, pub, env=env)
+
+    assert done == [str(FAILED)]
+    assert not new.exists()
 
 
 def test_a_signature_of_the_script_verifies(probe: Path, pair: Pair, tmp_path: Path) -> None:
@@ -421,6 +445,12 @@ def _encrypted_block(algorithm: str, passphrase: str = PASSPHRASE) -> str:
                        "1000", "-passout", f"pass:{passphrase}", stdin=plain).decode()  # fmt: skip
 
 
+def _in_the_body(block: str, text: str, at: int = 20) -> str:
+    """``block`` with ``text`` ``at`` characters into its base64."""
+    position = len(BEGIN) + at
+    return block[:position] + text + block[position:]
+
+
 BAD_KEY_FILES: dict[str, Callable[[str, str], str]] = {
     "empty": lambda _, __: "",
     "one block": lambda ed, _: ed,
@@ -437,7 +467,14 @@ BAD_KEY_FILES: dict[str, Callable[[str, str], str]] = {
     "both blocks unencrypted": lambda _, __: _plain_block("ED25519") + _plain_block("ML-DSA-65"),
     "a plain key between": lambda ed, ml: ed + _plain_block("ML-DSA-65") + ml,
     "a plain third key": lambda ed, ml: ed + ml + _plain_block("ML-DSA-65"),
-    "a space in the base64": lambda ed, ml: ed.replace("\n", " \n", 2) + ml,
+    "a space in the base64": lambda ed, ml: _in_the_body(ed, " ") + ml,
+    "a NUL in the base64": lambda ed, ml: _in_the_body(ed, "\0") + ml,
+    "a character outside base64": lambda ed, ml: ed + _in_the_body(ml, "*"),
+    "header lines in a block": lambda ed, ml: _in_the_body(
+        ed, "Proc-Type: 4,ENCRYPTED\nDEK-Info: AES-256-CBC,00\n\n", at=0) + ml,
+    "a byte in place of the LF between": lambda ed, ml: ed[:-1] + "x" + ml,
+    "a byte in place of the last LF": lambda ed, ml: ed + ml[:-1] + "x",
+    "text on the last line": lambda ed, ml: ed + ml[:-1] + "x\n",
     "a NUL": lambda ed, ml: ed + ml + "\0",
     "a public key file's label": lambda ed, ml: (ed + ml).replace("ENCRYPTED PRIVATE KEY",
                                                                   "PUBLIC KEY"),

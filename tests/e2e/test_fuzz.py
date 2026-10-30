@@ -2,7 +2,8 @@
 every edge case once, then a run exploring from them. ``FSBPYR_FUZZ_SECONDS`` sets how long it
 explores: 30 seconds in the test run; 600 before a release (docs/IMPLEMENTATION_PLAN.md,
 Phase 8). ``FSBPYR_FUZZ_CORPUS`` names the directory that keeps what the run finds, so that a
-later run (full-suite.yml restores it from its cache) starts from it."""
+later run (full-suite.yml restores it from its cache) starts from it. The readers of signing's
+.pub and .key files (tests/fuzz/sig_fuzz.c) get a shorter run of their own."""
 
 import os
 import subprocess
@@ -13,12 +14,16 @@ import pytest
 from fsbpyr.payload.format import DIGEST_LEAF
 
 from ..support import edges
+from ..support.signing import run_openssl
 from ..unit.boot.conftest import FAKE_RUNTIME
 from .conftest import LauncherBuild
 
 pytestmark = pytest.mark.slow
 
 HARNESS = Path(__file__).parents[1] / "fuzz" / "payload_fuzz.c"
+SIG_HARNESS = Path(__file__).parents[1] / "fuzz" / "sig_fuzz.c"
+SIG_FIXED = Path(__file__).parents[1] / "fixtures" / "signing" / "fixed.pub"
+SIG_FUZZ_SECONDS = 30
 FUZZ_SECONDS = int(os.environ.get("FSBPYR_FUZZ_SECONDS", "30"))
 SOURCES = ("payload.c", "integrity.c", "parallel.c", "cache.c", "way.c")
 
@@ -72,6 +77,35 @@ def test_the_parser_survives_a_fuzzing_run(harness: Path, corpus: Path, tmp_path
 
     result = _fuzz(harness, f"-max_total_time={FUZZ_SECONDS}", "-rss_limit_mb=2048",
                    "-timeout=30", f"-max_len={1 << 20}", f"-artifact_prefix={tmp_path}/",
+                   os.fspath(found), os.fspath(corpus))  # fmt: skip
+
+    assert result.returncode == 0, result.stderr[-4000:]
+    assert "Done " in result.stderr
+
+
+@pytest.fixture(scope="module")
+def sig_harness(launcher_build: LauncherBuild, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    out = tmp_path_factory.mktemp("sig-harness") / "sig_fuzz"
+    flags = ("-DFSB_SIG_NO_PYTHON", "-fsanitize=fuzzer,address,undefined",
+             "-fno-sanitize-recover=undefined")  # fmt: skip
+    return launcher_build.compile(out, [SIG_HARNESS, "sig.c", "integrity.c", "parallel.c"], *flags)
+
+
+def test_the_readers_of_keys_survive_a_fuzzing_run(sig_harness: Path, tmp_path: Path) -> None:
+    corpus, found = tmp_path / "corpus", tmp_path / "found"
+    corpus.mkdir()
+    found.mkdir()
+    (corpus / "pub").write_bytes(SIG_FIXED.read_bytes())
+    blocks = []
+    for algorithm in ("ED25519", "ML-DSA-65"):
+        plain = run_openssl("genpkey", "-algorithm", algorithm)
+        blocks.append(run_openssl("pkcs8", "-topk8", "-v2", "aes-256-cbc", "-v2prf",
+                                  "hmacWithSHA256", "-iter", "1", "-passout", "pass:p",
+                                  stdin=plain))  # fmt: skip
+    (corpus / "key").write_bytes(b"".join(blocks))
+
+    result = _fuzz(sig_harness, f"-max_total_time={SIG_FUZZ_SECONDS}", "-rss_limit_mb=2048",
+                   "-timeout=30", f"-max_len={1 << 14}", f"-artifact_prefix={tmp_path}/",
                    os.fspath(found), os.fspath(corpus))  # fmt: skip
 
     assert result.returncode == 0, result.stderr[-4000:]

@@ -13,7 +13,8 @@
  * first, as CPython's _hashlib and _ssl may have done before a check runs: none, crypto
  * (OPENSSL_init_crypto), ssl (SSL_CTX_new) or digests (EVP_MD_do_all_provided on the default
  * context). A failed setup exits 3, a bad queue 4; nothing here frees less than it allocates, so
- * LeakSanitizer sees sig.c's leaks only.
+ * LeakSanitizer sees sig.c's leaks only. Built with -Wl,--wrap=EVP_DigestVerify: with
+ * $PROBE_VERIFY_RESULT set, each verify returns that, which no input can make OpenSSL do.
  */
 #include "integrity.h"
 #include "sig.h"
@@ -39,6 +40,15 @@ unsigned long ERR_get_error(void);
 unsigned long ERR_peek_error(void);
 #define ERR_LIB_USER 128
 #define OWN_REASON 7
+
+int __real_EVP_DigestVerify(void *, const unsigned char *, size_t, const unsigned char *, size_t);
+
+int __wrap_EVP_DigestVerify(void *context, const unsigned char *signature, size_t signature_size,
+                            const unsigned char *message, size_t message_size) {
+    int result = __real_EVP_DigestVerify(context, signature, signature_size, message, message_size);
+    const char *forced = getenv("PROBE_VERIFY_RESULT");
+    return forced != NULL ? atoi(forced) : result;
+}
 
 #define MAX_FILE (4u << 20)
 #define SETUP_FAILED 3

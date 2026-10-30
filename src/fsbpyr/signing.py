@@ -288,7 +288,7 @@ def _through_sums(
             signature = _read_limited(directory / f"{name}.sig", SIGNATURE_SIZE)
         except OSError:
             continue
-        if content is None or signature is None or len(signature) != SIGNATURE_SIZE:
+        if content is None or signature is None:
             continue
         own = crypto()._sha256(content)  # private to fsbpyr
         pub = _signed_by(keys, statement(project, own), signature)

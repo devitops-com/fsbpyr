@@ -152,6 +152,7 @@ test-ci: ## Run the core of the test suite in JOBS processes
 		tests/e2e/test_loose_directory.py tests/e2e/test_single_script.py \
 		tests/e2e/test_install_links.py tests/e2e/test_pid1.py tests/e2e/test_unbuffered.py \
 		tests/e2e/test_file_overlay.py tests/e2e/test_pipfile_lock.py \
+		tests/e2e/test_signing.py tests/e2e/test_selfupdate.py \
 		-k "not (sanitized and not release)" --cov --cov-report=term --cov-report=xml
 
 # Nothing in the suite skips: a test whose tool or environment is missing fails, naming it.
