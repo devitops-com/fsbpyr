@@ -142,7 +142,7 @@ The tiers, from fastest to most complete:
   changes more than documentation (a merge; pull requests start no CI), weekly and on request,
   once per target (x86-64 on `ubuntu-24.04`, aarch64 on `ubuntu-24.04-arm`) and Python, with
   every tool and setting the tests need present (nothing skips), and `make release` and the
-  publish job require a green run, aarch64 jobs included, for the commit a release is made
+  draft job require a green run, aarch64 jobs included, for the commit a release is made
   from. The fuzzer runs for 600 s (`FSBPYR_FUZZ_SECONDS`) when `src/fsbpyr/launcher` or
   `tests/fuzz` changed since the last tag and on the weekly run, else for 30 s; the corpus it finds
   (`FSBPYR_FUZZ_CORPUS`) is kept in the Actions cache. The launcher programs the tests build
@@ -216,26 +216,24 @@ The tiers, from fastest to most complete:
   on the tag itself (a workflow that ran in the default branch's context and checked out a tag's
   code was flagged by CodeQL, D46); a `build` job builds the tag's executable as `build.yml`
   does (reproducible: the release asset's bytes) for the portability and VM jobs. Only the
-  `publish` job, after every other job passed, `SHA256SUMS-glibc2.28` was signed and the release
-  of the tag exists (it waits up to an hour for `release.yml` to publish it), writes: it creates
-  the companion release `el8-vX.Y.Z`
+  `draft` job, after every other job passed, writes: it creates the companion release `el8-vX.Y.Z`
   as a draft on the tag `el8-vX.Y.Z`, which `make release` pushed with `vX.Y.Z` on the same
   commit (GitHub refuses the workflow's token a release or tag whose target is a commit that
   changes a workflow file, as a release's merge often does), uploads the eight `fsbpyr-stub-3.X-<target>-glibc2.28.xz` and
-  `SHA256SUMS-glibc2.28` with its `.sig` to it, attests them and publishes it (it becomes immutable) with
-  `--latest=false`, so that `releases/latest` keeps pointing at `vX.Y.Z`. It does not touch the
+  `SHA256SUMS-glibc2.28` to it and attests them, with `--latest=false`, so that `releases/latest`
+  keeps pointing at `vX.Y.Z`. `make release-sign` signs and publishes it (it becomes immutable). It does not touch the
   release `vX.Y.Z`: an immutable release accepts no later upload, which is why the stubs are not
   attached to it (REL-1). A rerun that finds `el8-vX.Y.Z` published with the same sums publishes
-  nothing, one that finds other sums fails (a published release cannot be changed), and a draft
-  left by a failed run is deleted and made again. A version has EL8 stubs when the release
+  nothing, one that finds other sums fails (a published release cannot be changed), and one that
+  finds a draft fails too, as it may be the one waiting for the signature: delete a failed run's
+  by hand (`gh release delete el8-vX.Y.Z --yes`). A version has EL8 stubs when the release
   `el8-vX.Y.Z` exists; `make release-check` verifies it (and prints `skip: no EL8 stubs` when
   there is none). To publish them for a tag that has no companion release, or to retry a failed run, dispatch the workflow on the tag's ref: `gh workflow run
   el8.yml --ref vX.Y.Z` (or Actions, EL8, Run workflow, choosing the tag; it has no inputs, and
   dispatched on a branch the plan job finds no tag and nothing runs). Everything runs from the
   tag, workflow file included, so the tag must have the EL8 support (`fsbpyr runtime build
   --glibc`, `tools/release/el8-stub.py`, `tests/support/baseline.py`, el8.yml itself); an older
-  one fails in the first job with a message. A run whose `publish` found no release in an hour
-  says so: dispatch it again on the tag's ref once the release exists. On a 24-core machine `make test-el8-stub` takes about 3.5 minutes with 4 processes
+  one fails in the first job with a message. On a 24-core machine `make test-el8-stub` takes about 3.5 minutes with 4 processes
   (the EL8 and default runtimes linked from cached downloads) and `make test-el8` about 3
   minutes once the runtimes and images are cached; how long the jobs take on a runner is not yet
   measured (each is meant to stay near 20 minutes).
@@ -303,7 +301,7 @@ commands under [Verifying a release](#verifying-a-release) name no version, and 
 of the wiki's pages has its target), and `uv run pytest
 tests/e2e/test_build.py -k quickstart` when the README's quickstart changed. A release made
 from such a commit stands on the run of the newest commit before it that full-suite.yml ran
-for: `tools/release/green-run.sh`, which `make release` and the publish job use, accepts it
+for: `tools/release/green-run.sh`, which `make release` and the draft job use, accepts it
 only when nothing but documentation changed since, and names that run. A change to code,
 tests, configuration (`pyproject.toml`, `uv.lock`, the workflows, the Makefile) or the release
 tools runs the full suite when it is merged.

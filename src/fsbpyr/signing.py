@@ -53,7 +53,6 @@ _PRIVATE_MODE = 0o600
 _NO_PASSPHRASE = f"no passphrase: set {PASSPHRASE_VARIABLE} or run this on a terminal"
 _NO_NAME = "its build info names no valid project"
 _BUILT_ONLY = "signing needs a built fsbpyr"
-RELEASE_KEYS_DOCS = "https://github.com/devitops-com/fsbpyr/wiki/User-Installing#release-keys"
 _WARNING_WIDTH = 62
 
 
@@ -357,13 +356,6 @@ def check_release_file(content: bytes, signature: bytes) -> bool:
         return False
     message = statement(RELEASE_PROJECT, crypto()._sha256(content))  # private to fsbpyr
     return _signed_by(keys, message, signature) is not None
-
-
-def not_pinned_message(tag: str) -> str:
-    """A release no pinned key signed: this fsbpyr cannot tell a key change from a forgery."""
-    return (f"release {tag} is not signed by a key this fsbpyr pins: either the release keys "
-            "changed in a release this fsbpyr did not install, or the download is not genuine. "
-            f"Nothing was changed; see {RELEASE_KEYS_DOCS}")
 
 
 def asset_digest(sums: bytes, asset: str) -> str | None:

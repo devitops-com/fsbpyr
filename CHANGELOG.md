@@ -16,15 +16,23 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   set (`--signing-key`, `FSBPYR_SIGNING_KEY`). The crypto is launcher C, on the OpenSSL every
   fsbpyr carries, so checks need nothing installed.
 - **Signed releases.** Each release signs `SHA256SUMS`, and each EL8 companion
-  `SHA256SUMS-glibc2.28`, with a release key that only the job that signs them holds. `self
-  update`, dispatch to another Python and the EL8 stubs check those files against the keys fsbpyr
-  pins, and each `.xz` against its line before it is unpacked. A release that is not signed, or
-  not by a pinned key, is refused, with no fallback. The first update from a release before this
-  one runs old code and is not checked.
+  `SHA256SUMS-glibc2.28`. `self update`, dispatch to another Python and the EL8 stubs check those
+  files against the keys fsbpyr pins, and each `.xz` against its line before it is unpacked. A
+  release with no valid signature is refused, in two lines and with no fallback. The first update
+  from a release before this one runs old code and is not checked.
+- **Releases are signed on the admin's machine.** GitHub builds and attests, and stops at a draft;
+  no key is ever there. `make release-sign KEY=PATH` signs only if your HEAD, GitHub's main, its tag
+  and the attestation of the sums all name one commit, then uploads the signature and publishes.
+- **`make release-audit`** compares GitHub with what your machine recorded: tags, main, every
+  release with its files and signature, and the settings someone changes to stay. `make release`
+  and `make release-sign` stop if it does not pass.
+- The wiki says how to check an installed fsbpyr from outside it, and how to restore it.
 - `make release` refuses a tree that pins no release keys, which would burn the version.
 
 ### Changed
 - `SHA256SUMS-glibc2.28` lists each stub's `.xz` too.
+- `release.yml` and `el8.yml` publish nothing, and el8.yml no longer waits for the release of the
+  tag. A draft of the companion stays as it is, and a re-run that finds one fails.
 - From source, even in a checkout at a tag, `fsbpyr build` never fetches another Python's variant:
   it cannot check a signature. A variant already in the cache still runs.
 - `make release-check` needs jq and OpenSSL 3.5 or newer, and checks the signatures of a signed

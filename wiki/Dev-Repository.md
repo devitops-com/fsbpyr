@@ -62,37 +62,66 @@ executables. How users verify a download is in
 
 ## Release keys
 
-[`docs/signing.md`](../docs/signing.md) §5 is the whole procedure. Each release signs `SHA256SUMS`,
-and each EL8 companion `SHA256SUMS-glibc2.28`, with the release key K, in the job `sign` of
-[`release.yml`](../.github/workflows/release.yml) and
-[`el8.yml`](../.github/workflows/el8.yml). `prepare` runs built code with a read-only token and no
-secret, `sign` holds K and runs no built code, and `publish` writes and runs no built code. A
-release that cannot be signed, or whose signature the clients would refuse, is not published.
+[`docs/signing.md`](../docs/signing.md) §5 is the whole procedure. Everything is built and attested
+on GitHub, and CI stops at a draft: [`release.yml`](../.github/workflows/release.yml) and
+[`el8.yml`](../.github/workflows/el8.yml) hold no key and publish nothing. The admin signs on their
+own machine and pushes only the signature, so someone who steals the GitHub account gets a release
+that no fsbpyr accepts. This rests on GitHub itself being sound; if it is not, far more than fsbpyr
+is at stake.
 
-- **K** signs in CI only, from secrets of the GitHub environment `release-signing`. **R**, the
-  recovery key, never enters CI. Both come from `bash tools/release/release-signing.sh new-key
-  NAME`; R preferably on a machine that is offline. fsbpyr stores no private key.
+A release is two commands, on main, after the release commit is merged and its full suite passed:
+
+```console
+$ make release                         # audit, tag, CI builds, attests and leaves drafts
+$ make release-sign KEY=~/release-k.key
+```
+
+`make release-sign` refuses unless your HEAD, GitHub's main, GitHub's tag and the attestation of the
+sums file all name one commit, every job of the attested run ran on GitHub's machines, the tree is
+clean, the key is outside the checkout and the audit passes. The attested sums then vouch for every
+file of the draft. It shows what it will sign and asks, signs with K, checks the signature against
+the keys this tag and the previous release pin, reads the draft again, uploads the `.sig`, reads it
+again, publishes, and records the release. If `el8.yml` finishes later, run it again for the
+companion. It is only as good as what you pulled into main: what you tag, K signs.
+
+- **K** signs on the admin's machine, from an encrypted file on a medium plugged in to sign. **R**,
+  the recovery key, stays offline, apart from it. Neither ever reaches GitHub, not even for a
+  moment. Both come from `bash tools/release/release-signing.sh new-key NAME`. fsbpyr stores no
+  private key.
 - **The pins** are the `.pub` files in [`src/fsbpyr/release-keys/`](../src/fsbpyr/); a signature by
   any of them passes. `make release` refuses a tree without any, which would burn the version.
   Each change of them changes the "Release keys" section of
   [Installing](User-Installing.md#release-keys) too, which the suite compares with them.
-- **One-time setup**: make K and R; give the environment `release-signing` one deployment rule,
-  the tag pattern `v*`, before any secret is in it; set `FSBPYR_RELEASE_KEY` and
-  `FSBPYR_SIGNING_PASSPHRASE` in it; pin both keys, with the first signed version in
-  [`tools/release/first-signed-release`](../tools/release/first-signed-release); and remove the
-  organization's GitHub App's access to this repository, or trust it as below.
+- **One-time setup**: make K and R; pin both keys, with the first signed version in
+  [`tools/release/first-signed-release`](../tools/release/first-signed-release); remove the
+  organization's GitHub App's access to this repository, or trust it as you trust yourself; and
+  start the audit's record with `bash tools/release/audit.sh --accept`, after reading GitHub's
+  state.
 - **A planned change of K** takes two releases. Release N pins old K, new K and R, and is signed by
-  the old K, with its companion. Then the new K goes into the secrets, and N+1 drops the old K.
+  the old K, with its companion. N+1 drops the old K and is signed by the new one.
 - **K lost or stolen**: release N pins a new K and R and drops the old K, so only R is pinned by
-  both N and the release before it. Set the repository variable `FSBPYR_RECOVERY=1`: `sign` is
-  skipped, and `publish` makes drafts. Check each sums file's attestation, sign it with `R` by hand,
-  run `tools/release/check-signature.sh` against both sets of pins, upload the `.sig` and publish
-  the draft; the companion with `gh release edit el8-vX.Y.Z --draft=false --latest=false`.
+  both N and the release before it: `make release-sign KEY=~/release-r.key`, which makes the same
+  checks.
 - **R lost**: the next release pins a new R. **Both lost**: users reinstall.
 
-**Everyone with write access is trusted as the admin is.** A push to main sets what K signs next:
-the pins, the code that checks them and the workflows. Against mistakes the suite compares the pins
-with the wiki; against a writer who means harm, no check does.
+### The audit
+
+`make release-audit` compares GitHub with what your machine recorded, so that you are the first to
+see a tampered account or repository, not a user: every tag; that your main holds GitHub's; every
+release with its files, signature and immutability; drafts that are not yours; which release is the
+latest; and the settings someone changes to stay, from members and apps to rulesets, secrets,
+runners and the wiki's head. A valid signature on a release that is not on record means a stolen
+key. `make release` and `make release-sign` run it and stop if it does not pass; run it from cron as
+well, on any machine with a clone: it needs no key. It does not run in GitHub Actions, which whoever
+holds the account could turn off. The record is on that machine, in
+`$XDG_STATE_HOME/fsbpyr-release`.
+
+Exit 1 means treat GitHub as tampered with until each finding is explained. Exit 2 means it could
+not check, which is never a pass. After a change of yours, such as a new secret or a published wiki,
+it reports the difference: read it, then take it as the record with `bash tools/release/audit.sh
+--accept`. If GitHub was tampered with, stop releasing, recover the account, and tell users through
+CVEs, advisories and mailing lists. A GitHub advisory needs the account, so keep a mailing list
+ready before it happens.
 
 ## Developer tasks
 

@@ -377,7 +377,8 @@ def test_a_release_without_a_signature_runs_no_variant(
     releases.files["/v1.2.0/SHA256SUMS"] = b""
     releases.signer = None
 
-    assert "release v1.2.0 is not signed" in _refused(project, tmp_path, capsys, ran)
+    assert "release v1.2.0 has no valid release signature" in _refused(
+        project, tmp_path, capsys, ran)
     assert PATH not in releases.requests
 
 
@@ -388,7 +389,7 @@ def test_a_signature_by_no_pinned_key_runs_no_variant(
     releases.files[PATH] = lzma.compress(_release(tmp_path))
     releases.signer = lambda sums: release_signature(sums, fake_pub("not pinned"))
 
-    assert "not signed by a key this fsbpyr pins" in _refused(project, tmp_path, capsys, ran)
+    assert "has no valid release signature" in _refused(project, tmp_path, capsys, ran)
     assert PATH not in releases.requests
 
 

@@ -138,8 +138,14 @@ asks GitHub for the latest release and, when it is newer, checks its `SHA256SUMS
 keys this fsbpyr pins, downloads the same Python's build of it, checks that `.xz` against its line
 before it is unpacked, checks that the result is the same asset and a newer version, checks it as
 `inspect --verify` does before anything runs it, and renames it over the running executable. A
-release that is not signed, or not by a pinned key, is refused, and nothing is changed; there is
-no fallback. It refuses a build that needs a newer glibc than this machine has, naming
+release with no valid signature is refused, with no fallback, and fsbpyr prints only this:
+
+```text
+fsbpyr: error: new v0.30.0 has not been installed because it has no valid release signature.
+fsbpyr: currently installed fsbpyr version (0.29.0) has been kept unmodified.
+```
+
+Your fsbpyr is unchanged, and you can go on using it. It refuses a build that needs a newer glibc than this machine has, naming
 both versions, before anything is replaced. It never moves to another Python: run the installer
 with `--python` for that. The man page and completions that were installed under the same prefix are written again.
 A developer build (`fsbpyr --version` starts with `untagged`) refuses to update itself. The
@@ -161,11 +167,68 @@ SHA256:3184e5410af6ff52f3e6099c548cef0c058741288d8c8db7d0afd43d22f4806e
 
 A release that changes the keys is signed so that the fsbpyr before it can still update to it. A
 fsbpyr that skipped such a release refuses every later one, since it cannot tell a key change from
-a forgery: "release vX.Y.Z is not signed by a key this fsbpyr pins: either the release keys changed
-in a release this fsbpyr did not install, or the download is not genuine". Check here which keys
-changed, in which release, then update through that release, or reinstall.
+a forgery, and says there is no valid signature. Check here which keys changed, in which release,
+then update through that release, or reinstall.
 
 No key has changed yet.
+
+## Checking an installed fsbpyr
+
+fsbpyr cannot vouch for itself: a tampered copy says what its author wants from `--version`,
+`verify`, `inspect --verify` and `self update`, and a rebuilt one even passes a genuine fsbpyr's
+`inspect --verify`. One flipped byte is caught when it starts, but a careful attacker does not flip
+bytes. So check the file from outside it, with tools it does not control. Each of these needs
+GitHub to be sound, and an advisory tells you if it was not.
+
+Set the version you believe you have, and your Python and target:
+
+```sh
+tag=vX.Y.Z asset=fsbpyr-3.14-x86_64-linux-gnu
+exe=$(readlink -f ~/.local/bin/fsbpyr)
+```
+
+**By attestation**, with `gh`. Name the tag: without it, this passes anything the workflow ever
+built, from any tag:
+
+```sh
+gh attestation verify "$exe" --repo devitops-com/fsbpyr \
+  --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml \
+  --source-ref "refs/tags/$tag"
+```
+
+**By signature**, with OpenSSL 3.5 or newer and the release's own script and keys, in an empty
+directory. The last two lines must print the same digest:
+
+```sh
+base=https://github.com/devitops-com/fsbpyr
+curl -fLO "$base/releases/download/$tag/SHA256SUMS"
+curl -fLO "$base/releases/download/$tag/SHA256SUMS.sig"
+curl -fLO "$base/raw/$tag/tools/release/release-signing.sh"
+curl -fLO "$base/raw/$tag/src/fsbpyr/release-keys/k.pub"
+curl -fLO "$base/raw/$tag/src/fsbpyr/release-keys/r.pub"
+bash release-signing.sh verify SHA256SUMS k.pub r.pub
+grep " $asset\$" SHA256SUMS
+/usr/bin/sha256sum "$exe"
+```
+
+Use the full path: a `sha256sum` earlier on `PATH` can lie. Someone with root can fake that one too,
+so then copy the file to another machine and check it there.
+
+**If it does not match**, do not run it, and do not use `self update`, which is its own code:
+
+1. Install the release again. The installer does not run the old executable:
+   ```sh
+   curl -LsSf https://github.com/devitops-com/fsbpyr/releases/download/vX.Y.Z/install.sh | sh
+   ```
+2. Remove what a reinstall leaves. A poisoned file in the cache still runs under a genuine fsbpyr,
+   and a key planted in the trust store still gives VERIFIED:
+   ```sh
+   rm -rf ~/.cache/fsbpyr ~/.config/fsbpyr/trusted
+   ```
+3. Add your publishers' keys again with `fsbpyr key trust`.
+4. Rebuild the apps it built, and replace every signing key you used with it.
+5. Whoever could write your fsbpyr has your account: look for what else they changed, such as shell
+   files, SSH keys and cron jobs, or reinstall the machine.
 
 ## Versions
 

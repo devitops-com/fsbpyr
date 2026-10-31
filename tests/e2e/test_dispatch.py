@@ -184,7 +184,7 @@ def test_a_variant_signed_by_no_pinned_key_is_not_run(
     done = _build(own, _project(tmp_path), tmp_path / "out", releases.base, tmp_path / "cache")
 
     assert done.returncode == 1
-    assert f"release {TAG} is not signed by a key this fsbpyr pins" in done.stderr
+    assert f"release {TAG} has no valid release signature" in done.stderr
     assert PATH not in releases.requests
     assert not (tmp_path / "out").exists()
 

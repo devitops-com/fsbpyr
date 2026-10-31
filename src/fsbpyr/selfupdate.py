@@ -13,7 +13,8 @@ refused with the installer command that installs the latest release for its Pyth
 Every download of fsbpyr's own files goes through ``signed_sums`` and ``fetch_checked``
 (docs/signing.md §5.5): a release's sums file is checked against the keys this fsbpyr pins, and
 an ``.xz`` against its line of that file, before lzma sees a byte of it. A release that is not
-signed, or not by a pinned key, is refused, with no fallback.
+signed, or not by a pinned key, is refused, with no fallback. The refusal links nowhere: a hacked
+release comes with a hacked wiki.
 """
 
 import contextlib
@@ -54,6 +55,7 @@ _MAX_SUMS = 1 << 20
 _MAX_DOCUMENT = 4 << 20  # a release document has some 100 KB
 _RELEASE = re.compile(r"v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 _ACCEPT = {"Accept": "application/vnd.github+json", "User-Agent": "fsbpyr-self-update"}
+_NO_SIGNATURE = "it has no valid release signature"
 
 # What `make install` puts under the prefix (Makefile), and the command that writes each.
 _EXTRAS = (
@@ -70,6 +72,14 @@ class UpdateError(RuntimeError):
 
 class NotFound(UpdateError):
     """The server has no such file (404): the release does not publish it."""
+
+
+class TooLarge(UpdateError):
+    """The server sent more than a limit allows."""
+
+
+class UnsignedRelease(UpdateError):
+    """No signature by a pinned key covers what the release served."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,26 +196,33 @@ def download_bytes(url: str, limit: int) -> bytes:
     except (OSError, http.client.HTTPException, ValueError) as exc:
         raise _failed(url, exc) from exc
     if len(body) > limit:
-        raise UpdateError(f"{shown(url)} is larger than {limit} bytes")
+        raise TooLarge(f"{shown(url)} is larger than {limit} bytes")
     return body
+
+
+def _no_valid_signature(tag: str) -> UnsignedRelease:
+    return UnsignedRelease(f"release {tag} has no valid release signature; nothing was changed")
 
 
 def signed_sums(url: str, signature_url: str | None, tag: str) -> bytes:
     """The checksums file at ``url``, once a pinned key's signature of it passed. NotFound when
     the release has no such file. No line of it is used before this returns."""
-    sums = download_bytes(url, _MAX_SUMS)
+    try:
+        sums = download_bytes(url, _MAX_SUMS)
+    except TooLarge:
+        raise _no_valid_signature(tag) from None
     try:
         if signature_url is None:
             raise NotFound(f"{url} has no signature")
         signature = download_bytes(signature_url, signing.SIGNATURE_SIZE + 1)
-    except NotFound:
-        raise UpdateError(f"release {tag} is not signed; nothing was changed") from None
+    except (NotFound, TooLarge):
+        raise _no_valid_signature(tag) from None
     try:
         passed = signing.check_release_file(sums, signature)
     except signing.SigningError as exc:  # a pin this fsbpyr carries is damaged: nothing passes
         raise UpdateError(str(exc)) from exc
     if not passed:
-        raise UpdateError(signing.not_pinned_message(tag))
+        raise _no_valid_signature(tag)
     return sums
 
 
@@ -252,8 +269,8 @@ def fetch_checked(url: str, digest: str, target: Path, limit: int | None = None)
         packed.flush()
         got = signing.crypto()._sha256(packed.fileno()).hex()
         if got != digest:
-            raise UpdateError(f"{shown(url)} does not match the checksum of its release; nothing "
-                              "was changed")  # fmt: skip
+            raise UnsignedRelease(f"{shown(url)} does not match the checksum of its release; "
+                                  "nothing was changed")  # fmt: skip
         packed.seek(0)
         _unpack(packed, url, target, limit)
 
@@ -360,6 +377,24 @@ def _warn_about_placed_stubs(executable: Path, tag: str, warn: Callable[[str], N
              f"{tag} differs, `--glibc` refuses them and names the stub to place")  # fmt: skip
 
 
+def _not_installed(tag: str, why: str, own: tuple[int, int, int]) -> UpdateError:
+    """The two lines of a refused release, the first of them after "fsbpyr: error: "."""
+    return UpdateError(f"new {tag} has not been installed because {why}.\n"
+                       f"fsbpyr: currently installed fsbpyr version ({'.'.join(map(str, own))}) "
+                       "has been kept unmodified.")  # fmt: skip
+
+
+def _signed_digest(release: Release, asset: str, refused: UpdateError) -> str:
+    """The SHA-256 that the signed sums of ``release`` list for the ``.xz`` of ``asset``."""
+    try:
+        if release.sums_url is None:
+            raise _no_valid_signature(release.tag)
+        sums = signed_sums(release.sums_url, release.signature_url, release.tag)
+        return listed_digest(sums, f"{asset}.xz", release.tag)
+    except (UnsignedRelease, NotFound) as exc:
+        raise refused from exc
+
+
 def update(
     log: Callable[[str], None] = print, warn: Callable[[str], None] = print
 ) -> bool:
@@ -376,29 +411,28 @@ def update(
     if release.numbers <= own:
         log(f"fsbpyr is up to date ({own_version()}; latest release {release.tag})")
         return False
+    unsigned = _not_installed(release.tag, _NO_SIGNATURE, own)
+    digest = _signed_digest(release, asset, unsigned)
     log(f"downloading fsbpyr {release.tag}")
-    if release.sums_url is None:
-        raise UpdateError(f"release {release.tag} is not signed; nothing was changed")
-    digest = listed_digest(signed_sums(release.sums_url, release.signature_url, release.tag),
-                           f"{asset}.xz", release.tag)  # fmt: skip
     handle, name = tempfile.mkstemp(dir=directory, prefix=f".{executable.name}.update-")
     os.close(handle)
     new = Path(name)
     staged: list[tuple[Path, Path]] = []
     try:
-        fetch_checked(release.asset_url, digest, new)
+        try:
+            fetch_checked(release.asset_url, digest, new)
+        except UnsignedRelease as exc:
+            raise unsigned from exc
         new.chmod(stat.S_IMODE(executable.stat().st_mode))
         try:
             report = read(new, verify=True)
         except InspectError as exc:
-            raise UpdateError(f"the download failed verification, nothing was changed: {exc}"
-                              ) from exc
+            raise _not_installed(release.tag, f"it failed verification: {exc}", own) from exc
         numbers = check_release_identity(report.info, asset)
         if numbers <= own:
-            raise UpdateError(f"the download is not newer than this fsbpyr ({own_version()}); "
-                              "nothing was changed")  # fmt: skip
+            raise _not_installed(release.tag, "the download is not newer than this fsbpyr", own)
         if numbers != release.numbers:
-            raise UpdateError(f"the download is not fsbpyr {release.tag}; nothing was changed")
+            raise _not_installed(release.tag, f"the download is not fsbpyr {release.tag}", own)
         check_glibc(report.info.get("glibc"))
         staged = _stage_extras(executable, new, warn)
         new.rename(executable)

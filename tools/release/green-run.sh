@@ -6,7 +6,7 @@
 #     bash tools/release/green-run.sh WORKFLOW COMMIT
 #
 # A release needs a green full-suite.yml run (the release build and its checks, the whole
-# suite) of the commit it is made from. release.sh checks HEAD before it tags it; the publish
+# suite) of the commit it is made from. release.sh checks HEAD before it tags it; the draft
 # job checks the tagged commit. A run still in
 # progress is followed with follow-run.sh, as release.sh follows the tag's run.
 # A commit that changes only documentation has no run (full-suite.yml leaves such pushes out):

@@ -551,7 +551,7 @@ def test_a_companion_without_a_signature_gives_no_stub(
     publish(releases, make_stub())
     releases.signer = None
 
-    with pytest.raises(stubs.StubError, match="is not signed"):
+    with pytest.raises(stubs.StubError, match="has no valid release signature"):
         get(tmp_path)
 
     assert f"/{COMPANION}/{ASSET}.xz" not in releases.requests and cached(tmp_path) == []
@@ -563,7 +563,7 @@ def test_a_companion_signed_by_no_pinned_key_gives_no_stub(
     publish(releases, make_stub())
     releases.signer = lambda sums: release_signature(sums, fake_pub("not pinned"))
 
-    with pytest.raises(stubs.StubError, match="not signed by a key this fsbpyr pins"):
+    with pytest.raises(stubs.StubError, match="has no valid release signature"):
         get(tmp_path)
 
     assert f"/{COMPANION}/{ASSET}.xz" not in releases.requests and cached(tmp_path) == []

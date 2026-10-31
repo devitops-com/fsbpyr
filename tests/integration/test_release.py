@@ -2,7 +2,7 @@
 
 release.sh only tags: it promotes the CHANGELOG (and, given a new version, bumps pyproject.toml,
 src/fsbpyr/__init__.py and uv.lock to it), makes one commit, tags it and pushes the tag alone.
-The pushed tag triggers .github/workflows/release.yml, which builds, attests, publishes and moves
+The pushed tag triggers .github/workflows/release.yml, which builds, attests, drafts and moves
 main to the release commit; release.sh then just follows that run. Every guard must stop the
 release before anything is committed, tagged or pushed. Everything lives under ``tmp_path``;
 nothing reaches GitHub.
@@ -63,6 +63,7 @@ PREPARE_SH = ROOT / "tools" / "release" / "prepare.sh"
 VERSION_FILES_SH = ROOT / "tools" / "release" / "version-files.sh"
 GREEN_RUN_SH = ROOT / "tools" / "release" / "green-run.sh"
 FOLLOW_RUN_SH = ROOT / "tools" / "release" / "follow-run.sh"
+CONFIRM_SH = ROOT / "tools" / "release" / "confirm.sh"
 RELEASE_NOTES_SH = ROOT / "tools" / "release" / "release-notes.sh"
 TAG = f"v{VERSION}"
 RUN_ID = "4242"
@@ -80,6 +81,9 @@ REPO_URL = "https://github.com/devitops-com/fsbpyr"
 # run (4000 too) shows it completed with FAKE_GH_CHECK_CONCLUSION, any other run with
 # FAKE_GH_TAG_CONCLUSION (both "success" by default), as follow-run.sh's --jq prints it.
 # Anything else (such as `release create`) is not expected from release.sh and fails.
+FAKE_AUDIT = """\
+exit "${FAKE_AUDIT_EXIT:-0}"
+"""
 FAKE_GH = """\
 echo "$*" >> "$FAKE_GH_LOG"
 case "$1 $2" in
@@ -209,8 +213,9 @@ def make_release_repo(
     repo, origin = tmp_path / "repo", tmp_path / "origin.git"
     (repo / "tools" / "release").mkdir(parents=True)
     for script in (RELEASE_SH, PREPARE_SH, VERSION_FILES_SH, RELEASE_NOTES_SH, GREEN_RUN_SH,
-                   FOLLOW_RUN_SH):  # fmt: skip
+                   FOLLOW_RUN_SH, CONFIRM_SH):  # fmt: skip
         shutil.copy2(script, repo / "tools" / "release" / script.name)
+    write_program(repo / "tools" / "release" / "audit.sh", FAKE_AUDIT)  # test_release_sign's
     for name, text in version_files(version).items():
         (repo / name).parent.mkdir(parents=True, exist_ok=True)
         (repo / name).write_text(text)
@@ -673,8 +678,8 @@ def test_release_refuses_without_confirmation_off_a_tty(
 def test_release_tags_head_and_pushes_the_tag_without_building_or_publishing(
     args: list[str], tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    """The tag push is the release: CI builds, attests and publishes. release.sh makes no
-    commit, follows the workflow run the tag triggered and prints the release URL."""
+    """The tag push starts it: CI builds and attests and leaves a draft. release.sh makes no
+    commit, follows the workflow run the tag triggered and says what comes next."""
     repo = make_release_repo(tmp_path, release_env)
 
     result = run_release(repo, release_env, *args)
@@ -688,7 +693,23 @@ def test_release_tags_head_and_pushes_the_tag_without_building_or_publishing(
     for option in ("--workflow release.yml", f"--branch {TAG}", f"--commit {head}", "--event push"):
         assert option in run_list
     assert f"run view {RUN_ID}" in followed(tmp_path)
-    assert f"{REPO_URL}/releases/tag/{TAG}" in result.stdout
+    assert "nothing is published yet" in result.stdout
+    assert "make release-sign KEY=PATH" in result.stdout
+
+
+@pytest.mark.parametrize("status", ["1", "2"], ids=["something differs", "could not be checked"])
+def test_release_tags_nothing_when_the_audit_does_not_pass(
+    status: str, tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    """A version is not burned on a repository that may have been tampered with."""
+    repo = make_release_repo(tmp_path, release_env)
+
+    result = run_release(repo, release_env | {"FAKE_AUDIT_EXIT": status})
+
+    assert result.returncode == 1
+    assert "the audit did not pass; nothing was tagged" in result.stderr
+    assert git(repo, "tag", env=release_env) == ""
+    assert_nothing_built_or_published(tmp_path)
 
 
 def test_release_waits_for_the_workflow_run_to_show_up(
@@ -733,7 +754,7 @@ def test_release_reports_a_failed_workflow_run_with_its_recovery(
 
     assert result.returncode == 1
     assert_released_at_origin(repo, tmp_path, release_env)  # the tag stays pushed
-    assert f"{TAG} is pushed but not published" in result.stderr
+    assert f"{TAG} is pushed and has no draft" in result.stderr
     assert f"gh run view {RUN_ID} --log-failed" in result.stderr
     assert f"gh run rerun {RUN_ID} --failed" in result.stderr
     assert f"this version is burned: {TAG} stays as it is" in result.stderr
@@ -1229,9 +1250,9 @@ def test_a_release_is_one_run_and_a_pull_request_starts_none() -> None:
         script.count('git push --atomic hub "$TAG" "$EL8_TAG"') == 2
 
 
-def test_the_publish_job_checks_the_tagged_commits_full_suite_run_and_names_it() -> None:
+def test_the_draft_job_checks_the_tagged_commits_full_suite_run_and_names_it() -> None:
     """The tag is on the main commit the full suite tested: no release commit after it."""
-    publish = workflow_jobs("release.yml")["publish"]
+    publish = workflow_jobs("release.yml")["draft"]
 
     assert "actions: read" in publish
     assert 'tools/release/green-run.sh full-suite.yml "$GITHUB_SHA"' in publish
@@ -1448,7 +1469,7 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
     workflow = "".join((ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
                        for name in ("build.yml", "release.yml"))  # fmt: skip
     jobs = _jobs()
-    build, prepare, publish = jobs["build"], jobs["prepare"], jobs["publish"]
+    build, prepare, publish = jobs["build"], jobs["prepare"], jobs["draft"]
     assert "make bootstrap $MAKE_ARGS" in build
     assert 'echo "MAKE_ARGS=PYTHON=$MATRIX_PYTHON"' in build
     assert "xz $filter --lzma2=preset=9e --threads=1 --keep dist/fsbpyr$SUFFIX" in build
@@ -1481,10 +1502,10 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
 
 
 def _jobs() -> dict[str, str]:
-    """build.yml's build, reproduce and compare, and release.yml's sbom, prepare and publish."""
+    """build.yml's build, reproduce and compare, and release.yml's sbom, prepare and draft."""
     release = workflow_jobs("release.yml")
     return workflow_jobs("build.yml") | {"sbom": release["sbom"], "prepare": release["prepare"],
-                                         "publish": release["publish"]}  # fmt: skip
+                                         "draft": release["draft"]}  # fmt: skip
 
 
 def test_build_and_reproduce_make_the_sbom_from_their_executable_and_compare_compares_them(
@@ -1512,7 +1533,7 @@ def test_build_and_reproduce_make_the_sbom_from_their_executable_and_compare_com
 
 def test_each_sbom_is_attested_to_its_executable_by_a_pinned_action_and_published() -> None:
     jobs = _jobs()
-    sbom, publish = jobs["sbom"], jobs["publish"]
+    sbom, publish = jobs["sbom"], jobs["draft"]
     workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
     assert "needs: build\n" in sbom
@@ -1523,7 +1544,7 @@ def test_each_sbom_is_attested_to_its_executable_by_a_pinned_action_and_publishe
     assert "subject-path: built/${{ env.ASSET }}\n" in sbom
     assert "sbom-path: built/${{ env.ASSET }}.cdx.json" in sbom
     assert "needs: [build, sbom]" in jobs["prepare"]  # nothing is released unattested
-    assert "needs: [prepare, sign]" in publish
+    assert "needs: prepare" in publish
     assert "id-token: write" in publish  # still its own provenance
     assert "dist/fsbpyr*" in publish  # the SBOMs travel with the executables
     assert "actions/attest-sbom" in workflow and workflow.count("attest-sbom@") == 1
@@ -1793,14 +1814,14 @@ def test_each_job_runs_every_target_and_python_on_a_runner_of_the_targets_archit
 
 
 def test_a_run_needs_every_job_to_pass_for_the_commit_to_be_released() -> None:
-    """No job tolerates a failure, publish needs every build and SBOM attestation (aarch64
+    """No job tolerates a failure, draft needs every build and SBOM attestation (aarch64
     too) and green-run.sh requires the run's conclusion, which is that of all its jobs."""
     for name in ("build.yml", "release.yml", "full-suite.yml"):
         for job, text in workflow_jobs(name).items():
             header = text.split("    steps:", 1)[0]
             assert "continue-on-error" not in header, (name, job)
     assert "needs: [build, sbom]" in workflow_jobs("release.yml")["prepare"]
-    assert "needs: [prepare, sign]" in workflow_jobs("release.yml")["publish"]
+    assert "needs: prepare" in workflow_jobs("release.yml")["draft"]
     assert "needs: suite" in workflow_jobs("full-suite.yml")["portability"]
     gate = GREEN_RUN_SH.read_text(encoding="utf-8")
     assert "completed/success) ;;" in gate and "--jobs" not in gate

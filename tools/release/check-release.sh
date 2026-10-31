@@ -25,7 +25,7 @@
 #                 signed, SHA256SUMS's by release.yml too, which fails a release someone with
 #                 write access published by hand
 #   signatures    if signed: each sums file's signature against the keys this tag pins and those
-#                 of the previous release (check-signature.sh, as the sign job does), and every
+#                 of the previous release (check-signature.sh, as release-sign.sh does), and every
 #                 executable with the released fsbpyr's own `verify`, its reader on the script's
 #                 files
 #   el8 stubs     the companion release el8-<tag>, which el8.yml publishes after the release
@@ -157,7 +157,7 @@ if [ "${#PYTHONS[@]}" -eq 0 ] || [ "${#TARGETS[@]}" -eq 0 ]; then
     exit 1
 fi
 ok "$TAG is ${COMMIT:0:8}: Pythons ${PYTHONS[*]} (default $DEFAULT), targets ${TARGETS[*]}"
-# Signed if the tag pins keys: its sign job fails otherwise, and in a recovery the admin signs by
+# Signed if the tag pins keys: nothing else gets published, as only release-sign.sh publishes, by
 # hand, so a tag that pins keys must have signatures, and no list of versions is needed.
 signed=0
 compgen -G "$work/src/src/fsbpyr/release-keys/*.pub" >/dev/null && signed=1
@@ -323,8 +323,8 @@ if [ "$has_el8" -eq 1 ]; then
         || fail "$EL8_SUMS: no provenance attestation by el8.yml from refs/tags/$TAG"
 fi
 
-# --- Signatures, as the clients and the sign job check them ------------------------------------
-# The published release with the highest version below this one, which the tag's sign job checked
+# --- Signatures, as the clients and release-sign.sh check them ---------------------------------
+# The published release with the highest version below this one, which release-sign.sh checked
 # against too. Not GitHub's order of releases: createdAt does not follow the version.
 previous="$(GH_TOKEN="${GH_TOKEN:-$(gh auth token 2>/dev/null)}" \
     bash "$TOOLS/previous-release.sh" "$TAG" 2>"$work/previous.err")" \

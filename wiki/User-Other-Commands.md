@@ -102,7 +102,7 @@ fsbpyr self update
 Replaces the running executable with the latest release's build for the same Python, when that
 release is newer, after checking the release's signature against the keys fsbpyr pins, the
 download against its line of the signed sums, and the result as `inspect --verify` does. A release
-that is not signed, or not by a pinned key, is refused. It refuses a build that needs a newer glibc than the
+with no valid signature is refused, in two lines that say what stayed as it was. It refuses a build that needs a newer glibc than the
 machine has, naming both versions, before it replaces anything. EL8 stubs placed beside the
 executable (`fsbpyr-stub-*-glibc*`, beside the path it was run by or the file a link to it leads
 to, where `--glibc` looks) are left alone. After the update a warning names those whose SHA-256

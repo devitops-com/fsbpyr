@@ -34,6 +34,9 @@ from .boot.conftest import FAKE_RUNTIME
 
 OWN = "fsbpyr-3.14-x86_64-linux-gnu"  # the asset the 'running' executable was released as
 RUNNING = f"{sys.version_info.major}.{sys.version_info.minor}"  # the Python this test runs on
+REFUSED = ("fsbpyr: error: new v1.2.0 has not been installed because it has no valid release "
+           "signature.\nfsbpyr: currently installed fsbpyr version (1.0.0) has been kept "
+           "unmodified.\n")  # fmt: skip
 CHECKED = ["/api", "/files/SHA256SUMS", "/files/SHA256SUMS.sig"]  # before any asset is fetched
 
 
@@ -638,7 +641,7 @@ def test_a_release_without_a_signature_is_refused(
 
     err = _refused(installed, capsys)
 
-    assert "release v1.2.0 is not signed; nothing was changed" in err
+    assert err == REFUSED
     assert f"/files/{OWN}.xz" not in github.requests
 
 
@@ -648,13 +651,14 @@ def test_a_release_without_a_sums_file_is_refused(
     github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
     github.signer = None
 
-    assert "release v1.2.0 is not signed" in _refused(installed, capsys)
+    assert _refused(installed, capsys) == REFUSED
 
 
 @pytest.mark.parametrize("signature", [
     fake_signature(fake_pub("not pinned"), statement("fsbpyr", b"anything")),
     bytes(SIGNATURE_SIZE), b"", bytes(SIGNATURE_SIZE - 1), bytes(SIGNATURE_SIZE + 1),
-], ids=["another key", "zeros", "empty", "a byte short", "a byte more"])
+    bytes(SIGNATURE_SIZE + 2),
+], ids=["another key", "zeros", "empty", "a byte short", "a byte more", "two bytes more"])
 def test_a_signature_by_no_pinned_key_is_refused(
     github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch, signature: bytes
@@ -666,19 +670,32 @@ def test_a_signature_by_no_pinned_key_is_refused(
     err = _refused(installed, capsys)
 
     assert f"/files/{OWN}.xz" not in github.requests
-    assert "bytes" in err or "either the release keys changed" in err
+    assert err == REFUSED
 
 
-def test_a_key_not_pinned_says_it_cannot_tell_a_key_change_from_a_forgery(
+def test_a_refusal_is_exactly_two_lines_with_no_link(
     github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Nothing else, on either stream: a hacked release comes with a hacked wiki, and an alarm in
+    the tool helps nobody (owner, 2026-10-31). Incidents go through the usual channels."""
     github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
     github.signer = lambda sums: release_signature(sums, fake_pub("the next release key"))
 
-    err = _refused(installed, capsys)
+    assert main(["self", "update"]) == 1
 
-    assert "release v1.2.0 is not signed by a key this fsbpyr pins" in err
-    assert "#release-keys" in err and "Nothing was changed" in err
+    out, err = capsys.readouterr()
+    assert out == "" and err == REFUSED
+    assert "http" not in err and "wiki" not in err and "github" not in err.lower()
+
+
+def test_sums_too_large_are_a_release_with_no_valid_signature(
+    github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
+    monkeypatch.setattr(selfupdate, "_MAX_SUMS", 1)
+
+    assert _refused(installed, capsys) == REFUSED
 
 
 def test_a_signature_of_other_sums_is_refused(
@@ -688,7 +705,7 @@ def test_a_signature_of_other_sums_is_refused(
     github.assets[f"{OWN}.xz"] = lzma.compress(binary)
     github.assets["SHA256SUMS.sig"] = release_signature(b"the sums of another release")
 
-    assert "either the release keys changed" in _refused(installed, capsys)
+    assert _refused(installed, capsys) == REFUSED
 
 
 def test_an_xz_that_does_not_match_its_line_never_reaches_lzma(
@@ -700,7 +717,7 @@ def test_an_xz_that_does_not_match_its_line_never_reaches_lzma(
     github.assets["SHA256SUMS"] = f"{hashlib.sha256(genuine).hexdigest()}  {OWN}.xz\n".encode()
     github.assets[f"{OWN}.xz"] = genuine + b"\0"  # a mirror's
 
-    assert "does not match the checksum of its release" in _refused(installed, capsys)
+    assert _refused(installed, capsys) == REFUSED
 
 
 def test_a_sums_file_that_does_not_list_the_asset_is_refused(
@@ -709,7 +726,7 @@ def test_a_sums_file_that_does_not_list_the_asset_is_refused(
     github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
     github.assets["SHA256SUMS"] = f"{'0' * 64}  another-file\n".encode()
 
-    assert f"list no {OWN}.xz" in _refused(installed, capsys)
+    assert _refused(installed, capsys) == REFUSED
 
 
 def test_another_file_of_the_signed_release_is_not_taken_for_the_asset(

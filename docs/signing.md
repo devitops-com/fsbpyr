@@ -1,8 +1,9 @@
 # Signed fsbpyr releases and signed apps: concept
 
-Status: implemented, 2026-10-30, on branch `signing-openssl`, as §14 says, with the release keys K
-and R pinned. Before the first signed release, §5.2 steps 2 and 3 and the GitHub App are still the
-admin's. The release path was rehearsed on GitHub in a test repository (§14). The concept was written
+Status: implemented on branch `signing-openssl`, as §14 says, with the release keys K and R pinned.
+On 2026-10-31 the owner moved signing off GitHub, after a stolen account was played against the
+first design (§14): K never reaches GitHub, and §5 describes that. Before the first signed release,
+§5.2 steps 3 and 5 are still the admin's. The concept was written
 on 2026-10-29 at fadc3d9, revised the same day after an independent review, and on 2026-10-30 after
 a test round of every open gap (§11.1). It replaces the earlier concept on branch `signing-concept`
 (SSHSIG signatures embedded in the executable), which is dropped.
@@ -31,10 +32,12 @@ the alternatives it was weighed against.
   changes no check's result (§4). Python reads files, asks for passphrases and prints.
 - **fsbpyr's releases.** Each release signs one `SHA256SUMS`, and the EL8 companion release signs
   `SHA256SUMS-glibc2.28`.
-  - CI signs with the release key K, using an openssl script, never with a built fsbpyr.
-  - fsbpyr pins the public keys of K and of the recovery key R, which never enters CI.
-  - A release that cannot be signed, or whose signature the clients would refuse, is not
-    published.
+  - GitHub builds and attests everything, and stops at a draft. The admin checks the draft
+    against their own commit, signs on their own machine with the release key K, using an openssl
+    script, and uploads only the signature.
+  - fsbpyr pins the public keys of K and of the recovery key R. Neither key ever reaches GitHub.
+  - An audit from the admin's machine finds a tampered account or repository, so that the admin
+    is the first to know, and no release goes out until it passes.
 - **Apps.** `fsbpyr build` signs when a key is set. If the key cannot be used, it prints a warning
   and builds unsigned. Users check with `fsbpyr verify --project`. How publishers hand out their
   keys, and how users keep them, is out of scope.
@@ -453,27 +456,31 @@ belongs to whom the user thinks.
 
 ### 5.1 Keys
 
-- **K**, the release key, signs in CI only, from secrets of the GitHub environment
-  `release-signing`.
-- **R**, the recovery key, never enters CI. The admin signs with it by hand (§5.4).
-- **Pins.** Each `.pub` file in src/fsbpyr/release-keys/ (new) is packaged into fsbpyr, and a
-  signature by any of them passes. Normally these are k.pub and r.pub. For one release during a
-  change of K there are three (§5.4).
+The account on GitHub is what may be lost, and whoever holds it can run any workflow with whatever
+it can reach. The play of §14 showed it: with K in a GitHub environment, a backdoored commit on a
+pushed tag went through the unchanged pipeline and K signed it. So K is not on GitHub at all, not
+even for a moment: a copy taken there stays valid until K is replaced, and nothing the admin can
+read says it was taken.
+
+- **K**, the release key, signs on the admin's machine, for every release. Only the `.sig` goes to
+  GitHub.
+- **R**, the recovery key, stays offline. It signs like K, through the same command (§5.4).
+- **Pins.** Each `.pub` file in src/fsbpyr/release-keys/ is packaged into fsbpyr, and a signature by
+  any of them passes. Normally these are k.pub and r.pub. For one release during a change of K
+  there are three (§5.4).
 - **The pins are what main holds when the admin tags it**, like every other file, and K signs
   that. Nothing checks who added a pin (measured with the script, keys k, r and x):
-  - release N pins k, r and an added x, and K signs N. Both checks of the sign job pass, since
-    k is in both sets of pins (§5.3);
-  - sums signed by x then pass N's pins and fail those of the release before N. Every client
-    that installs N accepts x's signature on later sums: from a mirror
-    (`FSBPYR_RELEASE_DOWNLOADS`, dispatch.py:54, runtime/stubs.py:144, :227; `FSBPYR_RELEASE_API`,
-    selfupdate.py:124), through TLS interception, or in a release that someone with write access
-    publishes (§5.2).
+  - release N pins k, r and an added x, and K signs N. Both checks of `make release-sign` pass,
+    since k is in both sets of pins (§5.3);
+  - sums signed by x then pass N's pins and fail those of the release before N. Every client that
+    installs N accepts x's signature on later sums.
 
-  So the pins are only as safe as main: everyone who can push to main can change them (§5.2)
-  [P18]. Against mistakes, the suite compares the pins with the fingerprints the wiki lists
-  (§11.3); against a writer who means harm, no check does.
-- **Key files.** On which machine the keys are made, and where the key files and passphrases are
-  kept, is the admin's choice and job; R belongs offline. fsbpyr stores no private key.
+  What the admin pulls into main and tags is the admin's to know, and is out of this project's
+  scope (owner, 2026-10-31). Against mistakes, the suite compares the pins with the fingerprints
+  the wiki lists (§11.3).
+- **Key files.** K is an encrypted file on a medium the admin plugs in to sign; R is apart from it,
+  offline. `make release-sign` refuses a key inside the checkout, so a key is never kept in the
+  repository, not even for a moment. fsbpyr stores no private key.
 
 ### 5.2 One-time setup
 
@@ -483,251 +490,149 @@ belongs to whom the user thinks.
    bash tools/release/release-signing.sh new-key ~/release-k
    bash tools/release/release-signing.sh new-key ~/release-r
    ```
-2. **Restrict the environment**, before any secret is in it: a workflow that names an environment
-   that does not exist creates it, without rules or secrets (GitHub docs, read).
-   - `release-signing` gets one deployment rule: the name pattern `v*`, of type tag. The docs
-     say a rule has a type (branch or tag), is matched against `GITHUB_REF`, and that wildcards
-     do not match `/`. They do not say how a tag rule treats a branch named `v…`
-     (`refs/heads/v1`) [A] (§11.2). Only tag runs then get K.
-   - Check the rule before step 3:
-     `gh api repos/devitops-com/fsbpyr/environments/release-signing/deployment-branch-policies`
-     lists exactly the tag rule `v*`.
-   - Who can change what (GitHub docs, read; fsbpyr's owner is an organization):
-     - the environment, its rule and its secrets: admin access. Admins can bypass an
-       environment's rules by default;
-     - write access: repository variables and secrets, `FSBPYR_RECOVERY` among them (§5.4);
-       releases, drafts included, and which one is the latest; starting, re-running and
-       cancelling runs; pushes to main. The ruleset `main` blocks only deletion and force
-       pushes, and main has no branch protection (read with `gh api`, 2026-10-30).
-   - The rulesets of 2026-10-29 stay:
-     - `release tag creation`: only RepositoryRole 5, the admin role [A: the API shows only the
-       id], creates `v*` and `el8-v*` tags;
-     - `release tags`: nobody updates or deletes them.
-   - **So everyone with write access is trusted as the admin is** [P18]:
-     - a push to main sets what K signs next, since the admin tags main's HEAD: the pins (§5.1),
-       the code that checks them, the workflows, and release.sh and check-release.sh, which the
-       admin runs with their own gh login;
-     - they can make a tag other than `v*` and `el8-v*`, publish a release on it, and mark one
-       as the latest. First installs take install.sh and the executables from the latest release
-       (wiki/User-Installing.md:47, :93). Signed fsbpyr refuse such a release (§5.5). A release
-       may also be possible on an existing `v*` tag: a burned one, or the admin's new one before
-       CI publishes it [A] (§11.2). On the new one, CI's `gh release create` then fails and the
-       version is lost;
-     - they can set or delete `FSBPYR_RECOVERY` (§5.4).
-   - On 2026-10-30 the admin is the only collaborator, and one GitHub App, installed 2026-10-29,
-     holds write access to contents, workflows and actions in all of the organization's
-     repositories (read with `gh api`). Before the first signed release, the admin removes its
-     access to fsbpyr or trusts it as above [P18]. No environment and no variable exist yet.
-3. **Give K to the environment**, once step 2's check passes. `gh secret set` reads K from the
-   file and asks for the passphrase [A] (§11.2):
-   ```
-   gh secret set FSBPYR_RELEASE_KEY --env release-signing < ~/release-k.key
-   gh secret set FSBPYR_SIGNING_PASSPHRASE --env release-signing
-   ```
-   CI needs no other copy of K. GitHub never shows a secret again, so whether to keep
-   `release-k.key` to set it again is the admin's choice. `release-r.key` and its passphrase go
-   offline.
-4. **Pin the keys.** Copy `release-k.pub` and `release-r.pub` to src/fsbpyr/release-keys/k.pub
+2. **Pin the keys.** Copy `release-k.pub` and `release-r.pub` to src/fsbpyr/release-keys/k.pub
    and r.pub, and commit them with the release that brings signing. Write that release's version
    into tools/release/first-signed-release (one line, `X.Y.Z`) [P20].
-5. **Release.** The first signed release goes through §5.3 like every other. Its signature is
+3. **Remove what can write.** On 2026-10-31 the admin is the only collaborator, and the GitHub App
+   `chatgpt-codex-connector` holds write access to contents and actions in all of the
+   organization's repositories (read with `gh api`). The admin removes its access to fsbpyr, or
+   trusts it as they trust themselves: a write to main is what they would pull and tag.
+4. **Keep the rulesets of 2026-10-29:**
+   - `release tag creation`: only RepositoryRole 5, the admin role [A: the API shows only the id],
+     creates `v*` and `el8-v*` tags;
+   - `release tags`: nobody updates or deletes them.
+
+   They stop nobody who holds the admin's account, and nothing here depends on them: such a tag
+   gets a draft that nobody signs.
+5. **Start the audit's record** on the admin's machine: read GitHub's state, then
+   `bash tools/release/audit.sh --accept` (§5.7).
+6. **Release.** The first signed release goes through §5.3 like every other. Its signature is
    checked against its own keys only. The previous release pins none, which only the version in
    tools/release/first-signed-release may (§5.3).
 
 ### 5.3 Release pipeline
 
-| Job | Change |
+Everything is built on GitHub, and attested there. The admin signs locally and pushes the `.sig`,
+nothing else. This rests on one assumption: GitHub itself is sound and an account on it may be lost.
+An account cannot get GitHub to attest a file for a commit that did not build it. If GitHub itself
+is compromised, far more than fsbpyr is, and that is out of scope.
+
+| Job | What it does |
 |---|---|
-| `build`, `sbom` | none |
-| `prepare` (new) | The part of today's `publish` that runs built code: `make-install.sh`, where the built fsbpyr reads the executables. Then `SHA256SUMS` as written today (release.yml:141). It uploads both. Its token is read-only (`contents: read`) and it gets no secret. Today's `publish` runs that fsbpyr while it holds `contents: write` and `id-token: write` (release.yml:66-71). It needs what `publish` needs today and keeps its condition (below). The `sign` job writes the sums again from the build job's files and compares (step 3) [P22]. |
-| `sign` (new) | The steps below. It needs `prepare`, and its token is read-only (`contents: read`). |
-| `publish` | Runs no built code. It checks its files against the sums it uploads (step 3). It attests as today, with `SHA256SUMS` added to the attested files, then runs `gh release create` as today (release.yml:143), with `SHA256SUMS.sig` added. |
-| el8.yml | `SHA256SUMS-glibc2.28` is written inside `publish` today (el8.yml:655-674), so no job before it has the file. That step moves to a new job `prepare`, unchanged but for the `.xz` lines (§5.5): `contents: read`, no secret, no checkout. Like release.yml's, it needs what `publish` needs today and keeps its condition (below). It runs only `sha256sum`, `xz` and `cmp`, no built code, and uploads the sums. `sign` needs `prepare` and has the steps below but step 3, for `SHA256SUMS-glibc2.28`. `publish` needs `plan`, `prepare` and `sign`, downloads the stubs as today (el8.yml:648-653), the sums and the `.sig`, and writes no sums. Its other changes are below [P21]. |
+| `build`, `sbom` | as before |
+| `prepare` | `make-install.sh`, where the built fsbpyr reads the executables, then `SHA256SUMS`. Its token is read-only (`contents: read`) and it gets no secret. |
+| `draft` | Runs no built code. It checks its files (below), attests them with `SHA256SUMS`, and makes the release as a draft, without a signature. |
+| el8.yml's `prepare`, `draft` | The same for `SHA256SUMS-glibc2.28` and the stubs' `.xz`, in a draft of the companion release, with `--latest=false`. It waits for nothing: the release of the tag stays a draft until the admin signs it. A draft found there may be the one waiting for the signature, so a re-run leaves it alone and fails, and a stopped run's is deleted by hand. |
 
-The `sign` job, in order:
-1. `environment: release-signing`, in a Debian 13 image pinned by digest. It checks out the tagged
-   commit with all history and tags (`fetch-depth: 0`), for the script and for the pins of this
-   tag and of the previous release; a shallow checkout has no other tag (measured).
-   `github.ref_name` must be `vX.Y.Z`, checked as el8.yml's plan checks it (el8.yml:90-96).
-2. It installs `openssl`, and `curl`, `jq` and `ca-certificates` for the release list of step 5.
-   The image has the openssl library but not the command (measured). apt checks Debian's
-   signatures. This step runs before K is anywhere in the job.
-3. In release.yml only, before K is in the job, it writes the sums again [P22]. It downloads the
-   build job's files (`built-*`, as `publish` does, release.yml:93-98), and `prepare`'s
-   `install.sh` and `SHA256SUMS`, each into a directory of its own. It runs release.yml:141's
-   `sha256sum` over the build job's files and that `install.sh`, and compares the result with
-   `prepare`'s `SHA256SUMS` (`cmp`). A difference fails the job. Step 4 signs this job's copy,
-   and step 6 uploads it with the `.sig`.
-   - Why: `prepare` runs the built fsbpyr (make-install.sh:50-53) on a runner with passwordless
-     `sudo` (GitHub docs, read), so its files and artifacts are that code's to choose. Without the
-     compare, K signs whatever lines that code wrote, digests of files never published among
-     them, and whoever intercepts a download can serve such a file to `self update`, with the
-     signed sums from the release or from the run's artifacts, which anyone may download from a
-     public repository [A] (§11.2).
-   - With the compare, every line but `install.sh`'s names a file in the run's `built-*`
-     artifacts, as this job downloads them. `install.sh` stays `prepare`'s, as today; it is
-     published and attested.
-   - A later job can replace an earlier job's artifact of the same run (upload-artifact's
-     `overwrite`, docs read). Whether `prepare`'s code can take the artifact token and use it
-     after `prepare` ended is not known [A]. So `publish` checks its files against the sums it
-     uploads (`sha256sum --quiet -c SHA256SUMS`) before it attests or uploads anything: `sign`'s
-     copy, or in recovery `prepare`'s.
-   - It does not stop a poisoned build (§8): the build job ran the same code.
-   - It downloads what `publish` downloads; the cost is in §9.
-   - el8.yml's `sign` has no such step: its `prepare` runs no built code.
-4. One step holds K. Only this step's `env` gets the secrets `FSBPYR_RELEASE_KEY` and
-   `FSBPYR_SIGNING_PASSPHRASE`. It writes K into `$RUNNER_TEMP`, as the secret returns it
-   [A: K's bytes] (§11.2), and runs `release-signing.sh sign`, which checks the new signature
-   against K's own public keys. Then it removes K.
-5. It checks the signature as the clients will, with `release-signing.sh verify` (measured: a
-   signature by the wrong key passes step 4 and fails here):
-   - against the keys that this tag pins: this release's own fsbpyr, whose dispatch and EL8
-     stubs read this tag's sums;
-   - against the keys that the previous release pins: the fsbpyr that updates to this release,
-     and that reads this tag's EL8 sums during the update (stubs.py:135).
+No workflow holds a key, reads a repository variable, or publishes: `gh release edit --draft=false`
+is on the admin's machine only, and a test pins that for every workflow.
 
-   **The previous release** is the published release `vX.Y.Z` with the highest version below
-   this tag's [P20]:
-   - published: listed by `GET /repos/devitops-com/fsbpyr/releases`, every page
-     (`per_page=100`), read with the job's read-only token; neither a draft nor a prerelease.
-     `self update` takes the latest release from the same API (selfupdate.py:37);
-   - only names `vX.Y.Z` count, so never an `el8-v…` tag. Versions compare as numbers
-     (`sort -V`): as text, v0.9.0 sorts above v0.30.0 (measured);
-   - not taken from git, which does not say which tags were published. A release that failed
-     keeps its tag, and the version is burned (release.sh:199-213); v0.15.1, v0.18.2 and v0.20.0
-     are such tags (gh api: no release). For v0.21.0, `git describe --tags --abbrev=0 --match
-     'v[0-9]*' HEAD^` names v0.20.0, while the rule above finds no release before it. Without
-     `--match`, describe names `el8-v0.29.0` when it shares v0.29.0's commit; with it, on HEAD, it
-     names the tag itself (measured, scratch repository);
-   - why it matters (measured with the script, scratch repository): v0.29.0 is published and
-     pins old K and R; v0.30.0 is burned and pins old K, new K and R; v0.30.1 pins new K and R
-     and is signed by new K. The check against v0.30.0's pins passes, the one against v0.29.0's
-     fails, and only v0.29.0 has users.
+`draft` writes the sums again [P22]. `prepare` runs the built fsbpyr on a runner with passwordless
+`sudo` (GitHub docs, read), so its files and artifacts are that code's to choose. So the build
+job's files must be exactly the assets of every (Python, target), and `sha256sum` over them and
+`prepare`'s `install.sh` must equal `prepare`'s `SHA256SUMS` (`cmp`). Every line but `install.sh`'s
+then names a file of the build job, and a file too many stops the job. It does not stop a poisoned
+build (§8): the build job ran the same code. el8.yml has no such step: its `prepare` runs no built
+code.
 
-   A tag's pins are the `.pub` files that `git ls-tree --name-only TAG --
-   src/fsbpyr/release-keys/` lists, each read with `git show`. For a tag missing from the
-   checkout this fails (exit 128), and so does the job. For a tag from before signing it lists
-   nothing (exit 0). `release-signing.sh verify` given no `.pub` exits 2 (all measured).
+`make release` tags main's HEAD, after the audit has passed, and CI makes the drafts. Then, on the
+admin's machine, `make release-sign KEY=PATH`:
 
-   **The first signed release** is the only release whose previous release may pin nothing;
-   then only the first check runs. Its version is named in tools/release/first-signed-release,
-   not inferred. For any other version, a previous release that pins nothing fails the job, so a
-   lookup that goes wrong (a text sort, a failed API call, a page not read) stops the release
-   instead of skipping the check. If the named version is burned, the release that replaces it
-   changes the file.
-6. It uploads the `.sig`, and in release.yml its copy of `SHA256SUMS`.
+1. **Your commit.** It refuses unless HEAD, the local tag, GitHub's `main` and GitHub's tag are one
+   commit, on a clean tree, and the key file is outside the checkout. A commit pushed to GitHub, or
+   a moved tag, stops it here.
+2. **The audit** (§5.7) must pass.
+3. **The attestation.** It downloads the draft into an empty directory. Before anything reads the
+   sums file, `gh attestation verify` must find GitHub's attestation of it, with `--source-digest`
+   your commit, `--source-ref refs/tags/vX.Y.Z`, `--signer-workflow` this repository's release.yml
+   (el8.yml for the companion) and `--deny-self-hosted-runners`. The commit is the point: comparing
+   `main` alone says nothing about the draft's files, which an account can replace, and which a
+   run of a commit you never saw can have built. Measured on GitHub's real attestations in the test
+   repository: the genuine sums pass, and the sums of a backdoored commit, the wrong commit and the
+   wrong workflow are each refused.
+   **Where it was built.** `--deny-self-hosted-runners` speaks only for the job that attested, and
+   that job only hashes what the jobs before it left. A runner the attacker registers with the
+   label `ubuntu-24.04` might take a build job, if GitHub routes a hosted label to it [A], and the
+   attestation would then be a true one, for your commit, of the attacker's bytes. So the command
+   follows the attestation's `runInvocationURI` to the run and attempt, and reads the record of
+   every job: each must have `runner_group_id` 0, or be skipped. 0 is what GitHub's own machines
+   have (read on both repositories), and an organization's groups start at 1 (read:
+   `Default` is 1). Every attestation of the sums file counts. Attesting in the build jobs instead
+   would hand an OIDC token to the job that runs built code.
+4. **The files.** The attested sums vouch for the rest. Every file of the draft must be listed
+   there with the digest it has, every listed file must be there (for a companion, which publishes
+   each stub's `.xz` only, the stubs themselves are not), and no signature may be on the draft yet.
+5. **You.** It prints the release, the commit, the number of files and the digest of the sums, and
+   asks.
+6. **The signature.** `release-signing.sh sign`, which asks for K's passphrase on the terminal, then
+   a check as the clients will, with `check-signature.sh`:
+   - against the keys that this tag pins: this release's own fsbpyr, whose dispatch and EL8 stubs
+     read this tag's sums;
+   - against the keys that the previous release pins: the fsbpyr that updates to this release, and
+     that reads this tag's EL8 sums during the update.
+7. **Publishing.** It uploads the `.sig`, publishes the draft (`--latest=false` for a companion: a
+   companion as the latest release breaks self update and install.sh), records the release (§5.7)
+   and runs the audit again. A companion that comes later is signed by a second run.
 
-It runs no fsbpyr, no built code, and no action but GitHub's checkout, download-artifact and
-upload-artifact.
+   Whoever holds the account has as long as the prompts take. So the draft is read again before
+   the upload and once more before publishing: the refs must still be your commit, and the tag
+   must have exactly one draft, no prerelease, whose files are exactly what was checked, by name
+   and digest. This is what stands for `install.sh`, which `curl | sh` runs and no client checks.
+   It publishes by the draft's id: a tag can have two drafts, and `gh release edit` takes one by
+   name. A change between the last read and the publication remains possible, for a moment; the
+   audit that follows reports it, and clients refuse any executable that does not match.
 
-el8.yml's `publish` keeps its other steps (el8.yml:681-784), with these changes [P21]:
-- **Is it published** (el8.yml:695-720). A published companion counts as done only if its assets
-  include `SHA256SUMS-glibc2.28.sig` too. Each signing gives other bytes (§2.2), so the step only
-  checks that the file is there; check-release.sh checks it against the pins (§5.6). A published
-  companion without it fails the run: it cannot be repaired, and the stubs need a new version.
-  Today the step checks the sums and each `.xz` only (el8.yml:709-717). Measured with the step's
-  code and a stub `gh`: today such a companion gives "nothing to publish", exit 0.
-- **The `.xz` bytes.** With the `.xz` lines, that step's compare of the sums (el8.yml:712) also
-  compares the `.xz` bytes. They are the same with the same xz (build.yml:192-194), and el8.yml
-  installs xz from apt, unpinned (el8.yml:138). Measured: xz 5.2.5 and 5.8.1 gave the same bytes
-  for one input. A retry with an xz that encodes differently fails with "published with other
-  stubs" and publishes nothing.
-- **A draft companion.** Outside recovery it is deleted and made again, as today
-  (el8.yml:703-707): it is a stopped run's. In recovery the step deletes nothing, because the
-  draft may be the one waiting for R's signature (§5.4); it fails and names the draft. Measured
-  with the same stub: today a draft is always deleted.
-- **Publish the companion release** (el8.yml:757-772). The draft gets `SHA256SUMS-glibc2.28.sig`
-  too. Without a `.sig` (`sign` skipped, recovery) the step stops at the draft:
-  `gh release edit --draft=false` (el8.yml:772) runs only when `sign` succeeded.
+   If a run stops after the upload, the `.sig` stays on the draft and the next run refuses it,
+   saying how to remove it: it cannot know that the signature is its own.
 
-`publish` runs only if `prepare` and `sign` succeeded. The one exception is recovery
-(`vars.FSBPYR_RECOVERY == '1'`, §5.4). There, `sign` is skipped (`if: vars.FSBPYR_RECOVERY !=
-'1'`), and `publish` makes a draft (`--draft`) and stops. A skipped job skips the jobs that need
-it, so the condition starts with `!cancelled()`. That also drops the implicit `success()` of the
-other jobs `publish` needs (GitHub docs, read). So `prepare` needs every job that `publish` needs
-today (release.yml:63, el8.yml:634) and keeps `publish`'s condition (release.yml:64,
-el8.yml:635). `publish` then needs only `prepare` and `sign`, plus el8.yml's `plan` for its
-outputs:
-```
-if: ${{ !cancelled() && needs.prepare.result == 'success'
-        && (needs.sign.result == 'success'
-            || (needs.sign.result == 'skipped' && vars.FSBPYR_RECOVERY == '1')) }}
-```
-Inside `publish`, `needs.sign.result` decides whether the release is published or left a draft;
-the variable is not read again. Nothing else in it may let a release through unsigned.
+**The previous release** is the published release `vX.Y.Z` with the highest version below this
+tag's [P20]:
+- published: listed by `GET /repos/devitops-com/fsbpyr/releases`, every page (`per_page=100`);
+  neither a draft nor a prerelease. `self update` takes the latest release from the same API;
+- only names `vX.Y.Z` count, so never an `el8-v…` tag. Versions compare as numbers (`sort -V`):
+  as text, v0.9.0 sorts above v0.30.0 (measured);
+- not taken from git, which does not say which tags were published. A release that failed keeps
+  its tag, and the version is burned; v0.15.1, v0.18.2 and v0.20.0 are such tags (gh api: no
+  release);
+- why it matters (measured with the script, scratch repository): v0.29.0 is published and pins old
+  K and R; v0.30.0 is burned and pins old K, new K and R; v0.30.1 pins new K and R and is signed by
+  new K. The check against v0.30.0's pins passes, the one against v0.29.0's fails, and only v0.29.0
+  has users.
 
-Any failure stops the release, so CI never publishes fsbpyr unsigned. A release that someone
-publishes by hand without a pinned key's signature is refused by signed fsbpyr (§5.2, §5.5).
+A tag's pins are the `.pub` files that `git ls-tree --name-only TAG -- src/fsbpyr/release-keys/`
+lists, each read with `git show`. For a tag missing from the checkout this fails (exit 128), and so
+does the command. For a tag from before signing it lists nothing (exit 0). `release-signing.sh
+verify` given no `.pub` exits 2 (all measured).
 
-Users with write access can start these jobs again on an existing tag: re-run a run, or
-`gh workflow run el8.yml --ref vX.Y.Z`. That runs the tag's own workflow, which only the admin
-role can tag (§5.2), and signs that tag's files again. After a change of K (§5.4), such a run
-fails in `sign` for a tag whose own pins, or whose previous release's pins, lack the new K. That
-includes release N of a planned change, whose previous release pins only the old K (measured: a
-new-K signature against old K and R is NOT VERIFIED). A missing companion of such a release can
-then only be signed with R, by hand, as in recovery (`FSBPYR_RECOVERY=1` for that run).
+**The first signed release** is the only release whose previous release may pin nothing; then only
+the first check runs. Its version is named in tools/release/first-signed-release, not inferred. For
+any other version, a previous release that pins nothing stops the command, so a lookup that goes
+wrong (a text sort, a failed API call, a page not read) stops the release instead of skipping the
+check. If the named version is burned, the release that replaces it changes the file.
+
+A failure at any step publishes nothing, and the draft stays a draft. A release someone publishes
+by hand without a pinned key's signature is refused by signed fsbpyr (§5.5), and the audit finds it
+(§5.7).
 
 ### 5.4 Changing keys
 
-- **A new pair** comes from `fsbpyr key new` or from the script; both write the same format
-  (§2.3).
+- **A new pair** comes from `fsbpyr key new` or from the script; both write the same format (§2.3).
 - **Every reader must find a pinned key.** The sums of release N are read by the fsbpyr of the
-  previous release (§5.3: the published release with the highest version below N; a burned tag
-  does not count), in self update and for the EL8 sums (stubs.py:135), and by N's own fsbpyr
-  (dispatch, the EL8 stubs). So N's signature must pass both the previous release's pins and
-  N's. The sign job checks both (§5.3).
+  previous release (a burned tag does not count), in self update and for the EL8 sums, and by N's
+  own fsbpyr (dispatch, the EL8 stubs). So N's signature must pass both the previous release's pins
+  and N's. `make release-sign` checks both (§5.3).
 - **A planned change of K** takes two releases:
-  1. Release N pins the old K, the new K and R. CI still holds the old K and signs N and its EL8
-     companion.
-  2. Once N and its companion are published, the admin puts the new K into the environment's
-     secrets; afterwards CI cannot sign N's companion (§5.3).
-  3. Release N+1 drops the old K and is signed by the new one.
+  1. Release N pins the old K, the new K and R. The old K signs N and its EL8 companion.
+  2. Release N+1 drops the old K and is signed by the new one.
 - **A new R** replaces the old one in the next release's pins. K signs that release as usual.
-- **K lost or stolen:** release N pins a new K and R, and drops the old K at once. Only R is
-  pinned by both the previous release and N, so R signs both of N's sums files, by hand:
-  1. The admin removes K's secrets and sets the repository variable `FSBPYR_RECOVERY=1`.
-     release.yml and el8.yml then skip `sign`, make drafts, and publish nothing.
-  2. Anyone with write access can replace a draft's files. So before signing, the admin downloads
-     the draft's sums file and checks that the tag's run made it:
-     ```
-     gh attestation verify SHA256SUMS --repo devitops-com/fsbpyr \
-         --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml \
-         --source-ref refs/tags/vX.Y.Z
-     ```
-     For the companion: `SHA256SUMS-glibc2.28` and el8.yml (el8.yml attests it today).
-  3. The admin runs `release-signing.sh sign ~/release-r.key SHA256SUMS`, then `verify` against
-     both sets of pins as the sign job does: this tag's, and the previous release's (§5.3). Then
-     the admin uploads the `.sig` and publishes the draft: `gh release edit vX.Y.Z
-     --draft=false`.
-  4. The same for the companion, published with `gh release edit el8-vX.Y.Z --draft=false
-     --latest=false`, as el8.yml publishes it (el8.yml:772). A newly published release becomes
-     the latest unless told otherwise (GitHub docs, read), and a companion as the latest release
-     breaks self update and install.sh (el8.yml:754-756). el8.yml waits up to an hour for the
-     main release to be published, otherwise it is dispatched again on the tag. In recovery
-     el8.yml deletes no draft (§5.3), so a re-run keeps the draft the admin signs. A draft left
-     by a stopped run is deleted by hand (`gh release delete el8-vX.Y.Z --yes`) before el8.yml
-     runs again.
-  5. The admin puts the new K into the environment's secrets and removes `FSBPYR_RECOVERY`.
-     Release N+1 is signed by the new K.
-- **`FSBPYR_RECOVERY` is a repository variable** [P19]. Everyone with the write role can set or
-  delete it (§5.2); the GitHub App of §5.2 cannot (it has no variables permission, read with
-  `gh api`). It gives them nothing that write access does not give already:
-  - set, it makes the next tag's run skip `sign` and make a draft, so the release is withheld.
-    If someone then publishes that draft, every signed fsbpyr refuses it (§5.5), and immutable
-    releases (on, 2026-10-30) keep its assets as published [A: a `.sig` cannot be added later],
-    so the version is lost;
-  - deleted during a recovery, it lets `sign` run without K's environment secrets, and `sign`
-    fails. A repository secret `FSBPYR_RELEASE_KEY`, which write access can make (§5.2), would
-    reach the job, since an environment secret wins only where it exists (GitHub docs, read),
-    but step 5 of §5.3 refuses a key that is not pinned (measured with the script). Nothing is
-    published.
-- **A client that skipped the release that changed K** refuses every later release. It cannot tell
-  a key change from a forgery, and the release that changed the keys is signed by no key it
-  trusts. So the message names both causes and no version: "release vX.Y.Z is not signed by a key
-  this fsbpyr pins: either the release keys changed in a release this fsbpyr did not install, or
-  the download is not genuine. Nothing was changed; see <User-Installing URL>#release-keys". That
-  wiki section lists each key change with its release and the new fingerprints. The commit that
-  changes the pins changes that wiki section too (§11.3).
+- **K lost or stolen:** release N pins a new K and R, and drops the old K at once. Only R is pinned
+  by both the previous release and N, so R signs both of N's sums files, with the same command and
+  the same checks: `make release-sign KEY=~/release-r.key`. Release N+1 is signed by the new K.
+- **A client that skipped the release that changed K** refuses every later release, with the two
+  lines of §5.5. It cannot tell a key change from a forgery, and the release that changed the keys
+  is signed by no key it trusts. It links nowhere, so the wiki's "Release keys" section says what
+  happened, for whoever looks: it lists each key change with its release and the new fingerprints.
+  The commit that changes the pins changes that wiki section too (§11.3).
 - **R lost:** the next release pins a new R and is signed by K.
 - **Both lost:** users reinstall.
 - **Limit:** a stolen K works against every client that still pins it, until that client updates
@@ -746,8 +651,17 @@ All of them run in C, against the pinned keys, with subject `fsbpyr`.
   4. Continue as today: `inspect --verify`, then the rename. `inspect --verify` stays the D31
      check and does not change: the signature covers `SHA256SUMS`, not the executable.
 
-  A release without `SHA256SUMS.sig` gives "release vX.Y.Z is not signed; nothing was changed",
-  with no fallback. A release signed by no pinned key gives the message of §5.4.
+  A release with no valid signature prints these two lines and nothing else, with no fallback
+  (owner, 2026-10-31):
+  ```
+  fsbpyr: error: new v0.30.0 has not been installed because it has no valid release signature.
+  fsbpyr: currently installed fsbpyr version (0.29.0) has been kept unmodified.
+  ```
+  An `.xz` that does not match its line, and sums that do not list it, print the same: no valid
+  signature covers that file. A replayed or mislabelled release has a valid signature, so its
+  first line says what is wrong instead, and the second is the same. They link nowhere: a hacked
+  release comes with a hacked wiki, and people hear of an incident through CVEs, advisories and
+  mailing lists. Nothing is shown to a user who does not run `self update`, whom nothing touched.
 - **dispatch**, the other Python variants (dispatch.py:54): the same steps at its own tag, with a
   version equal to its own.
 - **EL8 stubs** (runtime/stubs.py:160–171):
@@ -776,7 +690,7 @@ All of them run in C, against the pinned keys, with subject `fsbpyr`.
   `.pub` in src/fsbpyr/release-keys/. The new checks below, but openssl's, run for signed
   releases only. An older release keeps today's checks, and the script prints `info  vX.Y.Z pins
   no release keys: released before signing`. A tag that pins keys must have a signed release:
-  its sign job fails otherwise (§5.3), and in recovery the admin signs by hand (§5.4). So a
+  nothing else gets published (§5.3). So a
   missing `.sig` there is a FAIL, and no version list is needed, unlike 0.26.0's exception
   (check-release.sh:441).
 - **Assets.** `SHA256SUMS.sig` joins the release's assets (check-release.sh:146) and its download
@@ -804,16 +718,51 @@ All of them run in C, against the pinned keys, with subject `fsbpyr`.
 - `fsbpyr verify` of each executable with the released fsbpyr. This checks fsbpyr's reader against
   the script's files.
 - **`SHA256SUMS`'s attestation:** its provenance attestation by release.yml from the tag, as
-  check-release.sh:285 checks `SHA256SUMS-glibc2.28`'s by el8.yml. Today release.yml does not
-  attest `SHA256SUMS` (§5.3 adds it), and the script checks release.yml's attestations of the
-  executables only (check-release.sh:189-207). This also FAILs a release that someone with write
-  access published by hand (§5.2).
+  check-release.sh:285 checks `SHA256SUMS-glibc2.28`'s by el8.yml. This also FAILs a release that
+  someone with write access published by hand.
 - **openssl.** It joins the tool list (check-release.sh:60) for every release, signed or not, so
   there is one tool list. That list checks only `command -v`, which cannot see the version. So
   before any download the script also checks that `openssl list -signature-algorithms` names
   ED25519 and ML-DSA-65, as the script's own tool check does, and stops with exit 2 otherwise.
   Without this, an OpenSSL 3.0 passes the start and fails each signature check later: the script
   exits 2 and names the version (measured with 3.0.13 and 3.0.22), a FAIL.
+
+### 5.7 `make release-audit`
+
+The first to see a tampered account or repository should be the admin, not a user. `audit.sh`
+compares what GitHub holds with what the admin's machine recorded. `make release` and `make
+release-sign` run it and stop if it does not pass, and it can run from cron on any machine with a
+clone: it needs no key, only a `gh` login that can read the settings. It never runs in GitHub
+Actions, which whoever holds the account could turn off. With K offline, existing users stay
+protected meanwhile, so what the delay costs is new installs, which take what GitHub serves (§8).
+
+The reference is on that machine, outside GitHub, in `FSBPYR_RELEASE_STATE` (default
+`$XDG_STATE_HOME/fsbpyr-release`): `releases`, a line per release (tag, commit, the SHA-256 of its
+files' names and digests), and `settings`. `make release-sign` adds each release it publishes.
+`audit.sh --accept` takes what it finds as the reference, so it comes after reading what differs.
+
+| Check | Finds |
+|---|---|
+| Every tag here and on GitHub, by commit | a moved, added or removed tag |
+| GitHub's `main` is held by this clone's main | a commit pushed that you do not have |
+| Every published release is on record with the same id, commit, title, notes and files, and every recorded one is there | an added, changed, or deleted and remade release |
+| Each signed release passes the keys its tag and the previous release pin, and its files are what its sums list | a replaced sums file or file, a removed signature |
+| A valid signature on a release that is not on record | **a stolen key**: the one thing a signature cannot show |
+| Every release is immutable; no draft for a tag this clone lacks | a weakened release, a draft that is not yours |
+| The latest release is the newest on record | updates held back |
+| Settings against the record: repository, collaborators, owners, members, apps with their permissions, webhooks, deploy keys, rulesets in full, secrets, variables, environments, runners, Actions policy, the token's default, immutable releases, the wiki's head | what someone changes to stay, and fingerprints changed in the wiki |
+
+Releases before the first signed one have no signature, so the record alone stands for them.
+
+A lookup that fails is exit 2 and never a pass: nothing to compare is not a match, since a blinded
+check would read as "no secrets", which is what the record says. Exit 1 lists each finding, and a
+finding means GitHub is treated as tampered with until it is explained.
+
+The organization's audit log is not available through the API on the Team plan (HTTP 404, read
+2026-10-31), so this compares state, and does not read who did what: a change undone before it
+runs is not seen. `gh release verify` is no
+substitute for the record: it passed the backdoored release of §14, since it shows that a release
+is unchanged since it was published, not that it is yours.
 
 ## 6. Apps
 
@@ -896,24 +845,28 @@ This needs nothing new: there is no standalone check script (§10).
 | `.sig` removed | fsbpyr's own paths refuse. For apps, `NOT VERIFIED: no myapp.sig`; users must expect a signature |
 | Ed25519 broken, by a quantum computer for instance | **Stopped**: ML-DSA-65 must pass too |
 | A flaw in the ML-DSA-65 code | **Stopped**: Ed25519 must pass too |
-| The first fsbpyr download tampered with | **Not stopped**: it is trusted as GitHub serves it (owner decision). That includes a release published by anyone with write access (§5.2) |
-| Malicious mirror or TLS interception, for updates | **Stopped**, given the [A] of the poisoned-build row (§5.3 step 3) |
-| Updates withheld | **Not stopped**: for instance by a writer who marks an older release as the latest, which the version check refuses (§5.5), or who sets `FSBPYR_RECOVERY` (§5.4) |
+| The first fsbpyr download tampered with | **Not stopped**: it is trusted as GitHub serves it (owner decision). That includes a release published by whoever holds the account. GitHub stays the only host (owner, 2026-10-31): a second site would only move the problem. The audit limits how long it lasts (§5.7) |
+| Malicious mirror or TLS interception, for updates | **Stopped**, given the poisoned-build row |
+| Updates withheld | **Not stopped**, but found: a writer can mark an older release as the latest, which the version check refuses (§5.5). The audit reports it (§5.7) |
 | Rollback of fsbpyr through an update | **Stopped**: the version must be newer |
 | Rollback of apps | **Not stopped** |
-| Malicious workflow file at a tag | Gets a signed release and can copy K, as with any key in CI. Only the workflows of tags made by the admin role reach K (§5.2), and users with write access can run those again (§5.3). The admin tags main's HEAD, so everyone who can push to main reaches K too (§5.2) |
-| A key, or any other change, pushed to main by someone with write access | **Not stopped**: K signs what the admin tags, and every client that installs that release accepts the added key (§5.1). Write access is only for those the admin trusts as they trust themselves (§5.2) [P18] |
-| A release made by hand by someone with write access, on any tag (the admin's new one, a burned one) | **Stopped** for updates: it has no signature by a pinned key (§5.5). First installs trust it (above). On the admin's new tag the version may be lost [A] (§5.2), and `make release-check` FAILs such a release (§5.6) |
-| Poisoned build | Gets a signed release. K is never in a job that runs built code. The sign job writes the sums again from the build job's files, and `publish` checks its files against them, so the built code in `prepare` cannot get digests of unpublished files signed [A: that it cannot replace the run's artifacts after `prepare`] (§5.3) [P22] |
-| CI secret holding the wrong key | **Stopped**: the sign job checks against the pins of this release and of the previous published one; a burned tag does not count (§5.3) |
-| Stolen K | **Partly**: R signs the key change; clients that do not update stay exposed |
-| A draft's files replaced before R signs them, in recovery | **Stopped**: the admin checks the sums file's attestation first (§5.4) |
-| `FSBPYR_RECOVERY` set or deleted by someone with the write role | **Not stopped**: the release is withheld or its version lost, and clients accept nothing from it (§5.4) [P19] |
+| A stolen GitHub account: a backdoored commit or workflow on a pushed tag, built and attested by GitHub | **Stopped**: CI leaves an unsigned draft, K is not there to reach, and `make release-sign` refuses an attestation that does not name your commit. Published by hand, every signed fsbpyr refuses it, and the audit reports it (§5.3, §5.5, §5.7). Played on GitHub (§14) |
+| A key, or any other change, pushed to main by someone with write access | **Not stopped by a check**: `make release-sign` refuses while GitHub's main is not your commit, and the audit finds a commit you do not hold, but what the admin pulls and tags is the admin's to know: out of scope (owner, 2026-10-31). Whatever they tag, K signs, and clients accept any key it adds (§5.1) |
+| A release made by hand by whoever holds the account, on any tag | **Stopped** for updates: it has no signature by a pinned key (§5.5). The audit reports it. First installs trust it (above) |
+| Poisoned build | Gets a signed release. K is never near built code. The `draft` job writes the sums again from the build job's files, so the built code in `prepare` cannot get digests of unpublished files listed. Everything the commit builds is what the admin signs: a compromised dependency in that commit is signed too |
+| A key the tag does not pin | **Stopped**: `make release-sign` checks against the pins of this release and of the previous published one before it uploads anything; a burned tag does not count (§5.3) |
+| Stolen K | **Partly**: it now takes the admin's key medium and passphrase, not the GitHub account. R signs the key change; clients that do not update stay exposed. The audit reports a release that is not on record (§5.7) |
+| A draft's files replaced before they are signed | **Stopped**: the attested sums must name your commit, and every file must match them (§5.3) |
+| A draft's files, tag or flags changed while the admin is at a prompt | **Stopped**: the draft and the refs are read again before the upload and before publishing. In the moment left after the last read, a file that changes no longer matches the signed sums: clients refuse it, and the audit that follows reports it, with the version burned |
+| A build job taken by a self-hosted runner of the attacker's, on a hosted label | **Stopped**: every job of the attested run must have run on GitHub's machines (§5.3) [A: whether GitHub routes so] |
 | The passphrase printed or logged by code that runs during `build`, in a dump of its environment | **Stopped**: the environments of the build's processes lack both variables (§3.1) |
 | The passphrase and the key file taken by code that runs during `build` and looks for them: in /proc, in memory, on the terminal, at a later start | **Not stopped**: build without a key and sign in a separate job, on a machine or account the build never ran on (§3.1, §6) [P1] |
-| fsbpyr's cache, or stubs placed beside fsbpyr, changed by someone who can write them | **Not stopped**: they can replace fsbpyr itself (§5.5) |
+| fsbpyr's cache, or stubs placed beside fsbpyr, changed by someone who can write them | **Not stopped**: they can replace fsbpyr itself (§5.5). A reinstall does not clean them (§14), nor the trust store: the wiki's restore steps remove both |
+| GitHub itself compromised, so that it attests what it did not build | **Not stopped**: out of scope, and far more than fsbpyr would be at stake |
+| The admin's own machine compromised | **Not stopped**: K's passphrase can be taken as it is typed. A separate offline machine for step 6 of §5.3 stops that: only `SHA256SUMS` and the `.sig` cross |
 | openssl.cnf, `OPENSSL_CONF`, `OPENSSL_MODULES` or `LD_PRELOAD` set by an attacker | **Not stopped**: they load code into fsbpyr. A config that loads no code changes no check's result, but it can choose the randomness of `key new` and `sign` (§4) |
 | An app key handed out by an attacker | Out of scope (publishers and users) |
+| A change undone before the audit runs: a ruleset toggled, an ephemeral runner | **Not seen**: the audit compares state, and the audit log is not available to it (§5.7). What such a change could reach is checked at signing |
 
 ## 9. Performance and size
 
@@ -958,6 +911,22 @@ design:
 - a `verify --project` that differs from the file's project is NOT VERIFIED (§3);
 - `SHA256SUMS-glibc2.28` lists each stub's `.xz` too (§5.5).
 
+Decided on 2026-10-31, after a stolen account was played against the first design (§14). Where these
+differ from the list above, they win:
+- K never reaches GitHub, not even for a moment. The admin downloads the draft, signs on their own
+  machine and pushes the `.sig`. Everything is still built on GitHub, and attestations stay.
+- The admin signs only if their commit is GitHub's `main`, GitHub's tag and what the sums are
+  attested for. GitHub itself being compromised is out of scope.
+- What the admin pulls into main is theirs to know, and out of scope.
+- Checking prior signed releases and the repository is part of the release process (§5.7): the
+  first to detect tampering should be the admin, not users.
+- A user checks a suspect local fsbpyr with a shell script, by signature or attestation. This
+  replaces "there is no standalone check script for users", for that purpose.
+- GitHub is the only host: no second site for install.sh or a status page. New installs during a
+  hack are an accepted risk, which fast detection limits.
+- A refusal prints its two lines and nothing else, with no link (§5.5). Incidents go through the
+  usual channels: CVEs, advisories, mailing lists.
+
 The test round of 2026-10-30 decided nothing. Its choices are marked [Pn] and listed in §13. The
 owner accepted all of them as written on 2026-10-30, and asked for Wycheproof's cases as well.
 
@@ -980,8 +949,8 @@ The results are in the sections they changed. The suite runs as a normal user
 
 None of these was run. Those marked [A] where the text states them rest on inference. The others
 were read in docs or source, or are steps no run has tried yet; a run could still contradict them.
-- **The write role** (§5.2, §5.4, §8), from GitHub's docs, with no second account to try it: it
-  sets `FSBPYR_RECOVERY`, publishes a draft, and may release on an existing `v*` tag (§5.2). A
+- **The write role** (§5.3, §8), from GitHub's docs, with no second account to try it: it
+  publishes a draft, and may release on an existing `v*` tag. A
 - **RepositoryRole 5** is the admin role (§5.2): the API shows only the id.
 - **Run artifacts**: whether `prepare`'s code can use the artifact token after `prepare` ended
   (§5.3, §8), and that anyone can download a public repository's run artifacts.
@@ -1304,7 +1273,8 @@ Found outside signing, for the owner:
 ## 13. Proposed in the test round, accepted by the owner
 
 The test round made these choices where §10 left the matter open. The owner accepted all of them
-as written on 2026-10-30.
+as written on 2026-10-30. P19 and what P18 and P21 say of K in CI went with the decisions of
+2026-10-31 (§10): §5 is what holds.
 
 - **P1 The build's processes.** The variables leave fsbpyr's environment, and nothing more is
   done in the process; §3.1 states the limits, and untrusted builds sign in a separate job.
@@ -1401,7 +1371,9 @@ as written on 2026-10-30.
 
 ## 14. What was built
 
-All of §12, on branch `signing-openssl`. What differs from the text above, or adds to it:
+All of §12, on branch `signing-openssl`, as first built, with K in CI. The last section says what
+replaced that, and §5 is what holds; this list and the rehearsal stay as the record. What differs
+from the text above, or adds to it:
 
 - **`_sha256`'s hashing is in integrity.c** (`fsb_sha256_file`, `fsb_sha256_bytes`), beside the
   declarations of the low-level SHA-256 it uses; sig.c holds the wrapper. So sig.c declares only
@@ -1476,3 +1448,53 @@ in the check of the clients. What it showed:
   the same failure would burn the version, as it can today.
 
 Not rehearsed: `make release-check`, whose repository is fixed; anything of the write role (§11.2).
+
+### A stolen account, played, 2026-10-31
+
+The owner asked what happens when fsbpyr on a user's machine is compromised, and when the GitHub
+repository is hacked. Both ran in the test repository, with real executables of this branch, real
+builds of an attacker's code (which only proves whose code runs), the throwaway keys and isolated
+homes. What the first design did:
+
+- **Without K**, eight forged releases were refused, nothing changed and no file stayed behind:
+  two published on GitHub, no signature and another key's; the rest from a local server, reusing
+  genuine signed files with a hacked `.xz`, edited or missing sums, a truncated `.sig`, a release
+  called newer than it is, and a replay. Being told the latest is old gave "up to date": updates
+  can be held back.
+- **With a tag push, K signed the backdoor.** A commit not on main went through the unchanged
+  pipeline. `self update` installed it, a genuine `verify` said VERIFIED, the attestation passed,
+  and a new user with `FSBPYR_VERIFY=1` got it. That is why K left GitHub.
+- **A rebuilt evil fsbpyr of the same version** passed its own `--version`, `verify`, `inspect
+  --verify` and `self update`, and a genuine fsbpyr's `inspect --verify`. `sha256sum` against the
+  sums, the attestation and a fresh fsbpyr's `verify` each caught it; a `sha256sum` earlier on PATH
+  lied. One flipped byte stopped it at start, exit 70.
+- **The installer restored it**: it did not run the old file, and replaced a tampered completion.
+  A poisoned cached variant and a planted trusted key survived it, and ran and passed under the
+  genuine fsbpyr, until they were removed.
+
+The same repository then ran what §5 describes, with no key on GitHub:
+
+- **CI** left two unsigned drafts, which the public cannot see (HTTP 404).
+- **`make release-sign` refused** each of these on GitHub's real API, and the draft stayed as it
+  was: a commit pushed to main, a file swapped under the attested sums, the sums rewritten to match,
+  a key the tag does not pin, and an `install.sh` swapped on GitHub after the checks had passed.
+- **The genuine release** was signed here and published, by id, with the job records of its real
+  run read, and a real fsbpyr updated to its exact bytes. The audit passed on 18 releases, key
+  changes and the recovery among them. A run takes 5 to 6 minutes, most of it the audit's.
+- **The attack that won above** now ends at a draft nobody can sign. `make release-sign` has no such
+  tag. The audit reported it before anything was published. Published by hand and marked the latest,
+  it got the two lines of §5.5 and the executable stayed as it was.
+
+**The tests found bugs that the design did not.** With one lookup failing, the audit passed, since
+bash does not wait for `<(...)`, and "no secrets" matched the record: now each result is read
+before it is compared, and every endpoint has its own test. An independent review found that the
+attestation says nothing of where the build ran, the window between the checks and the publication,
+and regex dots in a file name: §5.3 has the fixes. Running the wiki's own commands showed that an
+attestation check without `--source-ref` passes the attacker's build. Mutation testing weakened
+each check of the two scripts in turn: 91 mutants, all killed for a valid reason once the survivors
+it found had tests, a redundant line had gone and five tests that a second finding had hidden were
+made exact.
+
+Not run: whether GitHub routes a hosted label to a self-hosted runner, whose job records would
+differ, so that check is proven with the fake only (§5.3); the tag rulesets, as the test repository
+has none and there is no second account; and the real K and R, which have signed nothing yet.

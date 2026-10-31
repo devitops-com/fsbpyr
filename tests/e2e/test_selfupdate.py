@@ -33,6 +33,9 @@ PACKED = f"{ASSET}.xz"
 STUB = release_stub_asset(TARGET_PYTHON, host_target().name, "2.28")
 STUB_SUMS = release_stub_sums("2.28")
 TIMEOUT = 120
+REFUSED = ("fsbpyr: error: new v1.3.0 has not been installed because it has no valid release "
+           "signature.\nfsbpyr: currently installed fsbpyr version (1.2.0) has been kept "
+           "unmodified.\n")  # fmt: skip
 
 
 @pytest.fixture(scope="module")
@@ -143,7 +146,7 @@ def test_a_release_without_a_signature_changes_nothing(
     done = update(installed, github, tmp_path)
 
     assert done.returncode == 1
-    assert "release v1.3.0 is not signed; nothing was changed" in done.stderr
+    assert done.stderr == REFUSED and done.stdout == ""
     assert f"/files/{PACKED}" not in github.requests
     assert_unchanged(installed, old)
 
@@ -157,7 +160,7 @@ def test_a_signature_by_a_key_it_does_not_pin_changes_nothing(
     done = update(installed, github, tmp_path)
 
     assert done.returncode == 1
-    assert "release v1.3.0 is not signed by a key this fsbpyr pins" in done.stderr
+    assert done.stderr == REFUSED and done.stdout == ""
     assert f"/files/{PACKED}" not in github.requests
     assert_unchanged(installed, old)
 
@@ -171,7 +174,7 @@ def test_an_xz_that_does_not_match_its_line_changes_nothing(
 
     done = update(installed, github, tmp_path)
 
-    assert done.returncode == 1 and "does not match the checksum" in done.stderr
+    assert done.returncode == 1 and REFUSED in done.stderr
     assert_unchanged(installed, old)
 
 
@@ -205,7 +208,7 @@ def test_three_pinned_keys_take_a_release_of_the_new_key(
     assert version(transition) == "1.3.0"
 
 
-def test_a_client_that_skipped_the_key_change_refuses_and_says_why(
+def test_a_client_that_skipped_the_key_change_refuses(
     installed: Path, old: Path, github: FakeGitHub, packed_new: bytes, tmp_path: Path,
     release_keys: ReleaseKeys
 ) -> None:
@@ -213,9 +216,7 @@ def test_a_client_that_skipped_the_key_change_refuses_and_says_why(
 
     done = update(installed, github, tmp_path)
 
-    assert done.returncode == 1
-    assert "either the release keys changed in a release this fsbpyr did not install" in done.stderr
-    assert "#release-keys" in done.stderr
+    assert done.returncode == 1 and done.stderr == REFUSED
     assert_unchanged(installed, old)
 
 

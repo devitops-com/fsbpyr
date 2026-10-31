@@ -733,15 +733,18 @@ printed, is never normalized, and only a checked name is joined into a path.
 | A forged executable whose build info names a path or a terminal escape | Stopped: refused unprinted, never joined into a path |
 | A relative `XDG_CONFIG_HOME` that brings trusted keys in a download | Stopped: ignored, as a relative `HOME` is; a trust store another user can write is refused |
 | Ed25519 broken, or a flaw in the ML-DSA-65 code | Stopped: both must pass |
-| The first fsbpyr download tampered with | Not stopped: it is trusted as GitHub serves it |
-| A malicious mirror or TLS interception, for updates | Stopped, as far as `prepare`'s code cannot replace the run's artifacts after it ended, which nobody has tried; `publish` checks its files against the sums in any case |
-| Updates withheld, rollback of apps | Not stopped |
+| The first fsbpyr download tampered with | Not stopped: it is trusted as GitHub serves it, a hacked repository's included. The audit limits how long that lasts |
+| A malicious mirror or TLS interception, for updates | Stopped: the sums are checked against the pins, and each `.xz` against its line, before lzma sees it |
+| Updates withheld | Not stopped, but the audit finds a latest release that is not the newest |
+| Rollback of apps | Not stopped |
 | Rollback of fsbpyr through an update | Stopped: the version must be newer |
-| A malicious workflow file at a tag, or a key pushed to main by someone with write access | Not stopped: K signs what the admin tags. Write access is only for those the admin trusts as they trust themselves |
-| A poisoned build | Gets a signed release. K is never in a job that runs built code, and the sign job writes the sums again, so the built code in `prepare` cannot get digests of unpublished files signed |
-| A CI secret holding the wrong key | Stopped: the sign job checks against the pins of this release and of the previous published one |
-| Stolen K | Partly: R signs the key change; clients that do not update stay exposed |
+| A stolen GitHub account: a backdoored commit or workflow on a pushed tag, or a release made by hand | Stopped: no key is on GitHub, so CI leaves an unsigned draft, `make release-sign` refuses an attestation that does not name your commit, every signed fsbpyr refuses a release published by hand, and the audit reports it. Played on GitHub |
+| A change pushed to main that the admin then pulls and tags | Not stopped: what you tag, K signs. It is the admin's to know, and out of scope |
+| GitHub itself compromised, so that it attests what it did not build | Not stopped: out of scope |
+| A poisoned build | Gets a signed release, since what the commit builds is what the admin signs. K is never near built code, and the `draft` job writes the sums again, so the built code in `prepare` cannot get digests of unpublished files listed |
+| A key the tag does not pin | Stopped: `make release-sign` checks against the pins of this release and of the previous published one before it uploads anything |
+| Stolen K | Partly: it takes the admin's key medium and passphrase, not the GitHub account. R signs the key change, and the audit reports a release that is not on record; clients that do not update stay exposed |
 | The passphrase logged by code that runs during `build` | Stopped: the build's processes lack both variables in their environments |
 | The passphrase and the key file taken by code that runs during `build` and looks for them | Not stopped: sign in a separate job, on a machine or account the build never ran on |
-| fsbpyr's cache, or stubs placed beside fsbpyr, changed by someone who can write them | Not stopped: they can replace fsbpyr itself |
+| fsbpyr's cache, or stubs placed beside fsbpyr, changed by someone who can write them | Not stopped: they can replace fsbpyr itself. A reinstall does not clean them, nor the trust store: see [Checking an installed fsbpyr](User-Installing.md#checking-an-installed-fsbpyr) |
 | `OPENSSL_CONF`, `OPENSSL_MODULES` or `LD_PRELOAD` set by an attacker | Not stopped: they load code. A config that loads no code changes no check's result, but can choose the randomness of `key new` and `sign` |
