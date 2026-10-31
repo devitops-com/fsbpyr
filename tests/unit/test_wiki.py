@@ -296,7 +296,8 @@ def test_only_force_and_dry_run_given_to_make_as_1_count(
 
     printed = subprocess.run(make, capture_output=True, text=True, check=True).stdout
 
-    assert printed.strip() == f"python3 -I tools/wiki/publish.py publish{flags}"
+    record = "" if "--dry-run" in flags else " && bash tools/release/audit.sh --record-wiki"
+    assert printed.strip() == f"python3 -I tools/wiki/publish.py publish{flags}{record}"
 
 
 @pytest.fixture

@@ -21,8 +21,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   release with no valid signature is refused, in two lines and with no fallback. The first update
   from a release before this one runs old code and is not checked.
 - **Releases are signed on the admin's machine.** GitHub builds and attests, and stops at a draft;
-  no key is ever there. `make release-sign KEY=PATH` signs only if your HEAD, GitHub's main, its tag
-  and the attestation of the sums all name one commit, then uploads the signature and publishes.
+  no key is ever there. `make release` is the whole release in one command: it tags, waits for CI,
+  signs and publishes only if your HEAD, GitHub's main, its tag and the attestation of the sums all
+  name one commit, checks the result and publishes the wiki. Run it again after any stop. What
+  `make release` did before is `make release-assets`, and `make release-sign KEY=PATH` is a part of
+  its own.
 - **`make release-audit`** compares GitHub with what your machine recorded: tags, main, every
   release with its files and signature, and the settings someone changes to stay. `make release`
   and `make release-sign` stop if it does not pass.

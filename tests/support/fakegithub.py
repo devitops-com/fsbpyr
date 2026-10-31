@@ -97,10 +97,12 @@ elif command == "release view":
 elif command == "release download":
     tag, directory = sys.argv[3], pathlib.Path(option("--dir"))
     patterns = [sys.argv[i + 1] for i, a in enumerate(sys.argv) if a == "--pattern"]
-    directory.mkdir(parents=True)
+    directory.mkdir(parents=True, exist_ok=True)
     for path in (root / "assets" / tag).iterdir():
         if not patterns or path.name in patterns:
             shutil.copy2(path, directory / path.name)
+            if path.name in state.get("served_otherwise", []):
+                (directory / path.name).write_bytes(b"other bytes than its digest says")
     if not patterns and state.get("after_download"):
         subprocess.run(state["after_download"], shell=True, check=True)
 elif command == "release upload":

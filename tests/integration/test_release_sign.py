@@ -15,7 +15,7 @@ import pytest
 
 from ..support import requires
 from ..support.fakegithub import FakeGitHub
-from ..support.signing import PASSPHRASE, Key, new_key
+from ..support.signing import PASSPHRASE, Key, new_key, on_a_terminal
 
 ROOT = Path(__file__).parents[2]
 TOOLS = ("release-sign.sh", "audit.sh", "confirm.sh", "version-files.sh", "release-signing.sh",
@@ -236,6 +236,85 @@ def test_the_companion_is_signed_and_is_not_made_the_latest(ready: World) -> Non
     assert ready.verify(ready.github.asset(EL8_TAG, EL8_SUMS), ready.keys.k.pub).returncode == 0
     assert ready.github.writes()[-1].endswith("-F draft=false -f make_latest=false")
     assert ready.audit().returncode == 0
+
+
+def test_the_passphrase_is_asked_for_once_for_both_releases(ready: World) -> None:
+    ready.el8_draft()
+    env = {key: value for key, value in ready.env.items() if key != "FSBPYR_SIGNING_PASSPHRASE"}
+    command = ["bash", "tools/release/release-sign.sh", str(ready.keys.k.key)]
+
+    cwd = Path.cwd()
+    os.chdir(ready.tree)
+    try:
+        code, printed, _ = on_a_terminal(command, env, PASSPHRASE.encode())
+    finally:
+        os.chdir(cwd)
+
+    assert code == 0, printed
+    assert printed.count(b"Passphrase of") == 1 and PASSPHRASE.encode() not in printed
+    assert ready.verify(ready.github.asset(TAG, SUMS), ready.keys.k.pub).returncode == 0
+    assert ready.verify(ready.github.asset(EL8_TAG, EL8_SUMS), ready.keys.k.pub).returncode == 0
+
+
+def test_a_wrong_passphrase_leaves_both_drafts_as_they_are(ready: World) -> None:
+    """Everything is signed before anything is published."""
+    ready.el8_draft()
+    ready.env["FSBPYR_SIGNING_PASSPHRASE"] = "not the passphrase"  # noqa: S105
+
+    done = ready.sign()
+
+    assert done.returncode != 0
+    assert ready.github.writes() == []
+    ready.github.load()
+    assert ready.github.state["releases"][TAG]["draft"] is True
+    assert ready.github.state["releases"][EL8_TAG]["draft"] is True
+
+
+def test_a_companion_that_does_not_pass_leaves_the_release_unpublished(ready: World) -> None:
+    """Tampering stops everything: both are checked before anything is signed."""
+    ready.el8_draft()
+    ready.github.asset(EL8_TAG, f"{STUB}.xz").write_bytes(b"a hacked stub\n")
+
+    done = ready.sign()
+
+    assert done.returncode == 1
+    assert ready.github.writes() == []
+    ready.github.load()
+    assert ready.github.state["releases"][TAG]["draft"] is True
+
+
+def test_a_companion_that_cannot_be_signed_leaves_the_release_unpublished(
+    ready: World, tmp_path: Path
+) -> None:
+    """Both are signed before either is published: no half-done release."""
+    ready.el8_draft()
+    script = ready.tree / "tools" / "release" / "release-signing.sh"
+    real = tmp_path / "real-release-signing.sh"
+    shutil.copy2(script, real)
+    script.write_text(f"""#!/usr/bin/env bash
+case "$*" in *{EL8_SUMS}*) exit 2 ;; esac
+exec bash {real} "$@"
+""")
+    ready.git("update-index", "--assume-unchanged", "tools/release/release-signing.sh")
+
+    done = ready.sign()
+
+    assert done.returncode != 0
+    assert ready.github.writes() == []
+    ready.github.load()
+    assert ready.github.state["releases"][TAG]["draft"] is True
+
+
+def test_with_both_published_there_is_nothing_to_do(ready: World) -> None:
+    ready.el8_draft()
+    assert ready.sign().returncode == 0
+    writes = len(ready.github.writes())
+
+    done = ready.sign()
+
+    assert done.returncode == 0
+    assert "About to sign" not in done.stdout
+    assert len(ready.github.writes()) == writes
 
 
 def test_a_companion_that_comes_later_is_signed_by_a_second_run(ready: World) -> None:
@@ -806,6 +885,49 @@ def test_a_signature_that_cannot_be_checked_is_no_pass(world: World) -> None:
     assert world.audit().returncode == 2
 
 
+def test_every_signature_is_checked_without_downloading_it_again(world: World) -> None:
+    """The record keeps what it read, by digest: a run must stay fast as releases add up."""
+    world.published()
+    assert world.audit().returncode == 0
+    before = len(world.github.calls())
+
+    assert world.audit().returncode == 0
+
+    assert not [call for call in world.github.calls()[before:] if "release download" in call]
+
+
+def test_a_kept_file_that_was_tampered_with_fails_its_signature(world: World) -> None:
+    """Keeping them saves the download, not the check."""
+    world.published()
+    assert world.audit().returncode == 0
+    for kept in (world.state / "files").iterdir():
+        if kept.stat().st_size != 3373:
+            kept.write_bytes(b"0" * 64 + b"  evil\n")
+
+    findings(world.audit(), f"the signature of {TAG}'s {SUMS} is not valid", 1)
+
+
+def test_only_a_file_that_is_what_its_digest_says_is_kept(world: World) -> None:
+    """Or the next run would read those bytes back under the digest of others."""
+    world.published()
+    shutil.rmtree(world.state / "files")
+    world.github.state["served_otherwise"] = [SUMS]
+    world.github.save()
+
+    findings(world.audit(), f"the signature of {TAG}'s {SUMS} is not valid")
+
+    for kept in (world.state / "files").iterdir():
+        assert hashlib.sha256(kept.read_bytes()).hexdigest() == kept.name
+
+
+def test_a_file_github_replaced_is_read_again_and_fails(world: World) -> None:
+    world.published()
+    assert world.audit().returncode == 0
+    world.github.asset(TAG, SUMS).write_bytes(b"0" * 64 + b"  evil\n")
+
+    findings(world.audit(), f"the signature of {TAG}'s {SUMS} is not valid")
+
+
 def test_a_release_list_that_fails_is_no_pass(world: World) -> None:
     world.published()
     world.github.state["broken"] = ["/releases"]
@@ -1067,6 +1189,40 @@ def test_a_changed_wiki_is_found(world: World) -> None:
     world.git("push", "-q", world.wiki, "main", cwd=world.wiki_clone)
 
     findings(world.audit(), "the settings differ from the record")
+
+
+def test_record_wiki_takes_the_wikis_head_and_nothing_else(world: World) -> None:
+    """After make wiki-publish: --accept would take a webhook along with it."""
+    world.published()
+    (world.wiki_clone / "Home.md").write_text("a new release's pages\n")
+    world.git("add", "-A", cwd=world.wiki_clone)
+    world.git("commit", "-q", "-m", "publish", cwd=world.wiki_clone)
+    world.git("push", "-q", world.wiki, "main", cwd=world.wiki_clone)
+    world.github.state["settings"][f"{REPOSITORY}/hooks"] = [
+        {"id": 7, "config": {"url": "https://evil.example"}, "active": True}]
+    world.github.save()
+
+    assert world.audit("--record-wiki").returncode == 0
+
+    done = world.audit()
+    findings(done, "webhook 7", 1)
+    assert "wiki " not in done.stdout
+
+
+def test_record_wiki_takes_no_empty_head(world: World, tmp_path: Path) -> None:
+    world.published()
+    before = (world.state / "settings").read_text()
+    (tmp_path / "empty.git").mkdir()
+    world.git("init", "-q", "--bare", tmp_path / "empty.git", cwd=tmp_path)
+    world.env["FSBPYR_RELEASE_WIKI"] = str(tmp_path / "empty.git")
+
+    assert world.audit("--record-wiki").returncode == 2
+    assert (world.state / "settings").read_text() == before
+
+
+def test_record_wiki_with_no_record_does_nothing(world: World) -> None:
+    assert world.audit("--record-wiki").returncode == 0
+    assert not world.state.exists()
 
 
 def test_accept_takes_what_is_there_and_then_it_passes(world: World) -> None:

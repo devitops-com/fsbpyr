@@ -70,20 +70,34 @@ own machine and pushes only the signature, so someone who steals the GitHub acco
 that no fsbpyr accepts. This rests on GitHub itself being sound; if it is not, far more than fsbpyr
 is at stake.
 
-A release is two commands, on main, after the release commit is merged and its full suite passed:
+A release is one command, on main, at the release commit:
 
 ```console
-$ make release                         # audit, tag, CI builds, attests and leaves drafts
-$ make release-sign KEY=~/release-k.key
+$ git checkout main && git pull --ff-only hub main    # after looking at what you pull
+$ make release KEY=/media/key/release-k.key
 ```
+
+Set `FSBPYR_RELEASE_KEY_FILE` once and you can leave `KEY` out; with neither, it asks when it needs
+the key, since a build takes a while and the medium need not be plugged in before. It never pulls:
+a pull in the command would sign whatever GitHub's main says.
+
+It runs the audit, tags and pushes, waits for `release.yml` and `el8.yml`, shows what it will sign,
+asks once and takes the passphrase once, signs both releases, publishes them, checks the result as
+users get it (`make release-check`) and publishes the wiki. Run it again after any stop, such as a
+mistyped passphrase: what is done is left out. Nothing is published until both are signed. A failed
+`el8.yml` does not hold the release back: it says so, and `make release-sign` signs the companion
+once a run has passed.
+
+Each part is a target of its own: `make release-assets`, `make release-sign KEY=PATH`, `make
+release-check`, `make wiki-publish`. Do not merge into main between the tag and the signature:
+`make release-sign` refuses while GitHub's main is not your commit.
 
 `make release-sign` refuses unless your HEAD, GitHub's main, GitHub's tag and the attestation of the
 sums file all name one commit, every job of the attested run ran on GitHub's machines, the tree is
 clean, the key is outside the checkout and the audit passes. The attested sums then vouch for every
-file of the draft. It shows what it will sign and asks, signs with K, checks the signature against
-the keys this tag and the previous release pin, reads the draft again, uploads the `.sig`, reads it
-again, publishes, and records the release. If `el8.yml` finishes later, run it again for the
-companion. It is only as good as what you pulled into main: what you tag, K signs.
+file of the draft. Then it signs with K, checks the signature against the keys this tag and the
+previous release pin, reads the draft again, uploads the `.sig`, reads it again, publishes, and
+records the release. It is only as good as what you pulled into main: what you tag, K signs.
 
 - **K** signs on the admin's machine, from an encrypted file on a medium plugged in to sign. **R**,
   the recovery key, stays offline, apart from it. Neither ever reaches GitHub, not even for a
@@ -115,12 +129,13 @@ runners and the wiki's head. A valid signature on a release that is not on recor
 key. `make release` and `make release-sign` run it and stop if it does not pass; run it from cron as
 well, on any machine with a clone: it needs no key. It does not run in GitHub Actions, which whoever
 holds the account could turn off. The record is on that machine, in
-`$XDG_STATE_HOME/fsbpyr-release`.
+`$XDG_STATE_HOME/fsbpyr-release`, with the sums files and signatures it has read, so that a run
+checks every signature and takes seconds, not minutes.
 
 Exit 1 means treat GitHub as tampered with until each finding is explained. Exit 2 means it could
 not check, which is never a pass. After a change of yours, such as a new secret or a published wiki,
 it reports the difference: read it, then take it as the record with `bash tools/release/audit.sh
---accept`. If GitHub was tampered with, stop releasing, recover the account, and tell users through
+--accept`. `make wiki-publish` records the wiki's new head itself. If GitHub was tampered with, stop releasing, recover the account, and tell users through
 CVEs, advisories and mailing lists. A GitHub advisory needs the account, so keep a mailing list
 ready before it happens.
 
@@ -139,5 +154,6 @@ ready before it happens.
 | `make test-prereqs` | list the tools and environment conditions the full test suite needs that this machine lacks ([Testing](Dev-Testing.md#when-the-machine-lacks-something)) |
 | `make test-vm` | aarch64 apps in a QEMU virtual machine with EL8's 64K-page kernel ([Testing](Dev-Testing.md)) |
 | `make test-el8`, `make test-el8-stub`, `make test-el8-portability` | the EL8 test mode: the tests that run the stub with the glibc 2.28 runtime, and the portability matrix with apps built for glibc 2.28 ([Testing](Dev-Testing.md)) |
-| `make release-prep`, `make release`, `make release-check` | the release process (`CONTRIBUTING.md`) |
+| `make release-prep`, `make release` | the release: end a branch with the release commit, then [everything else](#release-keys) |
+| `make release-assets`, `make release-sign`, `make release-check`, `make release-audit` | the parts of `make release`, one at a time |
 | `make clean` | remove `dist/` |

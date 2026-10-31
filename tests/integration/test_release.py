@@ -1,9 +1,10 @@
-"""release.sh and release-notes.sh against throwaway git repos, a bare origin and a fake gh.
+"""release-assets.sh and release-notes.sh against throwaway git repos, a bare origin and a fake gh.
 
-release.sh only tags: it promotes the CHANGELOG (and, given a new version, bumps pyproject.toml,
+release-assets.sh only tags: it promotes the CHANGELOG (and, given a new version, bumps
+pyproject.toml,
 src/fsbpyr/__init__.py and uv.lock to it), makes one commit, tags it and pushes the tag alone.
 The pushed tag triggers .github/workflows/release.yml, which builds, attests, drafts and moves
-main to the release commit; release.sh then just follows that run. Every guard must stop the
+main to the release commit; release-assets.sh then just follows that run. Every guard must stop the
 release before anything is committed, tagged or pushed. Everything lives under ``tmp_path``;
 nothing reaches GitHub.
 """
@@ -58,7 +59,7 @@ def run_script(
     )
 
 
-RELEASE_SH = ROOT / "tools" / "release" / "release.sh"
+RELEASE_SH = ROOT / "tools" / "release" / "release-assets.sh"
 PREPARE_SH = ROOT / "tools" / "release" / "prepare.sh"
 VERSION_FILES_SH = ROOT / "tools" / "release" / "version-files.sh"
 GREEN_RUN_SH = ROOT / "tools" / "release" / "green-run.sh"
@@ -80,7 +81,7 @@ REPO_URL = "https://github.com/devitops-com/fsbpyr"
 # $FAKE_GH_RUN_ID from its (FAKE_GH_RUN_AFTER + 1)th call on. `run view` of the full suite's
 # run (4000 too) shows it completed with FAKE_GH_CHECK_CONCLUSION, any other run with
 # FAKE_GH_TAG_CONCLUSION (both "success" by default), as follow-run.sh's --jq prints it.
-# Anything else (such as `release create`) is not expected from release.sh and fails.
+# Anything else (such as `release create`) is not expected from release-assets.sh and fails.
 FAKE_AUDIT = """\
 exit "${FAKE_AUDIT_EXIT:-0}"
 """
@@ -119,7 +120,7 @@ esac
 """
 
 
-# ------------------------------------------------------------------- release.sh and prepare.sh
+# ------------------------------------------------------------ release-assets.sh and prepare.sh
 
 RELEASED_ENTRY = "### Added\n- The first thing.\n- The second thing."
 PREPARED_DAY = "2026-10-22"
@@ -245,7 +246,7 @@ def make_branch_repo(
 
 def run_release(repo: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
     return run_script(
-        ["bash", "tools/release/release.sh", *args],
+        ["bash", "tools/release/release-assets.sh", *args],
         env | {"FSBPYR_RELEASE_ASSUME_YES": "1"},
         cwd=repo,
     )
@@ -328,7 +329,8 @@ def test_release_refuses_a_tree_that_pins_no_keys(
     git(repo, "commit", "-q", "-m", "no keys", env=release_env)
     git(repo, "push", "-q", "hub", "main", env=release_env)
 
-    result = run_script(["bash", str(repo / "tools" / "release" / "release.sh")], release_env,
+    script = str(repo / "tools" / "release" / "release-assets.sh")
+    result = run_script(["bash", script], release_env,
                         cwd=repo)  # fmt: skip
 
     assert result.returncode == 1 and "pins no release keys" in result.stderr
@@ -345,7 +347,8 @@ def test_release_refuses_a_pin_git_does_not_hold(
     git(repo, "push", "-q", "hub", "main", env=release_env)
     (repo / ".git" / "info" / "exclude").write_text("*.pub\n")
 
-    result = run_script(["bash", str(repo / "tools" / "release" / "release.sh")], release_env,
+    script = str(repo / "tools" / "release" / "release-assets.sh")
+    result = run_script(["bash", script], release_env,
                         cwd=repo)  # fmt: skip
 
     assert result.returncode == 1 and "pins no release keys" in result.stderr
@@ -667,7 +670,7 @@ def test_release_refuses_without_confirmation_off_a_tty(
     """No controlling terminal: /dev/tty exists but cannot be opened."""
     repo = make_release_repo(tmp_path, release_env)
 
-    result = run_script(["bash", "tools/release/release.sh"], release_env, cwd=repo)
+    result = run_script(["bash", "tools/release/release-assets.sh"], release_env, cwd=repo)
 
     assert result.returncode == 1
     assert "FSBPYR_RELEASE_ASSUME_YES=1" in result.stderr
@@ -678,7 +681,7 @@ def test_release_refuses_without_confirmation_off_a_tty(
 def test_release_tags_head_and_pushes_the_tag_without_building_or_publishing(
     args: list[str], tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    """The tag push starts it: CI builds and attests and leaves a draft. release.sh makes no
+    """The tag push starts it: CI builds and attests and leaves a draft. release-assets.sh makes no
     commit, follows the workflow run the tag triggered and says what comes next."""
     repo = make_release_repo(tmp_path, release_env)
 
@@ -789,7 +792,7 @@ def test_release_reports_a_refused_tag_push_with_its_recovery(
 
 
 @pytest.mark.parametrize("name", ["src/fsbpyr/__init__.py", "uv.lock"])
-@pytest.mark.parametrize("script", ["release.sh", "prepare.sh"])
+@pytest.mark.parametrize("script", ["release-assets.sh", "prepare.sh"])
 def test_release_and_prepare_refuse_versions_that_disagree(
     script: str, name: str, tmp_path: Path, release_env: dict[str, str]
 ) -> None:
@@ -808,7 +811,7 @@ def test_release_and_prepare_refuse_versions_that_disagree(
     assert_nothing_built_or_published(tmp_path)
 
 
-@pytest.mark.parametrize("script", ["release.sh", "prepare.sh"])
+@pytest.mark.parametrize("script", ["release-assets.sh", "prepare.sh"])
 def test_release_and_prepare_take_at_most_one_version(
     script: str, tmp_path: Path, release_env: dict[str, str]
 ) -> None:
@@ -1080,7 +1083,7 @@ def test_prepare_refuses_an_empty_unreleased_section(
 
 
 def test_the_projects_versions_agree() -> None:
-    """What prepare.sh and release.sh check, checked on every change."""
+    """What prepare.sh and release-assets.sh check, checked on every change."""
     lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
     (locked,) = [p["version"] for p in lock["package"] if p["name"] == "fsbpyr"]
     init = (ROOT / "src" / "fsbpyr" / "__init__.py").read_text(encoding="utf-8")
@@ -1090,6 +1093,7 @@ def test_the_projects_versions_agree() -> None:
 
 
 @pytest.mark.parametrize(("target", "script"), [("release", "release.sh"),
+                                                ("release-assets", "release-assets.sh"),
                                                 ("release-prep", "prepare.sh")])  # fmt: skip
 @pytest.mark.parametrize(
     ("args", "env", "version"),
@@ -1230,7 +1234,8 @@ def test_the_image_is_pinned_by_digest_in_the_workflow_and_the_containerfile() -
 
 
 def test_a_release_is_one_run_and_a_pull_request_starts_none() -> None:
-    """release.yml runs for a pushed tag only and pushes nothing; release.sh pushes the tag and
+    """release.yml runs for a pushed tag only and pushes nothing; release-assets.sh pushes the tag
+    and
     its EL8 companion's tag alone, on the main commit the full suite tested. full-suite.yml
     runs for pushes to main (merges), weekly and on request. Neither runs for pull requests:
     anyone can open one, and a branch is tested locally first."""

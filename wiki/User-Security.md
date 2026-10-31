@@ -113,8 +113,9 @@ tag=vX.Y.Z asset=fsbpyr-3.14-x86_64-linux-gnu
 exe=$(readlink -f ~/.local/bin/fsbpyr)
 ```
 
-**By attestation**, with `gh`. Name the tag: without it, this passes anything the workflow ever
-built, from any tag:
+**By attestation**, with the [GitHub CLI](https://cli.github.com/), logged in with `gh auth login`
+or a `GH_TOKEN`, even for this public repository. Name the tag: without it, this passes anything the
+workflow ever built, from any tag:
 
 ```sh
 gh attestation verify "$exe" --repo devitops-com/fsbpyr \

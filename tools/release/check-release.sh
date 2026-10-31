@@ -43,6 +43,9 @@
 #                 --verify passes, the Python is the asset's
 #   installer     install.sh, for every Python, into a scratch home with --no-modify-path:
 #                 the release's executable, the man page and the completions, nothing else
+#   verify        install.sh with FSBPYR_VERIFY=1 and the real gh, for a signed release: logged
+#                 in it installs the release's executable, and with no login it stops and says
+#                 so, as no failed check
 #   dispatch      the default Python's executable builds a project pinned to another Python by
 #                 fetching that Python's executable of this release
 #   self-update   the previous release's (not a companion's) executables update to this one's, Python by Python
@@ -396,6 +399,39 @@ for py in "${PYTHONS[@]}"; do
         fail "${option[*]:-default}: install.sh failed: $(tail -1 "$work/install-$py.log")"
     fi
 done
+
+step "installer with FSBPYR_VERIFY=1"
+if [ "$signed" -eq 0 ]; then
+    skip "$TAG is from before signing"
+else
+    verifying_install() { # home, then what the environment holds beyond the installer's own
+        local home=$1
+        shift
+        env -i PATH="$PATH" HOME="$home" FSBPYR_VERIFY=1 FSBPYR_INSTALL_DIR="$home/prefix/bin" \
+            FSBPYR_GC=0 FSBPYR_CACHE_DIR="$work/cache" "$@" \
+            sh "$work/assets/install.sh" --no-modify-path -q >"$home.log" 2>&1
+    }
+    home="$work/install-verify"
+    token="$(gh auth token 2>/dev/null)"
+    if [ -z "$token" ]; then
+        fail "FSBPYR_VERIFY=1: this machine has no gh login to try it with"
+    elif ! verifying_install "$home" GH_TOKEN="$token"; then
+        fail "FSBPYR_VERIFY=1: install.sh failed: $(tail -1 "$home.log")"
+    elif cmp -s "$home/prefix/bin/fsbpyr" "$work/assets/fsbpyr-$DEFAULT-$HOST"; then
+        ok "FSBPYR_VERIFY=1: the attestation passes, and it installs fsbpyr-$DEFAULT-$HOST"
+    else
+        fail "FSBPYR_VERIFY=1: the installed file is not fsbpyr-$DEFAULT-$HOST"
+    fi
+    # No login must not read as a failed check, which would look like tampering.
+    home="$work/install-no-login"
+    if verifying_install "$home"; then
+        fail "FSBPYR_VERIFY=1: it installed with no gh login"
+    elif grep -q 'needs gh to be logged in' "$home.log" && [ ! -e "$home/prefix/bin/fsbpyr" ]; then
+        ok "FSBPYR_VERIFY=1: with no gh login it stops and says so"
+    else
+        fail "FSBPYR_VERIFY=1: with no gh login: $(tail -1 "$home.log")"
+    fi
+fi
 
 step "dispatch"
 other_py=""

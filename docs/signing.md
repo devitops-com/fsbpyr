@@ -535,8 +535,15 @@ then names a file of the build job, and a file too many stops the job. It does n
 build (§8): the build job ran the same code. el8.yml has no such step: its `prepare` runs no built
 code.
 
-`make release` tags main's HEAD, after the audit has passed, and CI makes the drafts. Then, on the
-admin's machine, `make release-sign KEY=PATH`:
+`make release` is the whole of it, on the admin's machine, on main at the release commit (owner,
+2026-10-31: too many steps to remember). It never pulls: a pull in the command would sign whatever
+GitHub's main says. `make release-assets` tags main's HEAD, after the audit has passed, and CI
+makes the drafts; it waits for both workflows; `make release-sign KEY=PATH`, below, signs and
+publishes; `make release-check` and `make wiki-publish` end it. Run again after any stop, it leaves
+out what is done. A failed el8.yml leaves the release to go out without its stubs, which are
+outside the release gate.
+
+`make release-sign`:
 
 1. **Your commit.** It refuses unless HEAD, the local tag, GitHub's `main` and GitHub's tag are one
    commit, on a clean tree, and the key file is outside the checkout. A commit pushed to GitHub, or
@@ -562,17 +569,19 @@ admin's machine, `make release-sign KEY=PATH`:
 4. **The files.** The attested sums vouch for the rest. Every file of the draft must be listed
    there with the digest it has, every listed file must be there (for a companion, which publishes
    each stub's `.xz` only, the stubs themselves are not), and no signature may be on the draft yet.
-5. **You.** It prints the release, the commit, the number of files and the digest of the sums, and
-   asks.
-6. **The signature.** `release-signing.sh sign`, which asks for K's passphrase on the terminal, then
-   a check as the clients will, with `check-signature.sh`:
+5. **You.** It checks both drafts first, prints the releases, the commit, the number of files and
+   the digests of the sums, asks once, and takes K's passphrase once, on the terminal. A companion
+   that does not pass stops the release too.
+6. **The signature.** Both sums files are signed before either is published, so that a wrong
+   passphrase leaves nothing half done. `release-signing.sh sign`, then a check as the clients will,
+   with `check-signature.sh`:
    - against the keys that this tag pins: this release's own fsbpyr, whose dispatch and EL8 stubs
      read this tag's sums;
    - against the keys that the previous release pins: the fsbpyr that updates to this release, and
      that reads this tag's EL8 sums during the update.
 7. **Publishing.** It uploads the `.sig`, publishes the draft (`--latest=false` for a companion: a
    companion as the latest release breaks self update and install.sh), records the release (§5.7)
-   and runs the audit again. A companion that comes later is signed by a second run.
+   and runs the audit again. A companion that comes later is signed by a second `make release-sign`.
 
    Whoever holds the account has as long as the prompts take. So the draft is read again before
    the upload and once more before publishing: the refs must still be your commit, and the tag
@@ -738,8 +747,15 @@ protected meanwhile, so what the delay costs is new installs, which take what Gi
 
 The reference is on that machine, outside GitHub, in `FSBPYR_RELEASE_STATE` (default
 `$XDG_STATE_HOME/fsbpyr-release`): `releases`, a line per release (tag, commit, the SHA-256 of its
-files' names and digests), and `settings`. `make release-sign` adds each release it publishes.
-`audit.sh --accept` takes what it finds as the reference, so it comes after reading what differs.
+id, title, notes and files), `settings`, and `files`, the sums files and signatures by digest.
+`make release-sign` adds each release it publishes. `audit.sh --accept` takes what it finds as the
+reference, so it comes after reading what differs. `make wiki-publish` records only the wiki's new
+head.
+
+Every signature is checked on every run, but none is downloaded twice: a published file does not
+change, and a digest that changes finds another file. The settings are read side by side, and all
+are waited for. On 22 releases a run takes 14 seconds (measured; 238 before, nearly all of it
+waiting on the network), and the first run after `--accept` takes as long as the downloads.
 
 | Check | Finds |
 |---|---|
@@ -1070,7 +1086,7 @@ change of K and a recovery; and the full suite settled aarch64 hardware.
     build updated itself to v1.3.0 in 0.3 s. Each `.xz` is packed once per session at preset 0
     (1.1 s for the 29.5 MB build, against 4.8 s at the default; measured).
   - Refusals in Python only (another `release_asset`, the size cap) are unit tests.
-  - full-suite.yml runs them on every merge, on x86-64 and aarch64 (:24-28), and release.sh tags
+  - full-suite.yml runs them on every merge, on x86-64 and aarch64 (:24-28), and release-assets.sh tags
     only a commit whose run passed (full-suite.yml:15-17). Their limit: N updates to a build of
     the same code; that N reads N+1's real files is first checked in N+1's `make release-check`.
 - The commands, tests/e2e/test_signing.py (new), against the script both ways: `key new`, the
@@ -1189,7 +1205,7 @@ Script bugs these cases found, fixed with the script's test (§11.3):
 shellcheck: Debian 13's 0.10.0 reports nothing on the script (measured, in a throwaway container
 of the pinned image). The repository lints no shell: `make check` is ruff and mypy
 (Makefile:242-244), and shellcheck appears only in three directive comments (tools/bootstrap.sh:82,
-tools/release/prepare.sh:25, tools/release/release.sh:31). So the script gets no lint step [P26].
+tools/release/prepare.sh:25, tools/release/release-assets.sh:31). So the script gets no lint step [P26].
 
 Found outside signing, for the owner:
 - a dispatching fsbpyr SIGKILLs its variant 0.25 s after Ctrl-C (`subprocess.run`,
@@ -1334,7 +1350,7 @@ as written on 2026-10-30. P19 and what P18 and P21 say of K in CI went with the 
   the first signed release; the suite compares the pins with the wiki's list (§5.1, §5.2).
   Instead: a ruleset on main with code-owner review (every change, the admin's too, then needs a
   pull request); a fingerprint list in the annotated tag that the sign job compares; a review of
-  the diff before each release; a pin guard in release.sh (a writer puts a pin elsewhere); the
+  the diff before each release; a pin guard in release-assets.sh (a writer puts a pin elsewhere); the
   fingerprint list in each key-changing CHANGELOG entry rather than the wiki, for the suite to
   compare.
 - **P19 `FSBPYR_RECOVERY` stays a repository variable** (§5.4). Instead: a variable of the
@@ -1491,10 +1507,22 @@ before it is compared, and every endpoint has its own test. An independent revie
 attestation says nothing of where the build ran, the window between the checks and the publication,
 and regex dots in a file name: §5.3 has the fixes. Running the wiki's own commands showed that an
 attestation check without `--source-ref` passes the attacker's build. Mutation testing weakened
-each check of the two scripts in turn: 91 mutants, all killed for a valid reason once the survivors
-it found had tests, a redundant line had gone and five tests that a second finding had hidden were
-made exact.
+each check of the scripts in turn: 110 mutants, all killed for a valid reason in the end; every
+survivor on the way was a real gap, now tested, or a redundant line, now gone.
+
+**One command.** `make release` ran end to end on GitHub too. With a wrong passphrase it stopped at
+the signature with both drafts as they were, run again it went on from the tag and published both,
+and a third run found nothing left to sign. A real `self update` installed its exact bytes.
+
+**The installer,** from the real release page. Without `FSBPYR_VERIFY`, on a machine with no `gh`,
+it installed the genuine bytes; with it and `gh` logged in, likewise, on the real attestation. With
+no login, and with no `gh`, it stopped before installing anything, and said why. As a control, a
+build nobody attested, with an installer that vouches for it, installed without the option and was
+refused with it: that is the first-install limit of §8, and what the option is for. `make
+release-check` makes the same runs, but the control, on every signed release.
 
 Not run: whether GitHub routes a hosted label to a self-hosted runner, whose job records would
 differ, so that check is proven with the fake only (§5.3); the tag rulesets, as the test repository
-has none and there is no second account; and the real K and R, which have signed nothing yet.
+has none and there is no second account; `make release-check` and `make wiki-publish` inside `make
+release`, whose repository is fixed, so stand-ins ran; and the real K and R, which have signed
+nothing yet.

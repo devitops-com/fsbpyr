@@ -68,7 +68,7 @@ a download is checked before it is used. It:
 |---|---|
 | `--python X.Y` | install the fsbpyr that runs on that Python instead of 3.14's |
 | `--no-modify-path`, `FSBPYR_NO_MODIFY_PATH=1` | leave shell start-up files alone |
-| `FSBPYR_VERIFY=1` | also run `gh attestation verify`, and stop if it fails or `gh` is missing |
+| `FSBPYR_VERIFY=1` | also check the attestation with `gh attestation verify`, and stop if it fails. Needs the [GitHub CLI](https://cli.github.com/), logged in with `gh auth login` or a `GH_TOKEN`, even for this public repository: without them it stops before it downloads anything |
 | `FSBPYR_INSTALL_DIR` | install into this directory |
 | `-q/--quiet`, `-v/--verbose`, `-h/--help` | as usual |
 

@@ -11,7 +11,7 @@
 # commit "chore: release vX.Y.Z" on the current branch. Nothing is pushed.
 #
 # The pull request merges the branch; that push to main runs full-suite.yml, which builds and
-# checks exactly this source, the release build included. `make release` (release.sh) then
+# checks exactly this source, the release build included. `make release` (release-assets.sh) then
 # tags that commit, and the tag's release.yml run builds it again and publishes it.
 #
 # Guards (all must pass before anything changes): the three versions agree, X.Y.Z well-formed

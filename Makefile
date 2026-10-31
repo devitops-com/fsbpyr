@@ -42,7 +42,7 @@ else
 WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-prereqs test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm check check-c release-prep release release-sign release-audit release-check wiki-lint wiki-build wiki-publish clean
+.PHONY: help bootstrap build install uninstall test test-ci test-prereqs test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm check check-c release-prep release release-assets release-sign release-audit release-check wiki-lint wiki-build wiki-publish clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -252,20 +252,24 @@ check-c: ## Static analysis of the launcher's C sources (clang --analyze; inform
 
 # --- Release ---
 
-# A release is two steps. release-prep ends a branch with the release commit (VERSION=X.Y.Z
-# sets the version in it; without, the current version is released), so that the full suite
-# tests exactly what is released once the branch is merged. release then tags main's HEAD, that
-# commit, once its full suite run passed, and pushes the tag: CI builds it and leaves a draft (a
-# VERSION there must be HEAD's). Only a VERSION given on the make command line counts: an
-# exported one (another tool's) is ignored.
+# A release has two parts. release-prep ends a branch with the release commit (VERSION=X.Y.Z sets
+# the version in it; without, the current version is released), so that the full suite tests
+# exactly what is released once the branch is merged. release then does the rest, on the admin's
+# machine, on main at that commit: it never pulls, and it can be run again after any stop. Its
+# parts are targets too: release-assets tags and builds, release-sign signs and publishes,
+# release-check checks. Only a VERSION or KEY given on the make command line counts: an exported
+# one (another tool's) is ignored.
 release-prep: ## End this branch with the release commit: set the version (VERSION=X.Y.Z), promote CHANGELOG
 	@bash tools/release/prepare.sh$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
 
-release: ## Tag main's tested HEAD and push the tag; CI builds and attests it and leaves a draft
-	@bash tools/release/release.sh$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
+release: ## The whole release: tag, build, sign with your key, publish, check, publish the wiki
+	@$(if $(filter command line,$(origin KEY)),FSBPYR_RELEASE_KEY_FILE='$(KEY)' )bash tools/release/release.sh$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
 
-# After `make release`, on the admin's machine: only the signature goes to GitHub, never KEY.
-release-sign: ## Check the draft against your commit, sign it with KEY=PATH and publish it
+release-assets: ## Only tag main's tested HEAD; CI builds and attests it and leaves a draft
+	@bash tools/release/release-assets.sh$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
+
+# Only the signature goes to GitHub, never KEY.
+release-sign: ## Only check the draft against your commit, sign it with KEY=PATH and publish it
 	@bash tools/release/release-sign.sh '$(KEY)'$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
 
 release-audit: ## Compare GitHub with what this machine recorded: tags, releases, settings
@@ -298,7 +302,7 @@ wiki-build: ## Build the wiki of this checkout into dist/wiki/site (pages, diagr
 	@python3 -I tools/wiki/publish.py build
 
 wiki-publish: ## Publish the wiki of main (shipping the newest release's code) or of release VERSION=X.Y.Z to the GitHub and GitLab wikis
-	@python3 -I tools/wiki/publish.py publish$(if $(filter command line,$(origin VERSION)), --version '$(VERSION)')$(if $(call wiki_flag,FORCE), --force)$(if $(call wiki_flag,DRY_RUN), --dry-run)
+	@python3 -I tools/wiki/publish.py publish$(if $(filter command line,$(origin VERSION)), --version '$(VERSION)')$(if $(call wiki_flag,FORCE), --force)$(if $(call wiki_flag,DRY_RUN), --dry-run, && bash tools/release/audit.sh --record-wiki)
 
 clean: ## Remove dist/
 	rm -rf dist

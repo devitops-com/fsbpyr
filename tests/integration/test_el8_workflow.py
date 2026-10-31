@@ -66,7 +66,7 @@ def test_the_release_and_its_gate_know_nothing_of_it() -> None:
     waits for them nor depends on them."""
     for path in (WORKFLOWS / "release.yml", WORKFLOWS / "full-suite.yml", WORKFLOWS / "build.yml",
                  ROOT / "tools" / "release" / "green-run.sh",
-                 ROOT / "tools" / "release" / "release.sh"):  # fmt: skip
+                 ROOT / "tools" / "release" / "release-assets.sh"):  # fmt: skip
         text = path.read_text(encoding="utf-8").lower()
         assert "el8.yml" not in text and "glibc2.28" not in text, path.name
         assert "--glibc" not in text and "workflow_run" not in text, path.name

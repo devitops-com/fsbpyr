@@ -6,6 +6,7 @@
 #     bash tools/release/audit.sh                 (make release-audit)
 #     bash tools/release/audit.sh --accept        take today's state as the reference
 #     bash tools/release/audit.sh --record TAG    add a release this machine has just published
+#     bash tools/release/audit.sh --record-wiki   take the wiki's head, after make wiki-publish
 #
 # Checked: every tag against this clone; GitHub's main is known here; every published release is on
 # record, with the same commit and the same files, immutable, and signed by the keys its tag pins;
@@ -17,7 +18,8 @@
 # clone: it needs no release key, only a gh login that can read those settings. It never runs in
 # GitHub Actions, which an attacker could turn off. The reference is outside GitHub, in
 # FSBPYR_RELEASE_STATE (default $XDG_STATE_HOME/fsbpyr-release): `releases`, one line per release
-# (tag, commit, the SHA-256 of its files' names and digests), and `settings`. A signature that
+# (tag, commit, the SHA-256 of what it is), `settings`, and `files`, the sums files and signatures
+# by digest, so that every signature is checked on every run without downloading it. A signature that
 # passes on a release that is not on record is a stolen key. --accept takes whatever it finds, so
 # read what differs first. FSBPYR_RELEASE_REPO and FSBPYR_RELEASE_WIKI replace GitHub in tests and
 # rehearsals. Needs gh, git, jq and sha256sum, and OpenSSL 3.5 for the signatures.
@@ -40,7 +42,7 @@ failures=0
 fail() { printf 'FAIL: %s\n' "$1"; failures=$((failures + 1)); }
 
 usage() {
-    echo "usage: audit.sh [--accept | --record TAG]" >&2
+    echo "usage: audit.sh [--accept | --record TAG | --record-wiki]" >&2
     exit 2
 }
 
@@ -67,33 +69,43 @@ fingerprint() {
            ([.assets[] | "\(.name) \(.digest)"] | sort | .[])' <<<"$1" | sha256sum | cut -d' ' -f1
 }
 
-# The settings an attacker changes to stay, a line each, sorted.
+# The settings an attacker changes to stay, a line each, sorted. The lookups run side by side, each
+# into a file, and all are waited for: one that fails is no empty answer.
 settings() {
-    local org=${REPOSITORY%%/*} rulesets id
+    local org=${REPOSITORY%%/*} rulesets id pid count=0 pids=() parts
+    parts=$(mktemp -d)
+    trap 'rm -rf -- "${parts:?}"' RETURN
+    look() {
+        count=$((count + 1))
+        gh api "$@" >"$parts/$count" &
+        pids+=("$!")
+    }
     rulesets=$(gh api --paginate "$API/rulesets?per_page=100" --jq '.[].id')
-    {
-        gh api "$API" --jq '"repository \(.visibility) default=\(.default_branch) archived=\(.archived) wiki=\(.has_wiki)"'
-        gh api --paginate "$API/collaborators?affiliation=all&per_page=100" --jq '.[] | "collaborator \(.login) \(.role_name)"'
-        gh api --paginate "orgs/$org/members?role=admin&per_page=100" --jq '.[] | "owner \(.login)"'
-        gh api --paginate "orgs/$org/members?per_page=100" --jq '.[] | "member \(.login)"'
-        gh api --paginate "orgs/$org/installations?per_page=100" --jq '.installations[] | "app \(.app_slug) \(.repository_selection) \(.permissions | tojson)"'
-        gh api --paginate "$API/hooks?per_page=100" --jq '.[] | "webhook \(.id) \(.config.url) active=\(.active)"'
-        gh api --paginate "$API/keys?per_page=100" --jq '.[] | "deploy-key \(.id) \(.title) read_only=\(.read_only)"'
-        for id in $rulesets; do
-            gh api "$API/rulesets/$id" --jq '"ruleset \(.name) \(.target) \(.enforcement) \(.bypass_actors | tojson) \(.conditions | tojson) \(.rules | tojson)"'
-        done
-        gh api --paginate "$API/actions/secrets?per_page=100" --jq '.secrets[] | "secret \(.name) \(.updated_at)"'
-        gh api --paginate "orgs/$org/actions/secrets?per_page=100" --jq '.secrets[] | "org-secret \(.name) \(.updated_at)"'
-        gh api --paginate "$API/actions/variables?per_page=100" --jq '.variables[] | "variable \(.name) \(.value)"'
-        gh api --paginate "orgs/$org/actions/variables?per_page=100" --jq '.variables[] | "org-variable \(.name) \(.value)"'
-        gh api "$API/environments" --jq '.environments[]? | "environment \(.name)"'
-        gh api --paginate "$API/actions/runners?per_page=100" --jq '.runners[] | "runner \(.name) \([.labels[].name] | join(","))"'
-        gh api --paginate "orgs/$org/actions/runners?per_page=100" --jq '.runners[] | "org-runner \(.name) \([.labels[].name] | join(","))"'
-        gh api "$API/actions/permissions" --jq '"actions enabled=\(.enabled) allowed=\(.allowed_actions)"'
-        gh api "$API/actions/permissions/workflow" --jq '"workflows token=\(.default_workflow_permissions) approve-prs=\(.can_approve_pull_request_reviews)"'
-        gh api "$API/immutable-releases" --jq '"immutable-releases \(.enabled)"'
-        git -C "$ROOT" ls-remote "$WIKI" HEAD | awk '{ print "wiki", $1 }'
-    } | sort
+    look "$API" --jq '"repository \(.visibility) default=\(.default_branch) archived=\(.archived) wiki=\(.has_wiki)"'
+    look --paginate "$API/collaborators?affiliation=all&per_page=100" --jq '.[] | "collaborator \(.login) \(.role_name)"'
+    look --paginate "orgs/$org/members?role=admin&per_page=100" --jq '.[] | "owner \(.login)"'
+    look --paginate "orgs/$org/members?per_page=100" --jq '.[] | "member \(.login)"'
+    look --paginate "orgs/$org/installations?per_page=100" --jq '.installations[] | "app \(.app_slug) \(.repository_selection) \(.permissions | tojson)"'
+    look --paginate "$API/hooks?per_page=100" --jq '.[] | "webhook \(.id) \(.config.url) active=\(.active)"'
+    look --paginate "$API/keys?per_page=100" --jq '.[] | "deploy-key \(.id) \(.title) read_only=\(.read_only)"'
+    for id in $rulesets; do
+        look "$API/rulesets/$id" --jq '"ruleset \(.name) \(.target) \(.enforcement) \(.bypass_actors | tojson) \(.conditions | tojson) \(.rules | tojson)"'
+    done
+    look --paginate "$API/actions/secrets?per_page=100" --jq '.secrets[] | "secret \(.name) \(.updated_at)"'
+    look --paginate "orgs/$org/actions/secrets?per_page=100" --jq '.secrets[] | "org-secret \(.name) \(.updated_at)"'
+    look --paginate "$API/actions/variables?per_page=100" --jq '.variables[] | "variable \(.name) \(.value)"'
+    look --paginate "orgs/$org/actions/variables?per_page=100" --jq '.variables[] | "org-variable \(.name) \(.value)"'
+    look "$API/environments" --jq '.environments[]? | "environment \(.name)"'
+    look --paginate "$API/actions/runners?per_page=100" --jq '.runners[] | "runner \(.name) \([.labels[].name] | join(","))"'
+    look --paginate "orgs/$org/actions/runners?per_page=100" --jq '.runners[] | "org-runner \(.name) \([.labels[].name] | join(","))"'
+    look "$API/actions/permissions" --jq '"actions enabled=\(.enabled) allowed=\(.allowed_actions)"'
+    look "$API/actions/permissions/workflow" --jq '"workflows token=\(.default_workflow_permissions) approve-prs=\(.can_approve_pull_request_reviews)"'
+    look "$API/immutable-releases" --jq '"immutable-releases \(.enabled)"'
+    for pid in "${pids[@]}"; do
+        wait "$pid"
+    done
+    git -C "$ROOT" ls-remote "$WIKI" HEAD | awk '{ print "wiki", $1 }' >"$parts/wiki"
+    cat "$parts"/* | sort
 }
 
 # A release's commit, from the remote's tags in $tags.
@@ -137,6 +149,17 @@ record() { # TAG
     echo "recorded $1"
 }
 
+# Only the one line: --accept would take everything else that differs along with it. With no
+# record yet there is nothing to keep up to date.
+record_wiki() {
+    local head
+    [[ -f "$STATE/settings" ]] || return 0
+    head=$(git -C "$ROOT" ls-remote "$WIKI" HEAD | awk '{ print $1 }')
+    [[ -n "$head" ]] || { echo "ERROR: the wiki has no head" >&2; exit 2; }
+    awk -v line="wiki $head" '/^wiki / { print line; next } { print }' "$STATE/settings" >"$STATE/settings.new"
+    mv -f "$STATE/settings.new" "$STATE/settings"
+}
+
 check_tags_and_main() {
     local here differs main
     here=$(local_tags)
@@ -155,6 +178,22 @@ must_be_signed() { # vX.Y.Z
     [[ "$(printf '%s\n%s\n' "$first" "$1" | sort -V | head -1)" == "$first" ]]
 }
 
+# A release's file into $work/TAG: kept under its digest once read, since a published file does not
+# change, and a digest that changes finds another file. What it holds is checked on every run.
+fetch_file() { # tag, name, digests of the release's files
+    local digest
+    digest=$(awk -v name="$2" '$1 == name { print $2 }' <<<"$3")
+    digest=${digest#sha256:}
+    mkdir -p "$work/$1" "$STATE/files"
+    if [[ -f "$STATE/files/$digest" ]]; then
+        cp "$STATE/files/$digest" "$work/$1/$2"
+        return 0
+    fi
+    gh release download "$1" --repo "$REPOSITORY" --dir "$work/$1" --pattern "$2"
+    [[ "$(sha256sum <"$work/$1/$2" | cut -d' ' -f1)" != "$digest" ]] ||
+        cp "$work/$1/$2" "$STATE/files/$digest"
+}
+
 # The sums of a release against the keys its tag pins, and its files against those sums.
 check_signed() { # release JSON, tag
     local version sums listed files previous status=0
@@ -167,8 +206,9 @@ check_signed() { # release JSON, tag
         fail "$2 has no $sums.sig"
         return 0
     fi
-    gh release download "$2" --repo "$REPOSITORY" --dir "$work/$2" --pattern "$sums" --pattern "$sums.sig"
-    previous=$(bash "$ROOT/tools/release/previous-release.sh" "$version")
+    fetch_file "$2" "$sums" "$files"
+    fetch_file "$2" "$sums.sig" "$files"
+    previous=$(FSBPYR_RELEASES_JSON=$work/releases.json bash "$ROOT/tools/release/previous-release.sh" "$version")
     bash "$ROOT/tools/release/check-signature.sh" "$ROOT" "$work/$2/$sums" "$version" "$previous" \
         >/dev/null 2>"$work/signature.err" || status=$?
     case $status in
@@ -188,6 +228,7 @@ check_signed() { # release JSON, tag
 check_releases() {
     local releases release tag expected recorded seen=''
     releases=$(all_releases)
+    jq -s . <<<"$releases" >"$work/releases.json"
     while IFS= read -r release; do
         [[ -n "$release" ]] || continue
         tag=$(jq -r .tag_name <<<"$release")
@@ -231,6 +272,7 @@ case "${1-}:$#" in
     :0) ;;
     --accept:1) accept; exit 0 ;;
     --record:2) record "$2"; exit 0 ;;
+    --record-wiki:1) record_wiki; exit 0 ;;
     *) usage ;;
 esac
 

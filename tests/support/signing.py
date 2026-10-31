@@ -116,9 +116,10 @@ def run_openssl(*args: str | Path, stdin: bytes | None = None) -> bytes:
 
 def on_a_terminal(
     command: Sequence[str | Path], env: dict[str, str], *typed: bytes, interrupt: bool = False,
+    prompt: bytes = b"Passphrase",
 ) -> tuple[int, bytes, list[int]]:
     """``command`` on a terminal of its own: its exit status, what it printed there, and the
-    terminal's local flags at the end. Each ``typed`` goes in when a prompt shows; Ctrl-C after
+    terminal's local flags at the end. Each ``typed`` goes in when a ``prompt`` shows; Ctrl-C after
     them with ``interrupt``."""
     primary, secondary = pty.openpty()
     fcntl.ioctl(secondary, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
@@ -140,7 +141,7 @@ def on_a_terminal(
                 printed += os.read(primary, 4096)
             except OSError:
                 break
-        if printed.count(b"Passphrase") > answered:
+        if printed.count(prompt) > answered:
             answered += 1
             time.sleep(0.05)  # echo goes off before the read
             if pending:
