@@ -63,8 +63,8 @@ equal), for two things:
 - What it detects: any change to the file that leaves the stored digest alone, such as
   damage, truncation or a patch. What it cannot detect: a change that also rewrites the digest
   or removes the check, since the checking code is in the same file. Provenance against
-  deliberate modification needs a signature checked with a key from outside the file (planned
-  with the release system). Damage to the launcher's own code can also crash it before the check
+  deliberate modification needs a signature checked with a key from outside the file
+  ([signing.md](signing.md), which signs the file's SHA-256, not this digest). Damage to the launcher's own code can also crash it before the check
   runs, without the message. The check reads the file a leaf at a time on its threads and never
   maps it (D36), so a file that shrinks or fails to read while it is hashed (a failing disk, a
   network file system) fails the check like a changed one, and its size never shows in the

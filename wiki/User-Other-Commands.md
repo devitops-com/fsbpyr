@@ -23,6 +23,19 @@ Commands:
   self        manage this fsbpyr executable
 ```
 
+## `fsbpyr key`, `sign` and `verify`
+
+```sh
+fsbpyr key new NAME
+fsbpyr key trust PROJECT PUBKEY FINGERPRINT [--replace]
+fsbpyr sign FILE [--project P] [--signing-key KEY]
+fsbpyr verify FILE [--project P]
+```
+
+Make a signing key, save the key of a project after checking all of its fingerprint, sign a file,
+and check one. [Signing](User-Signing.md) says how they fit together. `verify` exits 0 for
+VERIFIED, 1 for NOT VERIFIED and 2 when it cannot tell, such as with no trusted key.
+
 ## `fsbpyr cache gc`
 
 ```
@@ -87,15 +100,17 @@ fsbpyr self update
 ```
 
 Replaces the running executable with the latest release's build for the same Python, when that
-release is newer, after checking it as `inspect --verify` does. It refuses a build that needs a newer glibc than the
+release is newer, after checking the release's signature against the keys fsbpyr pins, the
+download against its line of the signed sums, and the result as `inspect --verify` does. A release
+with no valid signature is refused, in two lines that say what stayed as it was. It refuses a build that needs a newer glibc than the
 machine has, naming both versions, before it replaces anything. EL8 stubs placed beside the
 executable (`fsbpyr-stub-*-glibc*`, beside the path it was run by or the file a link to it leads
 to, where `--glibc` looks) are left alone. After the update a warning names those whose SHA-256
 the new release's companion does not list in its `SHA256SUMS-glibc2.28`, says that `--glibc`
 refuses them unless they carry the new runtime id, and asks you to place the new release's
 stubs there, or to remove them and let `--glibc` download them; a stub that did not change is
-not named. When that file cannot be read (no companion release yet, no network), the warning
-names every placed stub and says that `--glibc` refuses them if the runtime id changed. A
+not named. When that file cannot be read or fails its check (no companion release yet, no
+network), the warning names every placed stub and says that `--glibc` refuses them if the runtime id changed. A
 `--glibc 2.28` build refuses a stub only if its runtime id differs from the new release's,
 which happens when the launcher, the pinned Python, the sysroot or the runtime layout changed.
 See [Updating](User-Installing.md#updating).

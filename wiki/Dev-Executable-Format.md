@@ -106,7 +106,8 @@ and exits with status 70. The time the check took is `integrity_ns` in `FSBPYR_T
 **What it detects** is any change to the file that leaves the stored digest alone: damage,
 truncation, a patch. **What it cannot detect** is a change that also rewrites the digest or
 removes the check, since the checking code is in the same file. Provenance against deliberate
-modification needs a signature checked with a key from outside the file. Damage to the
+modification needs a signature checked with a key from outside the file:
+[Signing](User-Signing.md), which signs a file's SHA-256, not this digest. Damage to the
 launcher's own code can also crash it before the check runs, without the message.
 
 **Cached files.** Files extracted to the cache (natives, FS_REQUIRED packages, resources asked

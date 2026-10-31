@@ -20,6 +20,7 @@ from fsbpyr.targets import host_target
 from fsbpyr.vcs import release_stub_asset, release_stub_sums, release_stub_tag
 
 from ...support.releases import FakeReleases
+from ...support.signing import fake_pub, release_signature, use_stand_in
 from .test_registry import _runtime
 
 BASELINE = "2.28"
@@ -44,7 +45,8 @@ def sums_line(data: bytes, name: str = ASSET) -> bytes:
 
 @pytest.fixture
 def releases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeReleases]:
-    fake = FakeReleases()
+    fake = FakeReleases(release_signature)
+    use_stand_in(monkeypatch)
     monkeypatch.setenv(dispatch.DOWNLOADS_VARIABLE, fake.base)
     monkeypatch.setattr(stubs, "own_version", lambda: "1.2.0-abcdef12")
     monkeypatch.setattr(stubs, "own_paths", lambda: [tmp_path / "bin" / "fsbpyr"])
@@ -53,9 +55,14 @@ def releases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeRe
     fake.close()
 
 
+def signed_lines(data: bytes) -> bytes:
+    """The lines el8.yml writes for a stub: of the stub, and of its ``.xz``."""
+    return sums_line(data) + sums_line(lzma.compress(data), f"{ASSET}.xz")
+
+
 def publish(releases: FakeReleases, data: bytes, *, sums: bytes | None = None) -> None:
     releases.files[f"/{COMPANION}/{ASSET}.xz"] = lzma.compress(data)
-    releases.files[f"/{COMPANION}/{SUMS}"] = sums if sums is not None else sums_line(data)
+    releases.files[f"/{COMPANION}/{SUMS}"] = sums if sums is not None else signed_lines(data)
 
 
 def get(tmp_path: Path) -> bytes:
@@ -142,7 +149,8 @@ def test_a_download_is_verified_and_kept_for_offline_use(
 
     assert get(tmp_path) == data
 
-    assert releases.requests == [f"/{COMPANION}/{SUMS}", f"/{COMPANION}/{ASSET}.xz"]
+    assert releases.requests == [f"/{COMPANION}/{SUMS}", f"/{COMPANION}/{SUMS}.sig",
+                                 f"/{COMPANION}/{ASSET}.xz"]  # fmt: skip
     assert cached(tmp_path) == [CACHED]  # whole, no temporary file left
     assert (tmp_path / "cache" / "downloads" / CACHED).read_bytes() == data
     releases.close()  # no network from here on
@@ -180,7 +188,7 @@ def test_sums_may_use_the_binary_marker_and_list_other_stubs(
     digest = hashlib.sha256(data).hexdigest()
     other = "f" * 64
     sums = f"{other}  fsbpyr-stub-3.12-x86_64-linux-gnu-glibc2.28\n{digest} *{ASSET}\n"
-    publish(releases, data, sums=sums.encode())
+    publish(releases, data, sums=sums.encode() + sums_line(lzma.compress(data), f"{ASSET}.xz"))
 
     assert get(tmp_path) == data
 
@@ -188,7 +196,9 @@ def test_sums_may_use_the_binary_marker_and_list_other_stubs(
 def test_a_download_that_does_not_match_the_published_sha256_is_refused(
     releases: FakeReleases, tmp_path: Path
 ) -> None:
-    publish(releases, make_stub(), sums=sums_line(b"something else"))
+    data = make_stub()
+    packed = sums_line(lzma.compress(data), f"{ASSET}.xz")  # the .xz is fine: its stub is not
+    publish(releases, data, sums=sums_line(b"something else") + packed)
 
     with pytest.raises(stubs.StubError, match="does not match the SHA-256 the release publishes"):
         get(tmp_path)
@@ -530,3 +540,54 @@ def test_only_the_default_runtime_error_points_at_the_release_binary(tmp_path: P
         registry.find_runtime("3.14", cache=tmp_path, baseline=BASELINE)
 
     assert "release binary" not in str(error.value)  # a release's glibc 2.28 stub is another asset
+
+
+# --- the companion's sums are checked before a line of them is used (docs/signing.md §5.5) -------
+
+
+def test_a_companion_without_a_signature_gives_no_stub(
+    releases: FakeReleases, tmp_path: Path
+) -> None:
+    publish(releases, make_stub())
+    releases.signer = None
+
+    with pytest.raises(stubs.StubError, match="has no valid release signature"):
+        get(tmp_path)
+
+    assert f"/{COMPANION}/{ASSET}.xz" not in releases.requests and cached(tmp_path) == []
+
+
+def test_a_companion_signed_by_no_pinned_key_gives_no_stub(
+    releases: FakeReleases, tmp_path: Path
+) -> None:
+    publish(releases, make_stub())
+    releases.signer = lambda sums: release_signature(sums, fake_pub("not pinned"))
+
+    with pytest.raises(stubs.StubError, match="has no valid release signature"):
+        get(tmp_path)
+
+    assert f"/{COMPANION}/{ASSET}.xz" not in releases.requests and cached(tmp_path) == []
+
+
+def test_an_xz_that_does_not_match_its_line_never_reaches_lzma(
+    releases: FakeReleases, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fails(*args: object, **kwargs: object) -> None:
+        raise AssertionError("lzma saw a download that had not passed its check")
+
+    data = make_stub()
+    publish(releases, data)
+    releases.files[f"/{COMPANION}/{ASSET}.xz"] = lzma.compress(make_stub(filler=b"another"))
+    monkeypatch.setattr(lzma, "LZMADecompressor", fails)
+
+    with pytest.raises(stubs.StubError, match="does not match the checksum"):
+        get(tmp_path)
+
+    assert cached(tmp_path) == []
+
+
+def test_sums_without_the_xz_line_give_no_stub(releases: FakeReleases, tmp_path: Path) -> None:
+    publish(releases, make_stub(), sums=sums_line(make_stub()))
+
+    with pytest.raises(stubs.StubError, match="does not exist or has none"):
+        get(tmp_path)

@@ -42,13 +42,13 @@ name: EL8
 #     their venvs;
 #   - vm-smoke (aarch64, the default Python): apps built so run on EL8's 64 KiB-page kernel with
 #     its userland, in a QEMU system VM (tools/vm-smoke.py).
-# publish needs every job of the run to pass and waits for the release of the tag to exist
-# (release.yml publishes it in parallel; it fails after an hour without it, and the run is then
-# dispatched again on the tag's ref). It writes SHA256SUMS-glibc2.28 over the stubs, attests
-# them and publishes them in the companion release el8-vX.Y.Z (made as a draft, filled, then
-# published; the release of the tag is not touched); a run that finds the companion published
-# with the same sums publishes nothing, and one that finds other sums fails: a published release
-# cannot be changed. The attestations are this workflow's, from the tag's ref:
+# draft needs every job of the run to pass. prepare writes SHA256SUMS-glibc2.28 over the stubs and
+# their .xz, and draft attests them and leaves them in a draft of the companion release el8-vX.Y.Z;
+# the release of the tag is not touched. No release key is ever here: the admin checks the draft on
+# their own machine, signs its sums there and publishes it, with `make release-sign`
+# (docs/signing.md §5.3). A run that finds the companion published with the same sums and a
+# signature does nothing, and one that finds anything else fails: a published release cannot be
+# changed. The attestations are this workflow's, from the tag's ref:
 # `gh attestation verify` takes `--signer-workflow devitops-com/fsbpyr/.github/workflows/el8.yml --source-ref refs/tags/vX.Y.Z`.
 
 on:
@@ -621,20 +621,58 @@ jobs:
             --run 'native => orjson {"a":[1,2]}' \
             --run 'FSBPYR_SELFTEST=natives native => all natives load'
 
-  # Only when every job above passed (the default of `needs`): the stubs go to a release of their
-  # own, the companion el8-vX.Y.Z of the release vX.Y.Z (owner, 2026-10-27). Releases are
-  # immutable (REL-1): once published, vX.Y.Z accepts no asset, so the stubs, which come after it,
-  # cannot join it. The companion is made as a draft, filled, and published at once, so that it
-  # never exists half done; published, it is immutable too. The only job that may write, and it
-  # runs nothing of the tag's. release.yml publishes the release in parallel, so it may not exist
-  # yet: publish waits for it, so that no companion is published for a version that was not
-  # released (its tag could not be used again).
-  publish:
-    name: attest + publish
+  # The sums of every stub and of its .xz, nothing else: stubs.py checks the .xz against its line
+  # before lzma sees it, and each .xz must unpack to the stub it is listed with. It runs only
+  # sha256sum, xz and cmp, no built code, so it gets no secret and nothing of the tag's.
+  prepare:
+    name: SHA256SUMS-glibc2.28
     needs: [plan, stub, build, tests, portability, corpus, vm-smoke]
     if: needs.plan.outputs.tag != ''
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Download the stubs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: el8-stub-*
+          merge-multiple: true
+          path: stubs
+
+      - name: SHA256SUMS-glibc2.28
+        run: |
+          mkdir dist
+          expected=()
+          for python in 3.12 3.13 3.14 3.15; do
+            for target in x86_64-linux-gnu aarch64-linux-gnu; do
+              expected+=("fsbpyr-stub-$python-$target-glibc2.28")
+            done
+          done
+          found="$(cd stubs && ls | sort)"
+          [ "$found" = "$(for name in "${expected[@]}"; do echo "$name"; echo "$name.xz"; done | sort)" ] \
+            || { echo "::error::the stubs are not the 8 expected, each with its .xz:"; echo "$found"; exit 1; }
+          (cd stubs && sha256sum "${expected[@]}" "${expected[@]/%/.xz}" > ../dist/SHA256SUMS-glibc2.28)
+          for name in "${expected[@]}"; do
+            xz --decompress --stdout "stubs/$name.xz" | cmp - "stubs/$name"
+          done
+          cat dist/SHA256SUMS-glibc2.28
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: el8-sums
+          path: dist/SHA256SUMS-glibc2.28
+          if-no-files-found: error
+
+  # Only when every job above passed (the default of `needs`): the stubs go to a release of their
+  # own, the companion el8-vX.Y.Z of the release vX.Y.Z (owner, 2026-10-27). Releases are
+  # immutable (REL-1): once published, vX.Y.Z accepts no asset, so the stubs, which come after it,
+  # cannot join it. The only job that may write, and it runs nothing of the tag's.
+  draft:
+    name: attest + draft
+    needs: [plan, prepare]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write      # create the companion release and its tag
       id-token: write      # sign the attestation (Sigstore, through the job's OIDC token)
@@ -652,46 +690,27 @@ jobs:
           merge-multiple: true
           path: stubs
 
-      # Every entry's stub and its .xz, nothing else. The sums list the stubs themselves
-      # (stubs.py reads the format), and every .xz must unpack to the stub it is listed with.
-      - name: SHA256SUMS-glibc2.28
-        run: |
-          mkdir dist
-          expected=()
-          for python in 3.12 3.13 3.14 3.15; do
-            for target in x86_64-linux-gnu aarch64-linux-gnu; do
-              expected+=("fsbpyr-stub-$python-$target-glibc2.28")
-            done
-          done
-          found="$(cd stubs && ls | sort)"
-          [ "$found" = "$(for name in "${expected[@]}"; do echo "$name"; echo "$name.xz"; done | sort)" ] \
-            || { echo "::error::the stubs are not the 8 expected, each with its .xz:"; echo "$found"; exit 1; }
-          (cd stubs && sha256sum "${expected[@]}" > ../dist/SHA256SUMS-glibc2.28)
-          for name in "${expected[@]}"; do
-            xz --decompress --stdout "stubs/$name.xz" | cmp - "stubs/$name"
-            cp "stubs/$name.xz" dist/
-          done
-          cat dist/SHA256SUMS-glibc2.28
+      - name: Download the sums
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: el8-sums
+          path: dist
 
-      # release.yml publishes the release of this tag in parallel and may be slower than every job
-      # above. Up to an hour, every 30 seconds (the release run's build takes at most 75 minutes,
-      # and this job started after our own build). Until it is published: `gh release create`
-      # with assets makes a draft first on a repository with immutable releases, and `gh release
-      # view` finds drafts too.
-      - name: Wait for the release
+      # Before anything is attested or uploaded: every file listed, and none that is not. A later
+      # job can replace an earlier job's artifact of the same run.
+      - name: Check the stubs against the sums
         run: |
-          for _ in $(seq 1 120); do
-            [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" = false ] && exit 0
-            sleep 30
-          done
-          echo "::error::release $TAG does not exist yet; dispatch el8.yml on the tag ref once it does (gh workflow run el8.yml --ref $TAG)"
-          exit 1
+          (cd stubs && sha256sum --quiet -c ../dist/SHA256SUMS-glibc2.28)
+          [ "$(ls stubs | wc -l)" = "$(wc -l < dist/SHA256SUMS-glibc2.28)" ] \
+            || { echo "::error::stubs/ does not hold exactly the files the sums list"; exit 1; }
+          cp stubs/*.xz dist/
 
-      # A published companion is immutable: a run that finds the very same sums and every stub
-      # there has nothing to publish (a retry, or a second request; the links are reproducible, so
-      # the same stubs give the same sums), and one that finds anything else cannot repair it.
-      # A draft is what a run that stopped between creating and publishing leaves: not public,
-      # without a tag, and made again from this run's stubs. `gh release view` finds drafts too.
+      # A published companion is immutable: a run that finds the very same sums, a signature and
+      # every stub there has nothing to publish (a retry, or a second request; the links are
+      # reproducible, so the same stubs give the same sums, and each signing gives other bytes, so
+      # the .sig is only looked for: check-release.sh checks it against the pins), and one that
+      # finds anything else cannot repair it. A draft may be the one that waits for the admin's
+      # signature, so it is left alone and the run fails. `gh release view` finds drafts too.
       - name: Is it published
         id: published
         run: |
@@ -701,16 +720,15 @@ jobs:
             exit 0
           fi
           if [ "$draft" = true ]; then
-            echo "::notice::$COMPANION is a draft of a run that stopped: it is deleted and made again"
-            gh release delete "$COMPANION" --yes
-            echo "new=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "::error::$COMPANION is a draft, which may be the one that waits for the admin's signature: it is left alone. If a stopped run left it, delete it by hand, then dispatch el8.yml on the tag ref again"
+            exit 1
           fi
           assets="$(gh release view "$COMPANION" --json assets --jq '.assets[].name')"
           if grep -qx SHA256SUMS-glibc2.28 <<<"$assets"; then
             gh release download "$COMPANION" --pattern SHA256SUMS-glibc2.28 --dir published
             if cmp published/SHA256SUMS-glibc2.28 dist/SHA256SUMS-glibc2.28 \
-                && [ -z "$(comm -23 <(cd dist && ls fsbpyr-stub-*.xz | sort) <(echo "$assets" | sort))" ]; then
+                && [ -z "$(comm -23 <(cd dist && ls fsbpyr-stub-*.xz | sort) <(echo "$assets" | sort))" ] \
+                && grep -qx SHA256SUMS-glibc2.28.sig <<<"$assets"; then
               echo "::notice::$COMPANION already has these EL8 stubs: nothing to publish"
               echo "new=false" >> "$GITHUB_OUTPUT"
               exit 0
@@ -751,15 +769,16 @@ jobs:
 
       # The draft takes the existing tag el8-vX.Y.Z (--verify-tag: never one made here, see
       # above), on the commit of the tag vX.Y.Z (the next step compares them again).
-      # --latest=false on both calls: publishing a draft makes it the
-      # latest release unless told otherwise, which `fsbpyr self update`, install.sh and
-      # check-release.sh read as vX.Y.Z, and an immutable release cannot be corrected.
-      - name: Publish the companion release
+      # --latest=false: publishing a draft makes it the latest release unless told otherwise,
+      # which `fsbpyr self update`, install.sh and check-release.sh read as vX.Y.Z, and an immutable
+      # release cannot be corrected. `make release-sign` publishes it the same way.
+      - name: Make the draft of the companion release
         if: steps.published.outputs.new == 'true'
         run: |
           cat > notes.md <<EOF
           The glibc 2.28 (RHEL 8) stubs of fsbpyr $TAG, one per Python and target, with the
-          SHA-256 of each unpacked stub in SHA256SUMS-glibc2.28. They pair with the fsbpyr
+          SHA-256 of each stub and of its .xz in SHA256SUMS-glibc2.28, and the release key's
+          signature of that file. They pair with the fsbpyr
           $TAG of the same Python and target: \`fsbpyr build --glibc 2.28\` downloads the one it
           needs. To place one by hand, put its .xz next to the fsbpyr executable, under the same
           name; no download is then made.
@@ -769,7 +788,6 @@ jobs:
           gh release create "$COMPANION" --verify-tag --draft --latest=false \
             --title "EL8 stubs for $TAG" --notes-file notes.md \
             dist/fsbpyr-stub-*.xz dist/SHA256SUMS-glibc2.28
-          gh release edit "$COMPANION" --draft=false --latest=false
 
       # Published releases cannot be corrected, so say what went wrong at least. Read-only, and
       # run when the companion was published already too: a retry after a failed check (the

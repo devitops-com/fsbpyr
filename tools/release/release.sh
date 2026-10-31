@@ -9,16 +9,18 @@
 # checked exactly this commit, the release build included. Nothing is built or tested here,
 # and no release is created here: the pushed tag triggers .github/workflows/release.yml, which
 # builds the executables from the tag (build.yml, without its checks), attests them (GitHub
-# artifact attestations can only be made inside GitHub Actions) and publishes the GitHub
-# release. This script follows that run (follow-run.sh: a line per job started or finished)
-# and prints the release URL. X.Y.Z, if given, must be the version HEAD declares.
+# artifact attestations can only be made inside GitHub Actions) and leaves a draft of the GitHub
+# release. This script follows that run (follow-run.sh: a line per job started or finished);
+# `make release-sign` then checks the draft, signs it here and publishes it. X.Y.Z, if given, must
+# be the version HEAD declares.
 #
 # Guards (all must pass before the tag is made): the three versions agree (version-files.sh)
 # and equal X.Y.Z, on `main`, clean working tree (untracked files and assume-unchanged /
 # skip-worktree entries included), local == hub/main, neither the tag nor the GitHub release
 # exists yet, the CHANGELOG has the version's section and an empty [Unreleased] one (a change
-# merged after the release commit would ship without being in the notes), and a successful
-# full-suite.yml run for HEAD's push to main (a run in progress is waited for).
+# merged after the release commit would ship without being in the notes), a successful
+# full-suite.yml run for HEAD's push to main (a run in progress is waited for), and an audit that
+# finds GitHub as this machine recorded it (audit.sh).
 #
 # Non-interactive use: set FSBPYR_RELEASE_ASSUME_YES=1 to skip the prompt.
 # FSBPYR_RELEASE_WATCH_WAIT: how many seconds to wait for the tag's workflow run
@@ -30,6 +32,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 # shellcheck source=version-files.sh
 . tools/release/version-files.sh
+# shellcheck source=confirm.sh
+. tools/release/confirm.sh
 
 BRANCH="main"
 CHANGELOG="CHANGELOG.md"
@@ -87,6 +91,15 @@ if gh release view "$TAG" >/dev/null 2>&1; then
     echo "ERROR: a GitHub release for $TAG already exists" >&2; exit 1
 fi
 
+# A release is signed, and make release-sign refuses one that pins no keys: tagged, the version
+# would be burned. docs/signing.md §5.2 says how the keys are made and pinned.
+git ls-tree -r --name-only HEAD -- src/fsbpyr/release-keys/ | grep '\.pub$' >/dev/null || {
+    echo "ERROR: src/fsbpyr/release-keys/ pins no release keys, and make release-sign would refuse" \
+         "$TAG after its tag burned the version: make K and R and pin them first" \
+         "(docs/signing.md, One-time setup)" >&2
+    exit 1
+}
+
 # The release workflow publishes the version's section as the release notes; a change under
 # [Unreleased] is in the tagged commit but would be in no release's notes.
 bash tools/release/release-notes.sh "$VERSION" "$CHANGELOG" >/dev/null \
@@ -120,6 +133,10 @@ fi
 # documentation changed since such a commit (green-run.sh). A run in progress is waited for.
 bash tools/release/green-run.sh "$SUITE_WORKFLOW" "$LOCAL_HEAD" >/dev/null
 
+# Before a version is burned on a repository that may have been tampered with.
+bash tools/release/audit.sh \
+    || { echo "ERROR: the audit did not pass; nothing was tagged" >&2; exit 1; }
+
 # --- 2. Confirm --------------------------------------------------------------
 REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo '?')"
 cat <<EOF
@@ -131,24 +148,9 @@ About to release:
   branch  : $BRANCH  ($(git rev-parse --short HEAD))
 
 This tags $BRANCH's HEAD and pushes the tag, which starts the $WORKFLOW workflow: it
-builds, attests and publishes the GitHub release. It is outward-facing and hard to undo.
+builds, attests and leaves a draft for make release-sign. It is outward-facing and hard to undo.
 EOF
-if [ "${FSBPYR_RELEASE_ASSUME_YES:-0}" != "1" ]; then
-    if [ -t 0 ]; then
-        printf 'Continue? [y/N] '; read -r reply
-    # The /dev/tty node always exists; without a controlling terminal opening it
-    # fails (and set -e would abort without a word), so probe it instead.
-    elif { : > /dev/tty; } 2>/dev/null; then
-        printf 'Continue? [y/N] ' > /dev/tty; read -r reply < /dev/tty
-    else
-        echo "ERROR: not a TTY; set FSBPYR_RELEASE_ASSUME_YES=1 to proceed non-interactively" >&2
-        exit 1
-    fi
-    case "$reply" in
-        [yY]|[yY][eE][sS]) ;;
-        *) echo "Aborted."; exit 1 ;;
-    esac
-fi
+confirm_or_abort
 
 # --- 3. Tag and push the tag ---------------------------------------------------
 if ! git tag -a "$TAG" -m "fsbpyr $TAG" || ! git tag -a "$EL8_TAG" -m "fsbpyr $TAG: EL8 stubs"; then
@@ -167,10 +169,10 @@ EOF
 fi
 
 # --- 4. Follow the release workflow the tag started --------------------------
-# Past this point $TAG is pushed and the release is in CI's hands; `make release`
+# Past this point $TAG is pushed and the build is in CI's hands; `make release`
 # cannot resume (the tag guard blocks it). GitHub creates the run a few seconds
 # after the push.
-echo "==> $TAG pushed; the $WORKFLOW workflow builds, attests and publishes it"
+echo "==> $TAG pushed; the $WORKFLOW workflow builds and attests it and leaves a draft"
 run_id=""
 waited=0
 while :; do
@@ -189,7 +191,7 @@ done
 if [ -z "$run_id" ]; then
     echo "==> No $WORKFLOW run for $TAG showed up yet. Follow it at"
     echo "      https://github.com/$REPO/actions/workflows/$WORKFLOW"
-    echo "    The release appears at https://github.com/$REPO/releases/tag/$TAG when it succeeds."
+    echo "    When it succeeds, check, sign and publish the draft: make release-sign KEY=PATH"
     exit 0
 fi
 
@@ -202,7 +204,7 @@ if ! bash tools/release/follow-run.sh "$run_id"; then
     next="X.Y.Z+1"
     [[ "$VERSION" =~ $XYZ ]] && next="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
     cat >&2 <<EOF
-ERROR: the release workflow (run $run_id) failed: $TAG is pushed but not published.
+ERROR: the release workflow (run $run_id) failed: $TAG is pushed and has no draft.
        See why:           gh run view $run_id --log-failed
        Transient failure: gh run rerun $run_id --failed
        Needs a code fix:  this version is burned: $TAG stays as it is. Fix it on a branch,
@@ -215,5 +217,5 @@ EOF
 fi
 
 echo ""
-echo "Released fsbpyr $TAG"
-gh release view "$TAG" --json url -q .url 2>/dev/null || true
+echo "Built fsbpyr $TAG: nothing is published yet. Check, sign and publish the draft:"
+echo "    make release-sign KEY=PATH"

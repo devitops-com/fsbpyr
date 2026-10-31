@@ -2,13 +2,21 @@
 hash files of any size a leaf at a time, on threads, and a leaf inside a hole is not read (its
 digest is that of zeros): a sparse terabyte hashes in seconds."""
 
+import hashlib
 import os
 import random
 from pathlib import Path
 
 import pytest
 
-from fsbpyr.payload.format import DIGEST_LEAF, TreeHasher, file_digest, is_hole, tree_digest
+from fsbpyr.payload.format import (
+    DIGEST_LEAF,
+    ZERO_LEAF,
+    TreeHasher,
+    file_digest,
+    is_hole,
+    tree_digest,
+)
 
 SIZES = [0, 1, DIGEST_LEAF - 1, DIGEST_LEAF, DIGEST_LEAF + 1, 5 * DIGEST_LEAF + 3]
 
@@ -86,3 +94,7 @@ def test_content_hashed_in_pieces_of_any_size_has_its_tree_digest(piece: int) ->
         hasher.update(data[start : start + piece])
 
     assert hasher.digest() == tree_digest(data)
+
+
+def test_the_digest_of_a_zero_leaf_is_written_out_correctly() -> None:
+    assert hashlib.sha256(bytes(DIGEST_LEAF)).digest() == ZERO_LEAF

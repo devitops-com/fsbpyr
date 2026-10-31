@@ -25,11 +25,12 @@ COMMIT = "c" * 40
 HELPERS = "\n".join(re.findall(r"^(?:ok|fail|skip|step|verified)\(\).*$", SCRIPT, re.MULTILINE))
 VERIFY = re.findall(r"^verifying=0.*?(?=^# Whether the nth)", SCRIPT, re.MULTILINE | re.DOTALL)[0]
 CHECK = 'step "EL8 stubs' + SCRIPT.split('step "EL8 stubs', 1)[1].split(
-    "# --- This target's executables", 1)[0]  # fmt: skip
+    "# --- Signatures, as the clients", 1)[0]  # fmt: skip
 BUILD = 'step "el8 build' + SCRIPT.split('step "el8 build', 1)[1].split('step "installed"', 1)[0]
 
 PREAMBLE = r"""
 failed=0 skipped=0
+signed=${FAKE_SIGNED:-0}
 REPO=devitops-com/fsbpyr
 EL8_SIGNER="$REPO/.github/workflows/el8.yml"
 EL8_SUMS=SHA256SUMS-glibc2.28
@@ -79,24 +80,33 @@ class Check:
         self.files = root / "release"
         self.files.mkdir()
 
-    def release(self, *, flags: str = "false false", missing: str = "") -> None:
+    def release(self, *, flags: str = "false false", missing: str = "",
+                signed: bool = False) -> None:  # fmt: skip
         digest = hashlib.sha256(STUB).hexdigest()
-        (self.files / SUMS).write_text(f"{digest}  {ASSET}\n", encoding="utf-8")
-        (self.files / f"{ASSET}.xz").write_bytes(lzma.compress(STUB))
+        packed = lzma.compress(STUB)
+        lines = f"{digest}  {ASSET}\n"
+        if signed:
+            lines += f"{hashlib.sha256(packed).hexdigest()}  {ASSET}.xz\n"
+            (self.files / f"{SUMS}.sig").write_bytes(b"a signature")
+        (self.files / SUMS).write_text(lines, encoding="utf-8")
+        (self.files / f"{ASSET}.xz").write_bytes(packed)
         self.flags = flags
         self.missing = missing
+        self.signed = signed
 
     flags = ""
     missing = ""
+    signed = False
 
     def run(self, version: str = "0.27.0", **env: str) -> subprocess.CompletedProcess[str]:
-        assets = [name for name in (SUMS, f"{ASSET}.xz") if name != self.missing]
+        names = (SUMS, f"{ASSET}.xz", *([f"{SUMS}.sig"] if self.signed else ()))
+        assets = [name for name in names if name != self.missing]
         script = "\n".join([HELPERS, f'VERSION={version} work="$PWD/work"', 'mkdir -p "$work"',
                             PREAMBLE, VERIFY, CHECK, BUILD,
                             'echo "failed=$failed skipped=$skipped"'])  # fmt: skip
         environment = {"PATH": "/usr/bin:/bin", "FAKE_FLAGS": self.flags, "STUB": STUB.decode(),
                        "FAKE_ASSETS": " ".join(assets), "FAKE_DIR": str(self.files),
-                       "ASSET": ASSET, **env}  # fmt: skip
+                       "ASSET": ASSET, "FAKE_SIGNED": str(int(self.signed)), **env}  # fmt: skip
         bash = requires.tool("bash")
         return subprocess.run([bash, "-c", script], cwd=self.root, env=environment,
                               capture_output=True, text=True, check=False)  # fmt: skip
@@ -193,3 +203,51 @@ def test_the_stub_of_0_26_0_is_placed_beside_the_executable_which_cannot_fetch_i
     assert f"{ASSET}.xz is placed beside the executable" in result.stdout
     assert sorted(check.beside) == sorted([f"{ASSET}.xz", "fsbpyr-3.14-x86_64-linux-gnu"])
     assert "the stub it fetched" not in result.stdout
+
+
+def test_a_signed_companion_passes_with_its_signature_and_xz_lines(check: Check) -> None:
+    check.release(signed=True)
+
+    result = check.run()
+
+    assert "FAIL" not in result.stdout, result.stdout
+    assert f"each .xz matches its line of {SUMS}" in result.stdout
+
+
+def test_a_tag_that_pins_keys_needs_the_signature(check: Check) -> None:
+    check.release(signed=True, missing=f"{SUMS}.sig")
+
+    result = check.run()
+
+    assert f"FAIL  el8-v0.27.0 misses: {SUMS}.sig" in result.stdout
+
+
+def test_a_signed_companion_needs_a_line_for_each_xz(check: Check) -> None:
+    check.release(signed=True)
+    digest = hashlib.sha256(STUB).hexdigest()
+    (check.files / SUMS).write_text(f"{digest}  {ASSET}\n", encoding="utf-8")
+
+    result = check.run()
+
+    assert f"FAIL  {SUMS} lists" in result.stdout
+    assert f"FAIL  a .xz does not match its line of {SUMS}" in result.stdout
+
+
+def test_an_xz_that_does_not_match_its_line_fails(check: Check) -> None:
+    check.release(signed=True)
+    (check.files / SUMS).write_text(
+        f"{hashlib.sha256(STUB).hexdigest()}  {ASSET}\n"
+        + f"{hashlib.sha256(b'another').hexdigest()}  {ASSET}.xz\n", encoding="utf-8")
+
+    result = check.run()
+
+    assert f"FAIL  a .xz does not match its line of {SUMS}" in result.stdout
+
+
+def test_an_older_release_is_not_asked_for_what_it_never_had(check: Check) -> None:
+    check.release()
+
+    result = check.run()
+
+    assert "FAIL" not in result.stdout, result.stdout
+    assert "matches its line" not in result.stdout

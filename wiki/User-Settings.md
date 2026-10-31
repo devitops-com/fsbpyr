@@ -45,8 +45,9 @@ strict = true                      # as --strict
 An unknown key stops the build and names the supported keys; a value of the wrong type stops it
 and names the key and the value. `fast-compression` and `best-compression` exclude each other,
 and a compression flag on the command line replaces the other one set in the table. `--offline`,
-`--hints`, `--smoke` and `--verbose` exist on the command line only. What each setting does is
-on [Building an app](User-Building.md#options).
+`--hints`, `--smoke`, `--signing-key` and `--verbose` exist on the command line only: a key's path
+belongs to the machine that builds. What each setting does is on
+[Building an app](User-Building.md#options).
 
 ## Settings without a project
 

@@ -1,10 +1,11 @@
 """The shape of .github/workflows/el8.yml, which publishes EL8 stubs in a companion release
 outside the release gate. GitHub runs it, not these tests: they pin what can be read from the file
 (triggers, decoupling from the release, pins, permissions, asset names, and that no job checks out
-or runs anything but the commit that started the run), and run the shell of the publish steps
+or runs anything but the commit that started the run), and run the shell of the draft job's steps
 against a fake `gh`."""
 
 import fnmatch
+import hashlib
 import os
 import re
 import subprocess
@@ -32,8 +33,8 @@ USES = re.compile(r"uses: (\S+)@([0-9a-f]{40}) # (v\d+\.\d+\.\d+)$", re.MULTILIN
 
 
 def step_script(name: str) -> str:
-    """The shell of the publish job's step called `name`."""
-    step = JOBS["publish"].split(f"- name: {name}\n", 1)[1].split("run: |\n", 1)[1]
+    """The shell of the draft job's step called `name`."""
+    step = JOBS["draft"].split(f"- name: {name}\n", 1)[1].split("run: |\n", 1)[1]
     body = step.split("\n      #", 1)[0].split("\n      - ", 1)[0]  # up to the next comment or step
     return textwrap.dedent(body) + "\n"
 
@@ -104,9 +105,9 @@ def test_the_plan_reads_the_default_python_of_the_tag() -> None:
     assert 'echo "python=" >> "$GITHUB_OUTPUT"' in plan  # no tag, no Python
     for name in ("portability", "vm-smoke"):  # the stub and the executable of the entry must exist
         assert "needs: [plan, stub, build]" in JOBS[name]
-    stubs = re.search(r"for python in ([0-9. ]+); do", JOBS["publish"])
+    stubs = re.search(r"for python in ([0-9. ]+); do", JOBS["prepare"])
     assert stubs and stubs.group(1).split() == [
-        "{}.{}".format(*version) for version in sorted(SUPPORTED_PYTHON)]  # publish: all of them
+        "{}.{}".format(*version) for version in sorted(SUPPORTED_PYTHON)]  # draft: all of them
 
 
 def test_the_image_is_the_builds_by_digest() -> None:
@@ -130,41 +131,40 @@ def test_every_action_is_pinned_by_commit_as_the_other_workflows_pin_it() -> Non
         assert others.get(action) == sha, action
 
 
-def test_only_publish_writes_and_it_needs_every_other_job() -> None:
-    assert re.findall(r"^ +permissions:", EL8, re.MULTILINE) == ["    permissions:"]
+def test_only_draft_writes_and_prepare_needs_every_other_job() -> None:
+    assert len(re.findall(r"^ +permissions:", EL8, re.MULTILINE)) == 2  # prepare, draft
     assert "permissions:\n  contents: read\n" in EL8
-    publish = JOBS["publish"]
-    header = publish.split("    steps:", 1)[0]
+    draft = JOBS["draft"]
+    header = draft.split("    steps:", 1)[0]
+    prepare = JOBS["prepare"].split("    steps:", 1)[0]
 
     assert "      contents: write" in header
     assert "      id-token: write" in header and "      attestations: write" in header
     assert "actions:" not in header
-    assert re.search(r"needs: \[plan, stub, build, tests, portability, corpus, vm-smoke\]", header)
-    assert set(JOBS) - {"publish"} == {"plan", "stub", "build", "tests", "portability", "corpus",
-                                       "vm-smoke"}  # fmt: skip
+    assert re.search(r"needs: \[plan, stub, build, tests, portability, corpus, vm-smoke\]", prepare)
+    assert "needs: [plan, prepare]" in header
+    assert "      contents: read" in prepare and "write" not in prepare
+    assert set(JOBS) - {"draft"} == {"plan", "stub", "build", "tests", "portability", "corpus",
+                                     "vm-smoke", "prepare"}  # fmt: skip
     assert "continue-on-error" not in EL8
-    assert "checkout" not in publish  # it runs nothing of the tag's
+    assert "checkout" not in draft  # it runs nothing of the tag's
 
 
-def test_publish_makes_the_companion_release_and_leaves_the_release_of_the_tag_alone() -> None:
-    publish = JOBS["publish"]
-    create = re.sub(r"\\\n\s*", "", step_script("Publish the companion release"))  # joined lines
+def test_draft_makes_the_companion_release_and_leaves_the_release_of_the_tag_alone() -> None:
+    draft = JOBS["draft"]
+    create = re.sub(r"\\\n\s*", "", step_script("Make the draft of the companion release"))
     created = re.findall(r"gh release create .*", create)
 
-    assert "COMPANION: el8-${{ needs.plan.outputs.tag }}" in publish
+    assert "COMPANION: el8-${{ needs.plan.outputs.tag }}" in draft
     assert len(created) == 1
     assert created[0].startswith('gh release create "$COMPANION" --verify-tag --draft ')
     for flag in ('--latest=false', "dist/fsbpyr-stub-*.xz", f"dist/{release_stub_sums('2.28')}"):
         assert flag in created[0], flag
     assert "--target" not in created[0]  # the tag exists: make release pushed it
-    assert re.findall(r"gh release edit .*", create) == [
-        'gh release edit "$COMPANION" --draft=false --latest=false']  # the publishing call too
-    assert create.index("gh release create") < create.index("gh release edit")
-    assert not re.search(r'gh release (upload|create|edit|delete) "\$TAG"', publish)
-    assert "--clobber" not in publish and "gh release upload" not in publish
-    assert re.findall(r"gh release delete .*", publish) == ['gh release delete "$COMPANION" --yes']
-    assert "--cleanup-tag" not in publish  # a draft has no tag
-    assert "--source-ref refs/tags/v" in publish  # the attestations come from a run on the tag
+    assert not re.search(r"\bgh release (edit|delete|upload)\b", draft)  # only the admin publishes
+    assert not re.search(r'gh release (create|view) "\$TAG"', draft)  # nor waits for the release
+    assert "--clobber" not in draft
+    assert "--source-ref refs/tags/v" in draft  # the attestations come from a run on the tag
     assert ("--signer-workflow $GH_REPO/.github/workflows/el8.yml --source-ref refs/tags/$TAG"
             in create)  # the notes say how to verify
 
@@ -175,7 +175,7 @@ def test_the_companion_tag_starts_no_workflow_and_names_no_release() -> None:
     companion = "el8-v1.2.3"
     release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
 
-    assert "COMPANION: el8-${{ needs.plan.outputs.tag }}" in JOBS["publish"]
+    assert "COMPANION: el8-${{ needs.plan.outputs.tag }}" in JOBS["draft"]
     assert not fnmatch.fnmatchcase(companion, "v*")
     assert not re.match(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$", companion)
     assert '    tags: ["v*"]' in release and '    tags: ["v*"]' in EL8
@@ -186,7 +186,7 @@ def test_it_is_the_companion_that_is_looked_up_for_the_idempotence_check() -> No
 
     assert 'gh release view "$COMPANION" --json isDraft --jq .isDraft' in script
     assert "jq " not in script.replace("--jq ", "")  # gh's own jq: nothing to install
-    assert 'gh release delete "$COMPANION" --yes' in script
+    assert "gh release delete" not in script
     assert "is published with other stubs" in script and "immutable" in script
     assert "$TAG" not in script.replace("$TAG's", "")
 
@@ -213,21 +213,20 @@ def test_the_tag_is_the_ref_through_the_environment_and_is_a_version() -> None:
     assert '[ "$REF" != "refs/tags/$REF_NAME" ]' in plan  # a branch dispatch does nothing
     assert 'echo "tag=" >> "$GITHUB_OUTPUT"' in plan
     assert 'echo "python=" >> "$GITHUB_OUTPUT"' in plan
-    for job in ("stub", "build", "tests", "portability", "corpus", "vm-smoke", "publish"):
+    for job in ("stub", "build", "tests", "portability", "corpus", "vm-smoke", "prepare"):
         assert "if: needs.plan.outputs.tag != ''" in JOBS[job], job
-    for job in set(JOBS) - {"plan", "publish"}:
+    for job in set(JOBS) - {"plan", "draft"}:
         assert "${{ needs.plan.outputs.tag }}" not in JOBS[job], job
-    assert "TAG: ${{ needs.plan.outputs.tag }}" in JOBS["publish"]
+    assert "TAG: ${{ needs.plan.outputs.tag }}" in JOBS["draft"]
 
 
-def test_publish_waits_for_the_release_of_the_tag() -> None:
-    publish = JOBS["publish"]
-    wait = publish.split("name: Wait for the release", 1)[1].split("      - name:", 1)[0]
+def test_draft_waits_for_nothing() -> None:
+    """The release of the tag stays a draft until the admin signs it: waiting for it would end the
+    job, and a companion is a draft that publishes nothing."""
+    draft = JOBS["draft"]
 
-    assert "seq 1 120" in wait and "sleep 30" in wait  # up to an hour, every 30 seconds
-    assert 'gh release view "$TAG" --json isDraft --jq .isDraft' in wait  # published, not a draft
-    assert "does not exist yet; dispatch el8.yml on the tag ref once it does" in wait
-    assert "timeout-minutes: 75\n" in publish.split("steps:", 1)[0]
+    assert "Wait for the release" not in draft and "sleep" not in draft
+    assert "timeout-minutes: 15\n" in draft.split("steps:", 1)[0]
 
 
 def test_the_build_job_builds_the_release_executable_and_nothing_downloads_it() -> None:
@@ -250,22 +249,16 @@ def test_stubs_are_linked_in_the_stub_job_and_the_others_use_that_artifact() -> 
         assert "fsbpyr runtime build" not in JOBS[job]
 
 
-# ----------------------------------------------------------------- the publish steps, run for real
+# ------------------------------------------------------------------- the draft steps, run for real
 
 FAKE_GH = """#!/usr/bin/env bash
-# The part of gh the publish steps use. FAKE_STATE holds the companion release, if there is one:
+# The part of gh the draft job's steps use. FAKE_STATE holds the companion release, if there is one:
 # draft (`gh release view --json isDraft --jq .isDraft`), assets (`--json assets --jq
 # '.assets[].name'`, one name a line) and sums (its sums asset).
-# FAKE_TAG_DRAFT is isDraft of the release of the tag (unset: there is none), FAKE_REF the commit
-# of an existing tag ref of the companion (unset: none).
+# FAKE_REF the commit of an existing tag ref of the companion (unset: none).
 echo "$*" >> "$FAKE_STATE/log"
 case "$1 $2" in
     "release view")
-        if [ "$3" = "v1.2.0" ]; then
-            [ -n "${FAKE_TAG_DRAFT-}" ] || { echo "release not found" >&2; exit 1; }
-            echo "$FAKE_TAG_DRAFT"
-            exit 0
-        fi
         [ -e "$FAKE_STATE/draft" ] || { echo "release not found" >&2; exit 1; }
         case "$*" in
             *"--json isDraft --jq .isDraft") cat "$FAKE_STATE/draft" ;;
@@ -290,8 +283,8 @@ SUMS_TEXT = "".join(f"{i:064x}  {name.removesuffix('.xz')}\n" for i, name in enu
 
 
 
-class Publish:
-    """The publish job's shell, run in a directory with the job's dist/ and a fake gh."""
+class DraftJob:
+    """The draft job's shell, run in a directory with the job's dist/ and a fake gh."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -306,13 +299,11 @@ class Publish:
         for name in STUBS:
             (root / "dist" / name).write_bytes(b"xz")
         (root / "out").write_text("", encoding="utf-8")
-        sleep = root / "bin" / "sleep"  # the wait step waits up to an hour
-        sleep.write_text("#!/bin/sh\n", encoding="utf-8")
-        sleep.chmod(0o755)
 
     def release(self, *, draft: bool, sums: str = SUMS_TEXT, assets: list[str] | None = None,
-                with_sums: bool = True) -> None:  # fmt: skip
-        names = [*([SUMS] if with_sums else []), *(STUBS if assets is None else assets)]
+                with_sums: bool = True, with_signature: bool = True) -> None:  # fmt: skip
+        names = [*([SUMS] if with_sums else []), *([f"{SUMS}.sig"] if with_signature else []),
+                 *(STUBS if assets is None else assets)]  # fmt: skip
         (self.state / "draft").write_text(f"{str(draft).lower()}\n", encoding="utf-8")
         (self.state / "assets").write_text("".join(f"{name}\n" for name in names), encoding="utf-8")
         (self.state / "sums").write_text(sums, encoding="utf-8")
@@ -338,112 +329,155 @@ class Publish:
 
 
 @pytest.fixture
-def publish(tmp_path: Path) -> Publish:
-    return Publish(tmp_path)
+def job(tmp_path: Path) -> DraftJob:
+    return DraftJob(tmp_path)
 
 
 def test_the_check_of_the_result_runs_whether_or_not_the_companion_was_just_published() -> None:
-    publish = JOBS["publish"]
-    check = publish.split("- name: Check the result\n", 1)[1].split("run: |", 1)[0]
+    draft = JOBS["draft"]
+    check = draft.split("- name: Check the result\n", 1)[1].split("run: |", 1)[0]
 
     assert "if: steps.published.outputs.new != ''" in check
-    assert "steps.published.outputs.new == 'true'" in publish.split(
+    assert "steps.published.outputs.new == 'true'" in draft.split(
         "- name: The companion tag\n", 1)[1].split("run: |", 1)[0]
 
 
-def test_nothing_published_yet_goes_on_to_make_the_companion_release(publish: Publish) -> None:
-    result = publish.run("Is it published")
+def test_nothing_published_yet_goes_on_to_make_the_companion_release(job: DraftJob) -> None:
+    result = job.run("Is it published")
 
     assert result.returncode == 0, result.stderr
-    assert publish.output == "new=true"
-    assert publish.calls == [f"release view {COMPANION} --json isDraft --jq .isDraft"]
+    assert job.output == "new=true"
+    assert job.calls == [f"release view {COMPANION} --json isDraft --jq .isDraft"]
 
 
-def test_a_published_companion_with_the_same_stubs_has_nothing_to_publish(publish: Publish) -> None:
-    publish.release(draft=False)
+def test_a_published_companion_with_the_same_stubs_has_nothing_to_publish(job: DraftJob) -> None:
+    job.release(draft=False)
 
-    result = publish.run("Is it published")
+    result = job.run("Is it published")
 
     assert result.returncode == 0, result.stderr
-    assert publish.output == "new=false"
+    assert job.output == "new=false"
     assert "nothing to publish" in result.stdout
-    assert not [call for call in publish.calls if "delete" in call or "create" in call]
+    assert not [call for call in job.calls if "delete" in call or "create" in call]
 
 
 @pytest.mark.parametrize("case", ["other sums", "a stub missing", "no sums file"])
 def test_a_published_companion_with_other_stubs_fails_and_is_left_alone(
-        publish: Publish, case: str) -> None:  # fmt: skip
+        job: DraftJob, case: str) -> None:  # fmt: skip
     if case == "other sums":
-        publish.release(draft=False, sums=SUMS_TEXT.replace("0", "1"))
+        job.release(draft=False, sums=SUMS_TEXT.replace("0", "1"))
     elif case == "a stub missing":
-        publish.release(draft=False, assets=STUBS[1:])
+        job.release(draft=False, assets=STUBS[1:])
     else:  # not downloaded: gh would fail with its own message, not ours
-        publish.release(draft=False, with_sums=False)
+        job.release(draft=False, with_sums=False)
 
-    result = publish.run("Is it published")
+    result = job.run("Is it published")
 
     assert result.returncode == 1
     assert f"::error::{COMPANION} is published with other stubs" in result.stdout
     assert "immutable" in result.stdout
-    assert publish.output == ""
-    assert not [call for call in publish.calls if "delete" in call or "create" in call]
+    assert job.output == ""
+    assert not [call for call in job.calls if "delete" in call or "create" in call]
 
 
-def test_a_draft_left_by_a_run_that_stopped_is_deleted_and_made_again(publish: Publish) -> None:
-    publish.release(draft=True, sums="other\n", assets=STUBS[:3])
+def test_a_draft_is_left_alone(job: DraftJob) -> None:
+    """It may be the one that waits for the admin's signature, which a re-run must not delete."""
+    job.release(draft=True, sums="other\n", assets=STUBS[:3], with_signature=False)
 
-    result = publish.run("Is it published")
+    result = job.run("Is it published")
+
+    assert result.returncode == 1
+    assert f"::error::{COMPANION} is a draft" in result.stdout
+    assert not [call for call in job.calls if "delete" in call or "create" in call]
+
+
+def test_the_companion_is_created_as_a_draft_with_no_signature_and_not_latest(
+    job: DraftJob,
+) -> None:
+    result = job.run("Make the draft of the companion release")
 
     assert result.returncode == 0, result.stderr
-    assert publish.output == "new=true"
-    assert publish.calls == [f"release view {COMPANION} --json isDraft --jq .isDraft",
-                             f"release delete {COMPANION} --yes"]  # fmt: skip
-
-
-def test_the_companion_is_created_as_a_draft_and_published_not_latest(publish: Publish) -> None:
-    result = publish.run("Publish the companion release")
-
-    assert result.returncode == 0, result.stderr
-    create, edit = publish.calls
+    create, = job.calls  # no `release edit`: it is not published
     assert create.startswith(f"release create {COMPANION} --verify-tag --draft --latest=false ")
     assert "--target" not in create  # the token cannot make the tag: make release pushed it
     assert f"--title EL8 stubs for {TAG}" in create
     assert all(f"dist/{name}" in create for name in [*STUBS, SUMS])
-    assert edit == f"release edit {COMPANION} --draft=false --latest=false"
+    assert ".sig" not in create
 
 
-def test_the_wait_goes_on_until_the_release_of_the_tag_is_published(publish: Publish) -> None:
-    assert publish.run("Wait for the release", FAKE_TAG_DRAFT="false").returncode == 0
-    for state in ("true", ""):  # a draft is not the release, nor is no release
-        result = publish.run("Wait for the release", FAKE_TAG_DRAFT=state)
-        assert result.returncode == 1, state
-        assert f"::error::release {TAG} does not exist yet" in result.stdout
+def _stubs_for_the_check(job: DraftJob) -> str:
+    """stubs/ as draft downloads it, with sums that list each file in it."""
+    stubs = job.root / "stubs"
+    stubs.mkdir()
+    lines = []
+    for name in STUBS:
+        (stubs / name).write_bytes(b"an xz")
+        lines.append(f"{hashlib.sha256(b'an xz').hexdigest()}  {name}\n")
+    (job.root / "dist" / SUMS).write_text("".join(lines), encoding="utf-8")
+    return "Check the stubs against the sums"
+
+
+def test_stubs_that_match_their_sums_go_on(job: DraftJob) -> None:
+    step = _stubs_for_the_check(job)
+
+    result = job.run(step)
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert all((job.root / "dist" / name).is_file() for name in STUBS)
+
+
+def test_a_stub_that_does_not_match_its_line_stops_the_job(job: DraftJob) -> None:
+    step = _stubs_for_the_check(job)
+    (job.root / "stubs" / STUBS[0]).write_bytes(b"another")
+
+    assert job.run(step).returncode != 0
+
+
+def test_a_file_too_many_among_the_stubs_stops_the_job(job: DraftJob) -> None:
+    step = _stubs_for_the_check(job)
+    (job.root / "stubs" / "fsbpyr-stub-evil.xz").write_bytes(b"not listed")
+
+    result = job.run(step)
+
+    assert result.returncode == 1 and "exactly the files the sums list" in result.stdout
+
+
+def test_a_published_companion_without_a_signature_fails(job: DraftJob) -> None:
+    """It cannot be repaired, and the stubs need a new version; before, it was "nothing to
+    publish", exit 0."""
+    job.release(draft=False, with_signature=False)
+
+    result = job.run("Is it published")
+
+    assert result.returncode == 1
+    assert "is published with other stubs" in result.stdout
+    assert not [call for call in job.calls if "delete" in call or "create" in call]
 
 
 def test_the_companion_tag_must_exist_on_the_tags_commit_before_the_publication(
-        publish: Publish) -> None:  # fmt: skip
+        job: DraftJob) -> None:  # fmt: skip
     shas = f"{TAG}={'a' * 40},{COMPANION}=" + "{}"
 
-    missing = publish.run("The companion tag")
+    missing = job.run("The companion tag")
     assert missing.returncode == 1
     assert f"::error::the tag {COMPANION} does not exist: make release pushes it" in missing.stdout
-    here = publish.run("The companion tag", FAKE_REF="1", FAKE_SHAS=shas.format("a" * 40))
+    here = job.run("The companion tag", FAKE_REF="1", FAKE_SHAS=shas.format("a" * 40))
     assert here.returncode == 0, here.stderr
-    other = publish.run("The companion tag", FAKE_REF="1", FAKE_SHAS=shas.format("b" * 40))
+    other = job.run("The companion tag", FAKE_REF="1", FAKE_SHAS=shas.format("b" * 40))
     assert other.returncode == 1
     assert f"::error::the tag {COMPANION} exists on another commit than {TAG}'s" in other.stdout
-    assert not [call for call in publish.calls if "release" in call]
+    assert not [call for call in job.calls if "release" in call]
 
 
 def test_the_result_is_one_commit_for_both_tags_and_a_latest_release_that_is_not_the_companion(
-        publish: Publish) -> None:  # fmt: skip
+        job: DraftJob) -> None:  # fmt: skip
     same = f"{TAG}={'a' * 40},{COMPANION}={'a' * 40}"
 
-    assert publish.run("Check the result", FAKE_LATEST=TAG, FAKE_SHAS=same).returncode == 0
-    newer = publish.run("Check the result", FAKE_LATEST="v1.3.0", FAKE_SHAS=same)  # a retry later
+    assert job.run("Check the result", FAKE_LATEST=TAG, FAKE_SHAS=same).returncode == 0
+    newer = job.run("Check the result", FAKE_LATEST="v1.3.0", FAKE_SHAS=same)  # a retry later
     assert newer.returncode == 0, newer.stdout
-    wrong_latest = publish.run("Check the result", FAKE_LATEST=COMPANION, FAKE_SHAS=same)
+    wrong_latest = job.run("Check the result", FAKE_LATEST=COMPANION, FAKE_SHAS=same)
     assert wrong_latest.returncode == 1 and "latest" in wrong_latest.stdout
-    other_commit = publish.run("Check the result", FAKE_LATEST=TAG,
+    other_commit = job.run("Check the result", FAKE_LATEST=TAG,
                                FAKE_SHAS=f"{TAG}={'a' * 40},{COMPANION}={'b' * 40}")  # fmt: skip
     assert other_commit.returncode == 1 and "::error::" in other_commit.stdout

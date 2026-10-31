@@ -8,6 +8,7 @@
 - [Scripts and tools](User-Scripts.md)
 - [Settings](User-Settings.md)
 - [Inspecting](User-Inspecting.md)
+- [Signing](User-Signing.md)
 - [Running](User-Running.md)
 - [Other commands](User-Other-Commands.md)
 - [Examples](User-Examples.md)

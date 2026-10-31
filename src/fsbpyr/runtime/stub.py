@@ -24,6 +24,7 @@ LAUNCHER_SOURCES = (
     "slots.c",
     "way.c",
     "glibc.c",
+    "sig.c",
 )
 LAUNCHER_FILES = (
     *LAUNCHER_SOURCES,
@@ -35,6 +36,7 @@ LAUNCHER_FILES = (
     "due.h",
     "slots.h",
     "way.h",
+    "sig.h",
     "format.h",
     "vendor/zstd/zstd.h",
     "vendor/zstd/zstd_errors.h",

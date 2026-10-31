@@ -119,6 +119,11 @@ def _check_entry_module(entrypoint: str, app: App, runtime: Runtime) -> None:
 _DEFAULT_GLIBC = (2, 34)  # pins.DEFAULT_BASELINE as a version
 
 
+def signature_of(output: Path) -> Path:
+    """Where a detached signature of ``output`` goes (docs/signing.md §2.2)."""
+    return output.with_name(f"{output.name}.sig")
+
+
 def _output_path(path: Path, project: str) -> Path:
     """The path to write: absolute, and where it is a link, the file it points to, except for a
     link an earlier build of ``project`` made for one of several commands, which this build of
@@ -133,6 +138,9 @@ def _commands_to_link(entrypoint: str, output: Path, project: str) -> tuple[str,
     """The names of a multi-command executable's commands (none for a single command), checked
     against what the output's directory holds."""
     commands = tuple(parse(entrypoint)) if "\n" in entrypoint else ()
+    if signature_of(output).name in commands:  # its link would take the signature's path
+        raise BuildError(f"a command named {signature_of(output).name} would take the path of the "
+                         f"signature of {output}; rename the command or pass -o")  # fmt: skip
     try:
         check_links(output, commands, project)
     except LinkError as exc:
@@ -693,6 +701,7 @@ def build(
             if config.smoke_args:
                 log(f"running the new executable with {shlex.join(config.smoke_args)}")
                 smoke_run(written[0], result.output, config.smoke_args)
+        signature_of(result.output).unlink(missing_ok=True)  # never beside a file it is not of
         commit(written[0], result.output)
         written.clear()
         if result.commands:

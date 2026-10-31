@@ -52,6 +52,15 @@ ENVIRONMENT = (
                         "one line per missing one and exit 1 if any (glibc targets). Any other "
                         "value: import the entry point, check it, and exit without running "
                         "the app."),
+    ("FSBPYR_SIGNING_KEY", "The `.key` file that signs: `sign` reads it when `--signing-key` is "
+                           "not given, and with either a `build` signs its output."),
+    ("FSBPYR_SIGNING_PASSPHRASE", "The passphrase of a signing key, for jobs without a terminal; "
+                                  "otherwise it is asked for on the terminal, never read from "
+                                  "standard input. Empty counts as unset. `build` removes both "
+                                  "signing variables from its environment before it starts any "
+                                  "process."),
+    ("XDG_CONFIG_HOME", "The base of the keys `key trust` saves when it is an absolute path; "
+                        "otherwise ~/.config."),
     ("XDG_CACHE_HOME", "The base of the cache directories when it is an absolute path; "
                        "otherwise `~/.cache` is used."),
 )
@@ -65,6 +74,8 @@ FILES = (
                                            "Python fetches."),
     ("${XDG_CACHE_HOME:-~/.cache}/<app>", "What a built executable extracted on first use."),
     (".fsbpyr-cache", "The marker in a cache root: only a root that has it is collected."),
+    ("${XDG_CONFIG_HOME:-~/.config}/fsbpyr/trusted/<project>.pub",
+     "The key `key trust` saved for a project, which `verify` checks with."),
 )
 
 
