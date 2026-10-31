@@ -727,7 +727,7 @@ tests the script's own code without a VM.
 
 ## Test files
 
-The counts below are test items of the source tree that brought signing: 4,137 in 138 files. They
+The counts below are test items of the source tree that brought signing: 4,143 in 138 files. They
 are what pytest collects (`pytest --collect-only -q -p no:cacheprovider`, which runs no test), on
 x86-64 under Python 3.14, with
 `FSBPYR_TEST_GLIBC` and `FSBPYR_CORPUS_APPS` unset; the per-file counts come from the test ids
@@ -745,16 +745,16 @@ images, and `test_el8_apps_run_on_el8` is not generated.
 
 | Layer | Files | Tests |
 |---|---|---|
-| `tests/unit` (top level) | 26 | 876 |
+| `tests/unit` (top level) | 26 | 879 |
 | `tests/unit/boot` | 23 | 357 |
 | `tests/unit/builder` | 19 | 752 |
-| `tests/unit/payload` | 11 | 359 |
+| `tests/unit/payload` | 11 | 360 |
 | `tests/unit/runtime` | 9 | 249 |
 | `tests/integration` | 11 | 533 |
-| `tests/e2e` | 39 | 1,011 |
-| All | 138 | 4,137 |
+| `tests/e2e` | 39 | 1,013 |
+| All | 138 | 4,143 |
 
-### tests/unit (top level): 26 files, 876 tests
+### tests/unit (top level): 26 files, 879 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -776,7 +776,7 @@ images, and `test_el8_apps_run_on_el8` is not generated.
 | [`test_requires.py`](../tests/unit/test_requires.py) | 16 | `tests/support/requires.py` and the hooks of `tests/conftest.py`, with pytester on a suite of its own under that conftest: a missing tool or an unmet condition failing with one line that names the package or the change, a marked test failing before its fixtures run, `podman` marking and `-m "not podman"`, a test needing a wheel that does not exist deselected, a skip or an xfail failing the run, an empty parameter set a collection error; and every tool and package named in `CONTRIBUTING.md` and installed by the test container. |
 | [`test_sbom.py`](../tests/unit/test_sbom.py) | 18 | The CycloneDX SBOM generator `tools/release/sbom.py`, loaded as a module: identical bytes for identical input, CPEs and purls, the executable's hash, refusal of incomplete or unverified input. |
 | [`test_signing.py`](../tests/unit/test_signing.py) | 211 | `fsbpyr.signing` from source, on the stand-in for `sig.c`: the statement, names from a user and from a file, what a forged build info can do, the trust store, how a sums file is read, and what each command says and exits with. |
-| [`test_selfupdate.py`](../tests/unit/test_selfupdate.py) | 88 | `fsbpyr self update` against `FakeGitHub` on localhost: update in place keeping the mode, variants, symlinks, damaged, truncated or foreign downloads never installed, a download that unpacks beyond its limit, an asset that needs a newer glibc than the host's never installed (versions compared as numbers; no check where the host has no glibc), unwritable directories (root's case asserted as root sees it), man page and completions written again, glibc 2.28 stubs placed beside the executable or the path it was run by left alone and named in a warning only when the new release's companion does not list their SHA-256 (all of them, with a condition, when its sums cannot be read; the companion not asked when none is placed), and a download cut short an update error, not a traceback. |
+| [`test_selfupdate.py`](../tests/unit/test_selfupdate.py) | 91 | `fsbpyr self update` against `FakeGitHub` on localhost: update in place keeping the mode, variants, symlinks, damaged, truncated or foreign downloads never installed, a download that unpacks beyond its limit, an asset that needs a newer glibc than the host's never installed (versions compared as numbers; no check where the host has no glibc), unwritable directories (root's case asserted as root sees it), man page and completions written again, glibc 2.28 stubs placed beside the executable or the path it was run by left alone and named in a warning only when the new release's companion does not list their SHA-256 (all of them, with a condition, when its sums cannot be read; the companion not asked when none is placed), and a download cut short an update error, not a traceback. |
 | [`test_targets.py`](../tests/unit/test_targets.py) | 48 | The target table (`fsbpyr.targets`) and host detection, the pins and sysroot of each target and Python, the EL8 sysroot (Rocky Linux 8.10's `glibc`, `glibc-devel`, `glibc-headers`, `kernel-headers`, `libgcc` and `gcc` RPMs, the same builds for both targets) and the refusal of other baselines, runtime ids (different per baseline, the default's unchanged), the manylinux platform uv installs for (manylinux_2_28 for glibc 2.28), each target's loader, filter and machine. |
 | [`test_test_modes.py`](../tests/unit/test_test_modes.py) | 6 | The corpus selection (`FSBPYR_CORPUS_APPS`: unset, every app; a selection; an unknown app refused) and the [EL8 test mode](#the-el8-test-mode): a build in a test is for the run's baseline (2.34, or 2.28 in the mode) while a `--glibc` still wins, `baseline.as_tuple`, and the EL8 images added to the matrix for glibc 2.28. `make test-el8-stub` runs it in the mode. |
 | [`test_text.py`](../tests/unit/test_text.py) | 8 | `fsbpyr.text`: `plural` (no `s` for a count of one), and `tail_lines`: output within the limit unchanged, a cut inside a line moved to the next line start with a note of the earlier lines left out (`1 earlier line` in the singular), a cut on a line start keeping that line, and output with no newline after the cut cut where it falls. |
@@ -845,7 +845,7 @@ objects from `tests/support/elf.py`, local distributions, the hand-written locks
 | [`test_tools.py`](../tests/unit/builder/test_tools.py) | 47 | The tool binary (`fsbpyr.tools`), on staged sites built by hand: when a directory is one (no Python file and a lock source, `--requirements` or the `requirements` setting), which distributions a requirements file (includes followed) or `pylock.toml` names, which of them are tools (all of a short file; in a complete listing such as a freeze, those no other requires), their console and gui scripts as commands, meta-packages and families followed (cycles and a depth limit stop), libraries and missing distributions, name clashes, and the project that takes the tools' scripts and requirements; one distribution is named in the singular. |
 | [`test_venvdeps.py`](../tests/unit/builder/test_venvdeps.py) | 21 | The venv rung (`fsbpyr.venvdeps`): a venv found as `.venv`, `venv`, `env`, then `$VIRTUAL_ENV`; the distributions that provide the unresolved imports (`top_level.txt`, `RECORD`) and their `Requires-Dist` closure pinned at the installed versions, nothing guessed from PyPI; a needed editable or path install refused; the venv's Python never started; the lock record (`inferred`); `--strict`. |
 
-### tests/unit/payload: 11 files, 359 tests
+### tests/unit/payload: 11 files, 360 tests
 
 Writer and reader on specs from `make_spec`; edge cases from `tests/support/edges.py`.
 
@@ -853,7 +853,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 |---|---|---|
 | [`test_blocks.py`](../tests/unit/payload/test_blocks.py) | 20 | Small blobs packed into shared zstd blocks: placement, byte-for-byte round trips, identical content packed once, the reader's block cache, bad member records refused. |
 | [`test_edges.py`](../tests/unit/payload/test_edges.py) | 81 | The Python reader, with the stand-in's cache sync, on the intact edge-case executable, each of the 66 format cases and each of the 14 path cases (counted from collection): refused with `PayloadError` (or `CacheError`, `OSError` where the cache refuses) or read, never failing another way. The walk is `tests/support/walk.py`. |
-| [`test_file_digest.py`](../tests/unit/payload/test_file_digest.py) | 19 | The integrity digest of a file, streamed a leaf at a time: sizes around leaves, ranges, holes hashed as zeros, files shorter than asked. |
+| [`test_file_digest.py`](../tests/unit/payload/test_file_digest.py) | 20 | The integrity digest of a file, streamed a leaf at a time: sizes around leaves, ranges, holes hashed as zeros, files shorter than asked. |
 | [`test_hardening.py`](../tests/unit/payload/test_hardening.py) | 37 | Regression tests from review findings: hostile sizes, path traversal, reserved fields, overlapping sections, bad closures, zstd frames without checksum or content size, trailing bytes. |
 | [`test_integrity.py`](../tests/unit/payload/test_integrity.py) | 15 | The whole-file digest: the tree construction, leaf counts, one construction for every representation, any changed byte failing verification, older versions. |
 | [`test_roundtrip.py`](../tests/unit/payload/test_roundtrip.py) | 39 | Writer to reader: every table and field, lookups, sorted tables, deterministic encoding under permuted input, deduplication, alignment, the stub and trailer, replacing an executable only when committed. |
@@ -893,7 +893,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_sign_jobs.py`](../tests/integration/test_sign_jobs.py) | 43 | The sign jobs of `release.yml` and `el8.yml`: where K and the environment are, what the job may run, and `publish`'s condition, then their steps' shell, run for real with fake programs, the release script and real keys. |
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
 
-### tests/e2e: 39 files, 1,011 tests
+### tests/e2e: 39 files, 1,013 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -903,7 +903,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_compat.py`](../tests/e2e/test_compat.py) | 41 | The `compat` fixture's matrix (one check per package, compared with the venv's run, HTTP clients against a local server; none for a package without a wheel for the Python), the `mp` fixture's start methods, helper interpreters and the instance limit (in `contain.run`), forged multiprocessing children, a payload script started through `sys.executable` finding its sibling module, `sys.argv[0]` as `execve` got it (argparse's `prog` its basename), the `[sys.executable] + sys.argv` restart idiom, a missing module not blamed on site initialization, the `datafiles` checks, and the build information tracing every dist to the lock. |
 | [`test_corpus.py`](../tests/e2e/test_corpus.py) | 66 | One test per corpus app (or per app `FSBPYR_CORPUS_APPS` names) that has wheels for the Python and machine (64 apps on 3.14), the `expect` check, and the `plugins` fixture (see [The corpus](#the-corpus)). |
 | [`test_signatures.py`](../tests/e2e/test_signatures.py) | 153 | `launcher/sig.c`, through `probes/sig.c`, and `_fsbpyr`'s functions on both launchers: RFC 8032, ACVP and all of Wycheproof's Ed25519 and ML-DSA-65 cases, malleated and bit-flipped signatures, every form of a bad `.pub` and `.key`, a fixed `.pub` and `.sig` whose key is gone, the openssl.cnf matrix, the error queue, and sig.c's declarations against OpenSSL's headers. |
-| [`test_signing.py`](../tests/e2e/test_signing.py) | 34 | `key`, `sign`, `verify` and signing in `build` on a built fsbpyr with test keys pinned, each way against the release script: the passphrase on a pty, what the build's processes get, where a `.sig` goes, and planted modules, which replace nothing. |
+| [`test_signing.py`](../tests/e2e/test_signing.py) | 36 | `key`, `sign`, `verify` and signing in `build` on a built fsbpyr with test keys pinned, each way against the release script: the passphrase on a pty, what the build's processes get, where a `.sig` goes, planted modules, which replace nothing, and a build with this tree's own pins, which refuses every test key. |
 | [`test_selfupdate.py`](../tests/e2e/test_selfupdate.py) | 9 | `self update` of a built fsbpyr with test keys pinned, from `FakeGitHub`, to a second build of the same code: unsigned, signed by a key it does not pin, a `.xz` that does not match its line, an older build served as new, three pins, and a client that skipped a key change. |
 | [`test_digests.py`](../tests/e2e/test_digests.py) | 4 | The launcher's digest routines through `probes/digests.c`, built with passes of 3 leaves: files hashed together and content given a piece at a time have the Python reader's `tree_digest`. |
 | [`test_dispatch.py`](../tests/e2e/test_dispatch.py) | 6 | A project, and a single script whose PEP 723 block, that excludes the running Python builds through the variant: fsbpyr built from the checkout on another Python and served by `FakeReleases`. Needs that Python installed with uv, and builds its runtime in the cache when there is none. Marked `version_rule`. |
