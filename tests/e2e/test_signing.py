@@ -690,3 +690,54 @@ def test_a_hanging_fifo_as_the_key_file_stops_nothing(
     assert done.returncode == 2 and "cannot open" in done.stderr
 
 
+
+
+# --- the keys of this tree ------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def released(
+    tmp_path_factory: pytest.TempPathFactory, runtime: Runtime
+) -> Path:
+    """fsbpyr with the keys this tree pins: K and R, whose private keys no test has."""
+    pins = sorted((ROOT / "src" / "fsbpyr" / "release-keys").glob("*.pub"))
+    assert pins, "this tree pins no keys"
+    return built_release(tmp_path_factory.mktemp("released"), "v1.2.0", *pins)
+
+
+def test_the_keys_this_tree_pins_are_what_a_build_holds(
+    released: Path, tmp_path: Path, env: dict[str, str]
+) -> None:
+    """The real pins are in the executable: a file with no valid signature is a verdict, exit 1,
+    and not the exit 2 of a build that pins no keys."""
+    file = tmp_path / "file"
+    file.write_bytes(b"content\n")
+    Path(f"{file}.sig").write_bytes(bytes(SIGNATURE_SIZE))
+
+    done = run(released, "verify", "--project", "fsbpyr", file, env=env)
+
+    assert done.returncode == 1, done.stderr
+
+
+def test_no_key_of_the_tests_passes_the_keys_this_tree_pins(
+    released: Path, tmp_path: Path, env: dict[str, str], release_keys: ReleaseKeys
+) -> None:
+    """A signature that is good in every other way, by a key a forger holds, as a mirror would
+    serve it: by its own .sig, and through a signed sums file."""
+    for key in (release_keys.k, release_keys.r, release_keys.new_k, release_keys.stray):
+        file = tmp_path / "SHA256SUMS"
+        file.write_text("a line\n")
+        Path(f"{file}.sig").unlink(missing_ok=True)
+        sign(key.key, file)
+        beside = tmp_path / "asset"
+        beside.write_bytes(b"an asset\n")
+        file.write_text(f"{hashlib.sha256(b'an asset').hexdigest()}  asset\n")
+
+        assert run(released, "verify", "--project", "fsbpyr", file, env=env).returncode == 1
+        file.write_text(f"{hashlib.sha256(beside.read_bytes()).hexdigest()}  asset\n")
+        Path(f"{file}.sig").unlink()
+        sign(key.key, file)
+
+        done = run(released, "verify", "--project", "fsbpyr", beside, env=env)
+
+        assert done.returncode == 1 and done.stdout == "", done.stdout
