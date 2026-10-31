@@ -1,8 +1,10 @@
 # Test selection: a plan
 
-Status: proposed, 2026-10-31. Nothing here is built, and none of it goes into 0.29.0. Every number
-was measured for this plan, on `full-suite.yml` runs of 2026-10-31 and on a replay of the last 80
-merges into main (2026-10-20 to 2026-10-31). What is assumed is marked **[A]**.
+Status: proposed, 2026-10-31. Nothing here is built, and none of it goes into 0.29.0. The costs were
+measured for this plan, on `full-suite.yml` run 41227289551 and the probes in the test repository.
+The savings are a replay: those costs applied to what each of the last 80 merges into main changed
+(2026-10-20 to 2026-10-31). They are estimates until phase 5 measures the real thing. What is
+assumed is marked **[A]**.
 
 ## 1. Summary
 
@@ -16,16 +18,17 @@ it again. The measurements changed what that should mean here.
 - **The waste is work repeated, not tests selected badly.** The same fuzz run happens eight times
   on the same C code, each job builds the same runtime again, and a version bump makes everything
   look changed.
-- **`make` at the level of jobs, not of tests, does pay.** Three measures together save 28% of the
-  runner minutes, and take the longest job of a typical push from 21.5 minutes to 16, and from 31
-  to 16 on a push that fuzzes for ten minutes. Seven of 75 pushes would run nothing at all.
+- **`make` at the level of jobs, not of tests, does pay.** Three measures together save 27% of the
+  runner minutes. In the median push the longest job goes from 21.5 minutes to 16, and from 31 to
+  16 on a push that fuzzes for ten minutes. The 30 pushes of 75 that change the runtime's inputs
+  stay at 21. Three of 75 pushes would run nothing at all.
 
 | Measure | Saved | Risk |
 |---|---|---|
 | A. Fuzz in a job of its own, once per target, once per launcher | 8% | low |
 | B. Keep the built runtime between runs of the tests | 7% | low |
-| C. Records of passed jobs, with the version ignored | 15% | medium: inputs must be declared |
-| All three (they overlap) | **28%** | |
+| C. Records of passed jobs, with the version ignored by the tests | 14% | medium: inputs must be declared |
+| All three (they overlap) | **27%** | |
 
 What remains is real work: 8 entries of `suite` and `corpus` on code that did change. Doing less of
 that is a decision about coverage, not an optimization (§9, D4).
@@ -123,21 +126,25 @@ The inputs are declared in `tools/ci/inputs.toml`, coarse on purpose:
 
 | Job | Inputs, beyond the common ones |
 |---|---|
-| common | `src/`, `pyproject.toml`, `uv.lock`, `.python-version`, `Makefile`, `tools/bootstrap.sh`, `tools/test-setup.sh`, `tools/release/{llvm23,uv.version,install-uv.sh}`, `.github/workflows/full-suite.yml` |
-| `fuzz` | only: `src/fsbpyr/launcher/`, `tests/fuzz/`, `tests/probes/`, `tests/e2e/test_fuzz.py`, the workflow |
+| common | `src/`, `pyproject.toml`, `uv.lock`, `.python-version`, `Makefile`, `tools/bootstrap.sh`, `tools/test-setup.sh`, `tools/release/{llvm23,uv.version,install-uv.sh}`, `tools/ci/`, `.github/workflows/full-suite.yml` |
+| `fuzz` | only: `src/fsbpyr/launcher/`, `tests/fuzz/`, `tests/probes/`, `tests/e2e/test_fuzz.py`, `tools/ci/`, the workflow |
 | `suite` | `tests/`, `tools/` |
 | `corpus` | `tests/support/`, `tests/fixtures/`, `tests/corpus/`, the conftests, `tests/e2e/test_corpus.py` |
 | `build` | `.github/workflows/build.yml`, `tools/release/sbom.py` |
 | `portability` | as `corpus`, with `tests/e2e/test_portability.py` and `tools/portability-apps.sh` in place of `tests/e2e/test_corpus.py` |
 | `vm-smoke` | `tools/vm-smoke.py`, `tools/vm-pins.toml` |
 
-- **The version does not count.** `pyproject.toml`, `uv.lock` and `src/fsbpyr/__init__.py` go in
-  with fsbpyr's own version line removed. Otherwise `make release-prep` makes everything stale when
-  no code changed. A test that reads the version sees a stale value at worst, and the release build
-  and `make release-check` work on the real one.
+- **The version does not count, except for `build`.** `pyproject.toml`, `uv.lock` and
+  `src/fsbpyr/__init__.py` go into the tests' keys with fsbpyr's own version line removed. Otherwise
+  `make release-prep` makes everything stale when no code changed, and a test that reads the
+  version sees a stale value at worst. `build` keeps the whole files: the version is in the bytes
+  it makes, and release.yml leaves `reproduce` and `compare` out (`checks: false`) because the full
+  suite ran them "on this very commit". That has to stay true of a release commit.
 - **Every tracked file is accounted for.** A test requires each file `git ls-files` lists to be an
   input of some job, or to be in the file's `ignored` list (documentation, `spikes/`). A new
   directory cannot fall through in silence.
+- **The selection is an input of itself.** `tools/ci/` is in every key, so a changed table or a
+  changed key script runs everything once, instead of trusting records made under the old rules.
 
 ### 6.2 The record
 
@@ -173,7 +180,8 @@ Whoever can write to the repository can upload an artifact of any name. So a rec
 The last one is what makes a forgery pointless. The workflow is an input, so a changed workflow
 gives another key at its own commit, and it cannot claim the key of an unchanged one. A commit with
 the same key has the same workflow and the same inputs, so its job really ran them. This rests on
-GitHub reporting a run's commit truly, as §5.3 of `docs/signing.md` does.
+GitHub reporting a run's commit truly: GitHub the platform being compromised is out of scope here,
+as it is for signing.
 
 None of this touches a release's safety: that rests on the signature, and tests are no gate
 against a stolen account.
@@ -195,15 +203,17 @@ getting all of it, as it must.
 The runner's image, apt's packages, `archlinux:latest` and the like are not inputs. So:
 - **The weekly run ignores all records and writes new ones**, and so does a dispatch with
   `full: true`.
-- Records last 8 days, so that no pass is older than the last weekly run by more than a day.
+- Records last 8 days, the week between two weekly runs and a day, so no pass is older than that.
 
 A flaky test that passed once stays passed until then. That is a cost of the method.
 
 ### 6.7 A release
 
-A release commit changes the version and the changelog, and so reuses the jobs of the merge it came
-with, if nothing else changed (D1). `release.yml` builds from the tag as it does now, with no cache
-and no record, and `make release-check` tests what was published.
+A release commit changes the version and the changelog. `build` runs on it with `reproduce` and
+`compare`, since its key sees the version (§6.1), so what release.yml leaves out stays checked on
+that very commit. The test jobs reuse the records of the commit before it, if nothing else changed
+(D1). `release.yml` builds from the tag as it does now, with no cache and no record, and
+`make release-check` tests what was published.
 
 ## 7. Failure modes
 
@@ -235,7 +245,8 @@ Each phase can stop there and keep what it gained. Each is a pull request with i
 5. **Measure again,** on the same replay, and decide whether anything finer is worth it.
 
 The tools get the treatment the release scripts got:
-- unit tests of the keys: stable, changed by each input, unchanged by a version bump;
+- unit tests of the keys: stable, changed by each input, unchanged by a version bump for every job
+  but `build`, and changed by it for `build`;
 - the test that every tracked file is accounted for;
 - `plan` against a fake `gh`: each way a record can be forged or missing;
 - mutation testing of `plan`, since a check that fails open is the bug that matters here;
@@ -243,9 +254,9 @@ The tools get the treatment the release scripts got:
 
 ## 9. Decisions for the owner
 
-- **D1. May a release commit reuse records?** Proposed: yes. Only the version differs, the release
-  build is from scratch, and `make release-check` tests the result. Otherwise every release is a
-  full run for a change of one line.
+- **D1. May a release commit reuse the records of the tests?** Proposed: yes, and never those of
+  `build` (§6.7). Only the version differs, and `make release-check` tests the result. Otherwise
+  every release is a full run for a change of one line.
 - **D2. How old may a pass be?** Proposed: 8 days, one weekly run and a day.
 - **D3. Fuzz on one Python per target on a push?** Proposed: yes, with all 8 in the weekly run.
 - **D4. Should `corpus` run all 8 entries on every push?** Not in this plan, which changes no
