@@ -6,10 +6,11 @@ vulnerability. The threat model is
 [docs/security.md](../docs/security.md) at
 v@VERSION@, the reporting policy
 [SECURITY.md](../SECURITY.md), and the user's
-side of the same checks is in the User Guide:
-[Integrity](User-Running.md#integrity) and [Refusals](User-Running.md#refusals-exit-70) on Running,
-[`--verify`](User-Inspecting.md#--verify) on Inspecting, and
-[Verifying a download](User-Installing.md#verifying-a-download) on Installing.
+side of all of this is one chapter of the User Guide, [Security](User-Security.md).
+
+Security is a feature of fsbpyr in its own right. The two sides of it are the release chain, in
+which a stolen GitHub account gets nothing a client accepts ([Signatures](#signatures)), and the
+defences in every executable ([What stops what](#what-stops-what)).
 
 ## Reporting a vulnerability
 
@@ -198,7 +199,7 @@ deliberate rewrite. Origin is checked outside the file:
 
 - **Attestations.** fsbpyr's releases are attested by GitHub Actions; `gh attestation verify`
   shows that this repository's release workflow built the file from its tag
-  ([Verifying a download](User-Installing.md#verifying-a-download)). `make release-check`
+  ([Verifying a download](User-Security.md#verifying-a-download)). `make release-check`
   ([`tools/release/check-release.sh`](../tools/release/check-release.sh)) checks a published
   release as its users get it, its attestations among the rest; it does not rebuild it. A
   rebuild from the tag, compared byte for byte, is check (a) of
@@ -704,14 +705,20 @@ sdist, which runs its build code; dependencies are out of scope as above.
 - [Dev-Compatibility](Dev-Compatibility.md): what the cache, the refusals and the files beside the
   executable mean for apps.
 - [Dev-Performance](Dev-Performance.md): what the checks cost.
-- [User-Running](User-Running.md) and [User-Installing](User-Installing.md): the same checks from a
-  user's side.
+- [User-Security](User-Security.md): all of this from a user's side, with every message.
 
 ## Signatures
 
 [`docs/signing.md`](../docs/signing.md) is the design, with what each choice rests on;
-[Signing](User-Signing.md) says how to use them. Ed25519 and ML-DSA-65, always both, sign a short
-statement holding a file's SHA-256 and its project.
+[Signing your own apps](User-Security.md#signing-your-own-apps) says how to use them. Ed25519 and
+ML-DSA-65, always both, sign a short statement holding a file's SHA-256 and its project.
+
+![The chain of trust of a fsbpyr release. GitHub builds and attests the commit the maintainer tagged and leaves an unsigned draft. On the maintainer's own machine the audit runs, the commit is compared everywhere, every job is checked to have run on GitHub's machines, and the release key signs SHA256SUMS; only the signature goes back. On the user's machine fsbpyr self update checks the sums against the keys built into it, then the .xz, then that it is the right newer asset, and renames it into place. A stolen GitHub account gets a draft nobody signs, and a release published by hand is refused.](images/security-chain.svg)
+
+No key is on GitHub: CI builds and attests, and stops at a draft. `make release-sign` signs on the
+admin's machine, and only if the commit is the same everywhere and every job of the attested run
+ran on GitHub's machines; `make release-audit` finds a tampered account or repository first. Both
+are in [The repository](Dev-Repository.md#release-keys).
 
 The crypto is in [`launcher/sig.c`](../src/fsbpyr/launcher/sig.c), on the OpenSSL every fsbpyr
 carries. Each call makes a library context of its own and loads no configuration into it, so
@@ -746,5 +753,5 @@ printed, is never normalized, and only a checked name is joined into a path.
 | Stolen K | Partly: it takes the admin's key medium and passphrase, not the GitHub account. R signs the key change, and the audit reports a release that is not on record; clients that do not update stay exposed |
 | The passphrase logged by code that runs during `build` | Stopped: the build's processes lack both variables in their environments |
 | The passphrase and the key file taken by code that runs during `build` and looks for them | Not stopped: sign in a separate job, on a machine or account the build never ran on |
-| fsbpyr's cache, or stubs placed beside fsbpyr, changed by someone who can write them | Not stopped: they can replace fsbpyr itself. A reinstall does not clean them, nor the trust store: see [Checking an installed fsbpyr](User-Installing.md#checking-an-installed-fsbpyr) |
+| fsbpyr's cache, or stubs placed beside fsbpyr, changed by someone who can write them | Not stopped: they can replace fsbpyr itself. A reinstall does not clean them, nor the trust store: see [Checking an installed fsbpyr](User-Security.md#checking-an-installed-fsbpyr) |
 | `OPENSSL_CONF`, `OPENSSL_MODULES` or `LD_PRELOAD` set by an attacker | Not stopped: they load code. A config that loads no code changes no check's result, but can choose the randomness of `key new` and `sign` |

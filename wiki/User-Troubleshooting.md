@@ -64,6 +64,16 @@ fsbpyr's [compatibility notes](Dev-Compatibility.md); the rest from running the
 | On Python 3.15: `fsbpyr: X is not in the executable: add it to the project's dependencies and rebuild` | An import of something that was not packaged | Add the distribution that provides it to the project's dependencies |
 | Exit 70 at start for a set-uid, set-gid or file-capability copy | Refused: the cache location comes from the caller's environment | Do not make built apps set-uid or set-gid, or give them file capabilities |
 
+## Updates, signatures and tampering
+
+[Messages to watch for](User-Security.md#messages-to-watch-for) has every one, with what it means
+and what to do. The two you are most likely to see:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `fsbpyr: error: new vX.Y.Z has not been installed because it has no valid release signature.` | The release is covered by no key your fsbpyr holds. Nothing was changed, and your fsbpyr is fine to go on using | Keep the version you have, and look for an advisory: [Security](User-Security.md#messages-to-watch-for) |
+| `NOT VERIFIED: ...` | The file's signature does not pass, or it has none | Do not run the file: [Checking an app](User-Security.md#checking-an-app) |
+
 ## Reporting a problem
 
 Open an issue at <https://github.com/devitops-com/fsbpyr/issues> with the build output, the

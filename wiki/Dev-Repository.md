@@ -56,9 +56,10 @@ Repository: <https://github.com/devitops-com/fsbpyr>
 The wiki does not describe them. In short, and in detail in
 [`CONTRIBUTING.md`](../CONTRIBUTING.md): the
 full test suite runs in GitHub Actions for every Python and target, a release is tagged only from
-a commit whose full run passed, and the release workflow builds, attests and publishes the
-executables. How users verify a download is in
-[Installing](User-Installing.md#verifying-a-download).
+a commit whose full run passed, the release workflow builds and attests the executables and leaves
+a draft, and the admin signs and publishes it from their own machine ([below](#release-keys)). How
+users verify a download is in
+[Security](User-Security.md#verifying-a-download).
 
 ## Release keys
 
@@ -91,7 +92,7 @@ companion. It is only as good as what you pulled into main: what you tag, K sign
 - **The pins** are the `.pub` files in [`src/fsbpyr/release-keys/`](../src/fsbpyr/); a signature by
   any of them passes. `make release` refuses a tree without any, which would burn the version.
   Each change of them changes the "Release keys" section of
-  [Installing](User-Installing.md#release-keys) too, which the suite compares with them.
+  [Installing](User-Security.md#release-keys) too, which the suite compares with them.
 - **One-time setup**: make K and R; pin both keys, with the first signed version in
   [`tools/release/first-signed-release`](../tools/release/first-signed-release); remove the
   organization's GitHub App's access to this repository, or trust it as you trust yourself; and

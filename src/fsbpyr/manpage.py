@@ -13,6 +13,15 @@ _CODE = re.compile(r"`([^`]+)`")
 _NO_REWRAP = "\b"  # click: a paragraph whose first line is this keeps its lines
 
 
+SECURITY = (
+    "Every release is signed with Ed25519 and ML-DSA-65, both of which must pass, on the "
+    "maintainer's machine. `fsbpyr self update` checks a release against the keys built into "
+    "this executable and refuses one with no valid signature, with no fallback. Every executable "
+    "checks its whole file at every start. `--signing-key` signs your own apps, and `fsbpyr "
+    "verify` checks them. The Security chapter of the wiki covers all of it, with the messages to "
+    "watch for."
+)
+
 # (status, meaning): what `fsbpyr` and the executables it builds exit with.
 EXIT_STATUS = (
     ("0", "Success."),
@@ -106,6 +115,7 @@ def render(group: click.Group, name: str, examples: Sequence[tuple[str, str]] = 
     lines += [".SH EXIT STATUS", *_definitions(EXIT_STATUS)]
     lines += [".SH ENVIRONMENT", *_definitions(ENVIRONMENT)]
     lines += [".SH FILES", *_definitions(FILES)]
+    lines += [".SH SECURITY", *_paragraphs(SECURITY)]
     if examples:
         lines += [".SH EXAMPLES", ".nh", ".ad l"]  # command lines: no hyphens added, no gaps
     for command, text in examples:

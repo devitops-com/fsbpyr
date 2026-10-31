@@ -26,7 +26,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - **`make release-audit`** compares GitHub with what your machine recorded: tags, main, every
   release with its files and signature, and the settings someone changes to stay. `make release`
   and `make release-sign` stop if it does not pass.
-- The wiki says how to check an installed fsbpyr from outside it, and how to restore it.
+- **A Security chapter**, second in the User Guide: what protects you, a short update example, the
+  messages to watch for, checking and restoring fsbpyr, signing your own apps, and the limits. It
+  takes in the Signing page.
 - `make release` refuses a tree that pins no release keys, which would burn the version.
 
 ### Changed

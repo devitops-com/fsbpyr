@@ -809,7 +809,9 @@ This needs nothing new: there is no standalone check script (§10).
 
 ## 7. Wiki
 
-- **User-Signing** (new):
+- **User-Security** (new): one chapter for everything a user meets, second in the guide (owner,
+  2026-10-31). It took in the page first planned as User-Signing, and Installing's sections on
+  verifying a download, the release keys and checking an installed fsbpyr:
   - §6 for publishers and users, with the messages table, always with `verify --project`;
   - the CI pattern of §6 step 3, with one GitHub Actions example. On GitLab, the key fits a File
     variable, whose value in the job is the path of a file that holds it. A passphrase can be
@@ -825,11 +827,9 @@ This needs nothing new: there is no standalone check script (§10).
 - **User-Settings:** `--signing-key` joins the options that exist on the command line only
   (User-Settings.md:47-48) [P24].
 - **User-Installing, User-Other-Commands:** updates are checked, and the new commands.
-  User-Installing gains the section "release keys": the fingerprints that fsbpyr pins, one per
-  line in a code block that the suite reads (§11.3), and each key change with its release
-  (§5.4).
-- **Dev-Repository:** §5.2–5.4, `FSBPYR_RECOVERY`, and that everyone with write access is
-  trusted as the admin is (§5.2).
+  User-Security's section "Release keys" lists the fingerprints that fsbpyr pins, one per line in
+  a code block that the suite reads (§11.3), and each key change with its release (§5.4).
+- **Dev-Repository:** §5.2–5.4 and §5.7: `make release-sign` and `make release-audit`.
 - **Dev-Security:** what a pass means, and §8.
 
 ## 8. Threats

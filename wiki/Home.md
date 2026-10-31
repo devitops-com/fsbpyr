@@ -12,6 +12,12 @@ curl -LsSf https://github.com/devitops-com/fsbpyr/releases/latest/download/insta
 ~/.local/bin/fsbpyr build report.py  # one script: writes dist/report
 ```
 
+**Security is built in, on by default, with nothing to install.** Every release is signed twice,
+with Ed25519 and the post-quantum ML-DSA-65, on the maintainer's own machine, so that even a stolen
+GitHub account cannot ship you an update: `fsbpyr self update` refuses anything those keys did not
+sign. Every executable checks its whole file before it runs, and you can sign your own apps with
+one option. [Security](User-Security.md) covers all of it.
+
 > This wiki describes **fsbpyr @VERSION@**. Links into the repository point at the
 > [commit](../) the wiki was published from, whose code is that of v@VERSION@. For a later
 > release, the
@@ -25,16 +31,18 @@ For people who build and ship apps with fsbpyr.
 The whole guide as one PDF: [fsbpyr-User-Guide.pdf](fsbpyr-User-Guide.pdf)
 
 1. [What fsbpyr is](User-Overview.md): goals and main use cases
-2. [Installing fsbpyr](User-Installing.md)
-3. [Building an app](User-Building.md): what fsbpyr builds, several commands, locks, every option
-4. [Scripts and tools](User-Scripts.md): projects without a build system, directories of scripts,
+2. [**Security**](User-Security.md): what protects you, updating, the messages to watch for,
+   checking and restoring fsbpyr, signing your own apps
+3. [Installing fsbpyr](User-Installing.md)
+4. [Building an app](User-Building.md): what fsbpyr builds, several commands, locks, every option
+5. [Scripts and tools](User-Scripts.md): projects without a build system, directories of scripts,
    single scripts, tools from a requirements file, deploying them
-5. [Settings in `pyproject.toml`](User-Settings.md): `fs-packages`, `allow-system-libs`, `interpreter-reexec`
-6. [Inspecting an executable](User-Inspecting.md)
-7. [Running a built app](User-Running.md): the cache, environment variables, services, checking a target
-8. [Other commands](User-Other-Commands.md): `cache`, `runtime`, `self`, `completion`, `man`
-9. [Worked examples](User-Examples.md)
-10. [Troubleshooting](User-Troubleshooting.md)
+6. [Settings in `pyproject.toml`](User-Settings.md): `fs-packages`, `allow-system-libs`, `interpreter-reexec`
+7. [Inspecting an executable](User-Inspecting.md)
+8. [Running a built app](User-Running.md): the cache, environment variables, services, checking a target
+9. [Other commands](User-Other-Commands.md): `cache`, `runtime`, `self`, `completion`, `man`
+10. [Worked examples](User-Examples.md)
+11. [Troubleshooting](User-Troubleshooting.md)
 
 ## Developer Guide
 
@@ -44,12 +52,14 @@ The whole guide as one PDF: [fsbpyr-Developer-Guide.pdf](fsbpyr-Developer-Guide.
 
 1. [Overview](Dev-Overview.md): components, goals, use cases
 2. [Architecture](Dev-Architecture.md): how the parts fit, with diagrams and import graphs
-3. Python modules: [build side](Dev-Build-Modules.md), [payload](Dev-Payload-Modules.md),
+3. [**Security**](Dev-Security.md): the threat model, every defence and where it sits in the code,
+   the release chain, the known limits
+4. Python modules: [build side](Dev-Build-Modules.md), [payload](Dev-Payload-Modules.md),
    [runtime](Dev-Runtime-Modules.md), [boot (inside the executable)](Dev-Boot-Modules.md)
-4. [The C launcher](Dev-Launcher.md)
-5. [Executable format](Dev-Executable-Format.md)
-6. [Self-hosting](Dev-Self-Hosting.md): fsbpyr builds itself in three stages, from source or
+5. [The C launcher](Dev-Launcher.md)
+6. [Executable format](Dev-Executable-Format.md)
+7. [Self-hosting](Dev-Self-Hosting.md): fsbpyr builds itself in three stages, from source or
    from a release
-7. [Compatibility](Dev-Compatibility.md), [Performance](Dev-Performance.md), [Security](Dev-Security.md)
-8. [Testing](Dev-Testing.md)
-9. [The repository](Dev-Repository.md): plans, CI and releases, other documents
+8. [Compatibility](Dev-Compatibility.md), [Performance](Dev-Performance.md)
+9. [Testing](Dev-Testing.md)
+10. [The repository](Dev-Repository.md): plans, CI and releases, signing and the audit, other documents

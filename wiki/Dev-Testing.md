@@ -727,7 +727,7 @@ tests the script's own code without a VM.
 
 ## Test files
 
-The counts below are test items of the source tree that brought signing: 4,274 in 139 files. They
+The counts below are test items of the source tree that brought signing: 4,284 in 139 files. They
 are what pytest collects (`pytest --collect-only -q -p no:cacheprovider`, which runs no test), on
 x86-64 under Python 3.14, with
 `FSBPYR_TEST_GLIBC` and `FSBPYR_CORPUS_APPS` unset; the per-file counts come from the test ids
@@ -745,16 +745,16 @@ images, and `test_el8_apps_run_on_el8` is not generated.
 
 | Layer | Files | Tests |
 |---|---|---|
-| `tests/unit` (top level) | 26 | 881 |
+| `tests/unit` (top level) | 26 | 891 |
 | `tests/unit/boot` | 23 | 357 |
 | `tests/unit/builder` | 19 | 752 |
 | `tests/unit/payload` | 11 | 360 |
 | `tests/unit/runtime` | 9 | 249 |
 | `tests/integration` | 12 | 662 |
 | `tests/e2e` | 39 | 1,013 |
-| All | 139 | 4,274 |
+| All | 139 | 4,284 |
 
-### tests/unit (top level): 26 files, 881 tests
+### tests/unit (top level): 26 files, 891 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|

@@ -11,6 +11,8 @@ from types import ModuleType
 
 import pytest
 
+from fsbpyr import selfupdate
+
 ROOT = Path(__file__).parents[2]
 TOOLS = ROOT / "tools" / "wiki"
 
@@ -402,10 +404,39 @@ def test_a_tags_pages_over_pages_of_the_same_release_from_main_need_force(
                            force=True) is not None  # fmt: skip
 
 
+def test_the_refusal_the_security_chapter_shows_is_what_self_update_prints() -> None:
+    """Word for word: people search for a message they have just seen."""
+    text = (ROOT / "wiki" / "User-Security.md").read_text(encoding="utf-8")
+    printed = str(selfupdate._not_installed("vX.Y.Z", selfupdate._NO_SIGNATURE, (0, 0, 0)))
+    first, second = printed.replace("(0.0.0)", "(A.B.C)").split("\n")
+
+    assert f"`fsbpyr: error: {first}`" in text and f"`{second}`" in text
+
+
+@pytest.mark.parametrize(("source", "message"), [
+    ("launcher/integrity.c", "integrity check failed: the file was modified or damaged"),
+    ("launcher/main.c", "refusing a privileged start (set-uid, set-gid or file capabilities)"),
+    ("launcher/main.c", "cannot start "),
+    ("launcher/module.c", "was modified after extraction; restoring it"),
+    ("runtime/registry.py", "refusing cache directory"),
+    ("selfupdate.py", "fsbpyr is up to date ("),
+    ("selfupdate.py", "the download is not newer than this fsbpyr"),
+    ("selfupdate.py", "cannot read the latest release from "),
+    ("signing.py", "is NOT SIGNED: "),
+])
+def test_the_messages_the_security_chapter_lists_are_the_ones_fsbpyr_prints(
+    source: str, message: str
+) -> None:
+    text = (ROOT / "wiki" / "User-Security.md").read_text(encoding="utf-8")
+
+    assert message in (ROOT / "src" / "fsbpyr" / source).read_text(encoding="utf-8")
+    assert message in text
+
+
 def test_the_pinned_keys_are_the_ones_the_wiki_lists() -> None:
     """A test key, or a key change without its wiki entry, fails here: the pins are only as safe
     as main, and this is the check against mistakes (docs/signing.md §5.1)."""
-    text = (ROOT / "wiki" / "User-Installing.md").read_text(encoding="utf-8")
+    text = (ROOT / "wiki" / "User-Security.md").read_text(encoding="utf-8")
     section = text.split("## Release keys\n", 1)[1].split("\n## ", 1)[0]
     listed = section.split("```text\n", 1)[1].split("```", 1)[0].split()
     pins = sorted((ROOT / "src" / "fsbpyr" / "release-keys").glob("*.pub"))
