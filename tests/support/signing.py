@@ -34,6 +34,7 @@ ED25519_SIZE = 64
 PUB_SIZE = 2839
 KEY_SIZE = 6088
 TERMINAL_TIMEOUT = 300
+TERMINAL_DRAIN = 0.2
 
 
 class Key(NamedTuple):
@@ -147,6 +148,12 @@ def on_a_terminal(
             elif interrupt and not interrupted:
                 os.write(primary, b"\x03")
                 interrupted = True
+    # What it printed as it ended: the terminal hands it over a moment after the process is gone.
+    while select.select([primary], [], [], TERMINAL_DRAIN)[0]:
+        try:
+            printed += os.read(primary, 4096)
+        except OSError:
+            break
     flags = termios.tcgetattr(secondary)[3]
     code = process.wait(timeout=30)
     os.close(primary)
