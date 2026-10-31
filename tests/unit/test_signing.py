@@ -1,6 +1,7 @@
 """docs/signing.md from source: the statement, the names, the trust store, how a file is looked up
-and what each command says and exits with, on the stand-in for sig.c (tests/support/signing.py).
-tests/e2e/test_signatures.py tests the C, and tests/e2e/test_signing.py the commands on it.
+and what each command says and exits with, with real keys and signatures, on the openssl command
+in place of sig.c (tests/support/signing.py). tests/e2e/test_signatures.py tests the C, and
+tests/e2e/test_signing.py the commands on it.
 
 The tests that matter most here are the ones where a file lies: a forged executable can name
 anything in its build info, and its D31 digest passes, since the forger writes it."""
@@ -10,6 +11,7 @@ import json
 import os
 import stat
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -19,29 +21,36 @@ from fsbpyr.assemble import App, build_executable
 from fsbpyr.cli import main
 
 from ..support import signing as support
-from ..support.signing import PUB_SIZE, SIGNATURE_SIZE, fake_pub, fake_signature, use_stand_in
+from ..support.signing import (
+    PUB_SIZE,
+    SIGNATURE_SIZE,
+    OpenSSL,
+    named_key,
+    pub_of,
+    signature_by,
+    use_openssl,
+)
 from .boot.conftest import FAKE_RUNTIME
 
-PASSPHRASE = b"a passphrase"
-MYAPP_PUB = fake_pub("myapp's key")
+PASSPHRASE = support.PASSPHRASE.encode()
 EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 
 @pytest.fixture(autouse=True)
-def stand_in(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    use_stand_in(monkeypatch)
+def on_openssl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    use_openssl(monkeypatch)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.delenv(signing.KEY_VARIABLE, raising=False)
     monkeypatch.delenv(signing.PASSPHRASE_VARIABLE, raising=False)
 
 
-def trust(project: str = "myapp", pub: bytes = MYAPP_PUB) -> None:
+def trust(project: str = "myapp", key: str = "myapp") -> None:
     store = signing.trust_store()
-    (store / f"{project}.pub").write_bytes(pub)
+    (store / f"{project}.pub").write_bytes(pub_of(key))
 
 
-def signature(data: bytes, project: str = "myapp", pub: bytes = MYAPP_PUB) -> bytes:
-    return fake_signature(pub, support.statement(project, data))
+def signature(data: bytes, project: str = "myapp", key: str = "myapp") -> bytes:
+    return signature_by(key, support.statement(project, data))
 
 
 def signed_file(path: Path, data: bytes = b"content", project: str = "myapp") -> Path:
@@ -124,7 +133,7 @@ def test_a_build_info_without_a_valid_name_is_not_verified(
     trust()
     planted = tmp_path / "Downloads" / "x.pub"  # where trusted/../../../Downloads/x.pub leads
     planted.parent.mkdir()
-    planted.write_bytes(MYAPP_PUB)
+    planted.write_bytes(pub_of("myapp"))
     file = executable(tmp_path / "forged", project)
     data = file.read_bytes()
     file.with_name("forged.sig").write_bytes(signature(data, str(project)))
@@ -137,16 +146,10 @@ def test_a_build_info_without_a_valid_name_is_not_verified(
 
 @pytest.mark.parametrize("project", ["../x", "myapp\n", "x" * 65, 7, None, ...], ids=repr)
 def test_signing_an_executable_without_a_valid_name_is_an_error(
-    tmp_path: Path, project: object, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, key: Path, project: object, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    key = tmp_path / "k.key"
-    key.write_bytes(b"key:" + PASSPHRASE)
-    os.environ[signing.PASSPHRASE_VARIABLE] = PASSPHRASE.decode()
-    try:
-        code, _, err = command("sign", "--signing-key", str(key), str(executable(
-            tmp_path / "forged", project)), capsys=capsys)  # fmt: skip
-    finally:
-        del os.environ[signing.PASSPHRASE_VARIABLE]
+    code, _, err = command("sign", "--signing-key", str(key), str(executable(
+        tmp_path / "forged", project)), capsys=capsys)  # fmt: skip
 
     assert code == 2 and "names no valid project" in err
     assert not (tmp_path / "forged.sig").exists()
@@ -157,8 +160,7 @@ def test_a_forged_build_info_naming_a_trusted_project_needs_its_signature(
 ) -> None:
     trust()
     file = executable(tmp_path / "forged", "myapp")
-    forged = support.statement("myapp", b"x")
-    file.with_name("forged.sig").write_bytes(fake_signature(fake_pub("the forger's key"), forged))
+    file.with_name("forged.sig").write_bytes(signature(b"x", key="forger"))
 
     code, _, err = command("verify", str(file), capsys=capsys)
 
@@ -169,10 +171,9 @@ def test_a_file_named_after_a_project_is_not_that_project(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     trust()
-    trust("otherapp", fake_pub("other"))
+    trust("otherapp", "other")
     file = executable(tmp_path / "myapp", "otherapp")
-    file.with_name("myapp.sig").write_bytes(fake_signature(fake_pub("other"), support.statement(
-        "otherapp", file.read_bytes())))  # fmt: skip
+    file.with_name("myapp.sig").write_bytes(signature(file.read_bytes(), "otherapp", "other"))
 
     code, _, err = command("verify", "--project", "myapp", str(file), capsys=capsys)
 
@@ -183,10 +184,9 @@ def test_a_file_named_after_a_project_is_not_that_project(
 def test_a_genuine_file_of_another_trusted_project_passes_only_as_that_project(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    trust("otherapp", fake_pub("other"))
+    trust("otherapp", "other")
     file = executable(tmp_path / "myapp", "otherapp")
-    file.with_name("myapp.sig").write_bytes(fake_signature(fake_pub("other"), support.statement(
-        "otherapp", file.read_bytes())))  # fmt: skip
+    file.with_name("myapp.sig").write_bytes(signature(file.read_bytes(), "otherapp", "other"))
 
     code, out, _ = command("verify", str(file), capsys=capsys)
 
@@ -217,7 +217,7 @@ def test_a_signed_file_passes(tmp_path: Path, capsys: pytest.CaptureFixture[str]
 
     assert code == 0
     assert out == (f"VERIFIED  {file}  (project myapp, Ed25519 + ML-DSA-65, key "
-                   f"{support.fingerprint(MYAPP_PUB)})\n")
+                   f"{support.fingerprint(pub_of('myapp'))})\n")
 
 
 @pytest.mark.parametrize("change", [
@@ -225,10 +225,11 @@ def test_a_signed_file_passes(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     lambda data, sig: (b"", sig),
     lambda data, sig: (data, bytes(SIGNATURE_SIZE)),
     lambda data, sig: (data, sig[:-1] + bytes([sig[-1] ^ 1])),
+    lambda data, sig: (data, bytes([sig[0] ^ 1]) + sig[1:]),
     lambda data, sig: (data, signature(data, "otherapp")),
-    lambda data, sig: (data, fake_signature(fake_pub("another key"),
-                                            support.statement("myapp", data))),
-], ids=["a byte more", "emptied", "zeros", "a flipped bit", "another project's", "another key's"])
+    lambda data, sig: (data, signature(data, key="another")),
+], ids=["a byte more", "emptied", "zeros", "a flipped bit of ML-DSA-65", "a flipped bit of Ed25519",
+        "another project's", "another key's"])
 def test_a_changed_file_or_signature_is_not_verified(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], change: object
 ) -> None:
@@ -338,11 +339,10 @@ def test_a_trusted_key_for_fsbpyr_is_never_read(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Saved by hand: `key trust` refuses it. A signature by it is still not fsbpyr's."""
-    evil = fake_pub("evil")
-    (signing.trust_store() / "fsbpyr.pub").write_bytes(evil)
+    trust("fsbpyr", "evil")
     file = tmp_path / "file"
     file.write_bytes(b"content")
-    file.with_name("file.sig").write_bytes(signature(b"content", "fsbpyr", evil))
+    file.with_name("file.sig").write_bytes(signature(b"content", "fsbpyr", "evil"))
 
     code, _, err = command("verify", "--project", "FSBPYR", str(file), capsys=capsys)
 
@@ -352,8 +352,8 @@ def test_a_trusted_key_for_fsbpyr_is_never_read(
 def test_any_pinned_key_passes_for_fsbpyr(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pins = fake_pub("k"), fake_pub("r"), fake_pub("new k")
-    use_stand_in(monkeypatch, *pins)
+    pins = "k", "r", "new-k"
+    use_openssl(monkeypatch, *map(pub_of, pins))
     file = tmp_path / "file"
     file.write_bytes(b"content")
 
@@ -361,7 +361,7 @@ def test_any_pinned_key_passes_for_fsbpyr(
         file.with_name("file.sig").write_bytes(signature(b"content", "fsbpyr", pin))
         code, out, _ = command("verify", "--project", "fsbpyr", str(file), capsys=capsys)
 
-        assert code == 0 and support.fingerprint(pin) in out
+        assert code == 0 and support.fingerprint(pub_of(pin)) in out
 
 
 def test_without_pins_nothing_is_fsbpyrs(
@@ -381,10 +381,10 @@ def test_without_pins_nothing_is_fsbpyrs(
 # --- through a signed sums file -----------------------------------------------------------------
 
 
-def _sums(directory: Path, lines: str, *, pub: bytes = MYAPP_PUB, name: str = "SHA256SUMS") -> None:
+def _sums(directory: Path, lines: str, *, key: str = "myapp", name: str = "SHA256SUMS") -> None:
     content = lines.encode()
     (directory / name).write_bytes(content)
-    (directory / f"{name}.sig").write_bytes(signature(content, "myapp", pub))
+    (directory / f"{name}.sig").write_bytes(signature(content, "myapp", key))
 
 
 def _line(data: bytes, name: str) -> str:
@@ -403,7 +403,7 @@ def test_a_file_listed_in_a_signed_sums_file_passes_and_says_as_what(
 
     assert code == 0
     assert out == (f"VERIFIED  {file}  (project myapp, listed as myapp-1.2-x86_64 in SHA256SUMS, "
-                   f"Ed25519 + ML-DSA-65, key {support.fingerprint(MYAPP_PUB)})\n")
+                   f"Ed25519 + ML-DSA-65, key {support.fingerprint(pub_of('myapp'))})\n")
 
 
 def test_a_digest_listed_twice_prints_both_names(
@@ -451,8 +451,8 @@ def test_a_sums_file_that_fails_lists_nothing(
     trust()
     file = tmp_path / "file"
     file.write_bytes(b"content")
-    _sums(tmp_path, _line(b"content", "file"), pub=fake_pub("another key") if damage == "other key"
-          else MYAPP_PUB)  # fmt: skip
+    _sums(tmp_path, _line(b"content", "file"),
+          key="another" if damage == "other key" else "myapp")  # fmt: skip
     sums, sig = tmp_path / "SHA256SUMS", tmp_path / "SHA256SUMS.sig"
     if damage == "sums":
         sums.write_bytes(sums.read_bytes() + _line(b"other", "x").encode())
@@ -541,30 +541,35 @@ def test_a_sig_beside_a_link_does_not_count(
 @pytest.fixture
 def pub_file(tmp_path: Path) -> Path:
     path = tmp_path / "myapp.pub"
-    path.write_bytes(MYAPP_PUB)
+    path.write_bytes(pub_of("myapp"))
     return path
 
 
-FINGERPRINT = support.fingerprint(MYAPP_PUB)
+@pytest.fixture
+def fingerprint(pub_file: Path) -> str:
+    return support.fingerprint(pub_file.read_bytes())
 
 
-@pytest.mark.parametrize("fingerprint", [
-    "SHA256:" + "0" * 64, FINGERPRINT[:23], FINGERPRINT + "0", FINGERPRINT.removeprefix("SHA256:"),
-    "sha256:" + FINGERPRINT[7:], FINGERPRINT + "\n", " " + FINGERPRINT, "SHA1:" + FINGERPRINT[7:],
-])
+@pytest.mark.parametrize("change", [
+    lambda _: "SHA256:" + "0" * 64, lambda good: good[:23], lambda good: good + "0",
+    lambda good: good.removeprefix("SHA256:"), lambda good: "sha256:" + good[7:],
+    lambda good: good + "\n", lambda good: " " + good, lambda good: "SHA1:" + good[7:],
+], ids=["another digest", "shortened", "a digit more", "no prefix", "a lower-case prefix",
+        "a newline more", "a space before", "another algorithm"])
 def test_a_wrong_fingerprint_saves_nothing(
-    pub_file: Path, capsys: pytest.CaptureFixture[str], fingerprint: str
+    pub_file: Path, fingerprint: str, capsys: pytest.CaptureFixture[str],
+    change: Callable[[str], str]
 ) -> None:
-    code, _, _ = command("key", "trust", "myapp", str(pub_file), fingerprint, capsys=capsys)
+    code, _, _ = command("key", "trust", "myapp", str(pub_file), change(fingerprint), capsys=capsys)
 
     assert code == 2
     assert list(signing.trust_store().iterdir()) == []
 
 
 def test_a_shortened_fingerprint_says_what_a_fingerprint_is(
-    pub_file: Path, capsys: pytest.CaptureFixture[str]
+    pub_file: Path, fingerprint: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _, _, err = command("key", "trust", "myapp", str(pub_file), FINGERPRINT[:23], capsys=capsys)
+    _, _, err = command("key", "trust", "myapp", str(pub_file), fingerprint[:23], capsys=capsys)
 
     assert "not a fingerprint: give SHA256: and all 64 hex digits" in err
 
@@ -573,18 +578,20 @@ def test_a_shortened_fingerprint_says_what_a_fingerprint_is(
     "fsbpyr", "FSBPYR", "Fsbpyr", "../x", "/tmp/x", "a/b", "a\nb", "x" * 65,  # noqa: S108
     "\uff4d\uff59\uff41\uff50\uff50"])
 def test_a_project_that_cannot_be_trusted_saves_nothing(
-    pub_file: Path, capsys: pytest.CaptureFixture[str], project: str
+    pub_file: Path, fingerprint: str, capsys: pytest.CaptureFixture[str], project: str
 ) -> None:
-    assert command("key", "trust", project, str(pub_file), FINGERPRINT, capsys=capsys)[0] == 2
+    assert command("key", "trust", project, str(pub_file), fingerprint, capsys=capsys)[0] == 2
     assert list(signing.trust_store().iterdir()) == []
 
 
-@pytest.mark.parametrize("content", [
-    MYAPP_PUB[:-1], MYAPP_PUB + b"\n", b"", b"x" * PUB_SIZE, fake_pub("x")[::-1],
+@pytest.mark.parametrize("change", [
+    lambda good: good[:-1], lambda good: good + b"\n", lambda _: b"", lambda _: b"x" * PUB_SIZE,
+    lambda good: good[::-1],
 ], ids=["a byte short", "a byte more", "empty", "junk", "not a key"])
 def test_a_pubkey_that_is_no_pub_saves_nothing(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], content: bytes
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], change: Callable[[bytes], bytes]
 ) -> None:
+    content = change(pub_of("myapp"))
     pub = tmp_path / "bad.pub"
     pub.write_bytes(content)
     print_key = support.fingerprint(content)
@@ -594,36 +601,36 @@ def test_a_pubkey_that_is_no_pub_saves_nothing(
 
 
 def test_an_upper_case_fingerprint_counts_and_the_name_is_normalized(
-    pub_file: Path, capsys: pytest.CaptureFixture[str]
+    pub_file: Path, fingerprint: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    upper = "SHA256:" + FINGERPRINT[7:].upper()
+    upper = "SHA256:" + fingerprint[7:].upper()
 
     code, out, _ = command("key", "trust", "My_App", str(pub_file), upper, capsys=capsys)
 
-    assert code == 0 and FINGERPRINT in out
+    assert code == 0 and fingerprint in out
     saved = signing.trust_store() / "my-app.pub"
-    assert hashlib.sha256(saved.read_bytes()).hexdigest() == FINGERPRINT[7:]
+    assert hashlib.sha256(saved.read_bytes()).hexdigest() == fingerprint[7:]
     assert not list(signing.trust_store().glob(".trust-*"))
 
 
 def test_the_same_key_again_changes_nothing(
-    pub_file: Path, capsys: pytest.CaptureFixture[str]
+    pub_file: Path, fingerprint: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert command("key", "trust", "myapp", str(pub_file), FINGERPRINT, capsys=capsys)[0] == 0
+    assert command("key", "trust", "myapp", str(pub_file), fingerprint, capsys=capsys)[0] == 0
     saved = signing.trust_store() / "myapp.pub"
     before = saved.stat().st_mtime_ns
 
-    assert command("key", "trust", "myapp", str(pub_file), FINGERPRINT, capsys=capsys)[0] == 0
-    assert command("key", "trust", "myapp", str(pub_file), FINGERPRINT, "--replace",
+    assert command("key", "trust", "myapp", str(pub_file), fingerprint, capsys=capsys)[0] == 0
+    assert command("key", "trust", "myapp", str(pub_file), fingerprint, "--replace",
                    capsys=capsys)[0] == 0  # fmt: skip
     assert saved.stat().st_mtime_ns == before
 
 
 def test_another_key_needs_replace(
-    pub_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    pub_file: Path, fingerprint: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    command("key", "trust", "myapp", str(pub_file), FINGERPRINT, capsys=capsys)
-    other = fake_pub("the new key")
+    command("key", "trust", "myapp", str(pub_file), fingerprint, capsys=capsys)
+    other = pub_of("the-new-key")
     new = tmp_path / "new.pub"
     new.write_bytes(other)
     saved = signing.trust_store() / "myapp.pub"
@@ -631,27 +638,27 @@ def test_another_key_needs_replace(
     code, _, err = command("key", "trust", "myapp", str(new), support.fingerprint(other),
                            capsys=capsys)  # fmt: skip
 
-    assert code == 2 and saved.read_bytes() == MYAPP_PUB
-    assert f"myapp has another trusted key, {FINGERPRINT}; give --replace" in err
+    assert code == 2 and saved.read_bytes() == pub_of("myapp")
+    assert f"myapp has another trusted key, {fingerprint}; give --replace" in err
 
     code, out, _ = command("key", "trust", "myapp", str(new), support.fingerprint(other),
                            "--replace", capsys=capsys)  # fmt: skip
 
     assert code == 0 and saved.read_bytes() == other
-    assert FINGERPRINT in out and support.fingerprint(other) in out
+    assert fingerprint in out and support.fingerprint(other) in out
 
 
 def test_replace_with_no_key_saved_saves_it(
-    pub_file: Path, capsys: pytest.CaptureFixture[str]
+    pub_file: Path, fingerprint: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    code, _, _ = command("key", "trust", "myapp", str(pub_file), FINGERPRINT, "--replace",
+    code, _, _ = command("key", "trust", "myapp", str(pub_file), fingerprint, "--replace",
                          capsys=capsys)  # fmt: skip
 
-    assert code == 0 and (signing.trust_store() / "myapp.pub").read_bytes() == MYAPP_PUB
+    assert code == 0 and (signing.trust_store() / "myapp.pub").read_bytes() == pub_of("myapp")
 
 
 def test_the_key_saved_is_the_key_checked(
-    pub_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    pub_file: Path, fingerprint: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Read once: a file swapped after its first read is never what is saved."""
     original = signing._read_limited
@@ -659,14 +666,14 @@ def test_the_key_saved_is_the_key_checked(
     def read_then_swap(path: Path, limit: int) -> bytes | None:
         data = original(path, limit)
         if path == pub_file:
-            path.write_bytes(fake_pub("swapped in"))
+            path.write_bytes(pub_of("swapped-in"))
         return data
 
     monkeypatch.setattr(signing, "_read_limited", read_then_swap)
 
-    signing.key_trust("myapp", pub_file, FINGERPRINT)
+    signing.key_trust("myapp", pub_file, fingerprint)
 
-    assert (signing.trust_store() / "myapp.pub").read_bytes() == MYAPP_PUB
+    assert (signing.trust_store() / "myapp.pub").read_bytes() == pub_of("myapp")
 
 
 @pytest.mark.parametrize("variable", ["XDG_CONFIG_HOME", "HOME"])
@@ -680,7 +687,7 @@ def test_a_relative_path_brings_no_trusted_keys(
     monkeypatch.setenv("HOME", str(tmp_path / "home") if variable != "HOME" else "cfg")
     for root in ("cfg/fsbpyr/trusted", "cfg/.config/fsbpyr/trusted"):
         (tmp_path / root).mkdir(parents=True)
-        (tmp_path / root / "myapp.pub").write_bytes(MYAPP_PUB)
+        (tmp_path / root / "myapp.pub").write_bytes(pub_of("myapp"))
     file = signed_file(tmp_path / "file")
 
     code, _, _ = command("verify", "--project", "myapp", str(file), capsys=capsys)
@@ -709,7 +716,7 @@ def test_a_trust_store_someone_else_can_write_is_not_used(
 @pytest.fixture
 def key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "k.key"
-    path.write_bytes(b"key:" + PASSPHRASE)
+    path.write_bytes(named_key("signer").key.read_bytes())
     monkeypatch.setenv(signing.PASSPHRASE_VARIABLE, PASSPHRASE.decode())
     return path
 
@@ -727,7 +734,7 @@ def test_sign_writes_a_sig_that_verifies(
     sig = tmp_path / "file.sig"
     assert len(sig.read_bytes()) == SIGNATURE_SIZE
     assert stat.S_IMODE(sig.stat().st_mode) == 0o644
-    trust(pub=support.StandIn._key_new(PASSPHRASE)[1])
+    trust(key="signer")
     assert signing.verify(file, "myapp").project == "myapp"
 
 
@@ -844,13 +851,13 @@ def test_a_sig_appearing_while_signing_is_not_replaced(
     file = tmp_path / "file"
     file.write_bytes(b"content")
     sig = tmp_path / "file.sig"
-    original = support.StandIn._sign
+    original = OpenSSL._sign
 
     def and_a_sig_appears(*args: bytes) -> tuple[bytes, bytes]:
         sig.write_bytes(b"theirs")
         return original(*args)
 
-    monkeypatch.setattr(support.StandIn, "_sign", staticmethod(and_a_sig_appears))
+    monkeypatch.setattr(OpenSSL, "_sign", staticmethod(and_a_sig_appears))
 
     with pytest.raises(signing.SigningError, match="exists; nothing replaced"):
         signing.sign(file, project="myapp", key=key)
@@ -918,13 +925,13 @@ def test_a_pub_appearing_while_keys_are_made_leaves_no_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(signing.PASSPHRASE_VARIABLE, PASSPHRASE.decode())
-    original = support.StandIn._key_new
+    original = OpenSSL._key_new
 
     def and_a_pub_appears(passphrase: bytes) -> tuple[bytes, bytes]:
         (tmp_path / "myapp.pub").write_bytes(b"theirs")
         return original(passphrase)
 
-    monkeypatch.setattr(support.StandIn, "_key_new", staticmethod(and_a_pub_appears))
+    monkeypatch.setattr(OpenSSL, "_key_new", staticmethod(and_a_pub_appears))
 
     with pytest.raises(signing.SigningError, match="exists; nothing replaced"):
         signing.key_new(tmp_path / "myapp")
@@ -973,7 +980,7 @@ def test_no_terminal_and_no_variable_is_a_setup_error(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.parametrize("arguments", [
-    ("key", "new", "x"), ("key", "trust", "myapp", "x.pub", FINGERPRINT),
+    ("key", "new", "x"), ("key", "trust", "myapp", "x.pub", f"SHA256:{EMPTY_SHA256}"),
     ("sign", "--project", "myapp", "--signing-key", "k", "x"),
     ("verify", "--project", "myapp", "x"),
 ])

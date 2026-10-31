@@ -20,7 +20,7 @@ from fsbpyr.targets import host_target
 from fsbpyr.vcs import release_stub_asset, release_stub_sums, release_stub_tag
 
 from ...support.releases import FakeReleases
-from ...support.signing import fake_pub, release_signature, use_stand_in
+from ...support.signing import release_signature, use_openssl
 from .test_registry import _runtime
 
 BASELINE = "2.28"
@@ -46,7 +46,7 @@ def sums_line(data: bytes, name: str = ASSET) -> bytes:
 @pytest.fixture
 def releases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeReleases]:
     fake = FakeReleases(release_signature)
-    use_stand_in(monkeypatch)
+    use_openssl(monkeypatch)
     monkeypatch.setenv(dispatch.DOWNLOADS_VARIABLE, fake.base)
     monkeypatch.setattr(stubs, "own_version", lambda: "1.2.0-abcdef12")
     monkeypatch.setattr(stubs, "own_paths", lambda: [tmp_path / "bin" / "fsbpyr"])
@@ -561,7 +561,7 @@ def test_a_companion_signed_by_no_pinned_key_gives_no_stub(
     releases: FakeReleases, tmp_path: Path
 ) -> None:
     publish(releases, make_stub())
-    releases.signer = lambda sums: release_signature(sums, fake_pub("not pinned"))
+    releases.signer = lambda sums: release_signature(sums, "not-pinned")
 
     with pytest.raises(stubs.StubError, match="has no valid release signature"):
         get(tmp_path)

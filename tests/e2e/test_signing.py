@@ -296,7 +296,7 @@ def test_a_forged_build_info_is_checked_by_the_real_reader(
     fsbpyr: Path, tmp_path: Path, env: dict[str, str]
 ) -> None:
     """Only a checked name is joined into a path or printed; written with the real writer by
-    tests/unit/test_signing.py on the stand-in, and here its last line of defence is the same
+    tests/unit/test_signing.py from source, and here its last line of defence is the same
     code in a built fsbpyr, on an executable it did not build."""
     file = tmp_path / "forged"
     shutil.copy2(fsbpyr, file)

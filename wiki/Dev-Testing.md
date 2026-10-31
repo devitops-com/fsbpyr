@@ -727,7 +727,7 @@ tests the script's own code without a VM.
 
 ## Test files
 
-The counts below are test items of the source tree that brought signing: 4,331 in 141 files. They
+The counts below are test items of the source tree that brought signing: 4,332 in 141 files. They
 are what pytest collects (`pytest --collect-only -q -p no:cacheprovider`, which runs no test), on
 x86-64 under Python 3.14, with
 `FSBPYR_TEST_GLIBC` and `FSBPYR_CORPUS_APPS` unset; the per-file counts come from the test ids
@@ -745,14 +745,14 @@ images, and `test_el8_apps_run_on_el8` is not generated.
 
 | Layer | Files | Tests |
 |---|---|---|
-| `tests/unit` (top level) | 26 | 891 |
+| `tests/unit` (top level) | 26 | 892 |
 | `tests/unit/boot` | 23 | 357 |
 | `tests/unit/builder` | 19 | 752 |
 | `tests/unit/payload` | 11 | 360 |
 | `tests/unit/runtime` | 9 | 249 |
 | `tests/integration` | 14 | 709 |
 | `tests/e2e` | 39 | 1,013 |
-| All | 141 | 4,331 |
+| All | 141 | 4,332 |
 
 ### tests/unit (top level): 26 files, 891 tests
 
@@ -775,7 +775,7 @@ images, and `test_el8_apps_run_on_el8` is not generated.
 | [`test_pyversion.py`](../tests/unit/test_pyversion.py) | 57 | The version rule (`fsbpyr.pyversion`): the Python that `requires-python`, a `.python-version` pin and `--python` give, and the errors. Marked `version_rule`. |
 | [`test_requires.py`](../tests/unit/test_requires.py) | 16 | `tests/support/requires.py` and the hooks of `tests/conftest.py`, with pytester on a suite of its own under that conftest: a missing tool or an unmet condition failing with one line that names the package or the change, a marked test failing before its fixtures run, `podman` marking and `-m "not podman"`, a test needing a wheel that does not exist deselected, a skip or an xfail failing the run, an empty parameter set a collection error; and every tool and package named in `CONTRIBUTING.md` and installed by the test container. |
 | [`test_sbom.py`](../tests/unit/test_sbom.py) | 18 | The CycloneDX SBOM generator `tools/release/sbom.py`, loaded as a module: identical bytes for identical input, CPEs and purls, the executable's hash, refusal of incomplete or unverified input. |
-| [`test_signing.py`](../tests/unit/test_signing.py) | 211 | `fsbpyr.signing` from source, on the stand-in for `sig.c`: the statement, names from a user and from a file, what a forged build info can do, the trust store, how a sums file is read, and what each command says and exits with. |
+| [`test_signing.py`](../tests/unit/test_signing.py) | 212 | `fsbpyr.signing` from source, with real keys, on the openssl command in place of `sig.c`: the statement, names from a user and from a file, what a forged build info can do, the trust store, how a sums file is read, and what each command says and exits with. |
 | [`test_selfupdate.py`](../tests/unit/test_selfupdate.py) | 93 | `fsbpyr self update` against `FakeGitHub` on localhost: update in place keeping the mode, variants, symlinks, damaged, truncated or foreign downloads never installed, a download that unpacks beyond its limit, an asset that needs a newer glibc than the host's never installed (versions compared as numbers; no check where the host has no glibc), unwritable directories (root's case asserted as root sees it), man page and completions written again, glibc 2.28 stubs placed beside the executable or the path it was run by left alone and named in a warning only when the new release's companion does not list their SHA-256 (all of them, with a condition, when its sums cannot be read; the companion not asked when none is placed), and a download cut short an update error, not a traceback. |
 | [`test_targets.py`](../tests/unit/test_targets.py) | 48 | The target table (`fsbpyr.targets`) and host detection, the pins and sysroot of each target and Python, the EL8 sysroot (Rocky Linux 8.10's `glibc`, `glibc-devel`, `glibc-headers`, `kernel-headers`, `libgcc` and `gcc` RPMs, the same builds for both targets) and the refusal of other baselines, runtime ids (different per baseline, the default's unchanged), the manylinux platform uv installs for (manylinux_2_28 for glibc 2.28), each target's loader, filter and machine. |
 | [`test_test_modes.py`](../tests/unit/test_test_modes.py) | 6 | The corpus selection (`FSBPYR_CORPUS_APPS`: unset, every app; a selection; an unknown app refused) and the [EL8 test mode](#the-el8-test-mode): a build in a test is for the run's baseline (2.34, or 2.28 in the mode) while a `--glibc` still wins, `baseline.as_tuple`, and the EL8 images added to the matrix for glibc 2.28. `make test-el8-stub` runs it in the mode. |
@@ -960,7 +960,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`probe.py`](../tests/support/probe.py) | Run inside the demo executable: exercises `importlib.resources`, `pkgutil`, `importlib.util`, `importlib.metadata`, `inspect` and `linecache`, and prints the results as JSON. |
 | [`readme.py`](../tests/support/readme.py) | `quickstart()`: the README quickstart's shell lines. |
 | [`signatures.py`](../tests/support/signatures.py) | `run(fsb)`: `_fsbpyr`'s signature functions, called inside the demo app on both launchers, and what they must give. |
-| [`signing.py`](../tests/support/signing.py) | `script`, `new_key`, `sign`: the release script's keys and signatures, made per session, so none is committed; `StandIn` and `use_stand_in`: `_fsbpyr`'s four functions for tests from source, which do no crypto, through `fsbpyr.signing`'s two seams; `on_a_terminal`: a command on a pty. |
+| [`signing.py`](../tests/support/signing.py) | `script`, `new_key`, `sign`: the release script's keys and signatures, made per session, so none is committed; `OpenSSL`, `named_key` and `use_openssl`: `_fsbpyr`'s four functions for tests from source, done by the openssl command on real keys, through `fsbpyr.signing`'s two seams; `on_a_terminal`: a command on a pty. |
 | [`releases.py`](../tests/support/releases.py) | `FakeReleases`: a GitHub release downloads server on 127.0.0.1 that serves its files by path (`/vX.Y.Z/ASSET` for a release's assets, `/el8-vX.Y.Z/ASSET` for the glibc 2.28 stubs and their sums file) and logs the requests. |
 | [`requires.py`](../tests/support/requires.py) | What the tests need from the machine: `TOOLS` (each tool's commands, Debian package and use), `tool()` and the `requires_tools` mark `tools()`, the environment conditions and `unmet()`, each failing with one line; run as a module (`make test-prereqs`), everything the full suite lacks (see [When the machine lacks something](#when-the-machine-lacks-something)). |
 | [`rpms.py`](../tests/support/rpms.py) | Synthetic RPM packages for the RPM reader's and the sysroot's tests, with no network and no `rpm` tool: `rpm` (a lead, a signature and a main header naming the payload's format and compressor, and an xz-compressed payload, or given bytes), `cpio` (a newc archive), `header`, and the entries `file` (hard links by inode), `directory` and `symlink`. |

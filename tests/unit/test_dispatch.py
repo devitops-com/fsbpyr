@@ -5,6 +5,7 @@ import hashlib
 import lzma
 import os
 import subprocess
+import types
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from fsbpyr.targets import TARGETS, host_target
 from fsbpyr.vcs import release_asset
 
 from ..support.releases import FakeReleases
-from ..support.signing import fake_pub, release_signature, use_stand_in
+from ..support.signing import release_signature, use_openssl
 from .boot.conftest import FAKE_RUNTIME
 
 pytestmark = pytest.mark.version_rule
@@ -44,7 +45,7 @@ class Ran:
 @pytest.fixture
 def releases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeReleases]:
     fake = FakeReleases(release_signature)
-    use_stand_in(monkeypatch)
+    use_openssl(monkeypatch)
     monkeypatch.setenv(dispatch.DOWNLOADS_VARIABLE, fake.base)
     monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr(dispatch, "own_version", lambda: "1.2.0-abcdef12")
@@ -60,7 +61,7 @@ def ran(monkeypatch: pytest.MonkeyPatch) -> Ran:
         record.commands.append(command)
         return subprocess.CompletedProcess(command, record.status)
 
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(dispatch, "subprocess", types.SimpleNamespace(run=run))
     return record
 
 
@@ -351,7 +352,7 @@ def test_the_variant_is_told_where_the_dispatcher_is(
     monkeypatch.setattr(dispatch, "variant", lambda *_a, **_k: tmp_path / "variant")
     monkeypatch.setattr("fsbpyr.runtime.stubs.own_paths",
                         lambda: [tmp_path / "link", tmp_path / "real"])
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(dispatch, "subprocess", types.SimpleNamespace(run=run))
 
     assert dispatch.run(OTHER, ["build"]) == 0
 
@@ -387,7 +388,7 @@ def test_a_signature_by_no_pinned_key_runs_no_variant(
     capsys: pytest.CaptureFixture[str]
 ) -> None:
     releases.files[PATH] = lzma.compress(_release(tmp_path))
-    releases.signer = lambda sums: release_signature(sums, fake_pub("not pinned"))
+    releases.signer = lambda sums: release_signature(sums, "not-pinned")
 
     assert "has no valid release signature" in _refused(project, tmp_path, capsys, ran)
     assert PATH not in releases.requests
@@ -467,7 +468,7 @@ def test_the_variant_alone_gets_the_signing_variables(
         outside.append(dict(os.environ))
         return subprocess.CompletedProcess(command, 0)
 
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(dispatch, "subprocess", types.SimpleNamespace(run=run))
 
     assert main(["build", str(project)]) == 0
 

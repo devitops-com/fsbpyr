@@ -32,7 +32,7 @@ from fsbpyr.vcs import release_stub_asset, release_stub_sums, release_stub_tag
 
 from ..support import contain, requires
 from ..support.releases import FakeReleases, sums_of
-from ..support.signing import release_signature, signed_as_release, use_stand_in
+from ..support.signing import release_signature, signed_as_release, use_openssl
 from .conftest import ReleaseKeys, built_release
 
 pytestmark = pytest.mark.slow
@@ -297,10 +297,10 @@ def test_a_release_builds_for_el8_with_its_stdlib_and_the_downloaded_stub(
     tmp_path_factory: pytest.TempPathFactory
 ) -> None:
     """The embedded runtime stands in for the executable's (monkeypatched, so this builds no
-    executable, and the stand-in for the C checks its signature): the stdlib of the default
+    executable, and the openssl command checks its signature for the C): the stdlib of the default
     runtime and the stub of the EL8 asset make the very app the cache's EL8 runtime does, whose
     stdlib is the same."""
-    use_stand_in(monkeypatch)
+    use_openssl(monkeypatch)
     releases = FakeReleases(release_signature)
     request.addfinalizer(releases.close)
     packed = lzma.compress(el8_runtime.stub)

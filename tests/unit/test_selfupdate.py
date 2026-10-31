@@ -22,13 +22,13 @@ from fsbpyr.targets import target_named
 
 from ..support.releases import FakeGitHub, FakeReleases
 from ..support.signing import (
-    RELEASE_PUB,
+    RELEASE_KEY,
     SIGNATURE_SIZE,
-    fake_pub,
-    fake_signature,
+    pub_of,
     release_signature,
+    signature_by,
     statement,
-    use_stand_in,
+    use_openssl,
 )
 from .boot.conftest import FAKE_RUNTIME
 
@@ -44,7 +44,7 @@ CHECKED = ["/api", "/files/SHA256SUMS", "/files/SHA256SUMS.sig"]  # before any a
 def github(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeGitHub]:
     fake = FakeGitHub(release_signature)
     fake.assets[f"{OWN}.xz"] = b""
-    use_stand_in(monkeypatch)
+    use_openssl(monkeypatch)
     monkeypatch.setenv(selfupdate.API_VARIABLE, f"{fake.base}/api")
     yield fake
     fake.close()
@@ -600,7 +600,7 @@ def test_a_body_cut_short_is_an_update_error(
 
 
 def test_unpacking_stops_at_its_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    use_stand_in(monkeypatch)
+    use_openssl(monkeypatch)
     server = FakeReleases()
     server.files["/big.xz"] = lzma.compress(b"\0" * 1_000_000)
     digest = hashlib.sha256(server.files["/big.xz"]).hexdigest()
@@ -655,17 +655,17 @@ def test_a_release_without_a_sums_file_is_refused(
 
 
 @pytest.mark.parametrize("signature", [
-    fake_signature(fake_pub("not pinned"), statement("fsbpyr", b"anything")),
-    bytes(SIGNATURE_SIZE), b"", bytes(SIGNATURE_SIZE - 1), bytes(SIGNATURE_SIZE + 1),
-    bytes(SIGNATURE_SIZE + 2),
+    lambda: signature_by("not-pinned", statement("fsbpyr", b"anything")),
+    lambda: bytes(SIGNATURE_SIZE), lambda: b"", lambda: bytes(SIGNATURE_SIZE - 1),
+    lambda: bytes(SIGNATURE_SIZE + 1), lambda: bytes(SIGNATURE_SIZE + 2),
 ], ids=["another key", "zeros", "empty", "a byte short", "a byte more", "two bytes more"])
 def test_a_signature_by_no_pinned_key_is_refused(
     github: FakeGitHub, installed: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch, signature: bytes
+    monkeypatch: pytest.MonkeyPatch, signature: Callable[[], bytes]
 ) -> None:
     _no_lzma(monkeypatch)
     github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
-    github.signer = lambda sums: signature
+    github.signer = lambda sums: signature()
 
     err = _refused(installed, capsys)
 
@@ -679,7 +679,7 @@ def test_a_refusal_is_exactly_two_lines_with_no_link(
     """Nothing else, on either stream: a hacked release comes with a hacked wiki, and an alarm in
     the tool helps nobody (owner, 2026-10-31). Incidents go through the usual channels."""
     github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
-    github.signer = lambda sums: release_signature(sums, fake_pub("the next release key"))
+    github.signer = lambda sums: release_signature(sums, "the-next-release-key")
 
     assert main(["self", "update"]) == 1
 
@@ -778,11 +778,10 @@ def test_a_build_info_without_a_release_is_refused() -> None:
 def test_three_pinned_keys_pass_a_release_of_a_key_change(
     github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    new = fake_pub("the new release key")
-    use_stand_in(monkeypatch, RELEASE_PUB, new, fake_pub("the recovery key"))
+    use_openssl(monkeypatch, *map(pub_of, (RELEASE_KEY, "new-release-key", "recovery-key")))
     binary = _release_binary(tmp_path)
     github.assets[f"{OWN}.xz"] = lzma.compress(binary)
-    github.signer = lambda sums: release_signature(sums, new)
+    github.signer = lambda sums: release_signature(sums, "new-release-key")
 
     assert main(["self", "update"]) == 0
     assert installed.read_bytes() == binary
@@ -795,7 +794,7 @@ def test_a_placed_stub_whose_new_sums_fail_their_check_only_warns(
     stub = installed.parent / STUB
     stub.write_bytes(b"stub")
     _publish_stubs(companion, b"stub")
-    companion.signer = lambda sums: release_signature(sums, fake_pub("not pinned"))
+    companion.signer = lambda sums: release_signature(sums, "not-pinned")
 
     _update(github, tmp_path)
 

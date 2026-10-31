@@ -1,12 +1,14 @@
 """Keys and signatures for the tests of docs/signing.md.
 
 The release script makes the real ones, once per session (0.25 s a key), so that no private key
-is kept in the repository and fsbpyr's reader is checked against files that it did not write. The
-stand-in for ``_fsbpyr`` does no signing crypto, and is reached through ``fsbpyr.signing``'s two
-seams: never through ``sys.modules``, where vcs.py and build.py would take it for a built fsbpyr.
+is kept in the repository and fsbpyr's reader is checked against files that it did not write. Tests
+that run from source have no ``_fsbpyr``: the openssl command does its crypto, on those same keys,
+reached through ``fsbpyr.signing``'s two seams: never through ``sys.modules``, where vcs.py and
+build.py would take it for a built fsbpyr.
 """
 
 import fcntl
+import functools
 import hashlib
 import os
 import pty
@@ -14,6 +16,7 @@ import select
 import signal
 import struct
 import subprocess
+import tempfile
 import termios
 import time
 from collections.abc import Sequence
@@ -33,6 +36,10 @@ SIGNATURE_SIZE = 3373
 ED25519_SIZE = 64
 PUB_SIZE = 2839
 KEY_SIZE = 6088
+RELEASE_KEY = "release"
+ALGORITHMS = ("ED25519", "ML-DSA-65")
+END_KEY = b"-----END ENCRYPTED PRIVATE KEY-----\n"
+END_PUB = b"-----END PUBLIC KEY-----\n"
 TERMINAL_TIMEOUT = 300
 TERMINAL_DRAIN = 0.2
 
@@ -94,11 +101,10 @@ def sign_statement(
     requires.openssl_with_ml_dsa()
     path = directory / "message"
     path.write_bytes(message)
-    blocks = key.read_text().split("-----END ENCRYPTED PRIVATE KEY-----\n")[:2]
     halves = []
-    for index, block in enumerate(blocks):
+    for index, block in enumerate(_blocks(key.read_bytes(), END_KEY)[:2]):
         part = directory / f"key.{index}"
-        part.write_text(f"{block}-----END ENCRYPTED PRIVATE KEY-----\n")
+        part.write_bytes(block)
         out = directory / f"half.{index}"
         run_openssl("pkeyutl", "-sign", "-rawin", "-inkey", part, "-passin", f"pass:{passphrase}",
                     "-in", path, "-out", out)  # fmt: skip
@@ -166,14 +172,37 @@ def fingerprint(pub: bytes) -> str:
     return f"SHA256:{hashlib.sha256(pub).hexdigest()}"
 
 
-def fake_signature(pub: bytes, message: bytes) -> bytes:
-    """What the stand-in's ``_verify`` passes: bound to the key and the statement."""
-    return hashlib.shake_256(b"\0".join((pub, message))).digest(SIGNATURE_SIZE)
+def _blocks(pem: bytes, end: bytes) -> list[bytes]:
+    return [block + end for block in pem.split(end)[:-1]]
 
 
-class StandIn:
-    """``_fsbpyr``'s four functions for tests that run from source: no crypto, but each refuses
-    what the real one refuses when a test depends on it. A key is ``b"key:" + passphrase``."""
+def _public_blocks(pub: bytes) -> list[bytes]:
+    """The two keys of a .pub, as sig.c's ``public_keys`` wants them: Ed25519, then ML-DSA-65, each
+    as openssl writes it, and nothing else in the file."""
+    blocks = _blocks(pub, END_PUB)
+    if len(blocks) != len(ALGORITHMS) or b"".join(blocks) != pub:
+        raise ValueError("not a public key file")
+    for block, algorithm in zip(blocks, ALGORITHMS, strict=True):
+        done = subprocess.run([requires.tool("openssl"), "pkey", "-pubin", "-pubout", "-text_pub"],
+                              input=block, capture_output=True, check=False)  # fmt: skip
+        if done.returncode != 0 or not done.stdout.startswith(block + algorithm.encode()):
+            raise ValueError("not a public key file")
+    return blocks
+
+
+def _half_good(directory: Path, block: bytes, half: bytes) -> bool:
+    key, signature = directory / "pub", directory / "sig"
+    key.write_bytes(block)
+    signature.write_bytes(half)
+    return subprocess.run([requires.tool("openssl"), "pkeyutl", "-verify", "-rawin", "-pubin",
+                           "-inkey", key, "-in", directory / "message", "-sigfile", signature],
+                          capture_output=True, check=False).returncode == 0  # fmt: skip
+
+
+class OpenSSL:
+    """``_fsbpyr``'s four functions for tests that run from source, on the openssl command: real
+    keys and real signatures, refused as sig.c refuses them. tests/e2e/test_signatures.py tests
+    sig.c itself."""
 
     @staticmethod
     def _sha256(file: object) -> bytes:
@@ -189,41 +218,68 @@ class StandIn:
 
     @staticmethod
     def _key_new(passphrase: bytes) -> tuple[bytes, bytes]:
-        return b"key:" + passphrase, fake_pub(hashlib.sha256(passphrase).hexdigest())
+        with tempfile.TemporaryDirectory() as directory:
+            key = new_key(Path(directory) / "k", os.fsdecode(passphrase))
+            return key.key.read_bytes(), key.pub.read_bytes()
 
     @staticmethod
     def _sign(key: bytes, passphrase: bytes, message: bytes) -> tuple[bytes, bytes]:
-        if not key.startswith(b"key:"):
+        if len(_blocks(key, END_KEY)) != len(ALGORITHMS):
             raise ValueError("not a key file")
-        if key != b"key:" + passphrase:
+        secret = os.fsdecode(passphrase)
+        pubs = [subprocess.run([requires.tool("openssl"), "pkey", "-passin", f"pass:{secret}",
+                                "-pubout"], input=block, capture_output=True, check=False)
+                for block in _blocks(key, END_KEY)]  # fmt: skip
+        if any(done.returncode != 0 for done in pubs):
             raise ValueError("wrong passphrase?")
-        pub = fake_pub(hashlib.sha256(passphrase).hexdigest())
-        return fake_signature(pub, message), pub
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "k.key"
+            path.write_bytes(key)
+            signature = sign_statement(path, message, Path(directory), secret)
+        return signature, b"".join(done.stdout for done in pubs)
 
     @staticmethod
     def _verify(pub: bytes, message: bytes, signature: bytes) -> bool:
-        if not pub.startswith(_FAKE_PUB) or len(pub) != PUB_SIZE:
-            raise ValueError("not a public key file")
-        return signature == fake_signature(pub, message)
+        blocks = _public_blocks(pub)
+        if len(signature) != SIGNATURE_SIZE:
+            return False
+        with tempfile.TemporaryDirectory() as name:
+            directory = Path(name)
+            (directory / "message").write_bytes(message)
+            halves = signature[:ED25519_SIZE], signature[ED25519_SIZE:]
+            return all(_half_good(directory, block, half)
+                       for block, half in zip(blocks, halves, strict=True))  # fmt: skip
 
 
-_FAKE_PUB = b"fake public key "
+@functools.cache
+def _key_directory() -> tempfile.TemporaryDirectory[str]:
+    return tempfile.TemporaryDirectory(prefix="fsbpyr-test-keys-")
 
 
-def fake_pub(seed: str) -> bytes:
-    """A .pub of the stand-in: the size of a real one, different for each ``seed``."""
-    return (_FAKE_PUB + seed.encode()).ljust(PUB_SIZE, b".")
+@functools.cache
+def named_key(name: str) -> Key:
+    """The key ``name``, of the script, made when this process first asks for it. Not while tests
+    are collected: each xdist worker has its own keys, and test ids must not differ between them."""
+    return new_key(Path(_key_directory().name) / name)
 
 
-RELEASE_PUB = fake_pub("the release key")
+def pub_of(name: str) -> bytes:
+    return named_key(name).pub.read_bytes()
 
 
-def use_stand_in(monkeypatch: pytest.MonkeyPatch, *pins: bytes) -> None:
-    """Run fsbpyr.signing on the stand-in, with these pins (by default ``RELEASE_PUB``)."""
-    monkeypatch.setattr(signing, "crypto", lambda: StandIn)
-    monkeypatch.setattr(signing, "pinned_keys", lambda: pins or (RELEASE_PUB,))
+@functools.cache
+def signature_by(name: str, message: bytes) -> bytes:
+    """The ``.sig`` of ``message`` by the key ``name``."""
+    with tempfile.TemporaryDirectory() as directory:
+        return sign_statement(named_key(name).key, message, Path(directory))
 
 
-def release_signature(sums: bytes, pub: bytes = RELEASE_PUB) -> bytes:
-    """A sums file's ``.sig`` under the stand-in: a pinned key's, as fsbpyr's own paths check."""
-    return fake_signature(pub, statement("fsbpyr", sums))
+def use_openssl(monkeypatch: pytest.MonkeyPatch, *pins: bytes) -> None:
+    """Run fsbpyr.signing on the openssl command, with these pins (by default ``RELEASE_KEY``'s)."""
+    monkeypatch.setattr(signing, "crypto", lambda: OpenSSL)
+    monkeypatch.setattr(signing, "pinned_keys", lambda: pins or (pub_of(RELEASE_KEY),))
+
+
+def release_signature(sums: bytes, key: str = RELEASE_KEY) -> bytes:
+    """A sums file's ``.sig``: by the key ``key``, as a release's, whose subject is fsbpyr."""
+    return signature_by(key, statement("fsbpyr", sums))
