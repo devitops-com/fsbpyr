@@ -151,9 +151,12 @@ again: whoever can write your fsbpyr cache can also replace fsbpyr itself.
 
 ## Release keys
 
-fsbpyr pins the public keys that may sign a release. Their fingerprints:
+fsbpyr pins the public keys that may sign a release: the release key, which signs in CI, then the
+recovery key, which never enters CI. Their fingerprints:
 
 ```text
+SHA256:ffb630c522fdb1d0681f2e5027f6822d5c65b11e86539a83783382028a4efe27
+SHA256:3184e5410af6ff52f3e6099c548cef0c058741288d8c8db7d0afd43d22f4806e
 ```
 
 A release that changes the keys is signed so that the fsbpyr before it can still update to it. A

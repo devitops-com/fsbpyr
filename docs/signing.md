@@ -1,8 +1,8 @@
 # Signed fsbpyr releases and signed apps: concept
 
-Status: implemented, 2026-10-30, on branch `signing-openssl`, as §14 says; no real release keys are
-pinned yet (§5.2), so nothing can be released until the admin makes them. The release path was
-rehearsed on GitHub in a test repository (§14). The concept was written
+Status: implemented, 2026-10-30, on branch `signing-openssl`, as §14 says, with the release keys K
+and R pinned. Before the first signed release, §5.2 steps 2 and 3 and the GitHub App are still the
+admin's. The release path was rehearsed on GitHub in a test repository (§14). The concept was written
 on 2026-10-29 at fadc3d9, revised the same day after an independent review, and on 2026-10-30 after
 a test round of every open gap (§11.1). It replaces the earlier concept on branch `signing-concept`
 (SSHSIG signatures embedded in the executable), which is dropped.
