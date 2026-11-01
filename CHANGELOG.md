@@ -10,6 +10,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-01
+
 ### Added
 - **Signatures.** `fsbpyr key new`, `key trust`, `sign` and `verify` sign any file, with Ed25519 and
   ML-DSA-65, always both, in a detached `FILE.sig`; `fsbpyr build` signs its output when a key is
