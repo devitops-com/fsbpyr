@@ -87,7 +87,7 @@ def _digest(path: Path) -> str:
     return tree_digest(path.read_bytes()).hex()
 
 
-def _home() -> Path:
+def home_directory() -> Path:
     """$HOME if absolute, else (unset, empty or relative) the passwd entry's, as the boot code
     and the launcher have it (native.home_directory, due.c)."""
     home = os.environ.get("HOME", "")
@@ -108,7 +108,7 @@ def cache_home() -> Path:
     """${XDG_CACHE_HOME:-~/.cache}; a relative XDG_CACHE_HOME is ignored, as the XDG spec has
     it and as the boot code does (native.cache_directory)."""
     base = os.environ.get("XDG_CACHE_HOME", "")
-    return Path(base) if os.path.isabs(base) else _home() / ".cache"
+    return Path(base) if os.path.isabs(base) else home_directory() / ".cache"
 
 
 def cache_root() -> Path:

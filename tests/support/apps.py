@@ -32,12 +32,18 @@ def main():
         import contract
 
         print(json.dumps(contract.run(_fsbpyr)))
+    elif sys.argv[1:] == ["signatures"]:
+        import _fsbpyr
+        import signatures
+
+        print(json.dumps(signatures.run(_fsbpyr)))
     else:
         import probe
 
         print(json.dumps(probe.run(BOOT_MODULES)))
 """,
     "contract.py": (SUPPORT / "contract.py").read_text(),
+    "signatures.py": (SUPPORT / "signatures.py").read_text(),
     "probe.py": (SUPPORT / "probe.py").read_text(),
 }
 NAMESPACES = ("ns", "pkg.data", "pkg.data.sub")  # dirs without __init__.py

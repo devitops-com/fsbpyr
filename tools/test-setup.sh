@@ -8,7 +8,10 @@
 #     LLVM 23's own, tools/release/llvm23);
 #   - libc6-dev and libstdc++-14-dev: the headers and libraries the tests' C programs build
 #     against, with gcc or LLVM 23's clang (libFuzzer is C++);
-#   - gcc, strace, groff-base, zstd, xz-utils, wget and busybox: tests that fail without them;
+#   - gcc, strace, groff-base, zstd, xz-utils, wget, busybox, jq and openssl (3.5 or newer):
+#     tests that fail without them;
+#   - libssl-dev (3.5 or newer): the headers that sig.c's hand-written declarations are compiled
+#     against, so a declaration that does not match fails the suite;
 #   - a user `tester` (uid 1000) in one supplementary group (testers), the user the suite runs
 #     as: the ownership tests need a user that is not root and has a group besides its own;
 #   - a directory of root's in /tmp and a searchable directory of another user under /var/lib,
@@ -19,7 +22,8 @@ set -euo pipefail
 
 apt-get update -q
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-    llvm-22 libc6-dev libstdc++-14-dev gcc strace groff-base zstd xz-utils wget busybox openssl
+    llvm-22 libc6-dev libstdc++-14-dev gcc strace groff-base zstd xz-utils wget busybox openssl \
+    libssl-dev jq
 rm -rf /var/lib/apt/lists/*
 
 groupadd --gid 2000 testers

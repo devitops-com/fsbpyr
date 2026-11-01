@@ -12,12 +12,14 @@ import pytest
 from fsbpyr import bytecode
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.build import TARGET_PYTHON
+from fsbpyr.cli import main
 from fsbpyr.payload.format import FileKind, ModuleKind
 from fsbpyr.payload.spec import Blob, File, Module
 from fsbpyr.runtime import pbs, pins, registry, stub
 from fsbpyr.runtime.toolchain import ToolchainError, find_toolchain
 
 from ..support import baseline, corpus, downloads, requires
+from ..support.signing import ROOT, Key, new_key
 
 type BuildApp = Callable[[dict[str, str], str], Path]
 
@@ -107,6 +109,55 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
         terminalreporter.section("runtime downloads")
         for name, how in _download_status.items():
             terminalreporter.line(f"{how}: {name}")
+
+
+@dataclass(frozen=True)
+class ReleaseKeys:
+    """Keys of the script, made once per session and never committed: ``k`` and ``r`` stand in
+    for the release keys, ``new_k`` for the next release key, and no release pins ``stray``."""
+
+    k: Key
+    r: Key
+    new_k: Key
+    stray: Key
+
+
+@pytest.fixture(scope="session")
+def release_keys(tmp_path_factory: pytest.TempPathFactory) -> ReleaseKeys:
+    directory = tmp_path_factory.mktemp("release-keys")
+    return ReleaseKeys(*(new_key(directory / name) for name in ("k", "r", "new-k", "stray")))
+
+
+def tagged_copy(directory: Path, tag: str, *pins: Path) -> Path:
+    """This checkout's sources as a git repository with a commit tagged ``tag``: built, it is a
+    release fsbpyr, which pins the .pub files ``pins`` in src/fsbpyr/release-keys/, in place of
+    the real ones. They go in before the copy's commit, so that the real tree is never written;
+    no variable or option could do this."""
+    requires.tool("git")
+    copy = directory / "fsbpyr"
+    copy.mkdir()
+    for name in ("pyproject.toml", "uv.lock", "LICENSE", "README.md", ".python-version"):
+        shutil.copy2(ROOT / name, copy / name)
+    shutil.copytree(ROOT / "src", copy / "src",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))  # fmt: skip
+    keys = copy / "src" / "fsbpyr" / "release-keys"
+    shutil.rmtree(keys, ignore_errors=True)
+    keys.mkdir()
+    for pin in pins:
+        shutil.copy2(pin, keys / pin.name)
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.org", "-C", str(copy)]
+    for command in (["init", "-q", "-b", "main"], ["add", "-A"],
+                    ["commit", "-q", "-m", "release"], ["tag", tag]):  # fmt: skip
+        subprocess.run([*git, *command], check=True, capture_output=True)
+    return copy
+
+
+def built_release(directory: Path, tag: str, *pins: Path) -> Path:
+    """An executable that reports itself as release ``tag`` and pins ``pins``."""
+    out = directory / "bin" / "fsbpyr"
+    out.parent.mkdir()
+    assert main(["build", str(tagged_copy(directory, tag, *pins)), "-o", str(out)]) == 0
+    return out
 
 
 @dataclass(frozen=True)

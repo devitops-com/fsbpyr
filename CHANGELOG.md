@@ -10,7 +10,40 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-01
+
+### Added
+- **Signatures.** `fsbpyr key new`, `key trust`, `sign` and `verify` sign any file, with Ed25519 and
+  ML-DSA-65, always both, in a detached `FILE.sig`; `fsbpyr build` signs its output when a key is
+  set (`--signing-key`, `FSBPYR_SIGNING_KEY`). The crypto is launcher C, on the OpenSSL every
+  fsbpyr carries, so checks need nothing installed.
+- **Signed releases.** Each release signs `SHA256SUMS`, and each EL8 companion
+  `SHA256SUMS-glibc2.28`. `self update`, dispatch to another Python and the EL8 stubs check those
+  files against the keys fsbpyr pins, and each `.xz` against its line before it is unpacked. A
+  release with no valid signature is refused, in two lines and with no fallback. The first update
+  from a release before this one runs old code and is not checked.
+- **Releases are signed on the admin's machine.** GitHub builds and attests, and stops at a draft;
+  no key is ever there. `make release` is the whole release in one command: it tags, waits for CI,
+  signs and publishes only if your HEAD, GitHub's main, its tag and the attestation of the sums all
+  name one commit, checks the result and publishes the wiki. Run it again after any stop. What
+  `make release` did before is `make release-assets`, and `make release-sign KEY=PATH` is a part of
+  its own.
+- **`make release-audit`** compares GitHub with what your machine recorded: tags, main, every
+  release with its files and signature, and the settings someone changes to stay. `make release`
+  and `make release-sign` stop if it does not pass.
+- **A Security chapter**, second in the User Guide: what protects you, a short update example, the
+  messages to watch for, checking and restoring fsbpyr, signing your own apps, and the limits. It
+  takes in the Signing page.
+- `make release` refuses a tree that pins no release keys, which would burn the version.
+
 ### Changed
+- `SHA256SUMS-glibc2.28` lists each stub's `.xz` too.
+- `release.yml` and `el8.yml` publish nothing, and el8.yml no longer waits for the release of the
+  tag. A draft of the companion stays as it is, and a re-run that finds one fails.
+- From source, even in a checkout at a tag, `fsbpyr build` never fetches another Python's variant:
+  it cannot check a signature. A variant already in the cache still runs.
+- `make release-check` needs jq and OpenSSL 3.5 or newer, and checks the signatures of a signed
+  release.
 - **The wiki is published without a release.** `make wiki-publish` without `VERSION` publishes
   main as GitHub has it, as long as nothing of what goes into a release changed since the
   newest release tag (`src/`, `pyproject.toml`, `uv.lock`, `.python-version`, `tools/release/`);

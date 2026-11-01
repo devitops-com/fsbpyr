@@ -6,6 +6,13 @@ def plural(count: int, noun: str) -> str:
     return f"{count} {noun}{'s' * (count != 1)}"
 
 
+def shown(value: object) -> str:
+    """``value`` as a line of a report: repr() when it is not printable, so that a name read from
+    a file cannot rewrite the terminal."""
+    text = str(value)
+    return text if text.isprintable() else repr(text)
+
+
 def tail_lines(text: str, limit: int) -> str:
     """The last ``limit`` characters of ``text``, from a line boundary, with a note of how many
     earlier lines were left out. Text longer than ``limit`` with no newline after the cut is cut

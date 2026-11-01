@@ -9,6 +9,7 @@
 #define FSBPYR_INTEGRITY_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "format.h"
@@ -47,6 +48,12 @@ bool fsb_tree_digest(const uint8_t *data, uint64_t length, uint8_t digest[FSB_DI
 /* The digest of the first ``length`` bytes of the file open as ``fd``, read in leaves; 0, EIO
  * or ENOMEM as fsb_tree_digests. */
 int fsb_file_digest(int fd, uint64_t length, uint8_t digest[FSB_DIGEST_SIZE]);
+
+/* The plain SHA-256 of a file open as ``fd``, whatever its position (which stays), or of bytes in
+ * memory (docs/signing.md §4): OpenSSL's low-level one, as everything here, which reads no
+ * configuration. 0, or an errno value. */
+int fsb_sha256_file(int fd, uint8_t digest[FSB_DIGEST_SIZE]);
+int fsb_sha256_bytes(const uint8_t *data, size_t size, uint8_t digest[FSB_DIGEST_SIZE]);
 
 /* NULL if the file open as ``fd`` (``size`` bytes) ends with the digest of everything before
  * it, else a static description of the failure. */

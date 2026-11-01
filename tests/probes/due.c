@@ -8,7 +8,8 @@
  * make its starter wait as long; a cap of 30 s leaves no orphan if the file never comes) and
  * writes to $PROBE_OUT, a line each: the descriptors open, where 0, 1 and 2 lead, its
  * nice value, its I/O priority class, whether it shares its starter's session ($PROBE_SESSION),
- * its working directory, and $FSBPYR_CACHE_DIR. Built with -Wl,--wrap=statvfs: with $PROBE_FREE
+ * its working directory, $FSBPYR_CACHE_DIR, and whether a signing variable is in its environment
+ * as the kernel shows it. Built with -Wl,--wrap=statvfs: with $PROBE_FREE
  * set, the file system has that many percent free.
  */
 #include "due.h"
@@ -34,6 +35,15 @@ int __wrap_statvfs(const char *path, struct statvfs *fs) {
         fs->f_bavail = (fsblkcnt_t)(10 * atoi(share));
     }
     return status;
+}
+
+/* As /proc/self/environ has it: what a process of the same user can read, not getenv's view. */
+static int holds_signing_variable(void) {
+    static char environment[1 << 16];
+    int fd = open("/proc/self/environ", O_RDONLY);
+    ssize_t size = fd < 0 ? -1 : read(fd, environment, sizeof environment - 1);
+    if (fd >= 0) close(fd);
+    return size < 0 || memmem(environment, (size_t)size, "FSBPYR_SIGNING_", 15) != NULL;
 }
 
 static int report(void) {
@@ -64,6 +74,7 @@ static int report(void) {
     fprintf(out, "own session %d\n", (long)getsid(0) != atol(getenv("PROBE_SESSION")));
     fprintf(out, "cwd %s\n", getcwd(cwd, sizeof cwd) ? cwd : "?");
     fprintf(out, "root %s\n", getenv("FSBPYR_CACHE_DIR"));
+    fprintf(out, "signing %d\n", holds_signing_variable());
     return fclose(out) != 0;
 }
 

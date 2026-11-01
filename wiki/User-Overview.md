@@ -49,6 +49,10 @@ aarch64 kernels with 16K pages), is in [What the target needs](User-Running.md#w
 
 ## Main goals
 
+- **Secure by default.** Security is a feature of its own here, not an afterthought: every release
+  is signed twice, with Ed25519 and the post-quantum ML-DSA-65, on the maintainer's machine and
+  never on GitHub; `fsbpyr self update` refuses what those keys did not sign; and you sign your own
+  apps with one option. [Security](User-Security.md) covers all of it.
 - **One command, one file, no questions.** `fsbpyr build` turns what it finds into a single
   executable: a project maintained with uv, pip, Poetry, PDM or Pipenv, a directory of scripts,
   a script. Several commands become one executable with a link per command. Only the system's
@@ -101,15 +105,16 @@ aarch64 kernels with 16K pages), is in [What the target needs](User-Running.md#w
 
 ## Where to go next
 
-1. [Installing fsbpyr](User-Installing.md)
-2. [Building an app](User-Building.md), with every option
-3. [Scripts and tools](User-Scripts.md): projects without a build system, directories of scripts,
+1. [Security](User-Security.md): what protects you, and what to do when something looks wrong
+2. [Installing fsbpyr](User-Installing.md)
+3. [Building an app](User-Building.md), with every option
+4. [Scripts and tools](User-Scripts.md): projects without a build system, directories of scripts,
    single scripts, tools from a requirements file
-4. [Settings in `pyproject.toml`](User-Settings.md): which apps need them, and how to tell
-5. [Inspecting an executable](User-Inspecting.md)
-6. [Running a built app](User-Running.md): the cache, environment variables, services, helper processes
-7. [Other commands](User-Other-Commands.md): `cache`, `runtime`, `self`, `completion`, `man`
-8. [Worked examples](User-Examples.md)
-9. [Troubleshooting](User-Troubleshooting.md)
+5. [Settings in `pyproject.toml`](User-Settings.md): which apps need them, and how to tell
+6. [Inspecting an executable](User-Inspecting.md)
+7. [Running a built app](User-Running.md): the cache, environment variables, services, helper processes
+8. [Other commands](User-Other-Commands.md): `cache`, `runtime`, `self`, `completion`, `man`
+9. [Worked examples](User-Examples.md)
+10. [Troubleshooting](User-Troubleshooting.md)
 
 How fsbpyr works inside is in the [Developer Guide](Dev-Overview.md).

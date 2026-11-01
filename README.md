@@ -46,11 +46,26 @@ dist/hello
 These lines call fsbpyr by its path: when that directory is not on `PATH` yet, the installer adds
 it for new shells, not for the one it ran in (it prints the `source` line that does that).
 
+## Security
+
+Security is built in, on by default, with nothing to install:
+
+- Every release is signed twice, with Ed25519 and the post-quantum ML-DSA-65, on the maintainer's
+  own machine. No key is ever on GitHub, so a stolen account cannot ship you an update.
+- `fsbpyr self update` checks a release against keys built into the fsbpyr you already run, before
+  a byte of the download is unpacked, and it has no fallback.
+- Every executable checks its whole file before it runs. Releases are attested, have an SBOM and
+  rebuild byte for byte.
+- `fsbpyr build --signing-key KEY` signs your own apps the same way, and `fsbpyr verify` checks them.
+
+The [Security chapter](https://github.com/devitops-com/fsbpyr/wiki/User-Security) covers all of it,
+with the messages to watch for and how to check and restore an installed fsbpyr.
+
 ## Documentation
 
 The [wiki](https://github.com/devitops-com/fsbpyr/wiki) describes the latest release.
 
-- **User Guide:** [what fsbpyr is](https://github.com/devitops-com/fsbpyr/wiki/User-Overview), [installing](https://github.com/devitops-com/fsbpyr/wiki/User-Installing),
+- **User Guide:** [what fsbpyr is](https://github.com/devitops-com/fsbpyr/wiki/User-Overview), [**security**](https://github.com/devitops-com/fsbpyr/wiki/User-Security), [installing](https://github.com/devitops-com/fsbpyr/wiki/User-Installing),
   [building an app](https://github.com/devitops-com/fsbpyr/wiki/User-Building), [scripts and tools](https://github.com/devitops-com/fsbpyr/wiki/User-Scripts),
   [settings](https://github.com/devitops-com/fsbpyr/wiki/User-Settings), [inspecting](https://github.com/devitops-com/fsbpyr/wiki/User-Inspecting),
   [running](https://github.com/devitops-com/fsbpyr/wiki/User-Running), [other commands](https://github.com/devitops-com/fsbpyr/wiki/User-Other-Commands),

@@ -1,0 +1,46 @@
+// The chain of trust of a fsbpyr release: from the maintainer's commit to the fsbpyr that installs
+// it, and where a stolen GitHub account stops. docs/signing.md §5 is the procedure.
+digraph security_chain {
+  graph [fontname="Helvetica" fontsize=11 rankdir=TB bgcolor="white" pad=0.3 nodesep=0.45 ranksep=0.42 compound=true];
+  node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#eef3fb" color="#4a6fa5"];
+  edge [fontname="Helvetica" fontsize=9 color="#555555"];
+
+  subgraph cluster_github {
+    label="GitHub: builds and attests, holds no key"; labelloc=b; style="rounded"; color="#4a6fa5"; fontcolor="#4a6fa5";
+    build [label="every job on GitHub's machines:\nbuild, SBOM, attestation of SHA256SUMS"];
+    draft [label="draft release\nunsigned, public cannot see it"];
+    build -> draft;
+  }
+
+  subgraph cluster_admin {
+    label="The maintainer's machine: holds the keys"; labeljust=l; style="rounded"; color="#3d8b3d"; fontcolor="#3d8b3d";
+    commit [label="the commit the maintainer\nread and tagged" fillcolor="#eaf5ea" color="#3d8b3d"];
+    audit [label="audit: GitHub as recorded?\ntags, releases, settings" fillcolor="#eaf5ea" color="#3d8b3d"];
+    check [label="one commit everywhere?\nHEAD, main, tag, attestation\nevery job on GitHub's machines?" fillcolor="#eaf5ea" color="#3d8b3d"];
+    sign [label="K signs SHA256SUMS\nEd25519 and ML-DSA-65" fillcolor="#eaf5ea" color="#3d8b3d"];
+    audit -> check -> sign;
+  }
+
+  published [label="published release, immutable\nSHA256SUMS + SHA256SUMS.sig + files" fillcolor="#fdf6e3" color="#b58900"];
+
+  subgraph cluster_user {
+    label="Your machine: fsbpyr self update"; labelloc=b; style="rounded"; color="#4a6fa5"; fontcolor="#4a6fa5";
+    pinned [label="your fsbpyr checks the sums\nagainst the keys built into it"];
+    xz [label="the .xz against its signed line,\nbefore anything unpacks it"];
+    identity [label="the right asset, a newer version,\nthe tag it claims, a whole file"];
+    replaced [label="new fsbpyr renamed into place:\nit checks the next release" fillcolor="#eaf5ea" color="#3d8b3d"];
+    pinned -> xz -> identity -> replaced;
+  }
+
+  attacker [label="a stolen GitHub account" fillcolor="#fbeaea" color="#b03a3a" fontcolor="#b03a3a"];
+  refused [label="no valid signature: refused\nnothing is changed" fillcolor="#fbeaea" color="#b03a3a" fontcolor="#b03a3a"];
+
+  commit -> build [label=" tag"];
+  commit -> audit [style=invis];
+  draft -> check [label=" download"];
+  sign -> published [label=" only the .sig goes back"];
+  published -> pinned;
+  attacker -> build [style=dashed color="#b03a3a" fontcolor="#b03a3a" label=" pushes a tag: a draft nobody signs"];
+  attacker -> published [style=dashed color="#b03a3a" fontcolor="#b03a3a" label=" publishes by hand"];
+  published -> refused [style=dashed color="#b03a3a" fontcolor="#b03a3a"];
+}

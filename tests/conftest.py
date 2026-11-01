@@ -54,6 +54,17 @@ def _no_collection() -> Iterator[None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _no_signing_setup(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """A developer's exported key must not sign the suite's builds, and the tests of `key trust`
+    must not write into their ~/.config, or read what they trust."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.delenv("FSBPYR_SIGNING_KEY", raising=False)
+        patch.delenv("FSBPYR_SIGNING_PASSPHRASE", raising=False)
+        patch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("config")))
+        yield
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _build_for_own_python() -> Iterator[None]:
     """A build in a test is for the Python the tests run on, as `--python` would say: the
     fixture projects' `requires-python = ">=3.12"` would hand them to the 3.12 variant

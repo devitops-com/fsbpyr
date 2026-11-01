@@ -797,6 +797,23 @@ def test_verify_without_gh_stops_before_downloading(
     assert not installed(host).exists()
 
 
+def test_verify_without_a_login_stops_before_downloading_and_does_not_read_as_tampering(
+    shell: list[str], release: Release, host: Host, server: Server
+) -> None:
+    """gh needs a login even for a public repository. Reported as a failed check, that would be
+    a false alarm."""
+    host.fake("gh", 'case "$1 $2" in "auth status") exit 1 ;; esac')
+    script = release.make()
+
+    result = install(shell, script, host, FSBPYR_VERIFY="1")
+
+    assert result.returncode == 1
+    assert "needs gh to be logged in" in result.stderr and "gh auth login" in result.stderr
+    assert "does not verify" not in result.stderr
+    assert server.requests == []
+    assert not installed(host).exists()
+
+
 def test_verify_runs_gh_attestation_verify(
     shell: list[str],
     release: Release,
@@ -810,7 +827,8 @@ def test_verify_runs_gh_attestation_verify(
     result = install(shell, script, host, FSBPYR_VERIFY="1")
 
     assert result.returncode == 0, result.stderr
-    call = log.read_text()
+    login, call = log.read_text().splitlines()
+    assert login == "auth status"
     assert call.startswith("attestation verify ")
     assert "--repo devitops-com/fsbpyr" in call
     assert "--signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml" in call
@@ -819,7 +837,7 @@ def test_verify_runs_gh_attestation_verify(
 
 def test_verify_stops_when_gh_fails(shell: list[str], release: Release, host: Host) -> None:
     script = release.make()
-    host.fake("gh", "echo 'no matching attestation' >&2; exit 1")
+    host.fake("gh", 'case "$1" in attestation) echo "no attestation" >&2; exit 1 ;; esac')
 
     result = install(shell, script, host, FSBPYR_VERIFY="1")
 

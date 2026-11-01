@@ -13,7 +13,7 @@ name: Full suite
 #   - vm-smoke: aarch64 apps run in a QEMU system VM whose kernel has 64 KiB pages
 #     (tools/vm-smoke.py).
 # It runs on every push to main, which is a merge, that changes more than documentation (*.md
-# files and docs/): tools/release/release.sh tags only a main commit whose run passed, or one
+# files and docs/): tools/release/release-assets.sh tags only a main commit whose run passed, or one
 # that changes only documentation since such a commit (green-run.sh), and the publish job of
 # release.yml checks that again. A merge never carries a CI skip instruction in its message:
 # GitHub applies it to a tag pushed on that commit too, and release.yml would not run. Also

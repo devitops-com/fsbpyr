@@ -245,9 +245,10 @@ the sysroot. A runtime for 2.28 comes from one of two places:
 3. **Downloaded.** From the companion release `el8-vX.Y.Z` (`vcs.release_stub_tag`), since a
    published release takes no new assets, below `$FSBPYR_RELEASE_DOWNLOADS`, by default
    `https://github.com/devitops-com/fsbpyr/releases/download`. `SHA256SUMS-glibc2.28`
-   (`vcs.release_stub_sums`), in `sha256sum`'s format over the unpacked stubs, names the
-   SHA-256 of the asset; `<asset>.xz` is unpacked as it arrives, checked against that SHA-256,
-   checked for the runtime id, and only then kept in `downloads/`. With `--offline` nothing is
+   (`vcs.release_stub_sums`), in `sha256sum`'s format over the unpacked stubs and their `.xz`,
+   is checked against the pinned keys first, with its `.sig`, and names the SHA-256 of both;
+   `<asset>.xz` is downloaded, checked against its line before lzma sees it, unpacked, checked
+   against the stub's line and for the runtime id, and only then kept in `downloads/`. With `--offline` nothing is
    downloaded: the build stops with `--offline: the <asset> is not placed or cached, and nothing
    is downloaded; place <asset> (or <asset>.xz) next to <path>, or build once without --offline
    to cache it`.

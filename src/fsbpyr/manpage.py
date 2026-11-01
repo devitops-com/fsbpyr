@@ -13,6 +13,15 @@ _CODE = re.compile(r"`([^`]+)`")
 _NO_REWRAP = "\b"  # click: a paragraph whose first line is this keeps its lines
 
 
+SECURITY = (
+    "Every release is signed with Ed25519 and ML-DSA-65, both of which must pass, on the "
+    "maintainer's machine. `fsbpyr self update` checks a release against the keys built into "
+    "this executable and refuses one with no valid signature, with no fallback. Every executable "
+    "checks its whole file at every start. `--signing-key` signs your own apps, and `fsbpyr "
+    "verify` checks them. The Security chapter of the wiki covers all of it, with the messages to "
+    "watch for."
+)
+
 # (status, meaning): what `fsbpyr` and the executables it builds exit with.
 EXIT_STATUS = (
     ("0", "Success."),
@@ -52,6 +61,15 @@ ENVIRONMENT = (
                         "one line per missing one and exit 1 if any (glibc targets). Any other "
                         "value: import the entry point, check it, and exit without running "
                         "the app."),
+    ("FSBPYR_SIGNING_KEY", "The `.key` file that signs: `sign` reads it when `--signing-key` is "
+                           "not given, and with either a `build` signs its output."),
+    ("FSBPYR_SIGNING_PASSPHRASE", "The passphrase of a signing key, for jobs without a terminal; "
+                                  "otherwise it is asked for on the terminal, never read from "
+                                  "standard input. Empty counts as unset. `build` removes both "
+                                  "signing variables from its environment before it starts any "
+                                  "process."),
+    ("XDG_CONFIG_HOME", "The base of the keys `key trust` saves when it is an absolute path; "
+                        "otherwise ~/.config."),
     ("XDG_CACHE_HOME", "The base of the cache directories when it is an absolute path; "
                        "otherwise `~/.cache` is used."),
 )
@@ -65,6 +83,8 @@ FILES = (
                                            "Python fetches."),
     ("${XDG_CACHE_HOME:-~/.cache}/<app>", "What a built executable extracted on first use."),
     (".fsbpyr-cache", "The marker in a cache root: only a root that has it is collected."),
+    ("${XDG_CONFIG_HOME:-~/.config}/fsbpyr/trusted/<project>.pub",
+     "The key `key trust` saved for a project, which `verify` checks with."),
 )
 
 
@@ -95,6 +115,7 @@ def render(group: click.Group, name: str, examples: Sequence[tuple[str, str]] = 
     lines += [".SH EXIT STATUS", *_definitions(EXIT_STATUS)]
     lines += [".SH ENVIRONMENT", *_definitions(ENVIRONMENT)]
     lines += [".SH FILES", *_definitions(FILES)]
+    lines += [".SH SECURITY", *_paragraphs(SECURITY)]
     if examples:
         lines += [".SH EXAMPLES", ".nh", ".ad l"]  # command lines: no hyphens added, no gaps
     for command, text in examples:

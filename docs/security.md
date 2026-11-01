@@ -64,11 +64,12 @@ in the wiki); the launcher checks each file's digest before it is loaded.
   file can change the digest too. Only checking from outside catches that: a release's
   provenance and SBOM attestations (made by release.yml, checked with `gh attestation
   verify`; the EL8 stubs, published in the companion release `el8-vX.Y.Z`, are attested by el8.yml, a
-  workflow of its own whose only writing job is `publish`, checked with `--signer-workflow
+  workflow of its own whose only writing job is `draft`, checked with `--signer-workflow
   .../el8.yml --source-ref refs/tags/vX.Y.Z`), the installer (`install.sh` checks each download against the SHA-256 the release
   recorded and runs `fsbpyr inspect --verify`; `FSBPYR_VERIFY=1` adds the attestation) and the
-  reproduction steps in [CONTRIBUTING.md](../CONTRIBUTING.md#verifying-a-release). A signature checked with an outside
-  key (D31) comes with signed releases, after the MVP.
+  reproduction steps in [CONTRIBUTING.md](../CONTRIBUTING.md#verifying-a-release). And a detached
+  signature of `SHA256SUMS`, made on the admin's machine and checked with keys fsbpyr pins
+  ([signing.md](signing.md)).
 - **EL8 stubs** (D46). A stub is the launcher of every app built with `--glibc 2.28`. A
   download comes from the companion release `el8-vX.Y.Z` and is checked against
   `SHA256SUMS-glibc2.28` of the same release (over HTTPS; `FSBPYR_RELEASE_DOWNLOADS` can point

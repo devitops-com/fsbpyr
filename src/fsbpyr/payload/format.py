@@ -233,7 +233,10 @@ class TreeHasher:
         return self._root.digest()
 
 
-ZERO_LEAF = hashlib.sha256(bytes(DIGEST_LEAF)).digest()  # a leaf of zeros: a hole's
+# A leaf of zeros: a hole's. Written out, so that importing this hashes nothing: below Python 3.14
+# hashlib.sha256 is OpenSSL's default context, and an openssl.cnf with `fips=yes` makes it raise,
+# which would stop `fsbpyr verify` before its check, which reads no configuration, could run.
+ZERO_LEAF = bytes.fromhex("30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58")
 
 
 def _leaf_digest(fd: int, start: int, length: int) -> bytes:

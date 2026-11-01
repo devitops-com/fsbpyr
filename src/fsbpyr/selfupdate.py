@@ -9,6 +9,12 @@ executable's real path, keeping its mode. A man page and completions found under
 executable's prefix are written again by the new executable and renamed into place after it.
 Only released executables update themselves: a developer build (``untagged-<commit>``) is
 refused with the installer command that installs the latest release for its Python.
+
+Every download of fsbpyr's own files goes through ``signed_sums`` and ``fetch_checked``
+(docs/signing.md §5.5): a release's sums file is checked against the keys this fsbpyr pins, and
+an ``.xz`` against its line of that file, before lzma sees a byte of it. A release that is not
+signed, or not by a pinned key, is refused, with no fallback. The refusal links nowhere: a hacked
+release comes with a hacked wiki.
 """
 
 import contextlib
@@ -24,15 +30,19 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
+from . import signing
 from .inspection import InspectError, read
 from .targets import TARGETS, host_target
-from .vcs import own_version, release_asset
+from .text import shown
+from .vcs import own_version, release_asset, version_string
 
 REPO = "devitops-com/fsbpyr"
+SUMS = "SHA256SUMS"
 API_VARIABLE = "FSBPYR_RELEASE_API"  # the release document's URL; tests serve their own
 DEFAULT_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 INSTALLER = f"https://github.com/{REPO}/releases/latest/download/install.sh"
@@ -40,8 +50,12 @@ _TARGETS = "|".join(re.escape(t.name) for t in TARGETS)
 _ASSET_NAME = re.compile(rf"fsbpyr-3\.\d+-({_TARGETS})")
 _TIMEOUT_S = 60
 _CHUNK = 1 << 20
+_MAX_PACKED = 256 << 20  # an asset's .xz has a few MB; a larger one is no asset of a release
+_MAX_SUMS = 1 << 20
+_MAX_DOCUMENT = 4 << 20  # a release document has some 100 KB
 _RELEASE = re.compile(r"v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 _ACCEPT = {"Accept": "application/vnd.github+json", "User-Agent": "fsbpyr-self-update"}
+_NO_SIGNATURE = "it has no valid release signature"
 
 # What `make install` puts under the prefix (Makefile), and the command that writes each.
 _EXTRAS = (
@@ -60,11 +74,21 @@ class NotFound(UpdateError):
     """The server has no such file (404): the release does not publish it."""
 
 
+class TooLarge(UpdateError):
+    """The server sent more than a limit allows."""
+
+
+class UnsignedRelease(UpdateError):
+    """No signature by a pinned key covers what the release served."""
+
+
 @dataclass(frozen=True, slots=True)
 class Release:
     tag: str
     numbers: tuple[int, int, int]
     asset_url: str
+    sums_url: str | None
+    signature_url: str | None
 
 
 def _running_python() -> str:
@@ -119,17 +143,33 @@ def own_asset() -> str:
     return release_asset(_running_python(), host_target().name)
 
 
+def _open(url: str) -> http.client.HTTPResponse:
+    """``url``, which a release document or a mirror may have chosen: http or https alone. urllib
+    takes file: and ftp: as well, and its timeout does not hold there: /dev/stdin blocks."""
+    if not url.startswith(("https://", "http://")):
+        raise ValueError(f"{shown(url)} is no http or https URL")
+    request = urllib.request.Request(url, headers=_ACCEPT)  # noqa: S310  checked above
+    response: http.client.HTTPResponse = urllib.request.urlopen(request, timeout=_TIMEOUT_S)  # noqa: S310
+    return response
+
+
 def latest_release(asset: str) -> Release:
-    """The latest release and the URL of its ``asset``.xz."""
+    """The latest release and the URL of its ``asset``.xz. Nothing in this document is trusted:
+    it says where to look, and what is found there is checked."""
     api = os.environ.get(API_VARIABLE) or DEFAULT_API
     try:
-        request = urllib.request.Request(api, headers=_ACCEPT)  # noqa: S310  https, or a test's
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
-            document = json.load(response)
+        with _open(api) as response:
+            body = response.read(_MAX_DOCUMENT + 1)
+        if len(body) > _MAX_DOCUMENT:
+            raise ValueError(f"it is larger than {_MAX_DOCUMENT} bytes")
+        document = json.loads(body)
         tag = document["tag_name"]
-        assets = {a["name"]: a["browser_download_url"] for a in document["assets"]}
-    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as exc:
-        raise UpdateError(f"cannot read the latest release from {api}: {exc}") from exc
+        assets = {a["name"]: a["browser_download_url"] for a in document["assets"]
+                  if isinstance(a["browser_download_url"], str)}  # fmt: skip
+    except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError,
+            RecursionError) as exc:  # fmt: skip
+        raise UpdateError(f"cannot read the latest release from {shown(api)}: {shown(exc)}"
+                          ) from exc
     numbers = release_numbers(tag) if isinstance(tag, str) else None
     if numbers is None:
         raise UpdateError(f"the latest release has no vX.Y.Z tag ({tag!r})")
@@ -138,43 +178,116 @@ def latest_release(asset: str) -> Release:
         raise UpdateError(f"the latest release ({tag}) has no {name}; install its fsbpyr for "
                           "the default Python (or another with --python X.Y):\n"
                           f"{curl_hint(default=True)}")  # fmt: skip
-    return Release(tag, numbers, assets[name])
+    return Release(tag, numbers, assets[name], assets.get(SUMS), assets.get(f"{SUMS}.sig"))
 
 
 def _failed(url: str, exc: Exception) -> UpdateError:
     missing = isinstance(exc, urllib.error.HTTPError) and exc.code == 404
-    return (NotFound if missing else UpdateError)(f"downloading {url} failed: {exc}")
+    return (NotFound if missing else UpdateError)(f"downloading {shown(url)} failed: {shown(exc)}")
 
 
-def unpack(url: str, target: Path, limit: int | None = None) -> None:
-    """``url`` (an xz file), unpacked as it arrives into ``target``; UpdateError when the
-    unpacked file would exceed ``limit`` bytes."""
-    decoder = lzma.LZMADecompressor(format=lzma.FORMAT_XZ)
+def download_bytes(url: str, limit: int) -> bytes:
+    """``url``'s body, of at most ``limit`` bytes (a checksums file or a signature). The response
+    is closed when this returns: a failed check must not sit between urlopen() and read(), where
+    OpenSSL's error queue would reach _ssl (docs/signing.md §4)."""
     try:
-        request = urllib.request.Request(url, headers=_ACCEPT)  # noqa: S310  the release's URL
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response, \
-                target.open("wb") as out:  # noqa: S310
-            while chunk := response.read(_CHUNK):
-                out.write(decoder.decompress(chunk))
-                if limit is not None and out.tell() > limit:
-                    raise UpdateError(f"{url} unpacks to more than {limit} bytes")
-    except (OSError, http.client.HTTPException, lzma.LZMAError, EOFError) as exc:
-        raise _failed(url, exc) from exc
-    if not decoder.eof:
-        raise UpdateError(f"{url} ended before the end of its xz stream")
-
-
-def download_text(url: str, limit: int = _CHUNK) -> str:
-    """``url``'s body as text, of at most ``limit`` bytes (a checksums file)."""
-    try:
-        request = urllib.request.Request(url, headers=_ACCEPT)  # noqa: S310  the release's URL
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_S) as response:  # noqa: S310
+        with _open(url) as response:
             body: bytes = response.read(limit + 1)
-    except (OSError, http.client.HTTPException) as exc:
+    except (OSError, http.client.HTTPException, ValueError) as exc:
         raise _failed(url, exc) from exc
     if len(body) > limit:
-        raise UpdateError(f"{url} is larger than {limit} bytes")
-    return body.decode("utf-8", "replace")
+        raise TooLarge(f"{shown(url)} is larger than {limit} bytes")
+    return body
+
+
+def _no_valid_signature(tag: str) -> UnsignedRelease:
+    return UnsignedRelease(f"release {tag} has no valid release signature; nothing was changed")
+
+
+def signed_sums(url: str, signature_url: str | None, tag: str) -> bytes:
+    """The checksums file at ``url``, once a pinned key's signature of it passed. NotFound when
+    the release has no such file. No line of it is used before this returns."""
+    try:
+        sums = download_bytes(url, _MAX_SUMS)
+    except TooLarge:
+        raise _no_valid_signature(tag) from None
+    try:
+        if signature_url is None:
+            raise NotFound(f"{url} has no signature")
+        signature = download_bytes(signature_url, signing.SIGNATURE_SIZE + 1)
+    except (NotFound, TooLarge):
+        raise _no_valid_signature(tag) from None
+    try:
+        passed = signing.check_release_file(sums, signature)
+    except signing.SigningError as exc:  # a pin this fsbpyr carries is damaged: nothing passes
+        raise UpdateError(str(exc)) from exc
+    if not passed:
+        raise _no_valid_signature(tag)
+    return sums
+
+
+def listed_digest(sums: bytes, name: str, tag: str) -> str:
+    """The SHA-256 a checked sums file lists for the file ``name``."""
+    digest = signing.asset_digest(sums, name)
+    if digest is None:
+        raise NotFound(f"the checksums of release {tag} list no {name}")
+    return digest
+
+
+def _download(url: str, out: BinaryIO) -> None:
+    """``url`` into the file ``out``, of at most _MAX_PACKED bytes."""
+    try:
+        with _open(url) as response:
+            while chunk := response.read(_CHUNK):
+                out.write(chunk)
+                if out.tell() > _MAX_PACKED:
+                    raise UpdateError(f"{shown(url)} is larger than {_MAX_PACKED} bytes")
+    except (OSError, http.client.HTTPException, ValueError) as exc:
+        raise _failed(url, exc) from exc
+
+
+def _unpack(packed: BinaryIO, url: str, target: Path, limit: int | None) -> None:
+    """The xz file ``packed`` into ``target``; UpdateError when it would exceed ``limit`` bytes."""
+    decoder = lzma.LZMADecompressor(format=lzma.FORMAT_XZ)
+    try:
+        with target.open("wb") as out:
+            while chunk := packed.read(_CHUNK):
+                out.write(decoder.decompress(chunk))
+                if limit is not None and out.tell() > limit:
+                    raise UpdateError(f"{shown(url)} unpacks to more than {limit} bytes")
+    except (OSError, lzma.LZMAError, EOFError) as exc:
+        raise UpdateError(f"unpacking {shown(url)} failed: {exc}") from exc
+    if not decoder.eof:
+        raise UpdateError(f"{shown(url)} ended before the end of its xz stream")
+
+
+def fetch_checked(url: str, digest: str, target: Path, limit: int | None = None) -> None:
+    """``url`` (an xz file) unpacked into ``target``, only after its SHA-256 equals ``digest``,
+    the line of a checked sums file. One open file is hashed and read, so lzma sees what passed."""
+    with tempfile.TemporaryFile(dir=target.parent) as packed:
+        _download(url, packed)
+        packed.flush()
+        got = signing.crypto()._sha256(packed.fileno()).hex()
+        if got != digest:
+            raise UnsignedRelease(f"{shown(url)} does not match the checksum of its release; "
+                                  "nothing was changed")  # fmt: skip
+        packed.seek(0)
+        _unpack(packed, url, target, limit)
+
+
+def check_release_identity(info: Mapping[str, object], asset: str) -> tuple[int, int, int]:
+    """The release number of a new executable, once it is the asset expected: a signed sums file
+    lists every file of its release, under any name."""
+    found = info.get("release_asset")
+    if found != asset:
+        raise UpdateError(f"the download is {shown(found)}, not {asset}; nothing was "
+                          "changed")  # fmt: skip
+    git = info.get("git")
+    version = version_string(git if isinstance(git, dict) else None)
+    numbers = release_numbers(version.partition("-")[0])
+    if numbers is None:
+        raise UpdateError("the download records no release; nothing was changed")
+    return numbers
 
 
 def _glibc_version(text: object) -> tuple[int, ...] | None:
@@ -264,6 +377,24 @@ def _warn_about_placed_stubs(executable: Path, tag: str, warn: Callable[[str], N
              f"{tag} differs, `--glibc` refuses them and names the stub to place")  # fmt: skip
 
 
+def _not_installed(tag: str, why: str, own: tuple[int, int, int]) -> UpdateError:
+    """The two lines of a refused release, the first of them after "fsbpyr: error: "."""
+    return UpdateError(f"new {tag} has not been installed because {why}.\n"
+                       f"fsbpyr: currently installed fsbpyr version ({'.'.join(map(str, own))}) "
+                       "has been kept unmodified.")  # fmt: skip
+
+
+def _signed_digest(release: Release, asset: str, refused: UpdateError) -> str:
+    """The SHA-256 that the signed sums of ``release`` list for the ``.xz`` of ``asset``."""
+    try:
+        if release.sums_url is None:
+            raise _no_valid_signature(release.tag)
+        sums = signed_sums(release.sums_url, release.signature_url, release.tag)
+        return listed_digest(sums, f"{asset}.xz", release.tag)
+    except (UnsignedRelease, NotFound) as exc:
+        raise refused from exc
+
+
 def update(
     log: Callable[[str], None] = print, warn: Callable[[str], None] = print
 ) -> bool:
@@ -275,23 +406,33 @@ def update(
         raise UpdateError(f"cannot write to {directory}; update with the owner's rights, or "
                           f"install the latest release there:\n"
                           f"{curl_hint(directory=directory)}")  # fmt: skip
-    release = latest_release(own_asset())
+    asset = own_asset()
+    release = latest_release(asset)
     if release.numbers <= own:
         log(f"fsbpyr is up to date ({own_version()}; latest release {release.tag})")
         return False
+    unsigned = _not_installed(release.tag, _NO_SIGNATURE, own)
+    digest = _signed_digest(release, asset, unsigned)
     log(f"downloading fsbpyr {release.tag}")
     handle, name = tempfile.mkstemp(dir=directory, prefix=f".{executable.name}.update-")
     os.close(handle)
     new = Path(name)
     staged: list[tuple[Path, Path]] = []
     try:
-        unpack(release.asset_url, new)
+        try:
+            fetch_checked(release.asset_url, digest, new)
+        except UnsignedRelease as exc:
+            raise unsigned from exc
         new.chmod(stat.S_IMODE(executable.stat().st_mode))
         try:
             report = read(new, verify=True)
         except InspectError as exc:
-            raise UpdateError(f"the download failed verification, nothing was changed: {exc}"
-                              ) from exc
+            raise _not_installed(release.tag, f"it failed verification: {exc}", own) from exc
+        numbers = check_release_identity(report.info, asset)
+        if numbers <= own:
+            raise _not_installed(release.tag, "the download is not newer than this fsbpyr", own)
+        if numbers != release.numbers:
+            raise _not_installed(release.tag, f"the download is not fsbpyr {release.tag}", own)
         check_glibc(report.info.get("glibc"))
         staged = _stage_extras(executable, new, warn)
         new.rename(executable)

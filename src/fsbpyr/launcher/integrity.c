@@ -174,6 +174,30 @@ int fsb_file_digest(int fd, uint64_t length, uint8_t digest[FSB_DIGEST_SIZE]) {
     return fsb_tree_digests(1, &read_from_fd, &fd, &length, (uint8_t (*)[FSB_DIGEST_SIZE])digest);
 }
 
+int fsb_sha256_file(int fd, uint8_t digest[FSB_DIGEST_SIZE]) {
+    uint8_t *piece = malloc(READ_PIECE);
+    if (piece == NULL) return ENOMEM;
+    fsb_sha256_context context;
+    SHA256_Init(&context);
+    int error = 0;
+    for (off_t offset = 0;;) {
+        ssize_t got = pread(fd, piece, READ_PIECE, offset);
+        if (got < 0 && errno == EINTR) continue;
+        if (got < 0) error = errno;
+        if (got <= 0) break;
+        SHA256_Update(&context, piece, (size_t)got);
+        offset += got;
+    }
+    free(piece);
+    if (error == 0) SHA256_Final(digest, &context);
+    return error;
+}
+
+int fsb_sha256_bytes(const uint8_t *data, size_t size, uint8_t digest[FSB_DIGEST_SIZE]) {
+    sha256(data, size, digest);
+    return 0;
+}
+
 unsigned long long fsb_integrity_ns;
 
 static const char *check(int fd, uint64_t size) {

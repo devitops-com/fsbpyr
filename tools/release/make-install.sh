@@ -14,7 +14,7 @@
 # another (owner, 2026-10-23: 3.14 stays the default while 3.15 is new), which must be among
 # them.
 #
-# Used by the release workflow (.github/workflows/release.yml: the publish job), which attests
+# Used by the release workflow (.github/workflows/release.yml: the prepare job), which attests
 # OUTPUT and lists it in SHA256SUMS. Exit status: 0 with OUTPUT written, 1 if an asset is
 # missing or unreadable, 2 on bad usage.
 set -euo pipefail

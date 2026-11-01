@@ -80,8 +80,8 @@ Options:
 
 Environment:
   FSBPYR_VERIFY=1
-          Also check the download's GitHub attestation with \`gh attestation verify\`; stop
-          when it fails or gh is missing
+          Also check the download's GitHub attestation with \`gh attestation verify\`. Needs
+          the GitHub CLI, logged in (\`gh auth login\`, or GH_TOKEN). Stops when it fails
   FSBPYR_NO_MODIFY_PATH=1
           As --no-modify-path
 EOF
@@ -393,8 +393,11 @@ main() {
     check_target
     choose_asset
     case "$TARGET" in *-gnu) check_glibc ;; esac
-    if [ "${FSBPYR_VERIFY:-}" = 1 ] && ! have gh; then
-        err "FSBPYR_VERIFY=1 needs the GitHub CLI (gh) to check the attestation, and it is not installed"
+    if [ "${FSBPYR_VERIFY:-}" = 1 ]; then
+        have gh || err "FSBPYR_VERIFY=1 needs the GitHub CLI (gh) to check the attestation, and it is not installed"
+        # Before anything is downloaded, and not as a failed check: no login is no sign of tampering.
+        gh auth status > /dev/null 2>&1 \
+            || err "FSBPYR_VERIFY=1 needs gh to be logged in, even for a public repository: run gh auth login, or set GH_TOKEN"
     fi
 
     choose_install_dir

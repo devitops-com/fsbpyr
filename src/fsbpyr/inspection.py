@@ -30,7 +30,7 @@ from .payload.reader import Executable, FileRecord, Payload
 from .runtime.pins import DEFAULT_BASELINE
 from .sizes import PARTS, Sizes, measure
 from .system import target_needs
-from .text import plural
+from .text import plural, shown
 from .vcs import version_string
 
 SCHEMA = 1  # of --json
@@ -75,11 +75,6 @@ class Report:
     entrypoint: str = ""
     sizes: Sizes | None = None
     files: tuple[FileEntry, ...] | None = None  # None unless asked for (--files)
-
-
-def _shown(value: object) -> str:
-    text = str(value)
-    return text if text.isprintable() else repr(text)
 
 
 def _build_info(path: Path, text: str) -> dict[str, object]:
@@ -264,7 +259,7 @@ def _components(info: dict[str, object]) -> str:
     components = info.get("runtime_components")
     if not isinstance(components, dict):
         return ""
-    return "; ".join(f"{_shown(name)} {_shown(version)}" for name, version in components.items())
+    return "; ".join(f"{shown(name)} {shown(version)}" for name, version in components.items())
 
 
 def _lock(info: dict[str, object]) -> str:
@@ -275,10 +270,10 @@ def _lock(info: dict[str, object]) -> str:
         return ""
     if lock.get("kind") == "inferred":  # the venv the versions were read from, no file hash
         pins = lock.get("pins")
-        listed = ", ".join(_shown(pin) for pin in pins) if isinstance(pins, list) else ""
-        return f"inferred from {_shown(lock['path'])}: {listed}"
+        listed = ", ".join(shown(pin) for pin in pins) if isinstance(pins, list) else ""
+        return f"inferred from {shown(lock['path'])}: {listed}"
     digest = lock.get("sha256")
-    return f"{_shown(lock['path'])} sha256:{_shown(digest)}" if isinstance(digest, str) else ""
+    return f"{shown(lock['path'])} sha256:{shown(digest)}" if isinstance(digest, str) else ""
 
 
 def _provenance(info: dict[str, object]) -> list[str]:
@@ -300,7 +295,7 @@ def _setting_lines(info: dict[str, object]) -> list[str]:
                        ("allow libs", "allow_system_libs")):  # fmt: skip
         value = settings.get(key)
         if isinstance(value, list):
-            lines.append(f"{label:<10} {_shown(', '.join(map(str, value))) or '(none)'}")
+            lines.append(f"{label:<10} {shown(', '.join(map(str, value))) or '(none)'}")
     if isinstance(settings.get("include_source"), bool):
         lines.append(f"sources    {'kept' if settings['include_source'] else 'left out'}")
     return lines
@@ -378,7 +373,7 @@ def _columns(items: list[str]) -> list[str]:
         return [f"{_INDENT}(none)"]
     out = io.StringIO()
     width = shutil.get_terminal_size().columns - len(_INDENT)
-    cmd.Cmd(stdout=out).columnize([_shown(item) for item in items], max(width, 1))
+    cmd.Cmd(stdout=out).columnize([shown(item) for item in items], max(width, 1))
     return [_INDENT + line.rstrip() for line in out.getvalue().splitlines()]
 
 
@@ -404,7 +399,7 @@ def _every_module(report: Report) -> list[str]:
     lines = []
     for dist, version in report.dists:
         names = report.modules[dist]
-        lines += [f"{_shown(f'{dist} {version}')}: {plural(len(names), 'module')}",
+        lines += [f"{shown(f'{dist} {version}')}: {plural(len(names), 'module')}",
                   *_columns(names)]  # fmt: skip
     return [*lines, f"{RUNTIME}: {plural(len(report.runtime), 'module')}",
             *_columns(report.runtime)]  # fmt: skip
@@ -422,12 +417,12 @@ def _size_lines(sizes: Sizes | None) -> list[str]:
         rows.append(("unreferenced blobs", sizes.unreferenced))
     lines = ["stored bytes (without the trailer):",
              *(f"{_INDENT}{label:<36}{count:>13,}" for label, count in rows)]  # fmt: skip
-    width = max((len(_shown(name)) for name in sizes.distributions), default=0)
+    width = max((len(shown(name)) for name in sizes.distributions), default=0)
     if sizes.distributions:
         head = "".join(f"{part:>13}" for part in PARTS)
         lines.append(f"{_INDENT}{'distribution':<{max(width, 12)}}{head}")
     for name, parts in sizes.distributions.items():
-        lines.append(f"{_INDENT}{_shown(name):<{max(width, 12)}}"
+        lines.append(f"{_INDENT}{shown(name):<{max(width, 12)}}"
                      + "".join(f"{parts[part]:>13,}" for part in PARTS))  # fmt: skip
     return [*lines, f"{_INDENT}{'total':<36}{sizes.total:>13,}"]
 
@@ -436,45 +431,45 @@ def _file_lines(report: Report) -> list[str]:
     if report.files is None:
         return []
     rows = [f"{f.sha256 or '-' * 64}  {'-' if f.size is None else f.size:>10}  "
-            f"{f.kind:<9}  {_shown(f'{f.dist}: {f.path}')}" for f in report.files]  # fmt: skip
+            f"{f.kind:<9}  {shown(f'{f.dist}: {f.path}')}" for f in report.files]  # fmt: skip
     return [f"files: {len(rows)}", *(_INDENT + row for row in rows)]
 
 
 def as_text(report: Report, *, all_modules: bool = False) -> list[str]:
     name, version, revision = _project(report)
-    app_line = " ".join(_shown(part) for part in (name, version) if part)
+    app_line = " ".join(shown(part) for part in (name, version) if part)
     if revision:
-        app_line += f" ({_shown(revision)})"
+        app_line += f" ({shown(revision)})"
     glibc = report.info.get("glibc")
-    glibc_text = f", glibc >= {_shown(glibc)}" if glibc else ""
+    glibc_text = f", glibc >= {shown(glibc)}" if glibc else ""
     lines = [
         f"app        {app_line}",
-        f"built with fsbpyr {_shown(_built_with(report.info))}",
-        f"python     {_shown(report.info.get('python', UNKNOWN))}{glibc_text}",
-        *([f"baseline   glibc {_shown(_baseline(report.info))}"]
+        f"built with fsbpyr {shown(_built_with(report.info))}",
+        f"python     {shown(report.info.get('python', UNKNOWN))}{glibc_text}",
+        *([f"baseline   glibc {shown(_baseline(report.info))}"]
           if "glibc_baseline" in report.info else []),
-        f"uv         {_shown(report.info.get('uv', UNKNOWN))}",
+        f"uv         {shown(report.info.get('uv', UNKNOWN))}",
         f"size       {report.size / 1e6:.1f} MB, {plural(len(report.dists), 'distribution')}",
-        f"compressed {_shown(_compression(report))}",
+        f"compressed {shown(_compression(report))}",
         f"digest     {report.digest}{'' if report.covers_file else ' (payload only)'}"
         + (" verified" if report.verified else ""),
     ]
     if report.sha256:
         lines.append(f"sha256     {report.sha256}")
     if report.toolchain:
-        first, *rest = (_shown(line) for line in report.toolchain)
+        first, *rest = (shown(line) for line in report.toolchain)
         lines += [f"toolchain  {first}", *(f"           {line}" for line in rest)]
     lines += _provenance(report.info)
     lines += _setting_lines(report.info)
     libraries = _system_libraries(report)
     needs = target_needs(libraries, glibc if isinstance(glibc, str) else None)
     if "\n" in report.entrypoint:
-        shown = [f"{_shown(name)} = {_shown(target)}"
+        listed = [f"{shown(name)} = {shown(target)}"
                  for name, target in parse(report.entrypoint).items()]
-        lines += [f"commands   {shown[0]}", *(f"           {line}" for line in shown[1:])]
+        lines += [f"commands   {listed[0]}", *(f"           {line}" for line in listed[1:])]
     else:
-        lines += [f"entry      {_shown(report.entrypoint)}"]
-    lines += [f"needs      {_shown(needs)}"] if needs else []
+        lines += [f"entry      {shown(report.entrypoint)}"]
+    lines += [f"needs      {shown(needs)}"] if needs else []
     lines += [
         f"system libraries: {len(libraries)}",
         *_columns([_library_line(name, entry) for name, entry in libraries.items()]),

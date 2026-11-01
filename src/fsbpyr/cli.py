@@ -1,6 +1,7 @@
-"""Command-line entry point: ``fsbpyr build``, ``inspect``, ``runtime build|list``, ``cache gc``,
-``self update``, ``completion`` and ``man``. The click commands below are the one source of the
-help text, the shell completions and the man page (D40)."""
+"""Command-line entry point: ``fsbpyr build``, ``inspect``, ``key new|trust``, ``sign``, ``verify``,
+``runtime build|list``, ``cache gc``, ``self update``, ``completion`` and ``man``. The click
+commands below are the one source of the help text, the shell completions and the man page
+(D40)."""
 
 import errno
 import functools
@@ -10,9 +11,13 @@ import sys
 import traceback
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 from click.shell_completion import BashComplete, FishComplete, ShellComplete, ZshComplete
+
+if TYPE_CHECKING:
+    from .signing import BuildSigning
 
 DEFAULT_PYTHON = f"{sys.version_info[0]}.{sys.version_info[1]}"  # the runtime of this fsbpyr
 PROG = "fsbpyr"
@@ -136,6 +141,10 @@ def cli(ctx: click.Context) -> None:
                    "`-c CODE` or with a script of the app run as Python, or (--no-...) run the "
                    "app in them, for an app whose own options are named -m or -c; with "
                    "neither, they are refused (exit 70)")  # fmt: skip
+@click.option("--signing-key", metavar="KEY", type=click.Path(path_type=Path),
+              help="sign the output with this `.key` file after the smoke test, writing "
+                   "`OUTPUT.sig` (default: `FSBPYR_SIGNING_KEY`, else unsigned); a key that "
+                   "cannot be used gives a warning and an unsigned build")  # fmt: skip
 @click.option("--smoke/--no-smoke", default=None,
               help="run the new executable once as a smoke test (default) or skip it")  # fmt: skip
 @click.option("--smoke-args", "smoke_args_text", metavar="ARGS",
@@ -169,11 +178,15 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     best_compression: bool | None,
     hints: bool | None,
     interpreter_reexec: bool | None,
+    signing_key: Path | None,
     smoke: bool | None,
     smoke_args_text: str | None,
     strict: bool | None,
     verbose: bool,
 ) -> int:
+    from .signing import take_build_variables  # noqa: PLC0415  keep --version fast
+
+    signing = take_build_variables(signing_key)  # before anything can start a process
     if _unsupported_python():
         return 1
     if fast_compression and best_compression:
@@ -228,7 +241,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
         if chosen != DEFAULT_PYTHON:  # another fsbpyr builds it, given this command line
             args = click.get_current_context().obj  # main() put it there
             return run(chosen, args, lambda message: print(f"fsbpyr: {message}"),
-                       offline=config.offline)
+                       offline=config.offline, signing=signing)
         result = build(project, config, verbose=verbose,
                        log=lambda message: print(f"fsbpyr: {message}"))
     except errors as exc:
@@ -254,7 +267,23 @@ def build_command(  # noqa: PLR0913  click passes every option by name
 
         for line in deploy_recipe(result.output, result.commands):
             print(f"fsbpyr: {line}")
+    _sign_output(result.output, signing)
     return 0
+
+
+def _sign_output(output: Path, request: "BuildSigning") -> None:
+    """Sign what a build wrote, if it is to be signed. Signing is optional for apps: a failure
+    warns, and the build stands."""
+    from .signing import sign_output, warning_lines  # noqa: PLC0415  keep --version fast
+
+    if not request.wanted:
+        return
+    done, why = sign_output(output, request)
+    if why is None:
+        print(f"fsbpyr: {done}")
+        return
+    for line in warning_lines(output, why):
+        print(f"fsbpyr: WARNING {line}", file=sys.stderr)
 
 
 @cli.command("inspect", short_help="show what an executable was built from",
@@ -310,6 +339,108 @@ def _print_licenses(binary: Path) -> int:
         print(f"fsbpyr: error: cannot read {binary}: {exc.strerror or exc}", file=sys.stderr)
         return 1
     return 0
+
+
+@cli.group("key", help="make signing keys, and trust the keys of projects")
+def key_group() -> None:
+    pass
+
+
+@key_group.command("new", short_help="make a signing key",
+                   help="make a signing key: NAME.key (mode 600, keep it secret) and NAME.pub, "
+                        "and print the fingerprint to hand out with NAME.pub. The passphrase "
+                        "comes from `FSBPYR_SIGNING_PASSPHRASE`, else it is asked for twice on "
+                        "the terminal. Nothing that exists is replaced.")  # fmt: skip
+@click.argument("name", metavar="NAME", type=click.Path(path_type=Path))
+def key_new(*, name: Path) -> int:
+    from .signing import SigningError  # noqa: PLC0415  keep --version fast
+    from .signing import key_new as make  # noqa: PLC0415
+
+    try:
+        print_key = make(name)
+    except SigningError as exc:
+        return _signing_error(exc)
+    print(f"wrote {name}.key (keep it secret) and {name}.pub\nfingerprint {print_key}")
+    return 0
+
+
+@key_group.command("trust", short_help="save the key of a project",
+                   help="save PUBKEY as the key that signs PROJECT, once FINGERPRINT, all of it, "
+                        "is the file's. Get both from the publisher, by a way you trust: this is "
+                        "what a pass of `fsbpyr verify` means. The keys of fsbpyr itself are "
+                        "pinned in it.")  # fmt: skip
+@click.argument("project", metavar="PROJECT")
+@click.argument("pubkey", metavar="PUBKEY", type=click.Path(path_type=Path))
+@click.argument("fingerprint", metavar="FINGERPRINT")
+@click.option("--replace", is_flag=True, help="replace another key saved for PROJECT")
+def key_trust(*, project: str, pubkey: Path, fingerprint: str, replace: bool) -> int:
+    from .signing import SigningError  # noqa: PLC0415  keep --version fast
+    from .signing import key_trust as save  # noqa: PLC0415
+
+    try:
+        done = save(project, pubkey, fingerprint, replace=replace)
+    except SigningError as exc:
+        return _signing_error(exc)
+    if done.unchanged:
+        print(f"{done.project} already has this key, {done.key}")
+    elif done.replaced:
+        print(f"replaced the key of {done.project}: {done.replaced} -> {done.key}")
+    else:
+        print(f"trusted the key of {done.project}: {done.key}")
+    return 0
+
+
+@cli.command("sign", short_help="sign a file, writing FILE.sig",
+             help="sign FILE, writing FILE.sig beside it; the new signature is checked first, and "
+                  "nothing that exists is replaced. For an executable fsbpyr built, the project "
+                  "comes from its build info; for any other file `--project` names it. The "
+                  "passphrase comes from `FSBPYR_SIGNING_PASSPHRASE`, else it is asked for on "
+                  "the terminal.")  # fmt: skip
+@click.argument("file", metavar="FILE", type=click.Path(path_type=Path))
+@click.option("--project", metavar="P", help="the project FILE belongs to; for an executable "
+              "fsbpyr built it must be the one in its build info")  # fmt: skip
+@click.option("--signing-key", metavar="KEY", type=click.Path(path_type=Path),
+              help="the `.key` file (default: `FSBPYR_SIGNING_KEY`)")  # fmt: skip
+def sign_command(*, file: Path, project: str | None, signing_key: Path | None) -> int:
+    from .signing import SigningError, sign, signing_key_path  # noqa: PLC0415  fast --version
+
+    try:
+        written, name, print_key = sign(file, project=project, key=signing_key_path(signing_key))
+    except SigningError as exc:
+        return _signing_error(exc)
+    print(f"signed {file} as {name} with key {print_key}\nwrote {written}")
+    return 0
+
+
+@cli.command("verify", short_help="check a file's signature",
+             help="check FILE against the trusted key of its project: exit 0 and VERIFIED, exit 1 "
+                  "and NOT VERIFIED, exit 2 when it cannot be told (no trusted key, a project "
+                  "not named). It uses FILE.sig, else a signed `SHA256SUMS` beside FILE that "
+                  "lists it; a link is checked as the file it leads to. A pass means that the "
+                  "holder of the trusted key signed exactly this file, as the project printed. It "
+                  "does not mean that the app is safe, or the newest.")  # fmt: skip
+@click.argument("file", metavar="FILE", type=click.Path(path_type=Path))
+@click.option("--project", metavar="P", help="FILE must be this project's; whoever expects a "
+              "certain app gives this, or a genuine file of any trusted project "
+              "passes")  # fmt: skip
+def verify_command(*, file: Path, project: str | None) -> int:
+    from .signing import NotVerified, SigningError, verify  # noqa: PLC0415  keep --version fast
+
+    try:
+        print(verify(file, project).line())
+    except NotVerified as exc:
+        print(f"NOT VERIFIED: {exc}", file=sys.stderr)
+        return 1
+    except SigningError as exc:
+        return _signing_error(exc)
+    return 0
+
+
+def _signing_error(exc: Exception) -> int:
+    """A usage or setup error of ``key``, ``sign`` or ``verify``: exit 2, as usage errors. 1 means
+    NOT VERIFIED only."""
+    print(f"fsbpyr: error: {exc}", file=sys.stderr)
+    return 2
 
 
 @cli.group("runtime", help="manage runtimes (native stub + stdlib)")
@@ -481,6 +612,18 @@ EXAMPLES = (
      "Show what an executable was built from, and recompute its digest."),
     ("fsbpyr inspect --json --all-modules dist/mytool",
      "The same report as JSON, with every module listed."),
+    ("fsbpyr key new ~/keys/mytool",
+     "Make a signing key: `mytool.key`, to keep secret, and `mytool.pub`, to hand out with the "
+     "fingerprint it prints."),
+    ("fsbpyr build --signing-key ~/keys/mytool.key",
+     "Build and sign: it asks for the passphrase after the smoke test, and writes `dist/mytool` "
+     "and `dist/mytool.sig`."),
+    ("fsbpyr sign --project mytool mytool-docs.tar.gz",
+     "Sign any file as the project's."),
+    ("fsbpyr key trust mytool mytool.pub SHA256:64-HEX-DIGITS",
+     "Trust the key a publisher handed out, after checking all of its fingerprint."),
+    ("fsbpyr verify --project mytool mytool",
+     "Check that the file is the one the holder of that key signed."),
     ("fsbpyr runtime build",
      "Build the runtime that fsbpyr needs when it runs from a checkout or a wheel: once, with "
      "clang and lld 23 or newer."),
