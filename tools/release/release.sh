@@ -11,8 +11,9 @@
 # It tags and builds (release-assets.sh: the audit, the tag, release.yml), waits for el8.yml, signs
 # and publishes (release-sign.sh, which shows what it will sign, asks once and takes the passphrase
 # once), checks the release as its users get it (make release-check) and publishes the wiki (make
-# wiki-publish). Run it again after any stop: what is done is left out. The EL8 stubs are outside
-# the release gate, so a failed el8.yml leaves the release to go out without them.
+# wiki-publish), and GitLab follows (mirror.sh). Run it again after any stop: what is done is left
+# out. The EL8 stubs are outside the release gate, so a failed el8.yml leaves the release to go out
+# without them.
 #
 # The release key's file comes from KEY, or FSBPYR_RELEASE_KEY_FILE, or is asked for when it is
 # needed. FSBPYR_RELEASE_WATCH_WAIT: how many seconds to wait for a workflow run to show up
@@ -67,7 +68,7 @@ draft_left() {
     return 1
 }
 
-step "1/5 Tag and build $TAG"
+step "1/6 Tag and build $TAG"
 if [ -n "$(tag_on_github "$TAG")" ]; then
     echo "$TAG is on GitHub: going on from there"
     run=$(run_of release.yml) || die "$TAG has no release.yml run"
@@ -77,7 +78,7 @@ else
     bash tools/release/release-assets.sh "$VERSION"
 fi
 
-step "2/5 Wait for the EL8 stubs"
+step "2/6 Wait for the EL8 stubs"
 if run=$(run_of el8.yml) && bash tools/release/follow-run.sh "$run"; then
     echo "el8.yml passed"
 else
@@ -85,7 +86,7 @@ else
     echo "         Once a run has passed: make release-sign KEY=PATH" >&2
 fi
 
-step "3/5 Sign and publish"
+step "3/6 Sign and publish"
 if draft_left; then
     key=${FSBPYR_RELEASE_KEY_FILE:-}
     if [ -z "$key" ]; then
@@ -97,11 +98,14 @@ else
     echo "nothing is left to sign"
 fi
 
-step "4/5 Check it as users get it"
+step "4/6 Check it as users get it"
 make --no-print-directory release-check VERSION="$VERSION"
 
-step "5/5 Publish the wiki"
+step "5/6 Publish the wiki"
 make --no-print-directory wiki-publish
+
+step "6/6 GitLab follows"
+bash tools/release/mirror.sh
 
 printf '\nReleased fsbpyr %s\n' "$TAG"
 gh release view "$TAG" --repo "$REPOSITORY" --json url --jq .url 2>/dev/null || true

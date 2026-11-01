@@ -53,7 +53,7 @@ class Tree:
         tools.mkdir(parents=True)
         for name in ("release.sh", "version-files.sh"):
             shutil.copy2(ROOT / "tools" / "release" / name, tools / name)
-        for name in ("release-assets.sh", "release-sign.sh"):
+        for name in ("release-assets.sh", "release-sign.sh", "mirror.sh"):
             (tools / name).write_text(PART)
         (tools / "follow-run.sh").write_text(FAKE_FOLLOW)
         for name, text in (("gh", FAKE_GH), ("make", FAKE_MAKE)):
@@ -101,10 +101,10 @@ def tree(tmp_path: Path) -> Tree:
 
 WHOLE = ["release-assets.sh 1.2.0", "follow-run.sh 2", "release-sign.sh /key/k.key 1.2.0",
          "make --no-print-directory release-check VERSION=1.2.0",
-         "make --no-print-directory wiki-publish"]  # fmt: skip
+         "make --no-print-directory wiki-publish", "mirror.sh "]  # fmt: skip
 
 
-def test_it_tags_waits_signs_checks_and_publishes_the_wiki_in_that_order(tree: Tree) -> None:
+def test_it_tags_waits_signs_checks_publishes_and_mirrors_in_that_order(tree: Tree) -> None:
     done = tree.run()
 
     assert done.returncode == 0, done.stderr
@@ -155,6 +155,15 @@ def test_a_failed_wiki_fails_the_command(tree: Tree) -> None:
 
     assert done.returncode != 0
     assert "Released fsbpyr" not in done.stdout
+    assert tree.parts() == WHOLE[:5]
+
+
+def test_a_failed_mirror_fails_the_command(tree: Tree) -> None:
+    done = tree.run(FAIL="mirror.sh")
+
+    assert done.returncode != 0
+    assert "Released fsbpyr" not in done.stdout
+    assert tree.parts() == WHOLE
 
 
 def test_a_failed_build_found_on_going_on_stops_it(tree: Tree) -> None:
