@@ -70,27 +70,61 @@ own machine and pushes only the signature, so someone who steals the GitHub acco
 that no fsbpyr accepts. This rests on GitHub itself being sound; if it is not, far more than fsbpyr
 is at stake.
 
-A release is one command, on main, at the release commit:
+A release is one command, on main, at the release commit, and it asks nothing:
 
 ```console
 $ git checkout main && git pull --ff-only hub main    # after looking at what you pull
-$ make release KEY=/media/key/release-k.key
+$ make release
 ```
 
-Set `FSBPYR_RELEASE_KEY_FILE` once and you can leave `KEY` out; with neither, it asks when it needs
-the key, since a build takes a while and the medium need not be plugged in before. It never pulls:
-a pull in the command would sign whatever GitHub's main says.
+It takes what it needs from two variables, which you set once:
 
-It runs the audit, tags and pushes, waits for `release.yml` and `el8.yml`, shows what it will sign,
-asks once and takes the passphrase once, signs both releases, publishes them, checks the result as
-users get it (`make release-check`) and publishes the wiki. Run it again after any stop, such as a
-mistyped passphrase: what is done is left out. Nothing is published until both are signed. A failed
+| Variable | What it names |
+|---|---|
+| `FSBPYR_RELEASE_KEY_FILE` | The release key's file (`KEY=PATH` on the command line overrides it). |
+| `FSBPYR_RELEASE_PASSPHRASE_FILE` | The absolute path of a file that holds its passphrase, or of a program that prints it on standard output. |
+
+A file that can be executed is run, with nothing on its standard input; any other file is read. The
+passphrase is one line. The file must be yours or root's, nobody else may write it, a file that
+holds the passphrase must be mode 600 or tighter, and neither the key nor this file may be inside
+the checkout. A file beside the key adds no protection against someone with your account, so
+prefer a program that asks something else, such as a password manager or a hardware token.
+
+Both are checked before anything is tagged: the key must open with the passphrase and be one that
+this tree pins. It never pulls: a pull in the command would sign whatever GitHub's main says.
+
+It runs the audit, tags and pushes, waits for `release.yml` and `el8.yml`, signs both releases,
+publishes them, checks the result as
+users get it (`make release-check`), publishes the wiki and brings GitLab along (`make mirror`). Run
+it again after any stop, such as a mistyped passphrase: what is done is left out. Nothing is
+published until both are signed. A failed
 `el8.yml` does not hold the release back: it says so, and `make release-sign` signs the companion
 once a run has passed.
 
+What every step printed also goes into a report, in JSON, for reading later. It is rewritten at
+each step, so it shows how far a run got however that run ended. Reports stay under
+`$XDG_STATE_HOME/fsbpyr-release/reports` (or `FSBPYR_RELEASE_STATE`), one per run, named after the tag and the
+time, and `latest.json` leads to the newest:
+
+```console
+$ cd ~/.local/state/fsbpyr-release/reports
+$ jq '{tag, commit, result, failed_step, warnings}' latest.json
+$ jq -r '.steps[] | select(.result != "success") | .title, .output[]' latest.json
+```
+
+`result` is `running`, `success`, `failed` or `interrupted`. Each step has its `name`, `result`,
+`exit_code`, times and `output`, one string per line. A run that was killed outright stays at
+`running`, with `running_step` saying where.
+
 Each part is a target of its own: `make release-assets`, `make release-sign KEY=PATH`, `make
-release-check`, `make wiki-publish`. Do not merge into main between the tag and the signature:
-`make release-sign` refuses while GitHub's main is not your commit.
+release-check`, `make wiki-publish`, `make mirror`. Do not merge into main between the tag and the
+signature: `make release-sign` refuses while GitHub's main is not your commit.
+
+After a merge that no release follows, `make mirror` on main, once you have pulled and looked, is
+all there is to do. GitLab's main and release tags follow, and a branch goes from both remotes when
+main holds every commit of it. It pushes your checkout's main, not GitHub's, and only once GitHub
+holds the same: a commit someone slipped into one remote reaches no second one. If the two disagree
+about main or a tag, it stops before the first push. Running it again changes nothing.
 
 `make release-sign` refuses unless your HEAD, GitHub's main, GitHub's tag and the attestation of the
 sums file all name one commit, every job of the attested run ran on GitHub's machines, the tree is

@@ -18,7 +18,7 @@
 # they pulled into main.
 #
 # The draft is read again before the signature is uploaded and before it is published: whoever
-# holds the account has as long as the prompts take.
+# holds the account has as long as signing takes.
 #
 # The audit runs first, and again after publishing, when the record has the new release. Exit
 # status: 0 done, 1 refused, 2 usage.
@@ -28,8 +28,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 # shellcheck source=version-files.sh
 . tools/release/version-files.sh
-# shellcheck source=confirm.sh
-. tools/release/confirm.sh
+# shellcheck source=passphrase.sh
+. tools/release/passphrase.sh
 
 REPOSITORY=${FSBPYR_RELEASE_REPO:-devitops-com/fsbpyr}
 BRANCH=main
@@ -49,6 +49,7 @@ EL8_TAG=el8-$TAG
 case "$(realpath -- "$KEY")" in
     "$ROOT"/*) die "$KEY is inside this checkout: a release key is never kept in the repository" ;;
 esac
+read_passphrase
 
 # The commit a name has on GitHub, by the whole name: ls-remote's patterns match the tail of a ref,
 # so that a tag refs/tags/x/refs/tags/vX.Y.Z would answer for vX.Y.Z.
@@ -180,17 +181,10 @@ summary_of() { # release, sums file
 }
 
 # Once, for all the signing of this run. From no environment: it goes to the signing alone.
-passphrase() {
-    typed=${FSBPYR_SIGNING_PASSPHRASE-}
-    [ -z "$typed" ] || return 0
-    { : </dev/tty; } 2>/dev/null || die "no passphrase: set FSBPYR_SIGNING_PASSPHRASE or run this on a terminal"
-    IFS= read -rsp "Passphrase of $KEY: " typed </dev/tty
-    echo >&2
-}
 
 sign_sums() { # release, sums file
     local file=$WORK/$1/$2 previous
-    FSBPYR_SIGNING_PASSPHRASE=$typed bash tools/release/release-signing.sh sign "$KEY" "$file"
+    FSBPYR_SIGNING_PASSPHRASE=$passphrase bash tools/release/release-signing.sh sign "$KEY" "$file"
     previous=$(bash tools/release/previous-release.sh "$TAG")
     bash tools/release/check-signature.sh . "$file" "$TAG" "$previous"
 }
@@ -225,7 +219,7 @@ esac
 # companion that does not pass, leaves nothing half done.
 [ "$main_state" != draft ] || check_release "$TAG" SHA256SUMS release.yml
 [ "$el8_state" != draft ] || check_release "$EL8_TAG" SHA256SUMS-glibc2.28 el8.yml
-printf '\nAbout to sign and publish, on %s:\n' "$REPOSITORY"
+printf '\nSigning and publishing, on %s:\n' "$REPOSITORY"
 [ "$main_state" != draft ] || summary_of "$TAG" SHA256SUMS
 [ "$el8_state" != draft ] || summary_of "$EL8_TAG" SHA256SUMS-glibc2.28
 cat <<SUMMARY
@@ -233,12 +227,7 @@ cat <<SUMMARY
             your HEAD, GitHub's $BRANCH, GitHub's $TAG and the attestation all name it,
             and every job of its run ran on GitHub's machines
   key     : $KEY
-
-This signs with the key on this machine and uploads only the signature. Publishing is final:
-a published release cannot be changed.
 SUMMARY
-confirm_or_abort
-passphrase
 [ "$main_state" != draft ] || sign_sums "$TAG" SHA256SUMS
 [ "$el8_state" != draft ] || sign_sums "$EL8_TAG" SHA256SUMS-glibc2.28
 [ "$main_state" != draft ] || publish_release "$TAG" SHA256SUMS true

@@ -561,8 +561,8 @@ code.
 2026-10-31: too many steps to remember). It never pulls: a pull in the command would sign whatever
 GitHub's main says. `make release-assets` tags main's HEAD, after the audit has passed, and CI
 makes the drafts; it waits for both workflows; `make release-sign KEY=PATH`, below, signs and
-publishes; `make release-check` and `make wiki-publish` end it. Run again after any stop, it leaves
-out what is done. A failed el8.yml leaves the release to go out without its stubs, which are
+publishes; `make release-check`, `make wiki-publish` and `make mirror` end it. Run again after any
+stop, it leaves out what is done. A failed el8.yml leaves the release to go out without its stubs, which are
 outside the release gate.
 
 `make release-sign`:
@@ -591,9 +591,12 @@ outside the release gate.
 4. **The files.** The attested sums vouch for the rest. Every file of the draft must be listed
    there with the digest it has, every listed file must be there (for a companion, which publishes
    each stub's `.xz` only, the stubs themselves are not), and no signature may be on the draft yet.
-5. **You.** It checks both drafts first, prints the releases, the commit, the number of files and
-   the digests of the sums, asks once, and takes K's passphrase once, on the terminal. A companion
-   that does not pass stops the release too.
+5. **You.** It checks both drafts first, then prints the releases, the commit, the number of files
+   and the digests of the sums. It asks nothing (owner, 2026-11-02): KEY or
+   `FSBPYR_RELEASE_KEY_FILE` names K, and `FSBPYR_RELEASE_PASSPHRASE_FILE` a file that holds its
+   passphrase or a program that prints it, and `make release` checks both before it tags. A
+   passphrase kept beside the key no longer protects it from someone with the admin's account. A
+   companion that does not pass stops the release too.
 6. **The signature.** Both sums files are signed before either is published, so that a wrong
    passphrase leaves nothing half done. `release-signing.sh sign`, then a check as the clients will,
    with `check-signature.sh`:

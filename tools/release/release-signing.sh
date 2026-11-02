@@ -10,6 +10,7 @@
 #     bash tools/release/release-signing.sh sign KEY FILE        FILE.sig, signed as fsbpyr
 #     bash tools/release/release-signing.sh verify FILE PUB...   FILE.sig against any PUB; a PUB
 #                                                                that is not a .pub is skipped
+#     bash tools/release/release-signing.sh check-key KEY PUB... KEY opens, and is one of PUB
 #
 # The files, as fsbpyr's `key new`, `sign` and `verify` write and read them (docs/signing.md §2):
 #   NAME.key  two encrypted PKCS#8 PEM blocks under one passphrase, Ed25519 then ML-DSA-65;
@@ -41,6 +42,7 @@ usage() {
 usage: release-signing.sh new-key NAME
        release-signing.sh sign KEY FILE
        release-signing.sh verify FILE PUB...
+       release-signing.sh check-key KEY PUB...
 EOF
     exit 2
 }
@@ -161,6 +163,37 @@ new_key() {
     printf 'wrote %s (keep it secret) and %s\nfingerprint %s\n' "$name.key" "$name.pub" "$(fingerprint "$name.pub")"
 }
 
+# open_half BLOCK KEY PUB: one encrypted block of KEY opens with the passphrase; its public key goes
+# after PUB.
+open_half() {
+    # the label says encrypted, and only this can tell: a plain key ignores any passphrase
+    openssl asn1parse -in "$1" 2>/dev/null | grep ':PBES2' >/dev/null ||
+        die 2 "$2 does not hold two encrypted keys and nothing else"
+    openssl pkey -in "$1" -passin env:FSBPYR_SIGNING_PASSPHRASE -pubout >>"$3" 2>/dev/null ||
+        die 2 "cannot open $2: wrong passphrase?"
+}
+
+check_key_pinned() {
+    local key=$1 pub
+    shift
+    [[ -f "$key" && -r "$key" ]] || die 2 "cannot read the key $key"
+    check_key "$key" || die 2 "$key does not hold two encrypted keys and nothing else"
+    passphrase old
+    tmp=$(mktemp -d) || die 2 'cannot make a temporary directory'
+    split_pem "$key" "$tmp/k.0" "$tmp/k.1"
+    : >"$tmp/pub"
+    open_half "$tmp/k.0" "$key" "$tmp/pub"
+    open_half "$tmp/k.1" "$key" "$tmp/pub"
+    check_public "$tmp/pub" "$tmp" || exit 2
+    for pub in "$@"; do
+        if cmp -s "$tmp/pub" "$pub"; then
+            printf '%s opens, and is the key of %s\n' "$key" "$pub"
+            return 0
+        fi
+    done
+    die 1 "$key (key $(fingerprint "$tmp/pub")) is none of $*"
+}
+
 sign() {
     local key=$1 file=$2 sig=$2.sig i
     [[ -f "$key" && -r "$key" ]] || die 2 "cannot read the key $key"
@@ -173,11 +206,7 @@ sign() {
     split_pem "$key" "$tmp/k.0" "$tmp/k.1"
     : >"$tmp/pub"
     for i in 0 1; do
-        # the label says encrypted, and only this can tell: a plain key ignores any passphrase
-        openssl asn1parse -in "$tmp/k.$i" 2>/dev/null | grep ':PBES2' >/dev/null ||
-            die 2 "$key does not hold two encrypted keys and nothing else"
-        openssl pkey -in "$tmp/k.$i" -passin env:FSBPYR_SIGNING_PASSPHRASE -pubout >>"$tmp/pub" 2>/dev/null ||
-            die 2 "cannot open $key: wrong passphrase?"
+        open_half "$tmp/k.$i" "$key" "$tmp/pub"
         openssl pkeyutl -sign -rawin -inkey "$tmp/k.$i" -passin env:FSBPYR_SIGNING_PASSPHRASE \
             -in "$tmp/statement" -out "$tmp/s.$i"
     done
@@ -229,5 +258,6 @@ case "$command:$#" in
     new-key:1) need_tools; new_key "$1" ;;
     sign:2) need_tools; sign "$1" "$2" ;;
     verify:*) (($# >= 2)) || usage; need_tools; verify "$@" ;;
+    check-key:*) (($# >= 2)) || usage; need_tools; check_key_pinned "$@" ;;
     *) usage ;;
 esac

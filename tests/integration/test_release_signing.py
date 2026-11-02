@@ -756,3 +756,55 @@ def test_the_first_signed_release_is_named_as_x_y_z() -> None:
     text = (ROOT / "tools" / "release" / "first-signed-release").read_text()
 
     assert text.count("\n") == 1 and text.strip().count(".") == 2
+
+
+# --- check-key: before a release tags anything --------------------------------------------------
+
+
+def test_a_key_that_opens_and_is_listed_passes(k: Key, r: Key) -> None:
+    done = script("check-key", k.key, r.pub, k.pub)
+
+    assert done.returncode == 0, done.stderr
+    assert str(k.pub) in done.stdout
+
+
+def test_a_key_that_is_not_listed_does_not_pass(k: Key, r: Key) -> None:
+    done = script("check-key", k.key, r.pub)
+
+    assert done.returncode == 1
+    assert "is none of" in done.stderr
+
+
+def test_a_wrong_passphrase_does_not_pass_the_key_check(k: Key) -> None:
+    done = script("check-key", k.key, k.pub, passphrase="not the passphrase")  # noqa: S106
+
+    assert done.returncode == 2
+    assert "wrong passphrase?" in done.stderr
+
+
+def test_a_key_file_of_junk_does_not_pass_the_key_check(tmp_path: Path, k: Key) -> None:
+    junk = tmp_path / "junk.key"
+    junk.write_text("not a key\n")
+
+    done = script("check-key", junk, k.pub)
+
+    assert done.returncode == 2
+    assert "does not hold two encrypted keys" in done.stderr
+
+
+def test_a_good_key_with_text_around_it_does_not_pass_the_key_check(tmp_path: Path, k: Key) -> None:
+    """openssl's reader would skip the text: this file is no key file, as sign says too."""
+    wrapped = tmp_path / "wrapped.key"
+    wrapped.write_bytes(b"some text\n" + k.key.read_bytes())
+
+    done = script("check-key", wrapped, k.pub)
+
+    assert done.returncode == 2
+    assert "does not hold two encrypted keys" in done.stderr
+
+
+def test_the_key_check_leaves_nothing_behind(tmp_path: Path, k: Key) -> None:
+    done = script("check-key", k.key, k.pub, env={"TMPDIR": str(tmp_path)})
+
+    assert done.returncode == 0, done.stderr
+    assert list(tmp_path.iterdir()) == []

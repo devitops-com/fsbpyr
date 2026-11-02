@@ -42,7 +42,7 @@ else
 WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-prereqs test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm check check-c release-prep release release-assets release-sign release-audit release-check wiki-lint wiki-build wiki-publish clean
+.PHONY: help bootstrap build install uninstall test test-ci test-prereqs test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm check check-c release-prep release release-assets release-sign release-audit release-check mirror wiki-lint wiki-build wiki-publish clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -255,14 +255,15 @@ check-c: ## Static analysis of the launcher's C sources (clang --analyze; inform
 # A release has two parts. release-prep ends a branch with the release commit (VERSION=X.Y.Z sets
 # the version in it; without, the current version is released), so that the full suite tests
 # exactly what is released once the branch is merged. release then does the rest, on the admin's
-# machine, on main at that commit: it never pulls, and it can be run again after any stop. Its
+# machine, on main at that commit: it asks nothing, it never pulls, it leaves a JSON report under
+# $XDG_STATE_HOME/fsbpyr-release/reports, and it can be run again after any stop. Its
 # parts are targets too: release-assets tags and builds, release-sign signs and publishes,
-# release-check checks. Only a VERSION or KEY given on the make command line counts: an exported
-# one (another tool's) is ignored.
+# release-check checks, mirror brings GitLab along. Only a VERSION or KEY given on the make command
+# line counts: an exported one (another tool's) is ignored.
 release-prep: ## End this branch with the release commit: set the version (VERSION=X.Y.Z), promote CHANGELOG
 	@bash tools/release/prepare.sh$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
 
-release: ## The whole release: tag, build, sign with your key, publish, check, publish the wiki
+release: ## The whole release: tag, build, sign with your key, publish, check, publish the wiki, mirror
 	@$(if $(filter command line,$(origin KEY)),FSBPYR_RELEASE_KEY_FILE='$(KEY)' )bash tools/release/release.sh$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
 
 release-assets: ## Only tag main's tested HEAD; CI builds and attests it and leaves a draft
@@ -274,6 +275,10 @@ release-sign: ## Only check the draft against your commit, sign it with KEY=PATH
 
 release-audit: ## Compare GitHub with what this machine recorded: tags, releases, settings
 	@bash tools/release/audit.sh
+
+# After a merge that no release follows; make release ends with this.
+mirror: ## GitLab follows main and the release tags; branches main holds go from GitHub and GitLab
+	@bash tools/release/mirror.sh
 
 # After `make release`, once the release is published: checks it as its users get it
 # (tools/release/check-release.sh says what), in a directory under TESTTMP and in the tests'

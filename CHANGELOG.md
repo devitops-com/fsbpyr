@@ -11,6 +11,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Added
+- **`make mirror`** brings GitLab along: its main and the release tags follow this checkout's main
+  once GitHub holds the same, whatever disagrees stops it before the first push, and a branch goes
+  from both remotes once main holds every commit of it. `make release` ends with it.
+- **`make release` leaves a report in JSON**, with what every step printed and how the run ended,
+  under `$XDG_STATE_HOME/fsbpyr-release/reports`, where `latest.json` leads to the newest.
 - **`fsbpyr verify` takes its inputs by name.** `--signature` and `--checksums`, or
   `FSBPYR_VERIFY_SIGNATURE` and `FSBPYR_VERIFY_CHECKSUMS`, for any file. What is named is the only
   way tried: nothing falls back.
@@ -19,6 +24,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   to the wiki.
 
 ### Changed
+- **`make release` asks nothing.** `FSBPYR_RELEASE_KEY_FILE` names the key and
+  `FSBPYR_RELEASE_PASSPHRASE_FILE` a file that holds its passphrase, or a program that prints it.
+  Both are checked before anything is tagged. `FSBPYR_RELEASE_ASSUME_YES` is gone.
 - The Security chapter says how trust works and how far each check goes: fsbpyr on itself, a copy you
   already checked, system tools (a full verification needs OpenSSL 3.5 or newer), an attestation and
   your own build.
