@@ -4,14 +4,106 @@ fsbpyr is tested on a corpus of 65 small applications in
 [`tests/corpus`](../tests/corpus). Each one uses
 real libraries the way real code does. The corpus test builds each app, runs its commands both
 in a virtual environment and as the built executable, and requires the same exit code, output
-and errors. This page shows how to try a corpus app yourself, walks through six of them, maps every
-app to the use case it stands for, and lists the examples of scripts, several commands and
-other locks that the other pages take from fsbpyr's test fixtures and end-to-end tests.
+and errors. This page shows how to sign an app and check it, how to check and update fsbpyr itself
+and how to try a corpus app yourself, walks through six of them, maps every app to the use case it
+stands for, and lists the examples of scripts, several commands and other locks that the other
+pages take from fsbpyr's test fixtures and end-to-end tests.
 
 All outputs on this page and the other User Guide pages come from fsbpyr 0.28.0 (the released
 `fsbpyr-3.14-x86_64-linux-gnu`) with uv 0.13.6, the uv the release was built with, on x86-64
 Linux, on 2026-10-27, unless they say otherwise. Paths are shortened to `...`, and `...` alone
 stands for lines left out.
+
+## Signing an app and checking it
+
+All of this takes fsbpyr and nothing else. The outputs come from the code after 0.29.0, on
+2026-11-02. [`tests/fixtures/projects/hello`](../tests/fixtures/projects/hello) is a small app; copy
+it out of a checkout:
+
+```sh
+git clone --depth 1 --branch v@VERSION@ https://github.com/devitops-com/fsbpyr.git
+cp -r fsbpyr/tests/fixtures/projects/hello . && cd hello
+```
+
+**As the publisher**, make a key once. Your own fingerprint will differ:
+
+```console
+$ fsbpyr key new hello
+Passphrase:
+Passphrase again:
+wrote hello.key (keep it secret) and hello.pub
+fingerprint SHA256:9d78f931bb685cbcdbf114803272eb638daa3770b8d8f9cd0a3198b27f882b3c
+```
+
+Then build with the key. The build asks for the passphrase after its smoke test:
+
+```console
+$ fsbpyr build --python 3.14 --signing-key hello.key
+...
+fsbpyr: built .../hello/dist/hello (27.9 MB, entry hello.cli:main, glibc >= 2.34)
+fsbpyr: target needs: glibc >= 2.34
+Passphrase:
+fsbpyr: signed .../hello/dist/hello with key SHA256:9d78f931bb685cbcdbf114803272eb638daa3770b8d8f9cd0a3198b27f882b3c: .../hello/dist/hello.sig
+```
+
+Publish `dist/hello` and `dist/hello.sig`. Hand out `hello.pub` and the fingerprint by a way your
+users trust.
+
+**As a user**, save the key once, with the whole fingerprint, and check each download:
+
+```console
+$ fsbpyr key trust hello hello.pub SHA256:9d78f931bb685cbcdbf114803272eb638daa3770b8d8f9cd0a3198b27f882b3c
+trusted the key of hello: SHA256:9d78f931bb685cbcdbf114803272eb638daa3770b8d8f9cd0a3198b27f882b3c
+$ fsbpyr verify --project hello dist/hello
+VERIFIED  dist/hello  (project hello, Ed25519 + ML-DSA-65, key SHA256:9d78f931bb685cbcdbf114803272eb638daa3770b8d8f9cd0a3198b27f882b3c)
+```
+
+**When a check fails**, the exit code is 1. Here one byte of the app is changed, and then the
+signature is taken away:
+
+```console
+$ printf '\377' | dd of=dist/hello bs=1 seek=4096 conv=notrunc status=none
+$ fsbpyr verify --project hello dist/hello
+NOT VERIFIED: dist/hello: the signature does not match the trusted key of hello
+$ rm dist/hello.sig
+$ fsbpyr verify --project hello dist/hello
+NOT VERIFIED: dist/hello: no hello.sig, and no signed SHA256SUMS beside it lists it
+```
+
+All the commands, options and messages are on
+[Signing your own apps](User-Security.md#signing-your-own-apps).
+
+## Checking and updating fsbpyr
+
+To check your fsbpyr, name it. It downloads what it needs from its own release, and tells you what
+the result is worth:
+
+```console
+$ fsbpyr verify ~/.local/bin/fsbpyr
+fsbpyr: downloading SHA256SUMS and SHA256SUMS.sig of v0.29.0
+VERIFIED  .../.local/bin/fsbpyr  (project fsbpyr, listed as fsbpyr-3.14-x86_64-linux-gnu in SHA256SUMS of v0.29.0, Ed25519 + ML-DSA-65, key SHA256:ffb630c522fdb1d0681f2e5027f6822d5c65b11e86539a83783382028a4efe27)
+fsbpyr: WARNING ****************************************************************
+fsbpyr: WARNING  This check ran inside this fsbpyr, with the keys built into
+...
+```
+
+A check inside fsbpyr cannot show that this fsbpyr is genuine. To check it with tools it does not
+control, see [Checking an installed fsbpyr](User-Security.md#checking-an-installed-fsbpyr).
+
+With no network, download the two files elsewhere and name them. Then nothing is downloaded, and
+there is no warning:
+
+```console
+$ fsbpyr verify --checksums SHA256SUMS --signature SHA256SUMS.sig ~/.local/bin/fsbpyr
+VERIFIED  .../.local/bin/fsbpyr  (project fsbpyr, listed as fsbpyr-3.14-x86_64-linux-gnu in SHA256SUMS, Ed25519 + ML-DSA-65, key SHA256:ffb630c522fdb1d0681f2e5027f6822d5c65b11e86539a83783382028a4efe27)
+```
+
+To update, run one command, which checks the release before anything from it runs. Its output is
+on [Updating fsbpyr](User-Security.md#updating-fsbpyr):
+
+```sh
+fsbpyr self update
+```
 
 ## Trying a corpus app
 

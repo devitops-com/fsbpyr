@@ -488,8 +488,11 @@ releases are, not where your publisher keeps theirs.
 | `NOT VERIFIED: myapp: the signed SHA256SUMS does not list it` | 1 |
 | `cannot read path/myapp.sig: No such file or directory` | 2 |
 | `no trusted key for myapp: get the publisher's key and its fingerprint, then: fsbpyr key trust myapp KEY.pub SHA256:…` | 2 |
+| `myapp has no build info: name its project with --project` | 2 |
 
-Exit 2 is a usage or setup error: nothing was said about the file.
+Exit 2 is a usage or setup error: nothing was said about the file. Build info is at the end of the
+file, so a file changed there can end in the last line of this table, and with `--project` in NOT
+VERIFIED.
 
 A link is checked as the file it leads to: a command link of a multi-command app needs no `.sig` of
 its own. Without a `FILE.sig`, a signed `SHA256SUMS` or `SHA256SUMS-glibc2.28` beside the file
