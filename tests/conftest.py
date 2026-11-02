@@ -27,6 +27,7 @@ from fsbpyr.project import Project
 from fsbpyr.runtime import pins
 from tests.support import requires, wheels
 
+pytest_plugins = ("tests.support.worker_venvs",)
 # The glibc baseline the tests build for: the EL8 test mode when FSBPYR_TEST_GLIBC=2.28 (read
 # again by tests/support/baseline.py; not imported, since tests/unit/test_requires.py runs this
 # file outside the package)
