@@ -539,8 +539,8 @@ code.
 2026-10-31: too many steps to remember). It never pulls: a pull in the command would sign whatever
 GitHub's main says. `make release-assets` tags main's HEAD, after the audit has passed, and CI
 makes the drafts; it waits for both workflows; `make release-sign KEY=PATH`, below, signs and
-publishes; `make release-check` and `make wiki-publish` end it. Run again after any stop, it leaves
-out what is done. A failed el8.yml leaves the release to go out without its stubs, which are
+publishes; `make release-check`, `make wiki-publish` and `make mirror` end it. Run again after any
+stop, it leaves out what is done. A failed el8.yml leaves the release to go out without its stubs, which are
 outside the release gate.
 
 `make release-sign`:

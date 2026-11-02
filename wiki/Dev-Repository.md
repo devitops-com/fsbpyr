@@ -83,14 +83,21 @@ a pull in the command would sign whatever GitHub's main says.
 
 It runs the audit, tags and pushes, waits for `release.yml` and `el8.yml`, shows what it will sign,
 asks once and takes the passphrase once, signs both releases, publishes them, checks the result as
-users get it (`make release-check`) and publishes the wiki. Run it again after any stop, such as a
-mistyped passphrase: what is done is left out. Nothing is published until both are signed. A failed
+users get it (`make release-check`), publishes the wiki and brings GitLab along (`make mirror`). Run
+it again after any stop, such as a mistyped passphrase: what is done is left out. Nothing is
+published until both are signed. A failed
 `el8.yml` does not hold the release back: it says so, and `make release-sign` signs the companion
 once a run has passed.
 
 Each part is a target of its own: `make release-assets`, `make release-sign KEY=PATH`, `make
-release-check`, `make wiki-publish`. Do not merge into main between the tag and the signature:
-`make release-sign` refuses while GitHub's main is not your commit.
+release-check`, `make wiki-publish`, `make mirror`. Do not merge into main between the tag and the
+signature: `make release-sign` refuses while GitHub's main is not your commit.
+
+After a merge that no release follows, `make mirror` on main, once you have pulled and looked, is
+all there is to do. GitLab's main and release tags follow, and a branch goes from both remotes when
+main holds every commit of it. It pushes your checkout's main, not GitHub's, and only once GitHub
+holds the same: a commit someone slipped into one remote reaches no second one. If the two disagree
+about main or a tag, it stops before the first push. Running it again changes nothing.
 
 `make release-sign` refuses unless your HEAD, GitHub's main, GitHub's tag and the attestation of the
 sums file all name one commit, every job of the attested run ran on GitHub's machines, the tree is

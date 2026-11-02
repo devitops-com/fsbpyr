@@ -727,7 +727,7 @@ tests the script's own code without a VM.
 
 ## Test files
 
-The counts below are test items of the source tree that brought signing: 4,332 in 141 files. They
+The counts below are test items of the source tree that brought signing: 4,361 in 142 files. They
 are what pytest collects (`pytest --collect-only -q -p no:cacheprovider`, which runs no test), on
 x86-64 under Python 3.14, with
 `FSBPYR_TEST_GLIBC` and `FSBPYR_CORPUS_APPS` unset; the per-file counts come from the test ids
@@ -750,9 +750,9 @@ images, and `test_el8_apps_run_on_el8` is not generated.
 | `tests/unit/builder` | 19 | 752 |
 | `tests/unit/payload` | 11 | 360 |
 | `tests/unit/runtime` | 9 | 249 |
-| `tests/integration` | 14 | 709 |
+| `tests/integration` | 15 | 738 |
 | `tests/e2e` | 39 | 1,013 |
-| All | 141 | 4,332 |
+| All | 142 | 4,361 |
 
 ### tests/unit (top level): 26 files, 891 tests
 
@@ -877,7 +877,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_sysroot.py`](../tests/unit/runtime/test_sysroot.py) | 21 | The glibc sysroots: `ar` members, symlinks rewritten into the sysroot, entries and links that would leave it refused, verified downloads over HTTPS only; RPMs extracted as debs are, less what linking never reads, a damaged RPM named, and `lib` and `lib64` linked into `usr` for the EL8 sysroot only. |
 | [`test_toolchain_and_link.py`](../tests/unit/runtime/test_toolchain_and_link.py) | 35 | `ar` listing, clang discovery, and the stub's link command: static PIE, hardening flags, the sanitized variant, outlined atomics and the Cortex-A53 erratum 843419 fix on aarch64 (release and sanitized), paths mapped out of the launcher, a frame over the limit failing the link, the runtime id the stub records (`-DFSBPYR_RUNTIME_ID`, when one is given), a flag that is not part of what the runtime id covers, and a failed link's output from a line start. |
 
-### tests/integration: 14 files, 709 tests
+### tests/integration: 15 files, 738 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -887,7 +887,8 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_el8_workflow.py`](../tests/integration/test_el8_workflow.py) | 31 | [`.github/workflows/el8.yml`](../.github/workflows/el8.yml), which publishes the glibc 2.28 stubs in the companion release `el8-vX.Y.Z`, read as text (GitHub runs it, not the tests): its triggers, no checkout of another ref, the release and its gate naming none of it, one run per tag, every target on a runner of its architecture, the default Python read from the tag, actions pinned as the other workflows pin them, write permissions in `publish` only, the companion made as a draft on its tag, which must exist (`--verify-tag`, no target), and published as not the latest, asset names those `stubs.py` reads. The publish job's shell steps also run against a fake `gh`: nothing published yet, the same stubs already published, other stubs published (a failure, left alone), a draft left by a stopped run deleted, the wait for the release of the tag, a companion tag that is missing or on another commit, the check of the result. |
 | [`test_install.py`](../tests/integration/test_install.py) | 140 | `install.sh`, generated from fake release assets and served over HTTPS from 127.0.0.1 with a self-signed certificate for `localhost` and 127.0.0.1 that the session makes with the `openssl` CLI; `HOME`, the install directories and a `PATH` of chosen tools are under `tmp_path`, so a test can leave out or fake `xz`, `curl`, `gh`, `uname` or `ldd`. Each installer test runs under dash, bash and busybox sh (129 of the 137); the rest test the installer's generator and that dash and busybox parse the template. |
 | [`test_launcher_format.py`](../tests/integration/test_launcher_format.py) | 18 | `launcher/format.h` and `fsbpyr.payload.format` describe the same bytes: a C probe compiled with `cc` prints record sizes, constants and field offsets, compared with the Python structs. |
-| [`test_make_release.py`](../tests/integration/test_make_release.py) | 22 | `make release`, `tools/release/release.sh`, with stand-ins for its parts: their order, what each failure stops, going on from a tag after a stop, the key's three sources, and that it never pulls. |
+| [`test_make_release.py`](../tests/integration/test_make_release.py) | 23 | `make release`, `tools/release/release.sh`, with stand-ins for its parts: their order, what each failure stops, going on from a tag after a stop, the key's three sources, and that it never pulls. |
+| [`test_mirror.py`](../tests/integration/test_mirror.py) | 28 | `make mirror`, `tools/release/mirror.sh`, with real git on two bare repositories: GitLab follows only what this checkout and GitHub agree on, whatever disagrees stops it before the first push, and a branch goes only when main holds it. |
 | [`test_pbs_distribution.py`](../tests/integration/test_pbs_distribution.py) | 8 | Facts about the pinned PBS distribution the runtime build relies on: startup modules, the compile worker, the link plan, a licence text for every linked library (zstd's among them). The session takes the distribution from `FSBPYR_TEST_DOWNLOADS` or fetches it (`downloads.pbs_distribution`). |
 | [`test_pbs_stdlib_versions.py`](../tests/integration/test_pbs_stdlib_versions.py) | 12 | What the stdlib selection and startup modules give for each pinned CPython version's distribution, each taken or fetched as for `test_pbs_distribution.py`. |
 | [`test_release.py`](../tests/integration/test_release.py) | 158 | The release scripts against throwaway git repositories, a bare origin and a fake `gh` (the tag and the companion's tag `el8-vX.Y.Z` pushed together, the release check refusing a companion release `el8-vX.Y.Z` as the latest release, and passing over it when it looks up the previous release); also checks of the workflow files, `tools/bootstrap.sh` and the Makefile's handling of `VERSION` and `PYTHON`. Nothing reaches GitHub. |
