@@ -64,7 +64,6 @@ PREPARE_SH = ROOT / "tools" / "release" / "prepare.sh"
 VERSION_FILES_SH = ROOT / "tools" / "release" / "version-files.sh"
 GREEN_RUN_SH = ROOT / "tools" / "release" / "green-run.sh"
 FOLLOW_RUN_SH = ROOT / "tools" / "release" / "follow-run.sh"
-CONFIRM_SH = ROOT / "tools" / "release" / "confirm.sh"
 RELEASE_NOTES_SH = ROOT / "tools" / "release" / "release-notes.sh"
 TAG = f"v{VERSION}"
 RUN_ID = "4242"
@@ -214,7 +213,7 @@ def make_release_repo(
     repo, origin = tmp_path / "repo", tmp_path / "origin.git"
     (repo / "tools" / "release").mkdir(parents=True)
     for script in (RELEASE_SH, PREPARE_SH, VERSION_FILES_SH, RELEASE_NOTES_SH, GREEN_RUN_SH,
-                   FOLLOW_RUN_SH, CONFIRM_SH):  # fmt: skip
+                   FOLLOW_RUN_SH):  # fmt: skip
         shutil.copy2(script, repo / "tools" / "release" / script.name)
     write_program(repo / "tools" / "release" / "audit.sh", FAKE_AUDIT)  # test_release_sign's
     for name, text in version_files(version).items():
@@ -245,11 +244,7 @@ def make_branch_repo(
 
 
 def run_release(repo: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
-    return run_script(
-        ["bash", "tools/release/release-assets.sh", *args],
-        env | {"FSBPYR_RELEASE_ASSUME_YES": "1"},
-        cwd=repo,
-    )
+    return run_script(["bash", "tools/release/release-assets.sh", *args], env, cwd=repo)
 
 
 def run_prepare(repo: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
@@ -661,19 +656,6 @@ def test_release_refuses_a_version_other_than_the_one_head_declares(
     assert result.returncode == 1
     assert f"HEAD declares version {VERSION}, not 9.9.9" in result.stderr
     assert "make release-prep VERSION=9.9.9" in result.stderr
-    assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
-
-
-def test_release_refuses_without_confirmation_off_a_tty(
-    tmp_path: Path, release_env: dict[str, str]
-) -> None:
-    """No controlling terminal: /dev/tty exists but cannot be opened."""
-    repo = make_release_repo(tmp_path, release_env)
-
-    result = run_script(["bash", "tools/release/release-assets.sh"], release_env, cwd=repo)
-
-    assert result.returncode == 1
-    assert "FSBPYR_RELEASE_ASSUME_YES=1" in result.stderr
     assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
 
 

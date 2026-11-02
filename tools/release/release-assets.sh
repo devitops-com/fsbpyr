@@ -22,7 +22,6 @@
 # full-suite.yml run for HEAD's push to main (a run in progress is waited for), and an audit that
 # finds GitHub as this machine recorded it (audit.sh).
 #
-# Non-interactive use: set FSBPYR_RELEASE_ASSUME_YES=1 to skip the prompt.
 # FSBPYR_RELEASE_WATCH_WAIT: how many seconds to wait for the tag's workflow run
 # to show up (default 60); without one, the script says where to follow it and
 # still succeeds.
@@ -32,8 +31,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 # shellcheck source=version-files.sh
 . tools/release/version-files.sh
-# shellcheck source=confirm.sh
-. tools/release/confirm.sh
 
 BRANCH="main"
 CHANGELOG="CHANGELOG.md"
@@ -137,20 +134,19 @@ bash tools/release/green-run.sh "$SUITE_WORKFLOW" "$LOCAL_HEAD" >/dev/null
 bash tools/release/audit.sh \
     || { echo "ERROR: the audit did not pass; nothing was tagged" >&2; exit 1; }
 
-# --- 2. Confirm --------------------------------------------------------------
+# --- 2. What happens now ------------------------------------------------------
 REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo '?')"
 cat <<EOF
 
-About to release:
+Releasing:
   repo    : $REPO
   version : $VERSION
   tag     : $TAG
   branch  : $BRANCH  ($(git rev-parse --short HEAD))
 
 This tags $BRANCH's HEAD and pushes the tag, which starts the $WORKFLOW workflow: it
-builds, attests and leaves a draft for make release-sign. It is outward-facing and hard to undo.
+builds, attests and leaves a draft for make release-sign.
 EOF
-confirm_or_abort
 
 # --- 3. Tag and push the tag ---------------------------------------------------
 if ! git tag -a "$TAG" -m "fsbpyr $TAG" || ! git tag -a "$EL8_TAG" -m "fsbpyr $TAG: EL8 stubs"; then

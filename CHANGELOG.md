@@ -10,6 +10,18 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Added
+- **`make mirror`** brings GitLab along: its main and the release tags follow this checkout's main
+  once GitHub holds the same, whatever disagrees stops it before the first push, and a branch goes
+  from both remotes once main holds every commit of it. `make release` ends with it.
+- **`make release` leaves a report in JSON**, with what every step printed and how the run ended,
+  under `$XDG_STATE_HOME/fsbpyr-release/reports`, where `latest.json` leads to the newest.
+
+### Changed
+- **`make release` asks nothing.** `FSBPYR_RELEASE_KEY_FILE` names the key and
+  `FSBPYR_RELEASE_PASSPHRASE_FILE` a file that holds its passphrase, or a program that prints it.
+  Both are checked before anything is tagged. `FSBPYR_RELEASE_ASSUME_YES` is gone.
+
 ## [0.29.0] - 2026-11-01
 
 ### Added

@@ -255,7 +255,8 @@ check-c: ## Static analysis of the launcher's C sources (clang --analyze; inform
 # A release has two parts. release-prep ends a branch with the release commit (VERSION=X.Y.Z sets
 # the version in it; without, the current version is released), so that the full suite tests
 # exactly what is released once the branch is merged. release then does the rest, on the admin's
-# machine, on main at that commit: it never pulls, and it can be run again after any stop. Its
+# machine, on main at that commit: it asks nothing, it never pulls, it leaves a JSON report under
+# $XDG_STATE_HOME/fsbpyr-release/reports, and it can be run again after any stop. Its
 # parts are targets too: release-assets tags and builds, release-sign signs and publishes,
 # release-check checks, mirror brings GitLab along. Only a VERSION or KEY given on the make command
 # line counts: an exported one (another tool's) is ignored.
