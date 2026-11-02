@@ -727,7 +727,7 @@ tests the script's own code without a VM.
 
 ## Test files
 
-The counts below are test items of the source tree that brought signing: 4,401 in 142 files. They
+The counts below are test items of the source tree that brought signing: 4,402 in 142 files. They
 are what pytest collects (`pytest --collect-only -q -p no:cacheprovider`, which runs no test), on
 x86-64 under Python 3.14, with
 `FSBPYR_TEST_GLIBC` and `FSBPYR_CORPUS_APPS` unset; the per-file counts come from the test ids
@@ -877,7 +877,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_sysroot.py`](../tests/unit/runtime/test_sysroot.py) | 21 | The glibc sysroots: `ar` members, symlinks rewritten into the sysroot, entries and links that would leave it refused, verified downloads over HTTPS only; RPMs extracted as debs are, less what linking never reads, a damaged RPM named, and `lib` and `lib64` linked into `usr` for the EL8 sysroot only. |
 | [`test_toolchain_and_link.py`](../tests/unit/runtime/test_toolchain_and_link.py) | 35 | `ar` listing, clang discovery, and the stub's link command: static PIE, hardening flags, the sanitized variant, outlined atomics and the Cortex-A53 erratum 843419 fix on aarch64 (release and sanitized), paths mapped out of the launcher, a frame over the limit failing the link, the runtime id the stub records (`-DFSBPYR_RUNTIME_ID`, when one is given), a flag that is not part of what the runtime id covers, and a failed link's output from a line start. |
 
-### tests/integration: 14 files, 709 tests
+### tests/integration: 14 files, 710 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -893,7 +893,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_release.py`](../tests/integration/test_release.py) | 158 | The release scripts against throwaway git repositories, a bare origin and a fake `gh` (the tag and the companion's tag `el8-vX.Y.Z` pushed together, the release check refusing a companion release `el8-vX.Y.Z` as the latest release, and passing over it when it looks up the previous release); also checks of the workflow files, `tools/bootstrap.sh` and the Makefile's handling of `VERSION` and `PYTHON`. Nothing reaches GitHub. |
 | [`test_release_drafts.py`](../tests/integration/test_release_drafts.py) | 36 | What CI does to a release: in no workflow can anything reach a release key, publish a release, or read a variable, and `release.yml` and `el8.yml` stop at a draft. The draft job's check of the files runs for real against files and sums that `prepare`, which runs built code, could choose. |
 | [`test_release_sign.py`](../tests/integration/test_release_sign.py) | 149 | `make release-sign` and `make release-audit`, with the real scripts, keys and a bare repository as `hub`, against [`FakeGitHub`](../tests/support/fakegithub.py), which can do all that an account can, but attest: pushed commits and moved tags, attestations of another commit, workflow or runner, a build on someone else's machine, files swapped before and during signing, a second draft, a key inside the checkout; then each thing the audit finds, every lookup failing on its own, and that a failed lookup is never a pass. |
-| [`test_release_signing.py`](../tests/integration/test_release_signing.py) | 106 | [`tools/release/release-signing.sh`](../tools/release/release-signing.sh), `previous-release.sh` and `check-signature.sh`, with fake programs first on PATH where a failure must be made for any uid, and passphrases typed on a pty: every form of a bad key file and `.pub`, nothing replaced, a burned tag, a companion, a text sort and a failed call in the lookup of the previous release, and each pin rule of the sign job. |
+| [`test_release_signing.py`](../tests/integration/test_release_signing.py) | 107 | [`tools/release/release-signing.sh`](../tools/release/release-signing.sh), `previous-release.sh` and `check-signature.sh`, with fake programs first on PATH where a failure must be made for any uid, and passphrases typed on a pty: every form of a bad key file and `.pub`, nothing replaced, a burned tag, a companion, a text sort and a failed call in the lookup of the previous release, and each pin rule of the sign job. |
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
 
 ### tests/e2e: 40 files, 1,079 tests
