@@ -7,7 +7,7 @@ import hashlib
 import os
 import shutil
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,7 +18,7 @@ from ..support.fakegithub import FakeGitHub
 from ..support.signing import PASSPHRASE, Key, new_key, on_a_terminal
 
 ROOT = Path(__file__).parents[2]
-TOOLS = ("release-sign.sh", "audit.sh", "confirm.sh", "version-files.sh", "release-signing.sh",
+TOOLS = ("release-sign.sh", "audit.sh", "passphrase.sh", "version-files.sh", "release-signing.sh",
          "check-signature.sh", "previous-release.sh")  # fmt: skip
 TAG = "v1.2.0"
 EL8_TAG = "el8-v1.2.0"
@@ -57,14 +57,18 @@ class World:
         self.hub = root / "hub.git"
         self.wiki = root / "wiki.git"
         self.state = root / "state"
+        self.passphrase = root / "passphrase"
+        self.passphrase.write_text(f"{PASSPHRASE}\n")
+        self.passphrase.chmod(0o600)
         self.env = {**os.environ, **self.github.env(), "HOME": str(root / "home"),
                     "TMPDIR": str(root), "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "t",
                     "GIT_AUTHOR_EMAIL": "t@example.org", "GIT_COMMITTER_NAME": "t",
-                    "GIT_COMMITTER_EMAIL": "t@example.org", "FSBPYR_RELEASE_ASSUME_YES": "1",
-                    "FSBPYR_SIGNING_PASSPHRASE": PASSPHRASE,
+                    "GIT_COMMITTER_EMAIL": "t@example.org",
+                    "FSBPYR_RELEASE_PASSPHRASE_FILE": str(self.passphrase),
                     "FSBPYR_RELEASE_STATE": str(self.state),
                     "FSBPYR_RELEASE_WIKI": str(self.wiki)}  # fmt: skip
         self.env.pop("FSBPYR_RELEASE_REPO", None)
+        self.env.pop("FSBPYR_SIGNING_PASSPHRASE", None)
         tools = self.tree / "tools" / "release"
         tools.mkdir(parents=True)
         for name in TOOLS:
@@ -238,28 +242,145 @@ def test_the_companion_is_signed_and_is_not_made_the_latest(ready: World) -> Non
     assert ready.audit().returncode == 0
 
 
-def test_the_passphrase_is_asked_for_once_for_both_releases(ready: World) -> None:
+def test_on_a_terminal_it_asks_nothing(ready: World) -> None:
+    """Nothing is typed: a question would wait for the terminal's time limit, and fail."""
     ready.el8_draft()
-    env = {key: value for key, value in ready.env.items() if key != "FSBPYR_SIGNING_PASSPHRASE"}
     command = ["bash", "tools/release/release-sign.sh", str(ready.keys.k.key)]
 
     cwd = Path.cwd()
     os.chdir(ready.tree)
     try:
-        code, printed, _ = on_a_terminal(command, env, PASSPHRASE.encode())
+        code, printed, _ = on_a_terminal(command, ready.env)
     finally:
         os.chdir(cwd)
 
     assert code == 0, printed
-    assert printed.count(b"Passphrase of") == 1 and PASSPHRASE.encode() not in printed
+    assert b"Passphrase" not in printed and b"Continue?" not in printed
+    assert PASSPHRASE.encode() not in printed
     assert ready.verify(ready.github.asset(TAG, SUMS), ready.keys.k.pub).returncode == 0
     assert ready.verify(ready.github.asset(EL8_TAG, EL8_SUMS), ready.keys.k.pub).returncode == 0
+
+
+def _program(world: World, body: str, mode: int = 0o700) -> None:
+    world.passphrase.write_text(f"#!/bin/sh\n{body}\n")
+    world.passphrase.chmod(mode)
+
+
+PRINTS_IT = f"cat <<'END'\n{PASSPHRASE}\nEND"
+
+
+def test_a_program_prints_the_passphrase(ready: World) -> None:
+    _program(ready, PRINTS_IT)
+
+    done = ready.sign()
+
+    assert done.returncode == 0, done.stderr
+    assert PASSPHRASE not in done.stdout + done.stderr
+    assert ready.verify(ready.github.asset(TAG, SUMS), ready.keys.k.pub).returncode == 0
+
+
+def test_a_program_that_reads_its_input_does_not_hang(ready: World) -> None:
+    """The release's own input stays open, as on a terminal: the program must not wait for it."""
+    _program(ready, f"cat >/dev/null\n{PRINTS_IT}")
+    command = ["bash", "tools/release/release-sign.sh", str(ready.keys.k.key)]
+    never_closed, _ = os.pipe()
+
+    try:
+        done = subprocess.run(command, cwd=ready.tree, env=ready.env, capture_output=True,
+                              text=True, stdin=never_closed, timeout=60, check=False)  # fmt: skip
+    finally:
+        os.close(never_closed)
+        os.close(_)
+
+    assert done.returncode == 0, done.stderr
+
+
+def test_a_program_others_can_read_is_run(ready: World) -> None:
+    """It need hold no secret: a script that asks a password manager, say."""
+    _program(ready, PRINTS_IT, 0o755)
+
+    assert ready.sign().returncode == 0
+
+
+def test_a_link_to_a_passphrase_counts_as_what_it_leads_to(ready: World) -> None:
+    link = ready.passphrase.with_name("link")
+    link.symlink_to(ready.passphrase)
+    ready.env["FSBPYR_RELEASE_PASSPHRASE_FILE"] = str(link)
+
+    assert ready.sign().returncode == 0
+
+
+def test_an_exported_signing_passphrase_is_not_the_release_keys(ready: World) -> None:
+    """It belongs to a developer's own app: only the file gives the passphrase of a release key."""
+    ready.env["FSBPYR_SIGNING_PASSPHRASE"] = "an app's passphrase"  # noqa: S105
+
+    assert ready.sign().returncode == 0
+
+
+@pytest.mark.parametrize(("arrange", "said"), [
+    (lambda w: w.env.pop("FSBPYR_RELEASE_PASSPHRASE_FILE"), "no passphrase: set"),
+    (lambda w: w.env.update(FSBPYR_RELEASE_PASSPHRASE_FILE=""), "no passphrase: set"),
+    (lambda w: w.env.update({"FSBPYR_RELEASE_PASSPHRASE_FILE": "x"}), "not an absolute path"),
+    (lambda w: w.passphrase.unlink(), "names no file"),
+    (lambda w: (w.passphrase.unlink(), w.passphrase.mkdir()), "names no file"),
+    (lambda w: w.passphrase.write_text(""), "gave no passphrase"),
+    (lambda w: w.passphrase.write_text("\n"), "gave no passphrase"),
+    (lambda w: w.passphrase.write_text(f"{PASSPHRASE}\nmore\n"), "more than one line"),
+    (lambda w: w.passphrase.chmod(0o640), "others can read"),
+    (lambda w: w.passphrase.chmod(0o604), "others can read"),
+    (lambda w: w.passphrase.chmod(0o620), "others can write"),
+    (lambda w: w.passphrase.chmod(0o602), "others can write"),
+    (lambda w: _program(w, "exit 3"), "failed"),
+    (lambda w: _program(w, "true"), "gave no passphrase"),
+    (lambda w: _program(w, "echo x; echo y"), "more than one line"),
+    (lambda w: _program(w, "true", 0o770), "others can write"),
+    (lambda w: _program(w, "true", 0o707), "others can write"),
+], ids=["unset", "empty variable", "relative", "missing", "a directory", "empty", "a blank line",
+        "two lines", "group can read", "others can read", "group can write", "others can write",
+        "program fails", "program prints nothing", "program prints two lines",
+        "group can write the program", "others can write the program"])
+def test_a_passphrase_that_cannot_be_used_stops_it_before_anything_changes(
+    ready: World, arrange: Callable[[World], object], said: str
+) -> None:
+    arrange(ready)
+
+    done = ready.sign()
+
+    assert done.returncode == 1
+    assert said in done.stderr
+    assert ready.github.writes() == []
+
+
+def test_a_passphrase_of_someone_else_stops_it(ready: World, tmp_path: Path) -> None:
+    """Only root could make such a file here: `stat` reports one."""
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    (shim / "stat").write_text("#!/bin/sh\necho '12345 600'\n")
+    (shim / "stat").chmod(0o755)
+    ready.env["PATH"] = f"{shim}:{ready.env['PATH']}"
+
+    done = ready.sign()
+
+    assert done.returncode == 1 and "belongs to someone else" in done.stderr
+    assert ready.github.writes() == []
+
+
+def test_a_passphrase_inside_the_checkout_stops_it(ready: World) -> None:
+    inside = ready.tree / "secret"
+    inside.write_text(PASSPHRASE)
+    inside.chmod(0o600)
+    ready.env["FSBPYR_RELEASE_PASSPHRASE_FILE"] = str(inside)
+
+    done = ready.sign()
+
+    assert done.returncode == 1 and "inside this checkout" in done.stderr
+    assert ready.github.writes() == []
 
 
 def test_a_wrong_passphrase_leaves_both_drafts_as_they_are(ready: World) -> None:
     """Everything is signed before anything is published."""
     ready.el8_draft()
-    ready.env["FSBPYR_SIGNING_PASSPHRASE"] = "not the passphrase"  # noqa: S105
+    ready.passphrase.write_text("not the passphrase\n")
 
     done = ready.sign()
 
@@ -313,7 +434,7 @@ def test_with_both_published_there_is_nothing_to_do(ready: World) -> None:
     done = ready.sign()
 
     assert done.returncode == 0
-    assert "About to sign" not in done.stdout
+    assert "Signing and publishing" not in done.stdout
     assert len(ready.github.writes()) == writes
 
 
@@ -765,12 +886,6 @@ def test_no_login_stops_it(ready: World) -> None:
     refused(ready, ready.sign(), "gh is not authenticated")
 
 
-def test_no_terminal_and_no_consent_stops_it(ready: World) -> None:
-    ready.env.pop("FSBPYR_RELEASE_ASSUME_YES")
-
-    refused(ready, ready.sign(), "not a TTY")
-
-
 def test_an_audit_that_does_not_pass_stops_it_before_the_drafts_are_read(ready: World) -> None:
     ready.github.state["settings"]["repos/devitops-com/fsbpyr/hooks"] = [
         {"id": 7, "config": {"url": "https://evil.example"}, "active": True}]
@@ -961,8 +1076,8 @@ def test_a_signed_release_not_on_record_says_the_key_is_stolen(world: World) -> 
     world.draft("v1.3.0", extra=b"evil")
     command = ["bash", "tools/release/release-signing.sh", "sign", str(world.keys.k.key),
                str(world.github.asset("v1.3.0", SUMS))]
-    done = subprocess.run(command, cwd=world.tree, env=world.env, capture_output=True, text=True,
-                          check=False)  # fmt: skip
+    done = subprocess.run(command, cwd=world.tree, capture_output=True, text=True, check=False,
+                          env={**world.env, "FSBPYR_SIGNING_PASSPHRASE": PASSPHRASE})  # fmt: skip
     assert done.returncode == 0, done.stderr
     world.github.state["releases"]["v1.3.0"].update(draft=False, immutable=True)
     world.github.save()
@@ -1018,8 +1133,8 @@ def test_a_file_named_like_the_companions_sums_is_found(world: World) -> None:
     world.github.asset(EL8_TAG, "SHA256SUMS-glibc2x28").write_bytes(b"not listed")
     done = subprocess.run(["bash", "tools/release/release-signing.sh", "sign",  # noqa: S607
                            str(world.keys.k.key), str(world.github.asset(EL8_TAG, EL8_SUMS))],
-                          cwd=world.tree, env=world.env, capture_output=True, text=True,
-                          check=False)  # fmt: skip
+                          cwd=world.tree, capture_output=True, text=True, check=False,
+                          env={**world.env, "FSBPYR_SIGNING_PASSPHRASE": PASSPHRASE})  # fmt: skip
     assert done.returncode == 0, done.stderr
     world.github.state["releases"][EL8_TAG].update(draft=False, immutable=True)
     world.github.save()
