@@ -60,8 +60,8 @@ fi
 title="Toolchain update: ${#problems[@]} release pin(s) to move"
 body="The release toolchain is pinned (REP-1). To move the pins, edit tools/release/uv.version
 and the Containerfile's \`UV_VERSION\` and \`UV_SHA256_*\`, and the
-\`debian:trixie@sha256\` digest in the Containerfile, .github/workflows/build.yml and
-.github/workflows/full-suite.yml, then rebuild and compare:
+\`debian:trixie@sha256\` digest in the Containerfile, .github/workflows/build.yml,
+.github/workflows/full-suite.yml and .github/workflows/el8.yml, then rebuild and compare:
 "
 for problem in "${problems[@]}"; do
     body+="

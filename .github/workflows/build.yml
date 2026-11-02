@@ -47,7 +47,7 @@ jobs:
     # the multi-arch index's, so each runner pulls its own architecture. It installs no tools,
     # so the job does: a few packages from Debian's own repository, the pinned uv
     # (tools/release/uv.version) and the Python of .python-version.
-    container: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+    container: docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
     timeout-minutes: 75
     env:
       TARGET: ${{ matrix.target }}
@@ -250,7 +250,7 @@ jobs:
     name: reproduce (${{ matrix.target }}, Python ${{ matrix.python }})
     if: inputs.checks
     runs-on: ${{ matrix.runner }}
-    container: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+    container: docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
     timeout-minutes: 75
     strategy:
       fail-fast: false
