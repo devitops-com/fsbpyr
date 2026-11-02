@@ -676,6 +676,13 @@ tests in 4 processes (`pytest -n 4 --dist loadfile`, with the kept downloads); i
 their timings are described in
 [CONTRIBUTING.md](../CONTRIBUTING.md#running-the-tests).
 
+No two pytest-xdist workers share a virtual environment. Each gets a new one from `uv.lock` when
+the run starts, removed when it ends, with its own Python, `sys.path`, `PATH` and `VIRTUAL_ENV`,
+and a worker that finds anything else stops the run
+([`worker_venvs.py`](../tests/support/worker_venvs.py)). The reason is that Python writes a
+module's `.pyc` beside it on the first import, so workers on one environment change it under each
+other. The checkout is still shared, `src/` with its `__pycache__` directories included.
+
 ## The page-size smoke test
 
 `make test-vm` runs [`tools/vm-smoke.py`](../tools/vm-smoke.py),
@@ -727,7 +734,7 @@ tests the script's own code without a VM.
 
 ## Test files
 
-The counts below are test items of the source tree that brought signing: 4,402 in 142 files. They
+The counts below are test items of the source tree that gave each worker its own environment: 4,416 in 143 files. They
 are what pytest collects (`pytest --collect-only -q -p no:cacheprovider`, which runs no test), on
 x86-64 under Python 3.14, with
 `FSBPYR_TEST_GLIBC` and `FSBPYR_CORPUS_APPS` unset; the per-file counts come from the test ids
@@ -745,16 +752,16 @@ images, and `test_el8_apps_run_on_el8` is not generated.
 
 | Layer | Files | Tests |
 |---|---|---|
-| `tests/unit` (top level) | 26 | 892 |
+| `tests/unit` (top level) | 26 | 895 |
 | `tests/unit/boot` | 23 | 357 |
 | `tests/unit/builder` | 19 | 752 |
 | `tests/unit/payload` | 11 | 360 |
 | `tests/unit/runtime` | 9 | 249 |
-| `tests/integration` | 15 | 779 |
+| `tests/integration` | 16 | 790 |
 | `tests/e2e` | 39 | 1,013 |
-| All | 142 | 4,402 |
+| All | 143 | 4,416 |
 
-### tests/unit (top level): 26 files, 894 tests
+### tests/unit (top level): 26 files, 895 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -877,7 +884,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_sysroot.py`](../tests/unit/runtime/test_sysroot.py) | 21 | The glibc sysroots: `ar` members, symlinks rewritten into the sysroot, entries and links that would leave it refused, verified downloads over HTTPS only; RPMs extracted as debs are, less what linking never reads, a damaged RPM named, and `lib` and `lib64` linked into `usr` for the EL8 sysroot only. |
 | [`test_toolchain_and_link.py`](../tests/unit/runtime/test_toolchain_and_link.py) | 35 | `ar` listing, clang discovery, and the stub's link command: static PIE, hardening flags, the sanitized variant, outlined atomics and the Cortex-A53 erratum 843419 fix on aarch64 (release and sanitized), paths mapped out of the launcher, a frame over the limit failing the link, the runtime id the stub records (`-DFSBPYR_RUNTIME_ID`, when one is given), a flag that is not part of what the runtime id covers, and a failed link's output from a line start. |
 
-### tests/integration: 15 files, 780 tests
+### tests/integration: 16 files, 790 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -896,6 +903,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_release_sign.py`](../tests/integration/test_release_sign.py) | 172 | `make release-sign` and `make release-audit`, with the real scripts, keys and a bare repository as `hub`, against [`FakeGitHub`](../tests/support/fakegithub.py), which can do all that an account can, but attest: pushed commits and moved tags, attestations of another commit, workflow or runner, a build on someone else's machine, files swapped before and during signing, a second draft, a key inside the checkout; then each thing the audit finds, every lookup failing on its own, and that a failed lookup is never a pass. |
 | [`test_release_signing.py`](../tests/integration/test_release_signing.py) | 113 | [`tools/release/release-signing.sh`](../tools/release/release-signing.sh), `previous-release.sh` and `check-signature.sh`, with fake programs first on PATH where a failure must be made for any uid, and passphrases typed on a pty: every form of a bad key file and `.pub`, nothing replaced, a burned tag, a companion, a text sort and a failed call in the lookup of the previous release, and each pin rule of the sign job. |
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
+| [`test_worker_venvs.py`](../tests/integration/test_worker_venvs.py) | 10 | [`worker_venvs.py`](../tests/support/worker_venvs.py), on real runs of pytest with three workers: no two share an environment, and none shares the one the run started in; each imports from its own, and its subprocesses find its own; what one imports first appears in its environment alone; the environments go with the run; and a worker left on another interpreter, `sys.path`, `PATH` or `VIRTUAL_ENV` stops the run. |
 
 ### tests/e2e: 40 files, 1,079 tests
 
@@ -971,6 +979,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`stderr.py`](../tests/support/stderr.py) | `noise()` and the few patterns an end-to-end check allows on an app's stderr (onnxruntime's `hostname`/`blkid` and host warnings, trace lines). |
 | [`walk.py`](../tests/support/walk.py) | `run(fsb)`: uses every record of a payload through the `_fsbpyr` API (reads, closures, module tree, syncs) and lists what was refused; standard library only, since it is packaged into the executables it walks. |
 | [`wheels.py`](../tests/support/wheels.py) | Reads `no-wheels.txt`; `missing()`, and `needs()`, the `needs_wheel` mark by which `tests/conftest.py` deselects a test. |
+| [`worker_venvs.py`](../tests/support/worker_venvs.py) | The hooks that give each pytest-xdist worker a virtual environment of its own, and the check that stops a run when a worker is in anything else. A plugin of `tests/conftest.py`, so that every parallel run has them. |
 
 ## Probes and the fuzzer
 
