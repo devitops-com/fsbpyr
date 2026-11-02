@@ -46,7 +46,8 @@ def test_report(worker_id):
 
 def _pytest(directory: Path, *args: str) -> subprocess.CompletedProcess[str]:
     (directory / "test_probe.py").write_text(PROBE)
-    env = {**os.environ, "REPORTS": str(directory), "PYTHONPATH": str(directory)}
+    env = {name: value for name, value in os.environ.items() if not name.startswith("PYTEST_")}
+    env |= {"REPORTS": str(directory), "PYTHONPATH": str(directory)}  # the run's own PYTEST_ go
     return subprocess.run(
         [sys.executable, "-m", "pytest", "-n", str(len(WORKERS)), "--dist", "each",
          "-p", PLUGIN, "-p", "no:cacheprovider", "--rootdir", directory,
