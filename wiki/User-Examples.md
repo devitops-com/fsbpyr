@@ -99,7 +99,7 @@ VERIFIED  .../.local/bin/fsbpyr  (project fsbpyr, listed as fsbpyr-3.14-x86_64-l
 ```
 
 To update, run one command, which checks the release before anything from it runs. Its output is
-on [Updating fsbpyr](User-Security.md#updating-fsbpyr):
+on [Updating](User-Installing.md#updating):
 
 ```sh
 fsbpyr self update

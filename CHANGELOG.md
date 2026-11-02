@@ -22,6 +22,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - The Security chapter says how trust works and how far each check goes: fsbpyr on itself, a copy you
   already checked, system tools (a full verification needs OpenSSL 3.5 or newer), an attestation and
   your own build.
+- The User Guide's second chapter is Installing, which now holds every Python and architecture,
+  updating and building from source. Security follows it as the third, with every check of an
+  installed fsbpyr in one place.
 
 ### Fixed
 - The Security chapter said that the release key signs in CI, and showed an attestation check without

@@ -59,7 +59,7 @@ full test suite runs in GitHub Actions for every Python and target, a release is
 a commit whose full run passed, the release workflow builds and attests the executables and leaves
 a draft, and the admin signs and publishes it from their own machine ([below](#release-keys)). How
 users verify a download is in
-[Security](User-Security.md#verifying-a-download).
+[Security](User-Security.md#checking-an-installed-fsbpyr).
 
 ## Release keys
 
@@ -106,7 +106,7 @@ records the release. It is only as good as what you pulled into main: what you t
 - **The pins** are the `.pub` files in [`src/fsbpyr/release-keys/`](../src/fsbpyr/); a signature by
   any of them passes. `make release` refuses a tree without any, which would burn the version.
   Each change of them changes the "Release keys" section of
-  [Installing](User-Security.md#release-keys) too, which the suite compares with them.
+  [Security](User-Security.md#release-keys) too, which the suite compares with them.
 - **One-time setup**: make K and R; pin both keys, with the first signed version in
   [`tools/release/first-signed-release`](../tools/release/first-signed-release); remove the
   organization's GitHub App's access to this repository, or trust it as you trust yourself; and

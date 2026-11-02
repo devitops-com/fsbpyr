@@ -847,8 +847,9 @@ This needs nothing new: there is no standalone check script (§10).
 
 ## 7. Wiki
 
-- **User-Security** (new): one chapter for everything a user meets, second in the guide (owner,
-  2026-10-31). It took in the page first planned as User-Signing, and Installing's sections on
+- **User-Security** (new): one chapter for everything a user meets (owner, 2026-10-31), third in
+  the guide since 2026-11-02, after Installing, which holds updating and building from source
+  (owner). It took in the page first planned as User-Signing, and Installing's sections on
   verifying a download, the release keys and checking an installed fsbpyr:
   - §6 for publishers and users, with the messages table, always with `verify --project`;
   - the CI pattern of §6 step 3, with one GitHub Actions example. On GitLab, the key fits a File

@@ -31,9 +31,10 @@ For people who build and ship apps with fsbpyr.
 The whole guide as one PDF: [fsbpyr-User-Guide.pdf](fsbpyr-User-Guide.pdf)
 
 1. [What fsbpyr is](User-Overview.md): goals and main use cases
-2. [**Security**](User-Security.md): what protects you, updating, the messages to watch for,
-   checking and restoring fsbpyr, signing your own apps
-3. [Installing fsbpyr](User-Installing.md)
+2. [Installing fsbpyr](User-Installing.md): every Python and architecture, the installer, updating,
+   building fsbpyr from source
+3. [**Security**](User-Security.md): what protects you, the messages to watch for, checking and
+   restoring fsbpyr, signing your own apps
 4. [Building an app](User-Building.md): what fsbpyr builds, several commands, locks, every option
 5. [Scripts and tools](User-Scripts.md): projects without a build system, directories of scripts,
    single scripts, tools from a requirements file, deploying them

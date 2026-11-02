@@ -199,7 +199,7 @@ deliberate rewrite. Origin is checked outside the file:
 
 - **Attestations.** fsbpyr's releases are attested by GitHub Actions; `gh attestation verify`
   shows that this repository's release workflow built the file from its tag
-  ([Verifying a download](User-Security.md#verifying-a-download)). `make release-check`
+  ([By attestation](User-Security.md#by-attestation)). `make release-check`
   ([`tools/release/check-release.sh`](../tools/release/check-release.sh)) checks a published
   release as its users get it, its attestations among the rest; it does not rebuild it. A
   rebuild from the tag, compared byte for byte, is check (a) of

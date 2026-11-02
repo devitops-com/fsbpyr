@@ -1,8 +1,10 @@
 # Installing fsbpyr
 
 fsbpyr is itself a single executable built by fsbpyr. It carries its own CPython and launcher, so
-building apps with it needs no compiler. This page covers what the build machine needs, the
-installer, a manual download, verifying a download, and updating.
+building apps with it needs no compiler. This page covers what the build machine needs, which
+fsbpyr to install for your Python and architecture, the installer, a manual download, updating, and
+building fsbpyr from its sources. How to check what you installed is in
+[Security](User-Security.md#checking-an-installed-fsbpyr).
 
 ## What the build machine needs
 
@@ -72,10 +74,14 @@ a download is checked before it is used. It:
 | `FSBPYR_INSTALL_DIR` | install into this directory |
 | `-q/--quiet`, `-v/--verbose`, `-h/--help` | as usual |
 
-Options go through the pipe like this:
+The installer sees the architecture for itself, so the command is the same on x86-64 and aarch64.
+Options go after `sh -s --`, and variables before `sh`:
 
 ```sh
-curl -LsSf https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh | sh -s -- --python 3.13
+url=https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh
+curl -LsSf "$url" | sh -s -- --python 3.13                  # the fsbpyr that runs on Python 3.13
+curl -LsSf "$url" | FSBPYR_VERIFY=1 sh                      # also check the attestation
+curl -LsSf "$url" | FSBPYR_INSTALL_DIR=/opt/fsbpyr/bin sh   # into this directory
 ```
 
 A tag's own copy installs that version: `https://github.com/devitops-com/fsbpyr/releases/download/v@VERSION@/install.sh`.
@@ -86,18 +92,19 @@ start a new shell, call fsbpyr by its path (`~/.local/bin/fsbpyr`).
 
 ## Manually
 
-Pick the asset for your Python and target. For Python 3.14 on x86-64:
+Set your Python, and the rest of the name follows from the machine:
 
 ```sh
+python=3.14 target=$(uname -m)-linux-gnu
 mkdir -p ~/.local/bin
-curl -fLo ~/.local/bin/fsbpyr https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr-3.14-x86_64-linux-gnu
+curl -fLo ~/.local/bin/fsbpyr "https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr-$python-$target"
 chmod +x ~/.local/bin/fsbpyr
 ```
 
 or the compressed copy:
 
 ```sh
-curl -fL https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr-3.14-x86_64-linux-gnu.xz \
+curl -fL "https://github.com/devitops-com/fsbpyr/releases/latest/download/fsbpyr-$python-$target.xz" \
   | xz -d > ~/.local/bin/fsbpyr
 chmod +x ~/.local/bin/fsbpyr
 ```
@@ -105,22 +112,43 @@ chmod +x ~/.local/bin/fsbpyr
 Shell completion and the man page are printed by fsbpyr itself; see
 [Other commands](User-Other-Commands.md#completion-and-man).
 
-## Verifying a download
-
-A release can be checked by its attestation, by its signature, or by rebuilding it byte for byte:
-[Proving where a file came from](User-Security.md#proving-where-a-file-came-from).
-
 ## Updating
 
-```sh
-fsbpyr self update
+```console
+$ fsbpyr self update
+fsbpyr: downloading fsbpyr v0.30.0
+fsbpyr: updated /home/me/.local/bin/fsbpyr to fsbpyr v0.30.0
+$ fsbpyr self update
+fsbpyr: fsbpyr is up to date (0.30.0-1a2b3c4d; latest release v0.30.0)
 ```
 
-Each update is checked against the keys your fsbpyr carries, and refused otherwise, with no
-fallback. [Updating fsbpyr](User-Security.md#updating-fsbpyr) shows what you will see and what each
-step checks, and [Messages to watch for](User-Security.md#messages-to-watch-for) what the rest
-means. It never moves to another Python: run the installer with `--python` for that. A developer
+That is all there is to it. In that one command, nothing from the download runs until all of this
+has passed:
+
+1. The release's `SHA256SUMS` is checked against the keys built into your fsbpyr: both signatures,
+   Ed25519 and ML-DSA-65.
+2. The `.xz` of your Python's build is checked against its line of the signed sums, before anything
+   unpacks it.
+3. The unpacked file must be the same asset, a newer version than yours, and the version of the
+   tag it came from. Its whole file is checked.
+4. It must suit this machine's glibc.
+5. It is renamed over the running file, keeping its mode, so a failure at any step leaves your fsbpyr
+   exactly as it was.
+
+If a step fails, [Messages to watch for](User-Security.md#messages-to-watch-for) says what the
+message means and what to do.
+
+The man page and completions installed under the same prefix are written again; if they are not
+there, you see a warning that they were left alone, which is harmless. A build fetches its variants
+for another Python, and its EL8 stubs, with the same checks. An update does not check the
+attestation: [`gh attestation verify`](User-Security.md#by-attestation) still does.
+
+An update never moves to another Python: run the installer with `--python` for that. A developer
 build (`fsbpyr --version` starts with `untagged`) refuses to update itself.
+
+A fsbpyr from before signing, 0.28.1 or older, runs old code for its one update to a signed
+release, so that update is not checked: if that matters to you, [check the
+result](User-Security.md#checking-an-installed-fsbpyr).
 
 ## Versions
 
@@ -136,10 +164,27 @@ the [changelog](../CHANGELOG.md).
 
 ## Building fsbpyr from source
 
-For contributors: `make bootstrap` takes a checkout to an installed fsbpyr. It needs `make`, uv,
-and on Debian trixie the pinned Python, `curl` and `zstd`; elsewhere podman. The steps are
-described at the top of
-[`tools/bootstrap.sh`](../tools/bootstrap.sh);
-see also [Self-hosting](Dev-Self-Hosting.md) in the Developer Guide, which also shows how to
-run the three stages from a released fsbpyr, without a compiler (that way checks fsbpyr's Python
-code, not its runtime).
+Your build is a whole fsbpyr: it pins the same keys and carries the same OpenSSL, so it checks
+releases and signs and checks apps as the release does. If you changed a line of it, no release key
+signed it, and `verify` rightly says NOT VERIFIED about it, as it does about any file nobody signed.
+[Self-hosting](Dev-Self-Hosting.md) in the Developer Guide has both ways below in full.
+
+### With a released fsbpyr
+
+This needs git and uv, and no compiler:
+
+```sh
+git clone --branch vX.Y.Z https://github.com/devitops-com/fsbpyr.git src
+cd src
+fsbpyr build . --python 3.14 -o ../my-fsbpyr
+```
+
+`--python` is your fsbpyr's Python. With the fsbpyr of that tag and the uv it records (`fsbpyr
+inspect` names it), the result is the release, byte for byte. This build reuses the launcher and
+runtime of the fsbpyr that runs it, so only fsbpyr's Python code comes from your checkout.
+
+### From C and Python sources
+
+To trust no fsbpyr at all, `make bootstrap` takes a checkout to an installed fsbpyr. It needs `make`,
+uv, and on Debian trixie the pinned Python, `curl` and `zstd`; elsewhere podman. The steps are
+described at the top of [`tools/bootstrap.sh`](../tools/bootstrap.sh).

@@ -47,7 +47,8 @@ is checked:
    code are the same, with your keys in place of the release keys. `fsbpyr sign` also checks each new
    signature with that code before it writes the file.
 4. **Each later fsbpyr is checked by the one before it.** `fsbpyr self update` installs nothing but a
-   release signed by the keys your fsbpyr already holds.
+   release signed by the keys your fsbpyr already holds: [Updating](User-Installing.md#updating) has
+   every step.
 
 If your admin has done this for you, or you simply trust your download, there is nothing more to
 do: go on to [Signing your own apps](#signing-your-own-apps).
@@ -75,39 +76,6 @@ use as many as the file is worth to you:
 
 An app is checked with [`fsbpyr verify`](#checking-an-app). A tampered app cannot lie to that check,
 since the app does not run: fsbpyr reads its bytes.
-
-## Updating fsbpyr
-
-```console
-$ fsbpyr self update
-fsbpyr: downloading fsbpyr v0.30.0
-fsbpyr: updated /home/me/.local/bin/fsbpyr to fsbpyr v0.30.0
-$ fsbpyr self update
-fsbpyr: fsbpyr is up to date (0.30.0-1a2b3c4d; latest release v0.30.0)
-```
-
-That is all there is to it. In that one command, nothing from the download runs until all of this
-has passed:
-
-1. The release's `SHA256SUMS` is checked against the keys built into your fsbpyr: both signatures,
-   Ed25519 and ML-DSA-65.
-2. The `.xz` of your Python's build is checked against its line of the signed sums, before anything
-   unpacks it.
-3. The unpacked file must be the same asset, a newer version than yours, and the version of the
-   tag it came from. Its whole file is checked.
-4. It must suit this machine's glibc.
-5. It is renamed over the running file, keeping its mode, so a failure at any step leaves your fsbpyr
-   exactly as it was.
-
-The man page and completions installed under the same prefix are written again; if they are not
-there, you see a warning that they were left alone, which is harmless. A build fetches its variants
-for another Python, and its EL8 stubs, with the same checks. An update does not check the
-attestation: [`gh attestation verify`](#verifying-a-download) still does.
-
-Your first fsbpyr is trusted as GitHub serves it; every later one is checked by the one before it.
-A fsbpyr from before signing, 0.28.1 or older, runs old code for its one update to a signed
-release, so that update is not checked: if that matters to you, [check the
-result](#checking-an-installed-fsbpyr).
 
 ## Messages to watch for
 
@@ -196,6 +164,15 @@ valid release signature`. That is no sign of tampering: check such a file
 
 A check by **a copy you already checked**, on this machine or another, is worth more, since the
 file under test takes no part in it: run that copy with the same command, naming the other file.
+With the release's two files beside a new download, it needs nothing more:
+
+```sh
+fsbpyr verify --project fsbpyr fsbpyr-3.14-x86_64-linux-gnu
+```
+
+The keys of `fsbpyr` are pinned in fsbpyr, and `key trust` refuses that name.
+
+`fsbpyr inspect --verify "$exe"` checks only the file's own digest, as every start does.
 
 ### With system tools
 
@@ -240,9 +217,10 @@ NOT VERIFIED. [Check an app with fsbpyr](#checking-an-app), which carries OpenSS
 
 ### By attestation
 
-With the [GitHub CLI](https://cli.github.com/), logged in with `gh auth login` or a `GH_TOKEN`, even
-for this public repository. Name the tag: without it, this passes anything the workflow ever built,
-from any tag:
+GitHub Actions builds and attests every release asset. The attestation shows that this repository's
+release workflow built the file from its tag. You need the [GitHub CLI](https://cli.github.com/),
+logged in with `gh auth login` or a `GH_TOKEN`, even for this public repository. Name the tag:
+without it, this passes anything the workflow ever built, from any tag:
 
 ```sh
 gh attestation verify "$exe" --repo devitops-com/fsbpyr \
@@ -250,27 +228,22 @@ gh attestation verify "$exe" --repo devitops-com/fsbpyr \
   --source-ref "refs/tags/$tag"
 ```
 
+Every release also carries an SBOM, `fsbpyr-3.X-<target>.cdx.json`, attested with its executable.
+`fsbpyr inspect` names the runtime and, for builds that record them, the versions of the libraries
+in it.
+
 ### By building it yourself
 
-The most work, and you trust nothing but the sources you read. A release can be rebuilt byte for
-byte, with the uv it records (`fsbpyr inspect "$exe"` names it):
+The most work, and you trust nothing but the sources you read.
+[Build the tag yourself](User-Installing.md#building-fsbpyr-from-source), then compare:
 
 ```sh
-git clone --branch "$tag" https://github.com/devitops-com/fsbpyr.git src
-cd src
-"$exe" build . --python 3.14 -o ../my-fsbpyr
 /usr/bin/sha256sum ../my-fsbpyr "$exe"
 ```
 
-`--python` is your asset's Python. The two digests must be the same; for v0.29.0 they were. This
-build reuses the launcher and runtime of `$exe`, so it checks fsbpyr's Python code only. To trust no
-fsbpyr at all, build from C and Python sources with `make bootstrap`:
-[Self-hosting](Dev-Self-Hosting.md#from-c-and-python-sources-make-bootstrap) has both ways, and
-[Verifying a release](../CONTRIBUTING.md#verifying-a-release) the comparison.
-
-Your build is a whole fsbpyr: it pins the same keys and carries the same OpenSSL, so it checks
-releases and signs and checks apps as the release does. If you changed a line of it, no release key
-signed it, and `verify` rightly says NOT VERIFIED about it, as it does about any file nobody signed.
+The two digests must be the same; for v0.29.0 they were. A build with a released fsbpyr checks
+fsbpyr's Python code only, and a `make bootstrap` build trusts no fsbpyr at all.
+[Verifying a release](../CONTRIBUTING.md#verifying-a-release) has the full comparison.
 
 ### If a check fails
 
@@ -547,43 +520,6 @@ Every executable carries these, with nothing to set:
   versions, give the same bytes.
 - **Signing keys stay out of the build's processes.** `fsbpyr build` removes the signing variables
   from its environment before it starts anything.
-
-## Proving where a file came from
-
-### Verifying a download
-
-GitHub Actions builds and attests every release asset. The attestation shows that this
-repository's release workflow built the file from its tag. Check it before you run the file:
-
-```sh
-gh attestation verify ~/.local/bin/fsbpyr --repo devitops-com/fsbpyr \
-  --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml \
-  --source-ref refs/tags/vX.Y.Z
-```
-
-Then the file's own digest, which every start checks as well:
-
-```sh
-~/.local/bin/fsbpyr inspect --verify ~/.local/bin/fsbpyr
-```
-
-With `SHA256SUMS` and `SHA256SUMS.sig` of the release beside the file, a fsbpyr you already have
-checks its signature:
-
-```sh
-fsbpyr verify --project fsbpyr fsbpyr-3.14-x86_64-linux-gnu
-```
-
-Check that the VERIFIED line names the asset you downloaded: the sums file lists every file of the
-release. The keys of `fsbpyr` are pinned in fsbpyr, and `key trust` refuses that name.
-
-A release can also be rebuilt from its tag and compared byte for byte: check (a) of
-[Verifying a release](../CONTRIBUTING.md#verifying-a-release);
-[Self-hosting](Dev-Self-Hosting.md#from-a-released-fsbpyr) shows it too.
-
-`fsbpyr inspect` also names the runtime and, for builds that record them, the versions of the
-libraries in it. Every release carries an SBOM, `fsbpyr-3.X-<target>.cdx.json`, which is attested
-with its executable.
 
 ## How a release is made
 

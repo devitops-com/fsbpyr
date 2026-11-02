@@ -3,8 +3,8 @@
 **User Guide**
 
 - [What fsbpyr is](User-Overview.md)
-- [Security](User-Security.md)
 - [Installing](User-Installing.md)
+- [Security](User-Security.md)
 - [Building](User-Building.md)
 - [Scripts and tools](User-Scripts.md)
 - [Settings](User-Settings.md)
