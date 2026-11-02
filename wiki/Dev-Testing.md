@@ -727,7 +727,7 @@ tests the script's own code without a VM.
 
 ## Test files
 
-The counts below are test items of the source tree that brought signing: 4,332 in 141 files. They
+The counts below are test items of the source tree that brought signing: 4,401 in 142 files. They
 are what pytest collects (`pytest --collect-only -q -p no:cacheprovider`, which runs no test), on
 x86-64 under Python 3.14, with
 `FSBPYR_TEST_GLIBC` and `FSBPYR_CORPUS_APPS` unset; the per-file counts come from the test ids
@@ -754,7 +754,7 @@ images, and `test_el8_apps_run_on_el8` is not generated.
 | `tests/e2e` | 39 | 1,013 |
 | All | 141 | 4,332 |
 
-### tests/unit (top level): 26 files, 891 tests
+### tests/unit (top level): 26 files, 894 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -896,7 +896,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_release_signing.py`](../tests/integration/test_release_signing.py) | 106 | [`tools/release/release-signing.sh`](../tools/release/release-signing.sh), `previous-release.sh` and `check-signature.sh`, with fake programs first on PATH where a failure must be made for any uid, and passphrases typed on a pty: every form of a bad key file and `.pub`, nothing replaced, a burned tag, a companion, a text sort and a failed call in the lookup of the previous release, and each pin rule of the sign job. |
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
 
-### tests/e2e: 39 files, 1,013 tests
+### tests/e2e: 40 files, 1,079 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -907,6 +907,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_corpus.py`](../tests/e2e/test_corpus.py) | 66 | One test per corpus app (or per app `FSBPYR_CORPUS_APPS` names) that has wheels for the Python and machine (64 apps on 3.14), the `expect` check, and the `plugins` fixture (see [The corpus](#the-corpus)). |
 | [`test_signatures.py`](../tests/e2e/test_signatures.py) | 153 | `launcher/sig.c`, through `probes/sig.c`, and `_fsbpyr`'s functions on both launchers: RFC 8032, ACVP and all of Wycheproof's Ed25519 and ML-DSA-65 cases, malleated and bit-flipped signatures, every form of a bad `.pub` and `.key`, a fixed `.pub` and `.sig` whose key is gone, the openssl.cnf matrix, the error queue, and sig.c's declarations against OpenSSL's headers. |
 | [`test_signing.py`](../tests/e2e/test_signing.py) | 36 | `key`, `sign`, `verify` and signing in `build` on a built fsbpyr with test keys pinned, each way against the release script: the passphrase on a pty, what the build's processes get, where a `.sig` goes, planted modules, which replace nothing, and a build with this tree's own pins, which refuses every test key. |
+| [`test_verify.py`](../tests/e2e/test_verify.py) | 66 | `verify` on a built fsbpyr with test keys pinned: files named by option and variable, for any file, with no fallback; a file of fsbpyr against its release on a local server, with a replayed signature, a release signed by another key or as another project, a forged tag, a bad file beside it, and no network; the warning, and the quick start of the Security chapter, run as it is printed. |
 | [`test_selfupdate.py`](../tests/e2e/test_selfupdate.py) | 9 | `self update` of a built fsbpyr with test keys pinned, from `FakeGitHub`, to a second build of the same code: unsigned, signed by a key it does not pin, a `.xz` that does not match its line, an older build served as new, three pins, and a client that skipped a key change. |
 | [`test_digests.py`](../tests/e2e/test_digests.py) | 4 | The launcher's digest routines through `probes/digests.c`, built with passes of 3 leaves: files hashed together and content given a piece at a time have the Python reader's `tree_digest`. |
 | [`test_dispatch.py`](../tests/e2e/test_dispatch.py) | 6 | A project, and a single script whose PEP 723 block, that excludes the running Python builds through the variant: fsbpyr built from the checkout on another Python and served by `FakeReleases`. Needs that Python installed with uv, and builds its runtime in the cache when there is none. Marked `version_rule`. |

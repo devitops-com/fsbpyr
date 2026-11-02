@@ -29,13 +29,18 @@ Commands:
 fsbpyr key new NAME
 fsbpyr key trust PROJECT PUBKEY FINGERPRINT [--replace]
 fsbpyr sign FILE [--project P] [--signing-key KEY]
-fsbpyr verify FILE [--project P]
+fsbpyr verify FILE [--project P] [--checksums SUMS] [--signature SIG]
 ```
 
 Make a signing key, save the key of a project after checking all of its fingerprint, sign a file,
 and check one. [Signing your own apps](User-Security.md#signing-your-own-apps) says how they fit
 together. `verify` exits 0 for
 VERIFIED, 1 for NOT VERIFIED and 2 when it cannot tell, such as with no trusted key.
+
+`verify` uses what `--signature` and `--checksums` name (or `FSBPYR_VERIFY_SIGNATURE` and
+`FSBPYR_VERIFY_CHECKSUMS`), and nothing else; without them, `FILE.sig` or a signed `SHA256SUMS` beside
+FILE. A file of fsbpyr with neither is checked against its release, which fsbpyr downloads, with a
+warning of [how far that goes](User-Security.md#how-far-each-check-goes).
 
 ## `fsbpyr cache gc`
 

@@ -53,7 +53,8 @@ _CHUNK = 1 << 20
 _MAX_PACKED = 256 << 20  # an asset's .xz has a few MB; a larger one is no asset of a release
 _MAX_SUMS = 1 << 20
 _MAX_DOCUMENT = 4 << 20  # a release document has some 100 KB
-_RELEASE = re.compile(r"v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
+_NUMBER = "(0|[1-9][0-9]{0,8})"  # a tag can come from a forged file: int() refuses 4,300 digits
+_RELEASE = re.compile(rf"v?{_NUMBER}\.{_NUMBER}\.{_NUMBER}")
 _ACCEPT = {"Accept": "application/vnd.github+json", "User-Agent": "fsbpyr-self-update"}
 _NO_SIGNATURE = "it has no valid release signature"
 
@@ -224,6 +225,33 @@ def signed_sums(url: str, signature_url: str | None, tag: str) -> bytes:
     if not passed:
         raise _no_valid_signature(tag)
     return sums
+
+
+def release_files(
+    missing: signing.NothingToCheck, log: Callable[[str], None]
+) -> tuple[str, bytes, bytes]:
+    """The tag that a file of fsbpyr with nothing to check it by records, with that release's sums
+    file and signature, not yet checked. The tag is read from the file, so it can say anything:
+    only numbers go into the URL. A forged one gets a release that does not list the file."""
+    from .dispatch import DEFAULT_DOWNLOADS, DOWNLOADS_VARIABLE  # noqa: PLC0415  it needs this module
+
+    tag = signing.recorded_tag(missing.target.real)
+    numbers = release_numbers(tag) if isinstance(tag, str) else None
+    if numbers is None:
+        raise signing.NotVerified(f"{missing}, and it records no release")
+    release = "v{}.{}.{}".format(*numbers)
+    base = f"{os.environ.get(DOWNLOADS_VARIABLE) or DEFAULT_DOWNLOADS}/{release}"
+    log(f"downloading {SUMS} and {SUMS}.sig of {release}")
+    try:
+        sums = download_bytes(f"{base}/{SUMS}", _MAX_SUMS)
+        signature = download_bytes(f"{base}/{SUMS}.sig", signing.SIGNATURE_SIZE)
+    except (NotFound, TooLarge) as exc:
+        raise signing.NotVerified(f"{missing.target.label}: release {release} has no valid "
+                                  "release signature") from exc  # fmt: skip
+    except UpdateError as exc:
+        raise signing.SigningError(f"{exc}; nothing was checked: download both files, and give "
+                                   "them with --checksums and --signature") from exc  # fmt: skip
+    return release, sums, signature
 
 
 def listed_digest(sums: bytes, name: str, tag: str) -> str:

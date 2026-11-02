@@ -34,6 +34,9 @@ from .text import shown
 
 KEY_VARIABLE = "FSBPYR_SIGNING_KEY"
 PASSPHRASE_VARIABLE = "FSBPYR_SIGNING_PASSPHRASE"  # noqa: S105  a variable's name
+CHECKSUMS_VARIABLE = "FSBPYR_VERIFY_CHECKSUMS"
+SIGNATURE_VARIABLE = "FSBPYR_VERIFY_SIGNATURE"
+CHECKS_PAGE = "https://github.com/devitops-com/fsbpyr/wiki/User-Security#how-far-each-check-goes"
 RELEASE_PROJECT = "fsbpyr"  # only the pinned keys sign it
 SUMS_FILES = ("SHA256SUMS", "SHA256SUMS-glibc2.28")
 SIGNATURE_SIZE = 3373
@@ -62,6 +65,15 @@ class SigningError(RuntimeError):
 
 class NotVerified(RuntimeError):
     """The file does not pass: exit 1. The message follows `NOT VERIFIED: `."""
+
+
+class NothingToCheck(NotVerified):
+    """Nothing was given and nothing lies beside the file. That is NOT VERIFIED, unless it is a
+    file of fsbpyr, whose release can be asked (``selfupdate.release_files``)."""
+
+    def __init__(self, message: str, target: "Target") -> None:
+        super().__init__(message)
+        self.target = target
 
 
 class Crypto(Protocol):
@@ -162,20 +174,32 @@ def _no_build_info(path: Path) -> SigningError:
     return SigningError(f"{shown(path)} has no build info: name its project with --project")
 
 
-def recorded_project(path: Path) -> tuple[bool, object]:
-    """Whether ``path`` is an executable fsbpyr built, and the project its build info names, as
-    it is there: anything, or nothing. A file that does not parse is not such an executable."""
+def _recorded(path: Path) -> tuple[bool, dict[str, object]]:
+    """Whether ``path`` is an executable fsbpyr built, and its build info, as it is there: anything,
+    or nothing. A file that does not parse is not such an executable."""
     try:
         with Executable.open(path) as executable:
             text = executable.payload.build_info
     except (PayloadError, ValueError):  # ValueError: a mapping that cannot be made, a bad string
-        return False, None
+        return False, {}
     try:
         info = json.loads(text)
     except (ValueError, RecursionError):  # bad JSON, numbers beyond the digit limit
-        return True, None
-    project = info.get("project") if isinstance(info, dict) else None
-    return True, project.get("name") if isinstance(project, dict) else None
+        return True, {}
+    return True, info if isinstance(info, dict) else {}
+
+
+def recorded_project(path: Path) -> tuple[bool, object]:
+    """Whether ``path`` is an executable fsbpyr built, and the project its build info names."""
+    executable, info = _recorded(path)
+    project = info.get("project")
+    return executable, project.get("name") if isinstance(project, dict) else None
+
+
+def recorded_tag(path: Path) -> object:
+    """The git tag the build info of ``path`` names, as it is there: anything, or nothing."""
+    git = _recorded(path)[1].get("git")
+    return git.get("tag") if isinstance(git, dict) else None
 
 
 def _is_shown_as(path: Path, real: Path) -> Path:
@@ -323,9 +347,23 @@ def _project_to_check(real: Path, shown_as: str, project: str | None) -> str:
     return name
 
 
-def verify(path: Path, project: str | None = None) -> Verified:
-    """Check ``path`` (§3): by its own ``.sig``, else through a signed sums file beside it. The
-    file a link leads to is what is checked: its ``.sig``, its sums file and its name."""
+@dataclass(frozen=True, slots=True)
+class Target:
+    """A file to check: the path to print, the file itself, its project and that project's keys,
+    and its SHA-256."""
+
+    printed: Path
+    real: Path
+    project: str
+    keys: tuple[bytes, ...]
+    digest: bytes
+
+    @property
+    def label(self) -> str:
+        return shown(self.printed)
+
+
+def _target(path: Path, project: str | None) -> Target:
     real = Path(os.path.realpath(path))
     printed = _is_shown_as(path, real)
     label = shown(printed)
@@ -334,19 +372,89 @@ def verify(path: Path, project: str | None = None) -> Verified:
     except OSError as exc:
         raise SigningError(f"cannot read {label}: {exc.strerror or exc}") from exc
     name = _project_to_check(real, label, project)
-    keys = checking_keys(name)
+    return Target(printed, real, name, checking_keys(name), digest)
+
+
+def _by_own_signature(target: Target, signature: bytes) -> Verified:
+    pub = _signed_by(target.keys, statement(target.project, target.digest), signature)
+    if pub is None:
+        raise NotVerified(f"{target.label}: the signature does not match the trusted key of "
+                          f"{target.project}")  # fmt: skip
+    return Verified(target.printed, target.project, fingerprint(pub))
+
+
+def check_listed(target: Target, sums: bytes, signature: bytes, name: str) -> Verified:
+    """``target`` through a sums file and its signature, here as bytes, so that what is checked is
+    what is looked up in. ``name`` is how to call the sums file, and is printed as it is."""
+    pub = None
+    if len(signature) == SIGNATURE_SIZE:
+        own = crypto()._sha256(sums)  # private to fsbpyr
+        pub = _signed_by(target.keys, statement(target.project, own), signature)
+    if pub is None:
+        raise NotVerified(f"{target.label}: {name} is not signed by the trusted key of "
+                          f"{target.project}")  # fmt: skip
+    listed = listed_names(sums.decode("utf-8", "replace"), target.digest.hex())
+    if not listed:
+        raise NotVerified(f"{target.label}: the signed {name} does not list it")
+    return Verified(target.printed, target.project, fingerprint(pub), name, listed)
+
+
+def _read_given(path: Path, limit: int) -> bytes | None:
+    """A file the user named, or None if it has more than ``limit`` bytes. Without it nothing can
+    be said about the checked file: exit 2, and never another way to check."""
+    try:
+        return _read_limited(path, limit)
+    except OSError as exc:
+        raise SigningError(f"cannot read {shown(path)}: {exc.strerror or exc}") from exc
+
+
+def _by_given_sums(target: Target, sums: Path, signature: Path | None) -> Verified:
+    """``target`` through the sums file ``sums``, signed by ``signature``, else by its ``.sig``."""
+    content = _read_given(sums, _MAX_SUMS)
+    if content is None:
+        raise NotVerified(f"{target.label}: {shown(sums)} is larger than a checksums file may be")
+    raw = _read_given(signature or sums.with_name(f"{sums.name}.sig"), SIGNATURE_SIZE)
+    return check_listed(target, content, raw or b"", shown(sums.name))
+
+
+def _by_given_signature(target: Target, signature: Path) -> Verified:
+    raw = _read_given(signature, SIGNATURE_SIZE)
+    if raw is None or len(raw) != SIGNATURE_SIZE:
+        raise NotVerified(f"{target.label}: {shown(signature)} is not a signature")
+    return _by_own_signature(target, raw)
+
+
+def _by_files_beside(target: Target) -> Verified:
+    """``target`` by its own ``.sig``, else through a signed sums file beside it. What lies there
+    is what counts: a file that fails is NOT VERIFIED, and no release is asked in its place."""
+    real, label = target.real, target.label
     signature = _read_signature(real.with_name(f"{real.name}.sig"), label)
     if signature is not None:
-        pub = _signed_by(keys, statement(name, digest), signature)
-        if pub is None:
-            raise NotVerified(f"{label}: the signature does not match the trusted key of {name}")
-        return Verified(printed, name, fingerprint(pub))
-    found = _through_sums(real.parent, name, keys, digest)
+        return _by_own_signature(target, signature)
+    found = _through_sums(real.parent, target.project, target.keys, target.digest)
     if found is None:
-        raise NotVerified(f"{label}: no {shown(real.name)}.sig, and no signed {SUMS_FILES[0]} "
-                          "beside it lists it")  # fmt: skip
+        message = (f"{label}: no {shown(real.name)}.sig, and no signed {SUMS_FILES[0]} beside it "
+                   "lists it")  # fmt: skip
+        if any(os.path.lexists(real.parent / name) for name in (f"{real.name}.sig", *SUMS_FILES)):
+            raise NotVerified(message)  # a link that leads nowhere lies there too
+        raise NothingToCheck(message, target)
     sums, pub, listed = found
-    return Verified(printed, name, fingerprint(pub), sums, listed)
+    return Verified(target.printed, target.project, fingerprint(pub), sums, listed)
+
+
+def verify(
+    path: Path, project: str | None = None, *, checksums: Path | None = None,
+    signature: Path | None = None,
+) -> Verified:
+    """Check ``path`` (§3). ``checksums``: through that sums file, signed by ``signature`` or its
+    own ``.sig``. ``signature`` alone: that is the file's own. Neither: what lies beside the file,
+    the file a link leads to. What was named is the only way tried: nothing falls back."""
+    target = _target(path, project)
+    if checksums is not None:
+        return _by_given_sums(target, checksums, signature)
+    if signature is not None:
+        return _by_given_signature(target, signature)
+    return _by_files_beside(target)
 
 
 def check_release_file(content: bytes, signature: bytes) -> bool:
@@ -620,17 +728,36 @@ def sign_output(output: Path, request: BuildSigning) -> tuple[str, str | None]:
     return f"signed {output} with key {print_key}: {signature}", None
 
 
-def warning_lines(output: Path, why: str) -> list[str]:
-    """The warning of a build that was to be signed and is not, boxed: it must not be missed."""
-    ended = why if why.endswith(("?", ".")) else f"{why}."
-    text = (f"{output} is NOT SIGNED: {ended} Unset {KEY_VARIABLE} to build unsigned without "
-            "this warning.")
-    lines, line = [], ""
-    for word in text.split(" "):
-        if line and len(line) + 1 + len(word) > _WARNING_WIDTH:
-            lines.append(line)
-            line = word
-        else:
-            line = f"{line} {word}" if line else word
+def _boxed(*paragraphs: str) -> list[str]:
+    """Each of ``paragraphs`` wrapped, between two rules: it must not be missed."""
+    lines = []
+    for paragraph in paragraphs:
+        line = ""
+        for word in paragraph.split(" "):
+            if line and len(line) + 1 + len(word) > _WARNING_WIDTH:
+                lines.append(line)
+                line = word
+            else:
+                line = f"{line} {word}" if line else word
+        lines.append(line)
     rule = "*" * (_WARNING_WIDTH + 2)
-    return [rule, *(f" {part}" for part in (*lines, line)), rule]
+    return [rule, *(f" {part}" for part in lines), rule]
+
+
+def warning_lines(output: Path, why: str) -> list[str]:
+    """The warning of a build that was to be signed and is not."""
+    ended = why if why.endswith(("?", ".")) else f"{why}."
+    return _boxed(f"{output} is NOT SIGNED: {ended} Unset {KEY_VARIABLE} to build unsigned "
+                  "without this warning.")  # fmt: skip
+
+
+def release_check_lines(tag: str) -> list[str]:
+    """What a check against files fsbpyr downloaded by itself can tell, and what it cannot."""
+    return _boxed("This check ran inside this fsbpyr, with the keys built into it, on files "
+                  "downloaded from GitHub.",
+                  f"It CAN show that the file is the one the release keys signed for {tag}, so "
+                  "damage or a changed file is found, even if GitHub was hacked, as long as this "
+                  "fsbpyr is genuine.",
+                  "It CANNOT show that this fsbpyr is genuine: a tampered fsbpyr can print the "
+                  "same result. To check it with tools it does not control, read:",
+                  CHECKS_PAGE)  # fmt: skip

@@ -738,6 +738,9 @@ printed, is never normalized, and only a checked name is joined into a path.
 | A genuine file of another trusted project, served under this app's name | Stopped with `verify --project`; without it, `verify` passes and prints the other project's name |
 | Another file of the same release, or an older release's file with its own sums file, served under an asset's name | Not stopped by `verify` through a sums file, whose line says what the file is listed as. `self update` checks the asset and the version |
 | A forged executable whose build info names a path or a terminal escape | Stopped: refused unprinted, never joined into a path |
+| A file of fsbpyr whose build info names a path as its tag, or the tag of another release | Stopped: only the numbers of a vX.Y.Z tag go into a URL, and a forged tag gets a signed release that does not list the file |
+| A bad `.sig` or sums file laid beside a file, or named to `verify`, so that a better one is used instead | Stopped: what lies there or was named is the only way tried. `verify` falls back on nothing, and a download happens only when there is nothing |
+| A tampered fsbpyr that prints VERIFIED about itself | Not stopped: no check inside a file can be. `verify` says so whenever it checks a file of fsbpyr against files it downloaded, and [the outside checks](User-Security.md#how-far-each-check-goes) find it |
 | A relative `XDG_CONFIG_HOME` that brings trusted keys in a download | Stopped: ignored, as a relative `HOME` is; a trust store another user can write is refused |
 | Ed25519 broken, or a flaw in the ML-DSA-65 code | Stopped: both must pass |
 | The first fsbpyr download tampered with | Not stopped: it is trusted as GitHub serves it, a hacked repository's included. The audit limits how long that lasts |

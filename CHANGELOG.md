@@ -10,6 +10,23 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Added
+- **`fsbpyr verify` takes its inputs by name.** `--signature` and `--checksums`, or
+  `FSBPYR_VERIFY_SIGNATURE` and `FSBPYR_VERIFY_CHECKSUMS`, for any file. What is named is the only
+  way tried: nothing falls back.
+- **`fsbpyr verify` checks fsbpyr with nothing beside it.** It downloads the signed `SHA256SUMS` of
+  the release the file records, and prints a warning of what that can and cannot show, with a link
+  to the wiki.
+
+### Changed
+- The Security chapter says how trust works and how far each check goes: fsbpyr on itself, a copy you
+  already checked, system tools (a full verification needs OpenSSL 3.5 or newer), an attestation and
+  your own build.
+
+### Fixed
+- The Security chapter said that the release key signs in CI, and showed an attestation check without
+  `--source-ref`.
+
 ## [0.29.0] - 2026-11-01
 
 ### Added

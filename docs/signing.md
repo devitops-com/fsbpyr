@@ -164,7 +164,7 @@ sha256 <the file's SHA-256 in lowercase hex>
 | `fsbpyr key new NAME` | Makes both keys, writes `NAME.key` (mode 600) and `NAME.pub`, and prints the fingerprint. Asks for the passphrase twice unless `FSBPYR_SIGNING_PASSPHRASE` is set. Replaces nothing. |
 | `fsbpyr key trust PROJECT PUBKEY FINGERPRINT [--replace]` | Checks PUBKEY and FINGERPRINT and saves PUBKEY as PROJECT's key (rules below). A different saved key is replaced only with `--replace`. |
 | `fsbpyr sign FILE [--project P] [--signing-key KEY]` | Writes `FILE.sig`, after checking the new signature. Replaces nothing. |
-| `fsbpyr verify FILE [--project P]` | Checks FILE and prints `VERIFIED` or `NOT VERIFIED`, with the project it checked FILE as. With `--project`, FILE must be P's. |
+| `fsbpyr verify FILE [--project P] [--checksums SUMS] [--signature SIG]` | Checks FILE and prints `VERIFIED` or `NOT VERIFIED`, with the project it checked FILE as. With `--project`, FILE must be P's. |
 
 Rules shared by the commands:
 - **Project.**
@@ -210,6 +210,11 @@ Rules shared by the commands:
   - Exit 0 when saved or already saved, 2 otherwise, a wrong fingerprint too. 1 means NOT
     VERIFIED only, as in the script.
 - **Which signature.**
+  - `--checksums SUMS` (`FSBPYR_VERIFY_CHECKSUMS`): FILE through that sums file, signed by
+    `--signature` or else by `SUMS.sig`. `--signature SIG` alone (`FSBPYR_VERIFY_SIGNATURE`): FILE's
+    own signature. What was named is the only way tried, for any file: nothing falls back to what
+    lies beside FILE, or to a download. A named file that cannot be read is exit 2 (owner,
+    2026-11-02).
   - FILE's symlinks are followed first. `verify` then works on the file FILE leads to: its
     `.sig`, its sums file, and its name in the line. A command link is a symlink, both the
     build's (links.py:76) and `FSBPYR_INSTALL_LINKS`'s (boot/_fsbpyr_rt/links.py:51), so it is
@@ -230,6 +235,19 @@ Rules shared by the commands:
   - This is how a user checks fsbpyr's downloads by hand (§7). fsbpyr's own download paths take
     their asset's own line, and `self update` and dispatch also check `release_asset` and the
     version (§5.5).
+  - A file of fsbpyr with nothing named and nothing beside it, no `.sig` and no file of a sums
+    file's name, is checked against its release: the `SHA256SUMS` and `.sig` of the tag its build
+    info records, downloaded. The tag is read from the file, so only the numbers of a vX.Y.Z tag go
+    into the URL, and a forged one gets a release that does not list the file. Anything else beside
+    the file is what is checked, and a failure there is not gone around. An app is never looked up:
+    fsbpyr does not know where its publisher keeps it (owner, 2026-11-02).
+  - That check runs inside an fsbpyr, so it cannot show that this fsbpyr is genuine: a tampered one
+    prints the same. It shows that the keys, the hashing and the check work, and that the file is
+    the one the release keys signed, if this fsbpyr is genuine. The owner settled on 2026-11-02 that
+    fsbpyr verifies any file it built, itself included, and that the trust in that verification
+    comes from the chain of trust and the outside checks, not from a refusal. So `verify` prints a
+    boxed warning of what it can and cannot show, with a link to the wiki: the one place fsbpyr
+    links to it. A refused update still links nowhere (§5.5).
 - **Exit status.**
   - 0: VERIFIED.
   - 1: NOT VERIFIED.
@@ -245,6 +263,10 @@ Rules shared by the commands:
 | `NOT VERIFIED: myapp: its build info names no valid project` [P6] | 1 |
 | `NOT VERIFIED: myapp: no myapp.sig, and no signed SHA256SUMS beside it lists it` | 1 |
 | `NOT VERIFIED: myapp: myapp.sig is not a signature (N bytes)` | 1 |
+| `NOT VERIFIED: myapp: SHA256SUMS is not signed by the trusted key of myapp` | 1 |
+| `NOT VERIFIED: myapp: the signed SHA256SUMS does not list it` | 1 |
+| `NOT VERIFIED: fsbpyr: release v1.2.0 has no valid release signature` | 1 |
+| `cannot read path/myapp.sig: No such file or directory` | 2 |
 | `no trusted key for myapp: get the publisher's key and its fingerprint, then: fsbpyr key trust myapp KEY.pub SHA256:…` | 2 |
 
 Names in these lines come from files. The project is printed only after §2.1's check. FILE and
