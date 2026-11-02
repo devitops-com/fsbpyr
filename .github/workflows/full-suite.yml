@@ -75,7 +75,7 @@ jobs:
     # count against those 14 GiB beside 4 test processes; the step "The temporary files' file
     # system" checks what the tests need of it first.
     container:
-      image: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+      image: docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
       options: --privileged --pids-limit 8192 --memory 14g --memory-swap 14g
       volumes:
         - /mnt/fsbpyr-tmp:/var/tmp
@@ -350,7 +350,7 @@ jobs:
           - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
           - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
     container:
-      image: docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+      image: docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
       options: --pids-limit 8192 --memory 14g --memory-swap 14g  # as the suite job's
     timeout-minutes: 60
     steps:

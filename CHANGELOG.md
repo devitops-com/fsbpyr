@@ -27,6 +27,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - **`make release` asks nothing.** `FSBPYR_RELEASE_KEY_FILE` names the key and
   `FSBPYR_RELEASE_PASSPHRASE_FILE` a file that holds its passphrase, or a program that prints it.
   Both are checked before anything is tagged. `FSBPYR_RELEASE_ASSUME_YES` is gone.
+- **The release is built on the current Debian trixie image** (`debian:trixie@sha256:2dc419c6…`).
+  Only `tzdata` differs from the last one, on amd64 and arm64.
 - The Security chapter says how trust works and how far each check goes: fsbpyr on itself, a copy you
   already checked, system tools (a full verification needs OpenSSL 3.5 or newer), an attestation and
   your own build.

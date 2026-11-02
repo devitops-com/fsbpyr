@@ -2,7 +2,7 @@
 # `make bootstrap` uses it on hosts other than Debian trixie (tools/bootstrap.sh). The checkout
 # is mounted at /src and dist/fsbpyr lands in it; a volume keeps uv's cache, its Pythons,
 # fsbpyr's runtime and the clang/lld 23 bootstrap.sh fetches between runs.
-FROM docker.io/library/debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308 AS build
+FROM docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1 AS build
 
 # Everything but uv, Python and clang/lld 23 from Debian's own packages. The runtime links with
 # LLVM's clang/lld 23, which bootstrap.sh fetches with curl and unpacks with zstd
