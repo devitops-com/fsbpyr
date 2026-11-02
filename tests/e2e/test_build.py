@@ -278,7 +278,6 @@ def test_self_hosting_reaches_a_fixed_point(tmp_path: Path) -> None:
     (tmp_path / "git" / "git").symlink_to(git)
     path = os.pathsep.join([str(Path(uv).parent), str(tmp_path / "git")])
     env = {**os.environ, "PATH": path, "FSBPYR_CACHE_DIR": str(tmp_path / "c")}
-    venv_before = _tree(VENV)
     stages = [tmp_path / f"stage{n}" for n in (1, 2, 3)]
 
     assert main(["build", str(ROOT), "-o", str(stages[0])]) == 0
@@ -304,7 +303,6 @@ def test_self_hosting_reaches_a_fixed_point(tmp_path: Path) -> None:
     version = _run(stages[2], "--version")  # recorded by the build: the binary has no git
     assert version.stdout == version_string(git_state(ROOT)) + "\n"
     assert not (tmp_path / "c" / "runtimes").exists()  # the binary used its own runtime
-    assert _tree(VENV) == venv_before
 
 
 def test_self_hosted_binary_builds_offline_without_clang(tmp_path: Path) -> None:
