@@ -65,7 +65,7 @@ with the messages to watch for and how to check and restore an installed fsbpyr.
 
 The [wiki](https://github.com/devitops-com/fsbpyr/wiki) describes the latest release.
 
-- **User Guide:** [what fsbpyr is](https://github.com/devitops-com/fsbpyr/wiki/User-Overview), [**security**](https://github.com/devitops-com/fsbpyr/wiki/User-Security), [installing](https://github.com/devitops-com/fsbpyr/wiki/User-Installing),
+- **User Guide:** [what fsbpyr is](https://github.com/devitops-com/fsbpyr/wiki/User-Overview), [installing](https://github.com/devitops-com/fsbpyr/wiki/User-Installing), [**security**](https://github.com/devitops-com/fsbpyr/wiki/User-Security),
   [building an app](https://github.com/devitops-com/fsbpyr/wiki/User-Building), [scripts and tools](https://github.com/devitops-com/fsbpyr/wiki/User-Scripts),
   [settings](https://github.com/devitops-com/fsbpyr/wiki/User-Settings), [inspecting](https://github.com/devitops-com/fsbpyr/wiki/User-Inspecting),
   [running](https://github.com/devitops-com/fsbpyr/wiki/User-Running), [other commands](https://github.com/devitops-com/fsbpyr/wiki/User-Other-Commands),

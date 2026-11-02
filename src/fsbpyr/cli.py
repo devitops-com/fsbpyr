@@ -17,7 +17,7 @@ import click
 from click.shell_completion import BashComplete, FishComplete, ShellComplete, ZshComplete
 
 if TYPE_CHECKING:
-    from .signing import BuildSigning
+    from .signing import BuildSigning, NothingToCheck
 
 DEFAULT_PYTHON = f"{sys.version_info[0]}.{sys.version_info[1]}"  # the runtime of this fsbpyr
 PROG = "fsbpyr"
@@ -415,25 +415,71 @@ def sign_command(*, file: Path, project: str | None, signing_key: Path | None) -
 @cli.command("verify", short_help="check a file's signature",
              help="check FILE against the trusted key of its project: exit 0 and VERIFIED, exit 1 "
                   "and NOT VERIFIED, exit 2 when it cannot be told (no trusted key, a project "
-                  "not named). It uses FILE.sig, else a signed `SHA256SUMS` beside FILE that "
-                  "lists it; a link is checked as the file it leads to. A pass means that the "
-                  "holder of the trusted key signed exactly this file, as the project printed. It "
-                  "does not mean that the app is safe, or the newest.")  # fmt: skip
+                  "not named). It uses what `--signature` and `--checksums` name, and nothing "
+                  "else; without them FILE.sig, else a signed `SHA256SUMS` beside FILE that "
+                  "lists it; a link is checked as the file it leads to. A file of fsbpyr with "
+                  "neither is checked against the `SHA256SUMS` and `SHA256SUMS.sig` of the release "
+                  "it records, downloaded from GitHub, with a warning of what that can and cannot "
+                  "show. A pass means that the holder of the trusted key signed exactly this "
+                  "file, as the project printed. It does not mean that the app is safe, or the "
+                  "newest.")  # fmt: skip
 @click.argument("file", metavar="FILE", type=click.Path(path_type=Path))
 @click.option("--project", metavar="P", help="FILE must be this project's; whoever expects a "
               "certain app gives this, or a genuine file of any trusted project "
               "passes")  # fmt: skip
-def verify_command(*, file: Path, project: str | None) -> int:
-    from .signing import NotVerified, SigningError, verify  # noqa: PLC0415  keep --version fast
+@click.option("--checksums", metavar="SUMS", type=click.Path(path_type=Path),
+              envvar="FSBPYR_VERIFY_CHECKSUMS",
+              help="a checksums file that lists FILE; it is signed by `SUMS.sig` unless "
+                   "`--signature` names its signature (default: "
+                   "`FSBPYR_VERIFY_CHECKSUMS`)")  # fmt: skip
+@click.option("--signature", metavar="SIG", type=click.Path(path_type=Path),
+              envvar="FSBPYR_VERIFY_SIGNATURE",
+              help="FILE's signature, or with `--checksums` that file's (default: "
+                   "`FSBPYR_VERIFY_SIGNATURE`)")  # fmt: skip
+def verify_command(
+    *, file: Path, project: str | None, checksums: Path | None, signature: Path | None
+) -> int:
+    from .signing import (  # noqa: PLC0415  keep --version fast
+        RELEASE_PROJECT,
+        NothingToCheck,
+        NotVerified,
+        SigningError,
+        verify,
+    )
 
     try:
-        print(verify(file, project).line())
+        try:
+            print(verify(file, project, checksums=checksums, signature=signature).line())
+        except NothingToCheck as missing:
+            if missing.target.project != RELEASE_PROJECT:
+                raise
+            return _check_against_release(missing)
     except NotVerified as exc:
         print(f"NOT VERIFIED: {exc}", file=sys.stderr)
         return 1
     except SigningError as exc:
         return _signing_error(exc)
     return 0
+
+
+def _check_against_release(missing: "NothingToCheck") -> int:
+    """`verify` of a file of fsbpyr with nothing to check it by: its release is asked, and whatever
+    that says comes with what it is worth, since the check runs inside an fsbpyr."""
+    from .selfupdate import release_files  # noqa: PLC0415  keep --version fast
+    from .signing import NotVerified, check_listed, release_check_lines  # noqa: PLC0415
+
+    tag, sums, signature = release_files(
+        missing, lambda message: print(f"fsbpyr: {message}", file=sys.stderr))
+    code = 0
+    try:
+        print(check_listed(missing.target, sums, signature, f"SHA256SUMS of {tag}").line(),
+              flush=True)  # fmt: skip
+    except NotVerified as exc:
+        print(f"NOT VERIFIED: {exc}", file=sys.stderr)
+        code = 1
+    for line in release_check_lines(tag):
+        print(f"fsbpyr: WARNING {line}", file=sys.stderr)
+    return code
 
 
 def _signing_error(exc: Exception) -> int:

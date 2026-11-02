@@ -33,7 +33,7 @@ from fsbpyr.payload.format import (
 from fsbpyr.payload.reader import Executable, Payload
 from fsbpyr.payload.spec import ZSTD_FAST_LEVEL, ZSTD_LEVEL, Blob, Dist, File, Module, PayloadSpec
 from fsbpyr.payload.writer import encode_payload
-from fsbpyr.runtime import pins, registry
+from fsbpyr.runtime import pins, registry, stubs
 from fsbpyr.runtime.registry import Runtime, RuntimeCacheError, check_owner, secure_directory
 
 from ..payload.conftest import make_spec
@@ -354,6 +354,8 @@ def test_select_runtime_takes_the_embedded_runtime_only_for_its_baseline(
     embedded = _runtime(baseline="2.28")
     monkeypatch.setattr(registry, "running_executable", lambda: Path("/proc/self/exe"))
     monkeypatch.setattr(Runtime, "from_executable", classmethod(lambda cls, path: embedded))
+    # a developer build: on a checkout at a release tag it would look for that release's stubs
+    monkeypatch.setattr(stubs, "own_version", lambda: "untagged-abcdef12")
     asked: list[str] = []
 
     def find(python: str, cache: Path | None = None, baseline: str = "2.34") -> Runtime:

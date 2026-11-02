@@ -105,8 +105,9 @@ aarch64 kernels with 16K pages), is in [What the target needs](User-Running.md#w
 
 ## Where to go next
 
-1. [Security](User-Security.md): what protects you, and what to do when something looks wrong
-2. [Installing fsbpyr](User-Installing.md)
+1. [Installing fsbpyr](User-Installing.md): every Python and architecture, updating, building from
+   source
+2. [Security](User-Security.md): what protects you, and what to do when something looks wrong
 3. [Building an app](User-Building.md), with every option
 4. [Scripts and tools](User-Scripts.md): projects without a build system, directories of scripts,
    single scripts, tools from a requirements file

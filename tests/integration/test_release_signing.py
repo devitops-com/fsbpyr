@@ -290,6 +290,21 @@ def test_any_given_key_passes(file: Path, k: Key, r: Key) -> None:
     assert script("verify", file, r.pub).returncode == 1
 
 
+def test_a_genuine_signature_of_an_app_is_no_file_of_fsbpyr(
+    file: Path, k: Key, tmp_path: Path
+) -> None:
+    """The subject keeps apart what a key signed, and for whom: a good signature as another project
+    must not pass here. Whoever runs this on an app is told where to go, not that it is forged."""
+    message = statement("myapp", file.read_bytes())
+    file.with_name(f"{file.name}.sig").write_bytes(sign_statement(k.key, message, tmp_path))
+
+    done = script("verify", file, k.pub)
+
+    assert done.returncode == 1
+    assert "as a file of fsbpyr" in done.stderr
+    assert "check an app with fsbpyr verify" in done.stderr
+
+
 def test_a_changed_file_is_not_verified(file: Path, k: Key) -> None:
     sign(k.key, file)
     file.write_text("another file\n")

@@ -68,6 +68,10 @@ ENVIRONMENT = (
                                   "standard input. Empty counts as unset. `build` removes both "
                                   "signing variables from its environment before it starts any "
                                   "process."),
+    ("FSBPYR_VERIFY_CHECKSUMS", "The checksums file `verify` uses when `--checksums` is not "
+                                "given. Empty counts as unset."),
+    ("FSBPYR_VERIFY_SIGNATURE", "The signature `verify` uses when `--signature` is not given. "
+                                "Empty counts as unset."),
     ("XDG_CONFIG_HOME", "The base of the keys `key trust` saves when it is an absolute path; "
                         "otherwise ~/.config."),
     ("XDG_CACHE_HOME", "The base of the cache directories when it is an absolute path; "

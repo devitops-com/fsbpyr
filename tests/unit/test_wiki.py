@@ -11,7 +11,7 @@ from types import ModuleType
 
 import pytest
 
-from fsbpyr import selfupdate
+from fsbpyr import selfupdate, signing
 
 ROOT = Path(__file__).parents[2]
 TOOLS = ROOT / "tools" / "wiki"
@@ -424,6 +424,8 @@ def test_the_refusal_the_security_chapter_shows_is_what_self_update_prints() -> 
     ("selfupdate.py", "the download is not newer than this fsbpyr"),
     ("selfupdate.py", "cannot read the latest release from "),
     ("signing.py", "is NOT SIGNED: "),
+    ("signing.py", "This check ran inside this fsbpyr"),
+    ("signing.py", "does not list it"),
 ])
 def test_the_messages_the_security_chapter_lists_are_the_ones_fsbpyr_prints(
     source: str, message: str
@@ -432,6 +434,17 @@ def test_the_messages_the_security_chapter_lists_are_the_ones_fsbpyr_prints(
 
     assert message in (ROOT / "src" / "fsbpyr" / source).read_text(encoding="utf-8")
     assert message in text
+
+
+def test_the_warning_of_verify_links_to_a_heading_of_the_security_chapter() -> None:
+    """On a published page a dead anchor fails silently, and the warning sends people there."""
+    page, _, anchor = signing.CHECKS_PAGE.rpartition("#")
+    text = (ROOT / "wiki" / "User-Security.md").read_text(encoding="utf-8")
+    headings = [line.lstrip("#").strip().lower().replace(" ", "-")
+                for line in text.splitlines() if line.startswith("#")]  # fmt: skip
+
+    assert page == "https://github.com/devitops-com/fsbpyr/wiki/User-Security"
+    assert anchor in headings
 
 
 def test_the_pinned_keys_are_the_ones_the_wiki_lists() -> None:

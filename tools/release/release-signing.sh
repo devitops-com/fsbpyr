@@ -237,7 +237,7 @@ verify() {
         fi
     done
     ((usable)) || die 2 "no usable public key among $*"
-    die 1 "NOT VERIFIED: $file: $sig does not match $*"
+    die 1 "NOT VERIFIED: $file: $sig does not match $* as a file of $SUBJECT (this script checks fsbpyr's own releases; check an app with fsbpyr verify)"
 }
 
 tmp=
