@@ -33,8 +33,8 @@ it again. The measurements changed what that should mean here.
 
 What remains is real work: 8 entries of `suite` and `corpus` on code that did change. Doing less of
 that is a decision about coverage, not an optimization. The owner made it for `corpus` (§9, D4): the
-default Python on each target, on every run; all 8 entries only on demand. That saves about 80 of
-its 107 runner minutes a run on top of the 27%.
+default Python on each target, on every push; all 8 entries in the weekly run and on demand. That
+saves about 80 of its 107 runner minutes a push on top of the 27%.
 
 ## 2. What costs what
 
@@ -235,11 +235,11 @@ that very commit. The test jobs reuse the records of the commit before it, if no
 Each phase can stop there and keep what it gained. Each is a pull request with its own full run.
 
 1. **Fuzz, the runtime and the corpus (A, B, D4).** No records yet. `corpus` runs the default
-   Python (`.python-version`, 3.14 now) on x86_64 and aarch64, on a push, the weekly run and a plain
-   dispatch; a dispatch that asks for all Pythons runs all 8 entries.
+   Python (`.python-version`, 3.14 now) on x86_64 and aarch64, on a push and a plain dispatch; the
+   weekly run, and a dispatch that asks for all Pythons, run all 8 entries.
    Done when: a full run takes 10 minutes less per `suite` job on a long fuzz, and the same tests
    pass; a planted crash in the launcher is still found by the `fuzz` job; `corpus` has 2 entries
-   unless a dispatch asks for 8.
+   on a push and 8 in the weekly run.
 2. **Shadow mode.** `tools/ci/inputs.toml`, the keys, the records and `plan`, which only reports
    what it would skip, while everything runs.
    Done when: 20 pushes to main have passed with no entry that `plan` would have skipped and that
@@ -267,7 +267,7 @@ The tools get the treatment the release scripts got:
 - **D3. Fuzz on one Python per target on a push?** Yes, with all 8 in the weekly run.
 - **D4. Should `corpus` run all 8 entries on every push?** No. `corpus` runs on the default Python
   (3.14 now) for every supported architecture, x86_64 and aarch64, on every push. All 8 entries run
-  only on demand, typically when 3.14 fails. The weekly run is no exception: it runs the 2 entries.
-  At 107 minutes `corpus` was the largest thing left, and this saves about 80 of them a run. The
-  price: a corpus failure on 3.12, 3.13 or 3.15 alone shows only on a run asked for, or locally
+  in the weekly run, which stays full, and on demand, typically when 3.14 fails. At 107 minutes
+  `corpus` was the largest thing left, and this saves about 80 of them a push. The price: a corpus
+  failure on 3.12, 3.13 or 3.15 alone shows up to a week later, sooner on a run asked for or locally
   (`make test-corpus PYTHON=3.X`).
