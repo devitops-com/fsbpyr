@@ -207,8 +207,8 @@ test-portability: ## Run the portability matrix on 12 distributions (podman, dis
 # gc, restore, find_object), the _fsbpyr contract (runtime_app, imports, stub_hardening, cache
 # root, streaming) and the build of apps with natives from manylinux_2_28 wheels (compat,
 # natives). tests/e2e/test_el8.py compares an EL8 build with a default one, so it runs with
-# both runtimes, not in the mode. full-suite.yml does not run any of it; el8.yml, which publishes
-# the EL8 stubs in the companion release el8-vX.Y.Z, does.
+# both runtimes, not in the mode. full-suite.yml's el8-tests job runs it; el8.yml, which publishes
+# the EL8 stubs in the companion release el8-vX.Y.Z, tests nothing.
 EL8_TESTS := tests/e2e/test_runtime_app.py tests/e2e/test_imports.py tests/e2e/test_stub_hardening.py \
 	tests/e2e/test_edges.py tests/e2e/test_cache_root.py tests/e2e/test_gc.py tests/e2e/test_slots.py \
 	tests/e2e/test_due.py tests/e2e/test_restore.py tests/e2e/test_find_object.py \
@@ -222,13 +222,14 @@ test-el8-stub: ## Run the stub-dependent tests with the glibc 2.28 (EL8) stub, a
 
 # The portability matrix (podman) with apps built `--glibc 2.28`: the 12 images and, only in this
 # mode, rockylinux:8 and almalinux:8. The apps are built by the tests with the EL8 runtime (as
-# without FSBPYR_PORTABILITY_APPS); el8.yml builds them with tools/portability-apps.sh instead,
-# with the release's fsbpyr and the stub it has just linked.
+# without FSBPYR_PORTABILITY_APPS); full-suite.yml's el8-portability job builds them with
+# tools/portability-apps.sh instead, with an fsbpyr of the commit tagged as its release and the
+# stub its el8-stub job linked.
 test-el8-portability: ## Run the portability matrix with apps built for glibc 2.28, on the 12 distributions and rockylinux:8, almalinux:8 (podman; PYTHON=3.X)
 	$(TESTENV) $(CONTAINED) env FSBPYR_TEST_GLIBC=2.28 \
 		$(UVRUN) pytest tests/e2e/test_portability.py
 
-test-el8: test-el8-stub test-el8-portability ## Run the EL8 (glibc 2.28) test mode and its portability matrix: what el8.yml runs, without the corpus subset and the VM
+test-el8: test-el8-stub test-el8-portability ## Run the EL8 (glibc 2.28) test mode and its portability matrix: what full-suite.yml's EL8 jobs run, without the corpus subset and the VM
 
 # aarch64 apps in a QEMU system VM (tools/vm-smoke.py) whose kernel has 64 KiB pages (EL8's),
 # under TCG: no KVM, about a minute per boot. fsbpyr builds for

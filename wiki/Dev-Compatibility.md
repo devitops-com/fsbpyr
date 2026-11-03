@@ -366,9 +366,11 @@ every build of the tests is a `--glibc 2.28` one, and the whole matrix, `hello`,
 targets ([Makefile](../Makefile)).
 [`tests/e2e/test_el8_use_cases.py`](../tests/e2e/test_el8_use_cases.py)
 builds a directory of scripts, a single script and a project of several commands for EL8 and
-runs them on the host. The EL8 workflow,
+runs them on the host. The EL8 jobs of
+[`.github/workflows/full-suite.yml`](../.github/workflows/full-suite.yml)
+run the EL8 test mode and gate the release; the EL8 workflow,
 [`.github/workflows/el8.yml`](../.github/workflows/el8.yml),
-which publishes the stubs, runs the EL8 test mode.
+only links the stubs from a release's tag and publishes them.
 
 The container matrix runs on kernels with 4 KiB pages. aarch64 kernels with 64 KiB pages
 (EL8's) are smoke-tested in a QEMU system VM, not on hardware: `make test-vm` runs

@@ -365,8 +365,9 @@ else from downloads, and fails the test without clang and lld 23.
   `runtime/test_registry.py`, `builder/test_project_and_staging.py`,
   `builder/test_system_report.py`, `builder/test_build.py`, `test_cli.py`, `test_dispatch.py`,
   `test_inspect.py`, `test_selfupdate.py`, `test_vcs.py` and `test_downloads.py`.
-- Integration tests: `test_el8_workflow.py` (the shape of `.github/workflows/el8.yml` and its
-  publish steps against a fake `gh`), `test_check_release_el8.py` (the release check's EL8
+- Integration tests: `test_el8_workflow.py` (the shape of `.github/workflows/el8.yml` and of
+  `full-suite.yml`'s EL8 jobs, el8.yml's publish steps against a fake `gh`, and the step that
+  tags a commit as its release against real git), `test_check_release_el8.py` (the release check's EL8
   steps), and the tests of `test_release.py` about the companion release and its tag.
 - End-to-end tests: `test_el8.py` (EL8 builds on real runtimes, and a release fsbpyr that
   downloads or finds its stub), `test_el8_use_cases.py` (a directory of scripts, a single script
@@ -408,9 +409,9 @@ comment). In the mode:
 one and needs both runtimes. `make test-el8-portability` runs `test_portability.py` in the mode;
 the tests build the apps with the glibc 2.28 runtime. `make test-el8` runs both.
 `test_el8_use_cases.py` is in neither; `make test` runs it. The Makefile names
-[`el8.yml`](../.github/workflows/el8.yml) as
-the workflow that runs the mode and `full-suite.yml` as one that runs none of it;
-`test_corpus.py`'s docstring adds that `el8.yml` runs a few corpus apps
+the EL8 jobs of [`full-suite.yml`](../.github/workflows/full-suite.yml) as
+those that run the mode, and [`el8.yml`](../.github/workflows/el8.yml) as a workflow that tests
+nothing; `test_corpus.py`'s docstring adds that the `el8-corpus` job runs a few corpus apps
 (`FSBPYR_CORPUS_APPS`) in the mode.
 
 ## The corpus
@@ -891,7 +892,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_bytecode_determinism.py`](../tests/integration/test_bytecode_determinism.py) | 2 | Canonical bytecode over the real stdlib, and across build processes of different shapes (see [Determinism checks](#determinism-checks)). |
 | [`test_check_release_el8.py`](../tests/integration/test_check_release_el8.py) | 16 | The two EL8 steps of `tools/release/check-release.sh` (the companion release's stubs, and a build for glibc 2.28), cut out of the script and run with its own helpers against a fake `gh` and `git`: a version without a companion release skips both; a draft or prerelease companion, a companion that is the latest release, a companion tag on another commit, a missing asset (one failure, not two) and each file whose attestation does not verify fail; a complete companion passes and a later fsbpyr fetches its stub (cached under the tag by 0.27.0, under the runtime id by later releases), while 0.26.0's stub is placed beside the executable instead. |
 | [`test_check_release_install.py`](../tests/integration/test_check_release_install.py) | 7 | The step of `tools/release/check-release.sh` that installs a signed release with `FSBPYR_VERIFY=1`, logged in and not: what it makes of each answer, including an install with no login, and a missing login that reads as tampering. |
-| [`test_el8_workflow.py`](../tests/integration/test_el8_workflow.py) | 31 | [`.github/workflows/el8.yml`](../.github/workflows/el8.yml), which publishes the glibc 2.28 stubs in the companion release `el8-vX.Y.Z`, read as text (GitHub runs it, not the tests): its triggers, no checkout of another ref, the release and its gate naming none of it, one run per tag, every target on a runner of its architecture, the default Python read from the tag, actions pinned as the other workflows pin them, write permissions in `publish` only, the companion made as a draft on its tag, which must exist (`--verify-tag`, no target), and published as not the latest, asset names those `stubs.py` reads. The publish job's shell steps also run against a fake `gh`: nothing published yet, the same stubs already published, other stubs published (a failure, left alone), a draft left by a stopped run deleted, the wait for the release of the tag, a companion tag that is missing or on another commit, the check of the result. |
+| [`test_el8_workflow.py`](../tests/integration/test_el8_workflow.py) | 36 | [`.github/workflows/el8.yml`](../.github/workflows/el8.yml), which links the glibc 2.28 stubs from a release's tag and publishes them in the companion release `el8-vX.Y.Z`, and the EL8 jobs of `full-suite.yml`, which check and test them, read as text (GitHub runs them, not the tests): el8.yml's triggers, no checkout of another ref, the release naming none of it, nothing linked for a commit whose full suite run did not pass, nothing tested and each stub linked once, as the full suite links it twice; EL8 jobs in the full suite that run on every trigger and cannot fail without failing the run, a vanished VM pin a warning there as in the `vm-smoke` job, the default Python read by `el8-python`, the executable built from the commit tagged as its release (the tag step run against real git), one run per tag, every target on a runner of its architecture, actions pinned as the other workflows pin them, write permissions in `publish` only, the companion made as a draft on its tag, which must exist (`--verify-tag`, no target), and published as not the latest, asset names those `stubs.py` reads. The publish job's shell steps also run against a fake `gh`: nothing published yet, the same stubs already published, other stubs published (a failure, left alone), a draft left by a stopped run deleted, the wait for the release of the tag, a companion tag that is missing or on another commit, the check of the result. |
 | [`test_install.py`](../tests/integration/test_install.py) | 140 | `install.sh`, generated from fake release assets and served over HTTPS from 127.0.0.1 with a self-signed certificate for `localhost` and 127.0.0.1 that the session makes with the `openssl` CLI; `HOME`, the install directories and a `PATH` of chosen tools are under `tmp_path`, so a test can leave out or fake `xz`, `curl`, `gh`, `uname` or `ldd`. Each installer test runs under dash, bash and busybox sh (129 of the 137); the rest test the installer's generator and that dash and busybox parse the template. |
 | [`test_launcher_format.py`](../tests/integration/test_launcher_format.py) | 18 | `launcher/format.h` and `fsbpyr.payload.format` describe the same bytes: a C probe compiled with `cc` prints record sizes, constants and field offsets, compared with the Python structs. |
 | [`test_make_release.py`](../tests/integration/test_make_release.py) | 36 | `make release`, `tools/release/release.sh`, with stand-ins for its parts: their order, what each failure stops, going on from a tag after a stop, the key's three sources, and that it never pulls. |
@@ -1023,7 +1024,7 @@ with `-rss_limit_mb`.
 | `heavy` | A light CLI with heavy native dependencies: numpy, orjson, cryptography, pydantic, onnxruntime. | `test_natives.py`, `test_portability.py` |
 | `mp` | Multiprocessing start methods re-executing the binary; also a payload script started through `sys.executable` (`mp/scripts/`), `sys.argv[0]`, the restart idiom and a missing module. | `test_compat.py` |
 | `multi` | Two console scripts, `multi-alpha` and `multi-beta`, built as one multi-command executable. | `test_multicall.py`, `test_el8_use_cases.py` |
-| `native` | Two small native dependencies, orjson and markupsafe; its description names the VM smoke test of `tools/vm-smoke.py`. | No test file: the VM smoke jobs of [`full-suite.yml`](../.github/workflows/full-suite.yml) and [`el8.yml`](../.github/workflows/el8.yml) build it and run it with `tools/vm-smoke.py` |
+| `native` | Two small native dependencies, orjson and markupsafe; its description names the VM smoke test of `tools/vm-smoke.py`. | No test file: the VM smoke jobs of [`full-suite.yml`](../.github/workflows/full-suite.yml), `vm-smoke` and `el8-vm-smoke`, build it and run it with `tools/vm-smoke.py` |
 | `plugins` | A host and two plugin distributions: entry points and a PEP 420 namespace. | `test_corpus.py` |
 | `scripts` | The layout of `uv init --no-package`: `main.py`, `utils.py` and a `helpers` package, no build system. | `test_scripts.py` |
 

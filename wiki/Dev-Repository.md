@@ -23,7 +23,7 @@ Repository: <https://github.com/devitops-com/fsbpyr>
 | [`spikes/`](../spikes) | experiments kept for reference: Phase 0's static link, initialisation path and marshal spikes, and Phase 9's trial links of other Python versions |
 | [`Makefile`](../Makefile) | every developer task: `make help` lists them |
 | [`Containerfile`](../Containerfile) | the Debian trixie image for bootstrap and tests on hosts other than trixie |
-| [`.github/workflows/`](../.github/workflows) | CI: the full suite, the release build and reproduction, the release, the upstream watch, an attestation example for apps, and a separate workflow, `el8.yml`, that links, tests and publishes the glibc 2.28 (EL8) stubs in the companion release `el8-vX.Y.Z` |
+| [`.github/workflows/`](../.github/workflows) | CI: the full suite, the release build and reproduction, the release, the upstream watch, an attestation example for apps, and a separate workflow, `el8.yml`, that links the glibc 2.28 (EL8) stubs from a release's tag and publishes them in the companion release `el8-vX.Y.Z` (the full suite tests them) |
 
 ## Documents in `docs/`
 
