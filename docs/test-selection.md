@@ -1,6 +1,7 @@
 # Test selection: a plan
 
-Status: proposed, 2026-10-31. Nothing here is built, and none of it goes into 0.29.0. The costs were
+Status: proposed 2026-10-31; the owner decided D1 to D4 on 2026-11-03 (§9). Nothing here is built
+yet, and none of it goes into 0.29.0 or 0.30.0. The costs were
 measured for this plan, on `full-suite.yml` run 41227289551 and the probes in the test repository.
 The savings are a replay: those costs applied to what each of the last 80 merges into main changed
 (2026-10-20 to 2026-10-31). They are estimates until phase 5 measures the real thing. What is
@@ -31,7 +32,9 @@ it again. The measurements changed what that should mean here.
 | All three (they overlap) | **27%** | |
 
 What remains is real work: 8 entries of `suite` and `corpus` on code that did change. Doing less of
-that is a decision about coverage, not an optimization (§9, D4).
+that is a decision about coverage, not an optimization. The owner made it for `corpus` (§9, D4): the
+default Python on each target, on every run; all 8 entries only on demand. That saves about 80 of
+its 107 runner minutes a run on top of the 27%.
 
 ## 2. What costs what
 
@@ -231,9 +234,12 @@ that very commit. The test jobs reuse the records of the commit before it, if no
 
 Each phase can stop there and keep what it gained. Each is a pull request with its own full run.
 
-1. **Fuzz and the runtime (A, B).** No records yet.
+1. **Fuzz, the runtime and the corpus (A, B, D4).** No records yet. `corpus` runs the default
+   Python (`.python-version`, 3.14 now) on x86_64 and aarch64, on a push, the weekly run and a plain
+   dispatch; a dispatch that asks for all Pythons runs all 8 entries.
    Done when: a full run takes 10 minutes less per `suite` job on a long fuzz, and the same tests
-   pass; a planted crash in the launcher is still found by the `fuzz` job.
+   pass; a planted crash in the launcher is still found by the `fuzz` job; `corpus` has 2 entries
+   unless a dispatch asks for 8.
 2. **Shadow mode.** `tools/ci/inputs.toml`, the keys, the records and `plan`, which only reports
    what it would skip, while everything runs.
    Done when: 20 pushes to main have passed with no entry that `plan` would have skipped and that
@@ -252,14 +258,16 @@ The tools get the treatment the release scripts got:
 - mutation testing of `plan`, since a check that fails open is the bug that matters here;
 - a rehearsal in the test repository, where the probes of this plan ran.
 
-## 9. Decisions for the owner
+## 9. Decisions (the owner, 2026-11-03)
 
-- **D1. May a release commit reuse the records of the tests?** Proposed: yes, and never those of
-  `build` (§6.7). Only the version differs, and `make release-check` tests the result. Otherwise
-  every release is a full run for a change of one line.
-- **D2. How old may a pass be?** Proposed: 8 days, one weekly run and a day.
-- **D3. Fuzz on one Python per target on a push?** Proposed: yes, with all 8 in the weekly run.
-- **D4. Should `corpus` run all 8 entries on every push?** Not in this plan, which changes no
-  coverage. At 107 minutes it is the largest thing left, and one entry per target on a push, with
-  all 8 weekly, would save about 80 minutes a run, at the price of finding a corpus failure on
-  another Python up to a week later.
+- **D1. May a release commit reuse the records of the tests?** Yes, and never those of `build`
+  (§6.7). Only the version differs, and `make release-check` tests the result. Otherwise every
+  release is a full run for a change of one line.
+- **D2. How old may a pass be?** 8 days, one weekly run and a day.
+- **D3. Fuzz on one Python per target on a push?** Yes, with all 8 in the weekly run.
+- **D4. Should `corpus` run all 8 entries on every push?** No. `corpus` runs on the default Python
+  (3.14 now) for every supported architecture, x86_64 and aarch64, on every push. All 8 entries run
+  only on demand, typically when 3.14 fails. The weekly run is no exception: it runs the 2 entries.
+  At 107 minutes `corpus` was the largest thing left, and this saves about 80 of them a run. The
+  price: a corpus failure on 3.12, 3.13 or 3.15 alone shows only on a run asked for, or locally
+  (`make test-corpus PYTHON=3.X`).
