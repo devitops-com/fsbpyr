@@ -73,12 +73,14 @@ jobs:
     # contain each run of an app besides (tests/support/contain.py). /var/tmp, the tests'
     # temporary files, is a directory of the runner's own disk, not a tmpfs, whose files would
     # count against those 14 GiB beside 4 test processes; the step "The temporary files' file
-    # system" checks what the tests need of it first.
+    # system" checks what the tests need of it first. The runner's whole file system is at
+    # /runner-host, where the step "Room on the runner's disk" removes what it does not need.
     container:
       image: docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
       options: --privileged --pids-limit 8192 --memory 14g --memory-swap 14g
       volumes:
         - /mnt/fsbpyr-tmp:/var/tmp
+        - /:/runner-host
     timeout-minutes: 60
     env:
       TEST_DOWNLOADS: /home/tester/test-downloads  # tests/support/downloads.py: the kept ones
@@ -99,6 +101,15 @@ jobs:
 
       - name: Trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # Runners differ in disk, and some have too little for the suite: tools/runner-disk.sh
+      # removes software of the runner image that this container never uses, then fails at once
+      # unless the runner's file system (/var/tmp's, and /home/tester's) has 20 GiB free beyond a
+      # tenth of its size: more than the job takes, which "Memory and disk used" shows.
+      - name: Room on the runner's disk
+        run: |
+          bash tools/runner-disk.sh /runner-host /var/tmp 20
+          df -B1M --output=avail /var/tmp | tail -n 1 > /root/disk-free.txt
 
       # The uv that tools/release/uv.version names, as build.yml installs it. The tester's
       # Python and caches are its own (below); only the uv executable is shared.
@@ -268,10 +279,15 @@ jobs:
       # otherwise build its own. Nothing in the suite skips, so a test that cannot run here fails
       # the step. Branch coverage below pyproject.toml's fail_under fails it too (pytest-cov
       # combines the workers'). The launcher programs the tests build are instrumented for
-      # llvm-cov and kept (FSBPYR_LLVM_COV_DIR), for the report below.
+      # llvm-cov and kept (FSBPYR_LLVM_COV_DIR), for the report below. The runner disk's free
+      # space is sampled each second meanwhile, for the report "Memory and disk used".
       - name: The whole suite
         run: |
           echo "$(nproc) cores"
+          while df -B1M --output=avail /var/tmp | tail -n 1; do sleep 1; done \
+            >> /root/disk-free.txt 2> /dev/null < /dev/null &
+          sampler=$!
+          trap 'kill "$sampler"' EXIT
           as-tester $UV_ENV \
             FSBPYR_TEST_DOWNLOADS="$TEST_DOWNLOADS" \
             FSBPYR_FUZZ_SECONDS="$FSBPYR_FUZZ_SECONDS" FSBPYR_FUZZ_CORPUS=/home/tester/fuzz-corpus \
@@ -283,7 +299,9 @@ jobs:
 
       # What the run took: the container's memory high-water mark (cgroup v2; page cache
       # included, so it reaches the limit when the disk is busy, which by itself kills nothing),
-      # its memory events (oom_kill: processes the limit killed) and its disks.
+      # its memory events (oom_kill: processes the limit killed) and its disks: the free space
+      # after "Room on the runner's disk" and the lowest in the suite, the difference being the
+      # most the job took (what "Room on the runner's disk" asks for must stay above it).
       - name: Memory and disk used
         if: ${{ !cancelled() }}
         run: |
@@ -295,6 +313,10 @@ jobs:
           fi
           cat /sys/fs/cgroup/memory.events 2>/dev/null || echo "memory.events: unknown"
           df -h /var/tmp /home/tester || true
+          awk 'NR == 1 { room = $1 } NR == 1 || $1 < low { low = $1 }
+            END { if (NR > 1) print "disk:", room, "MiB free after making room,", low,
+              "MiB at the lowest in the suite: the job took", room - low, "MiB" }' \
+            /root/disk-free.txt || echo "disk: unknown"
 
       # IMPLEMENTATION_PLAN.md §7 sets 90% for payload/ and elf.py, above the 80% overall; this
       # reads the data the suite left in .coverage.
@@ -337,7 +359,8 @@ jobs:
   # in a job of its own beside the suite, which it would otherwise take past its timeout. The
   # same container and user as the suite; temporary files on the container's disk, not a
   # tmpfs: a big app's venv, executable and caches take gigabytes while it runs. `make
-  # test-corpus` builds the runtime (and fetches clang/lld 23) itself.
+  # test-corpus` builds the runtime (and fetches clang/lld 23) itself. The runner's file system
+  # is at /runner-host, as in the suite job.
   corpus:
     name: corpus (${{ matrix.target }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.runner }}
@@ -352,6 +375,8 @@ jobs:
     container:
       image: docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
       options: --pids-limit 8192 --memory 14g --memory-swap 14g  # as the suite job's
+      volumes:
+        - /:/runner-host
     timeout-minutes: 60
     steps:
       - name: Install the build prerequisites
@@ -367,6 +392,13 @@ jobs:
 
       - name: Trust the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # As in the suite job; the temporary files are on the container's disk, the runner's file
+      # system.
+      - name: Room on the runner's disk
+        run: |
+          bash tools/runner-disk.sh /runner-host /tmp 20
+          df -B1M --output=avail /tmp | tail -n 1 > /root/disk-free.txt
 
       - name: Install uv
         run: sh tools/release/install-uv.sh /usr/local/bin > /dev/null
@@ -400,11 +432,25 @@ jobs:
           fi
 
       # An app whose lock needs a package without a wheel on this Python and machine
-      # (tests/support/no-wheels.txt) is not part of the run.
+      # (tests/support/no-wheels.txt) is not part of the run. The free space is sampled as in the
+      # suite job.
       - name: make test-corpus
         run: |
+          while df -B1M --output=avail /tmp | tail -n 1; do sleep 1; done \
+            >> /root/disk-free.txt 2> /dev/null < /dev/null &
+          sampler=$!
+          trap 'kill "$sampler"' EXIT
           as-tester JOBS=4 \
             PYTEST_ADDOPTS="--durations=30 --junitxml=corpus.xml" make test-corpus $MAKE_ARGS
+
+      # As the suite job's "Memory and disk used" reports it.
+      - name: Disk used
+        if: ${{ !cancelled() }}
+        run: |
+          awk 'NR == 1 { room = $1 } NR == 1 || $1 < low { low = $1 }
+            END { if (NR > 1) print "disk:", room, "MiB free after making room,", low,
+              "MiB at the lowest in the corpus: the job took", room - low, "MiB" }' \
+            /root/disk-free.txt || echo "disk: unknown"
 
       - name: Upload the report
         if: ${{ !cancelled() }}

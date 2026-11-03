@@ -148,7 +148,10 @@ The tiers, from fastest to most complete:
   (`FSBPYR_FUZZ_CORPUS`) is kept in the Actions cache. The launcher programs the tests build
   are instrumented for llvm-cov (`FSBPYR_LLVM_COV_DIR`), and the run's summary shows the
   report; it is informational. A run took 37 to 40 minutes in October 2026, while each suite
-  job ran its tests in one process; the job's limit is 60 minutes.
+  job ran its tests in one process; the job's limit is 60 minutes. Runners of one label differ
+  in disk (most have 85 GB free, some 12 GB): the suite and corpus jobs first remove software of
+  the runner image they never use and stop at once unless 20 GiB beyond a tenth of the disk are
+  free (`tools/runner-disk.sh`), and each logs the most it took.
 - `make test`: everything but the corpus, on your machine, in 8 processes (`JOBS=` to change
   it; about 2.5 minutes on 24 cores). A test whose tool or environment is missing fails,
   naming it: root's own directories, a second user, a supplementary group, strace, groff,

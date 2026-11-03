@@ -10,6 +10,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-11-03
+
 ### Added
 - **`make mirror`** brings GitLab along: its main and the release tags follow this checkout's main
   once GitHub holds the same, whatever disagrees stops it before the first push, and a branch goes
@@ -35,6 +37,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - The User Guide's second chapter is Installing, which now holds every Python and architecture,
   updating and building from source. Security follows it as the third, with every check of an
   installed fsbpyr in one place.
+- **The full suite makes room on the runner's disk first.** GitHub's runners of one label differ
+  in disk: most have 85 GB free, some 12 GB, too little for the suite. The suite and corpus jobs of
+  `full-suite.yml` remove software of the runner image they never use (`tools/runner-disk.sh`) and
+  stop at once, with the figures, unless 20 GiB beyond a tenth of the disk are free; each job logs
+  the most disk it took.
 
 ### Fixed
 - The Security chapter said that the release key signs in CI, and showed an attestation check without
