@@ -181,11 +181,12 @@ reads the digest back from it, and `commit` renames it into place.
 `fsbpyr inspect` shows the stored digest, which proves nothing by itself. `read(path,
 verify=True)` in
 [`inspection.py`](../src/fsbpyr/inspection.py)
-(`fsbpyr inspect --verify`) recomputes it from the very file it opened (`Executable.verify` in
+(`fsbpyr inspect --verify`) recomputes it from the very file it opened
+(`Executable.verify_sha256` in
 [`payload/reader.py`](../src/fsbpyr/payload/reader.py),
 a leaf at a time through the descriptor) and fails with `<path> is damaged or was changed after
 its build`. With `--verify` it also prints the file's plain SHA-256 as `sha256`, the value a
-GitHub attestation names; the `digest` line is fsbpyr's own. It refuses a path that is not a
+GitHub attestation names, taken from the same read; the `digest` line is fsbpyr's own. It refuses a path that is not a
 regular file (a FIFO would block the open), and prints text from the build information that is
 not printable as its `repr`. Standard tools give the same digest:
 

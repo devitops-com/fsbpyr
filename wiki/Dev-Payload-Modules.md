@@ -54,7 +54,7 @@ runtime registry, and for the tests' pure-Python stand-in of the launcher's `_fs
 | CLOSURES | `File.closure` (paths) | count word, then sorted FILES indices | `Payload.closure` |
 | DIGESTS | `Blob.sha256` | in blob order, for the blobs that have one | `Payload.digest` |
 | STARTUP | `ModuleFlag.STARTUP` on a `Module` | indices of the flagged modules | `Payload.startup_modules` |
-| Integrity digest | the bytes | `format.tree_digest`, `TreeHasher`, `file_digest` | `Executable.verify` |
+| Integrity digest | the bytes | `format.tree_digest`, `TreeHasher`, `file_digest` | `Executable.verify`, `Executable.verify_sha256` |
 
 A few things the Python code decides that the layout tables only show the result of:
 
@@ -137,6 +137,9 @@ Public functions:
 - `file_digest(fd, size, offset=0)`: `tree_digest` of a range of a file, read a leaf at a time
   on up to 8 threads in passes of 4096 leaves, so that the file's size does not count in
   memory; leaves inside holes are not read.
+- `executable_digests(fd, size)`: an executable's integrity digest and the plain SHA-256 of the
+  whole file from one read of it: up to 7 threads read and hash its leaves, holes unread, at most
+  64 leaves ahead of the calling thread, which feeds the SHA-256 in order (`inspect --verify`).
 - `align(value, alignment)`: `value` rounded up.
 - `encode_text(text)`: UTF-8 bytes, rejecting lone surrogates and NUL.
 - `check_path(path)`: a site-relative POSIX path with no empty, `.` or `..` component, no

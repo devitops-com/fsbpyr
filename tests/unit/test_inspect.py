@@ -378,6 +378,9 @@ def test_older_executables_show_a_digest_of_their_payload_only(
 
     assert main(["inspect", "--verify", str(older)]) == 0
     assert f"digest     {digest.hex()} (payload only) verified" in capsys.readouterr().out
+    assert main(["inspect", "--json", "--verify", str(older)]) == 0
+    sha256 = hashlib.sha256(older.read_bytes()).hexdigest()  # the whole file, not the payload
+    assert json.loads(capsys.readouterr().out)["sha256"] == sha256
     assert main(["inspect", "--json", str(older)]) == 0
     report = json.loads(capsys.readouterr().out)
     assert (report["digest"], report["digest_covers"]) == (digest.hex(), "payload")

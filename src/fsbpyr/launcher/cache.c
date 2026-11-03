@@ -38,11 +38,12 @@
 /* Files are written once every file of the sync is checked, on up to 8 threads (D39): those of
  * at most POOLED_FILE bytes, raw, in one zstd frame or in a block, a chunk of neighbours at a
  * time, CHUNK_FILES or CHUNK_BYTES and the rest of the last one's block, so that a block is
- * decoded once. Larger files, xz and pieces are written by the calling thread, one at a time:
- * their pieces are decoded in parallel already, and a thread each would hold up to 8 stream
- * windows (64 MiB) and xz dictionaries at once (D38). torch's 12,139 files that are no native
- * library took 302 ms to write on one thread, 140 on 8 (XFS, Core Ultra 9 285): threads that
- * write in one large directory wait for one another there. */
+ * decoded once. Larger files, xz and pieces are written one at a time: their pieces are decoded
+ * in parallel already, their leaves written by the threads that hash them (write_leaf), and a
+ * thread each would hold up to 8 stream windows (64 MiB) and xz dictionaries at once (D38).
+ * torch's 12,139 files that are no native library took 302 ms to write on one thread, 140 on 8
+ * (XFS, Core Ultra 9 285): threads that write in one large directory wait for one another
+ * there. */
 #define POOLED_FILE FSB_ZSTD_PIECE
 #define CHUNK_FILES 32u
 #define CHUNK_BYTES (UINT64_C(2) << 20)
@@ -185,9 +186,30 @@ static int write_window(int fd, uint64_t offset, const uint8_t *data, uint64_t l
     return 0;
 }
 
+/* A file's content as the hashing threads write it (write_leaf): the window's offset in the
+ * file, the first write's errno (0: none failed) and where the furthest leaf written ends. */
+struct leaf_writes {
+    int fd;
+    uint64_t offset;
+    atomic_int error;
+    _Atomic uint64_t end;
+};
+
+/* fsb_tree_add_each's work: the leaf written where it belongs in the file, by the thread that
+ * hashed it (D31, D39: within the hashing threads' bound), unless it is zeros or a write failed. */
+static void write_leaf(void *context, const uint8_t *leaf, uint64_t at, size_t size) {
+    struct leaf_writes *w = context;
+    if (atomic_load(&w->error) != 0) return;
+    uint64_t end = 0;
+    int error = write_window(w->fd, w->offset + at, leaf, size, &end), none = 0;
+    if (error != 0) atomic_compare_exchange_strong(&w->error, &none, error);
+    for (uint64_t seen = atomic_load(&w->end); end > seen;)
+        if (atomic_compare_exchange_weak(&w->end, &seen, end)) break;
+}
+
 /* The entry's content from the payload a window at a time (D38): its digest into ``digest``
- * and, if ``fd`` >= 0, the content written to the file open as ``fd``. False with the failure
- * set. */
+ * and, if ``fd`` >= 0, the content written to the file open as ``fd``, each leaf by the thread
+ * that hashed it. False with the failure set. */
 static bool stream_content(struct state *s, const struct entry *e, int fd,
                            uint8_t digest[FSB_DIGEST_SIZE]) {
     if (s->decoder == NULL && (s->decoder = fsb_decoder_new(DECODER_BLOCKS)) == NULL)
@@ -196,16 +218,19 @@ static bool stream_content(struct state *s, const struct entry *e, int fd,
     if (stream == NULL) return out_of_memory(s);
     struct fsb_tree tree;
     fsb_tree_init(&tree);
+    struct leaf_writes writes = {.fd = fd};
+    atomic_init(&writes.error, 0);
+    atomic_init(&writes.end, 0);
     const uint8_t *data;
-    uint64_t length, offset = 0, end = 0;
+    uint64_t length;
     int status, error = 0;
     while ((status = fsb_stream_next(stream, &data, &length)) == FSB_STREAM_DATA) {
-        if (fsb_tree_add(&tree, data, length) != 0) {
+        if (fsb_tree_add_each(&tree, data, length, fd >= 0 ? write_leaf : NULL, &writes) != 0) {
             status = FSB_STREAM_MEMORY;
             break;
         }
-        if (fd >= 0 && (error = write_window(fd, offset, data, length, &end)) != 0) break;
-        offset += length;
+        if ((error = atomic_load(&writes.error)) != 0) break;
+        writes.offset += length;
     }
     if (status == FSB_STREAM_SYSTEM) error = fsb_stream_error(stream); /* reading the executable */
     fsb_stream_close(stream);
@@ -213,7 +238,8 @@ static bool stream_content(struct state *s, const struct entry *e, int fd,
     if (status == FSB_STREAM_MEMORY) return out_of_memory(s);
     if (status != FSB_STREAM_END) return corrupt(s, "blob data of file", e->index);
     /* a hole at the end: the file gets its size (a truncate costs XFS a transaction: only then) */
-    if (fd >= 0 && end < e->blob.size && ftruncate(fd, (off_t)e->blob.size) != 0)
+    if (fd >= 0 && atomic_load(&writes.end) < e->blob.size &&
+        ftruncate(fd, (off_t)e->blob.size) != 0)
         return file_failed(s, errno, e);
     fsb_tree_final(&tree, digest);
     return true;

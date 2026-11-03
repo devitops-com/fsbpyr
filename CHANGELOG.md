@@ -10,6 +10,15 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Changed
+- **Large files are extracted on up to 8 threads throughout.** A raw file's windows are read from
+  the executable a leaf per thread, and every leaf is written to the cache by the thread that
+  hashes it, within the same bound of 8 threads (D31, D39). A run that streams and extracts a
+  1 TiB file of zeros took 606 s instead of 991 stored raw, and 453 s instead of 487 compressed.
+- **`fsbpyr inspect --verify` reads the file once.** The integrity digest and the plain SHA-256
+  come from the same read, other threads reading and hashing the leaves, holes unread: 217 s
+  instead of 324 for a 1 TiB executable, 1.2 s instead of 1.5 for a 5 GiB one.
+
 ## [0.30.0] - 2026-11-03
 
 ### Added

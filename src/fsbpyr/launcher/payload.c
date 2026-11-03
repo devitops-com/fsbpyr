@@ -585,24 +585,55 @@ static int open_self(const struct fsb_payload *p) {
     return -1;
 }
 
+/* Leaves of a raw window each thread reads, as integrity.c hashes them: fewer would cost more to
+ * start threads for than they save. */
+#define RAW_LEAVES_PER_THREAD 4u
+
+struct raw_reads { /* a raw window read a leaf at a time (raw_window) */
+    int fd;
+    uint64_t at, want; /* the window: where it is in the file, and its size */
+    uint8_t *buffer;
+    atomic_int status; /* FSB_STREAM_DATA, or the first failure */
+    int error;         /* FSB_STREAM_SYSTEM: its errno, set by the thread that failed first */
+};
+
+static void read_leaf(void *context, uint64_t item, unsigned worker) {
+    (void)worker;
+    struct raw_reads *r = context;
+    uint64_t start = item * FSB_DIGEST_LEAF, rest = r->want - start;
+    uint64_t size = rest < FSB_DIGEST_LEAF ? rest : FSB_DIGEST_LEAF;
+    for (uint64_t got = 0; got < size && atomic_load(&r->status) == FSB_STREAM_DATA;) {
+        ssize_t n = pread(r->fd, r->buffer + start + got, (size_t)(size - got),
+                          (off_t)(r->at + start + got));
+        if (n < 0 && errno == EINTR) continue;
+        if (n > 0) {
+            got += (uint64_t)n;
+            continue;
+        }
+        int error = errno, expected = FSB_STREAM_DATA; /* n == 0: shorter than it was */
+        if (atomic_compare_exchange_strong(&r->status, &expected,
+                                           n < 0 ? FSB_STREAM_SYSTEM : FSB_STREAM_CORRUPT))
+            r->error = error;
+        return;
+    }
+}
+
 /* ``want`` bytes of a raw blob from the stream's position, read from the executable into the
- * buffer (read_raw): a hole reads as zeros, wherever the file is. */
+ * buffer (read_raw), a leaf per item on up to 8 threads (D31, D39): a hole reads as zeros,
+ * wherever the file is. */
 static int raw_window(struct fsb_stream *s, uint64_t want) {
     if (s->file < 0 && (s->file = open_self(s->payload)) < 0) {
         s->error = errno;
         return FSB_STREAM_SYSTEM;
     }
-    uint64_t at = s->payload->offset + s->blob.offset + s->position;
-    for (uint64_t got = 0; got < want;) {
-        ssize_t n = pread(s->file, s->buffer + got, (size_t)(want - got), (off_t)(at + got));
-        if (n < 0 && errno == EINTR) continue;
-        if (n < 0) {
-            s->error = errno;
-            return FSB_STREAM_SYSTEM;
-        }
-        if (n == 0) return FSB_STREAM_CORRUPT; /* shorter than it was */
-        got += (uint64_t)n;
-    }
+    struct raw_reads r = {.fd = s->file, .at = s->payload->offset + s->blob.offset + s->position,
+                          .want = want, .buffer = s->buffer};
+    atomic_init(&r.status, FSB_STREAM_DATA);
+    fsb_parallel((want + FSB_DIGEST_LEAF - 1) / FSB_DIGEST_LEAF, RAW_LEAVES_PER_THREAD, read_leaf,
+                 &r);
+    int status = atomic_load(&r.status);
+    if (status == FSB_STREAM_SYSTEM) s->error = r.error;
+    if (status != FSB_STREAM_DATA) return status;
     fsb_stored_bytes += want; /* read, not mapped: nothing to sweep */
     return FSB_STREAM_DATA;
 }

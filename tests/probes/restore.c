@@ -11,8 +11,9 @@
  * With $PROBE_FREE set, the descriptor limit leaves that many descriptors to open; with
  * $PROBE_NO_LINK set, no link can be made (as on a kernel before 6.10 without /proc), and a line
  * "links N" says how many were tried; with $PROBE_DECOY set, a link by descriptor fails and one
- * through /proc links that file instead (a /proc that is not procfs). Built with
- * -Wl,--wrap=renameat,--wrap=linkat,--wrap=pthread_create.
+ * through /proc links that file instead (a /proc that is not procfs); with $PROBE_NO_SPACE set,
+ * a write at that offset of any file fails with ENOSPC (a full disk). Built with
+ * -Wl,--wrap=renameat,--wrap=linkat,--wrap=pthread_create,--wrap=pwrite.
  */
 #include "cache.h"
 
@@ -29,6 +30,7 @@ int __real_renameat(int from, const char *old, int to, const char *new);
 int __real_linkat(int from, const char *old, int to, const char *new, int flags);
 int __real_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                           void *(*routine)(void *), void *arg);
+ssize_t __real_pwrite(int fd, const void *data, size_t size, off_t offset);
 
 static pthread_t caller;
 static atomic_uint running = 1, most = 1, links;
@@ -57,6 +59,15 @@ int __wrap_linkat(int from, const char *old, int to, const char *new, int flags)
     int status = __real_linkat(from, old, to, new, flags);
     if (status == 0) placed(new, "link");
     return status;
+}
+
+ssize_t __wrap_pwrite(int fd, const void *data, size_t size, off_t offset) {
+    const char *at = getenv("PROBE_NO_SPACE");
+    if (at != NULL && offset == (off_t)strtoll(at, NULL, 10)) {
+        errno = ENOSPC;
+        return -1;
+    }
+    return __real_pwrite(fd, data, size, offset);
 }
 
 struct start {

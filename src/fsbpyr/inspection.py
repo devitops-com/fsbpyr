@@ -11,7 +11,6 @@ import base64
 import binascii
 import cmd
 import csv
-import hashlib
 import io
 import json
 import re
@@ -101,11 +100,6 @@ def _is_extension(payload: Payload, file: FileRecord) -> bool:
         return True
 
 
-def _file_sha256(path: Path) -> str:
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
-
-
 def _toolchain(stub: bytes) -> tuple[str, ...]:
     """The lines of the stub's ``.comment`` section (clang, lld and what they linked in); none
     when the stub has no such section or is not an ELF file (a test double)."""
@@ -159,9 +153,10 @@ def read(path: Path, *, verify: bool = False, files: bool = False) -> Report:
         if not stat.S_ISREG(status.st_mode):  # a FIFO would block the open
             raise InspectError(f"{path} is not a regular file")
         with Executable.open(path) as executable:
+            sha256 = ""
             if verify:
                 try:
-                    executable.verify()
+                    sha256 = executable.verify_sha256().hex()
                 except PayloadError as exc:
                     raise InspectError(f"{path} is damaged or was changed after its build "
                                        f"({exc})") from exc  # fmt: skip
@@ -183,7 +178,7 @@ def read(path: Path, *, verify: bool = False, files: bool = False) -> Report:
                 {name: sorted(names) for name, names in modules.items()}, sorted(runtime),
                 sorted(libraries), sorted(extensions), verified=verify,
                 digest=executable.digest.hex(), covers_file=executable.covers_file,
-                sha256=_file_sha256(path) if verify else "",
+                sha256=sha256,
                 toolchain=_toolchain(executable.stub_prefix()),
                 entrypoint=payload.entrypoint,
                 sizes=measure(executable),

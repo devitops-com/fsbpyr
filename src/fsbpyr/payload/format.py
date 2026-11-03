@@ -8,8 +8,9 @@ import os
 import re
 import struct
 import threading
-from collections.abc import Buffer, Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from collections import deque
+from collections.abc import Buffer, Callable, Iterator, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from enum import IntEnum, IntFlag
 
 from ..compat import process_cpu_count
@@ -239,18 +240,23 @@ class TreeHasher:
 ZERO_LEAF = bytes.fromhex("30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58")
 
 
-def _leaf_digest(fd: int, start: int, length: int) -> bytes:
-    """The SHA-256 of ``length`` bytes at ``start`` of the file open as ``fd``; a leaf inside a
-    hole is zeros, and not read."""
-    if is_hole(fd, start, length):
-        return ZERO_LEAF if length == DIGEST_LEAF else hashlib.sha256(bytes(length)).digest()
+def _read(fd: int, start: int, length: int) -> bytes:
+    """``length`` bytes at ``start`` of the file open as ``fd``; OSError if it is shorter."""
     data = os.pread(fd, length, start)
     while len(data) < length:
         more = os.pread(fd, length - len(data), start + len(data))
         if not more:
             raise OSError(errno.EIO, "file shorter than its digest's range (changed while read)")
         data += more
-    return hashlib.sha256(data).digest()
+    return data
+
+
+def _leaf_digest(fd: int, start: int, length: int) -> bytes:
+    """The SHA-256 of ``length`` bytes at ``start`` of the file open as ``fd``; a leaf inside a
+    hole is zeros, and not read."""
+    if is_hole(fd, start, length):
+        return ZERO_LEAF if length == DIGEST_LEAF else hashlib.sha256(bytes(length)).digest()
+    return hashlib.sha256(_read(fd, start, length)).digest()
 
 
 def file_digest(fd: int, size: int, offset: int = 0) -> bytes:
@@ -272,6 +278,59 @@ def file_digest(fd: int, size: int, offset: int = 0) -> bytes:
             for digest in pool.map(leaf, range(first, min(first + _PASS_LEAVES, leaves))):
                 root.update(digest)
     return root.digest()
+
+
+_AHEAD = 64  # leaves read ahead of their user (_ahead): 64 MiB, a launcher stream window (D38)
+
+
+def _ahead[R](function: Callable[[int], R], count: int) -> Iterator[R]:
+    """function(0) to function(count - 1), in order, computed on up to THREADS - 1 threads at
+    most _AHEAD ahead of the caller, whose thread is the last of THREADS (D39); on the caller's
+    alone where THREADS is 1 or it is a pool's thread already."""
+    if THREADS < 2 or getattr(_POOLED, "busy", False):
+        yield from map(function, range(count))
+        return
+    pool = ThreadPoolExecutor(THREADS - 1, initializer=pooled_thread)
+    try:
+        ahead: deque[Future[R]] = deque()
+        for number in range(count):
+            ahead.append(pool.submit(function, number))
+            if len(ahead) == _AHEAD:
+                yield ahead.popleft().result()
+        while ahead:
+            yield ahead.popleft().result()
+    finally:
+        pool.shutdown(cancel_futures=True)
+
+
+def executable_digests(fd: int, size: int) -> tuple[bytes, bytes]:
+    """The integrity digest of an executable of ``size`` bytes open as ``fd`` (file_digest of all
+    but its last DIGEST_SIZE bytes, D31) and the plain SHA-256 of the whole file, from one read
+    of it: other threads read and hash its leaves, a hole's unread, while this one feeds the
+    SHA-256 in order (_ahead), so neither the file's size nor its holes count in memory (D38).
+    OSError if the file is shorter."""
+    if os.fstat(fd).st_size < size:
+        raise OSError(errno.EIO, f"file shorter than {size} bytes")
+    covered = size - DIGEST_SIZE
+    # every hole's content, its zeros written: bytes(n) maps the kernel's zero page, which SHA-256
+    # read at a third of the speed (5 GiB: 3.0 against 1.1 s, Core Ultra 9 285)
+    zeros = memoryview(b"\0" * min(DIGEST_LEAF, covered))
+
+    def leaf(number: int) -> tuple[bytes, Buffer]:
+        start = number * DIGEST_LEAF
+        length = min(DIGEST_LEAF, covered - start)
+        if not is_hole(fd, start, length):
+            data = _read(fd, start, length)
+            return hashlib.sha256(data).digest(), data
+        whole = length == DIGEST_LEAF
+        return (ZERO_LEAF if whole else hashlib.sha256(zeros[:length]).digest()), zeros[:length]
+
+    tree, plain = hashlib.sha256(), hashlib.sha256()
+    for digest, data in _ahead(leaf, -(-covered // DIGEST_LEAF)):
+        tree.update(digest)
+        plain.update(data)
+    plain.update(_read(fd, covered, DIGEST_SIZE))
+    return tree.digest(), plain.digest()
 
 
 def align(value: int, alignment: int) -> int:

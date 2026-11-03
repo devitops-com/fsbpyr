@@ -44,6 +44,8 @@ struct trees {
     uint8_t *digests;      /* FSB_DIGEST_SIZE per leaf of the pass */
     uint8_t *buffers;      /* READ_PIECE bytes per worker, for leaves read from a descriptor */
     atomic_bool unreadable;
+    void (*each)(void *context, const uint8_t *leaf, uint64_t offset, size_t size); /* or NULL */
+    void *each_context;
 };
 
 /* A leaf read from a descriptor is hashed READ_PIECE bytes at a time. With a whole 1 MiB leaf
@@ -80,6 +82,7 @@ static void hash_leaf(void *context, uint64_t item, unsigned worker) {
     uint8_t *digest = t->digests + item * FSB_DIGEST_SIZE;
     if (t->data[low] != NULL) {
         sha256(t->data[low] + start, size, digest);
+        if (t->each != NULL) t->each(t->each_context, t->data[low] + start, start, size);
         return;
     }
     assert(worker < FSB_PARALLEL_MAX_THREADS);
@@ -156,13 +159,21 @@ void fsb_tree_init(struct fsb_tree *tree) {
     tree->ended = false;
 }
 
-int fsb_tree_add(struct fsb_tree *tree, const uint8_t *data, uint64_t length) {
+int fsb_tree_add_each(struct fsb_tree *tree, const uint8_t *data, uint64_t length,
+                      void (*each)(void *context, const uint8_t *leaf, uint64_t offset,
+                                   size_t size),
+                      void *context) {
     assert(!tree->ended);
     tree->ended = length % FSB_DIGEST_LEAF != 0;
     uint64_t first[2] = {0, (length + FSB_DIGEST_LEAF - 1) / FSB_DIGEST_LEAF};
-    struct trees t = {.count = 1, .data = &data, .lengths = &length, .first = first};
+    struct trees t = {.count = 1, .data = &data, .lengths = &length, .first = first,
+                      .each = each, .each_context = context};
     atomic_init(&t.unreadable, false);
     return hash_passes(&t, &tree->root) ? 0 : ENOMEM;
+}
+
+int fsb_tree_add(struct fsb_tree *tree, const uint8_t *data, uint64_t length) {
+    return fsb_tree_add_each(tree, data, length, NULL, NULL);
 }
 
 void fsb_tree_final(struct fsb_tree *tree, uint8_t digest[FSB_DIGEST_SIZE]) {

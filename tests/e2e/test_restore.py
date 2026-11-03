@@ -1,13 +1,14 @@
 """The cache sync writes files on up to 8 threads (D39, launcher/cache.c), probed
 (tests/probes/restore.c): small files, in chunks of neighbours that share a block, on the
-helpers too; files over a zstd piece, in pieces or in xz, by the calling thread alone, since
-their pieces are decoded in parallel already; never more than 8 threads at once, the hashing of
-what they write included. A new file is written unnamed in its directory and linked into place
-(no directory that every thread locks; nothing left behind if the process is killed); a changed
-one is replaced from the scratch directory. The failure reported is the first in path order
-among the pooled files, whichever thread met it; and with too few descriptors for the helpers,
-the calling thread writes what is left."""
+helpers too; files over a zstd piece, in pieces or in xz, one at a time by the calling thread,
+since their pieces are decoded, and their leaves hashed and written, in parallel already; never
+more than 8 threads at once, the hashing of what they write included. A new file is written
+unnamed in its directory and linked into place (no directory that every thread locks; nothing
+left behind if the process is killed); a changed one is replaced from the scratch directory.
+The failure reported is the first in path order among the pooled files, whichever thread met
+it; and with too few descriptors for the helpers, the calling thread writes what is left."""
 
+import errno
 import hashlib
 import os
 import random
@@ -17,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from fsbpyr.assemble import App, build_executable
-from fsbpyr.payload.format import XZ_PIECE, ZSTD_PIECE, FileKind
+from fsbpyr.payload.format import DIGEST_LEAF, XZ_PIECE, ZSTD_PIECE, FileKind
 from fsbpyr.payload.spec import Blob, File
 
 from ..unit.boot.conftest import FAKE_RUNTIME
@@ -99,7 +100,7 @@ def _image(directory: Path, files: dict[str, tuple[File, bytes]]) -> Path:
 @pytest.fixture(scope="module")
 def probe(launcher_build: LauncherBuild, tmp_path_factory: pytest.TempPathFactory) -> Path:
     out = tmp_path_factory.mktemp("probe") / "restore"
-    flags = ("-Wl,--wrap=renameat,--wrap=linkat,--wrap=pthread_create",
+    flags = ("-Wl,--wrap=renameat,--wrap=linkat,--wrap=pthread_create,--wrap=pwrite",
              "-fsanitize=address,undefined",
              "-fno-sanitize-recover=undefined")  # fmt: skip
     names = ("cache.c", "way.c", "payload.c", "integrity.c", "parallel.c")
@@ -242,6 +243,26 @@ def test_the_first_failure_in_path_order_is_reported(
         assert lines["failure"] == f"1 {first} 0"
         assert _whole(root, before) == []
         assert not (_site(root) / first).exists()
+
+
+@pytest.mark.parametrize(
+    "path, size", [("mid/m5.bin", 5 << 20), ("big/pieces.bin", ZSTD_PIECE + 1)],
+    ids=["pooled", "in pieces"],
+)  # fmt: skip
+def test_a_write_that_fails_fails_the_file_whichever_thread_wrote_it(
+    probe: Path, path: str, size: int, tmp_path: Path
+) -> None:
+    """A full disk under a leaf in the middle (ENOSPC): the file is not placed, and the sync says
+    so. The truncate to the file's size that follows a trailing hole allocates nothing: it would
+    not notice."""
+    data = _content(size, size)
+    files = {path: (File(path, FileKind.RESOURCE, Blob.zstd(data, digest=True)), data)}
+    root = tmp_path / "root"
+
+    lines = _restore(probe, _image(tmp_path, files), root, PROBE_NO_SPACE=str(DIGEST_LEAF))
+
+    assert lines["failure"] == f"3 - {errno.ENOSPC}"  # FSB_CACHE_SYSTEM
+    assert not (_site(root) / path).exists()
 
 
 def test_with_too_few_descriptors_for_the_helpers_the_caller_writes_the_rest(

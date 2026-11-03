@@ -412,7 +412,7 @@ with a streaming context of its own, and its frame is checked to its end, checks
 the last window; a seek backwards restarts the frame. xz and block blobs are decoded whole into
 the stream's buffer (they are at most one piece or one block). Pieces are decoded a window's
 worth at a time in parallel. A large raw blob is read with `pread` from a descriptor of the
-stream's own. `fsb_stream_next` returns `FSB_STREAM_DATA`, `FSB_STREAM_END`,
+stream's own, a window's 1 MiB leaves on up to 8 threads (`fsb_parallel`, 4 leaves a thread). `fsb_stream_next` returns `FSB_STREAM_DATA`, `FSB_STREAM_END`,
 `FSB_STREAM_CORRUPT`, `FSB_STREAM_MEMORY` or `FSB_STREAM_SYSTEM`; after a failure every later
 call fails the same way.
 
@@ -448,6 +448,8 @@ extracts to the cache. The format is described in
 - `fsb_tree_digest` and `fsb_file_digest` are the one-buffer and one-file forms;
   `fsb_tree_init`, `fsb_tree_add` and `fsb_tree_final` hash content that comes a window at a
   time (every window but the last whole leaves), as a cache sync writes it.
+  `fsb_tree_add_each` also hands every leaf to a function, on the thread that hashed it: the
+  cache sync writes the leaf there, within the hashing threads' bound.
 - `fsb_check_integrity(fd, size)` ([line 192][integrity.c#L192]) returns `NULL` if the file's
   last 32 bytes are the digest of the bytes before them, else a static message (see the step 2
   reasons above), and stores the time it took in `fsb_integrity_ns` (`_fsbpyr.stats()`, which
@@ -626,15 +628,17 @@ thread-safe; its caller in `module.c` releases the GIL. It stops at the first fa
 5. **Write the queued files**, in path order. Files of at most 8 MiB stored raw, as one zstd
    frame or in a block go to a pool on up to 8 threads (`fsb_parallel`), in chunks of 32 files
    or 2 MiB that never split a block, so a block is decoded once; each writer has its own
-   directories and decoder. Larger files, xz and pieces are then written by the calling thread
-   one at a time, since their pieces are decoded in parallel already. The descriptor table is
+   directories and decoder. Larger files, xz and pieces are then written one at a time: their
+   pieces are decoded in parallel already, and their leaves written by the threads that hash
+   them. The descriptor table is
    grown once before the pool starts (`make_room`). The failure reported is the first in path
    order; if the pool failed for want of descriptors or memory, the calling thread writes what
    it left.
 
-**Writing one file** (`restore`). The content comes from a stream, a window at a time, hashed as
-it is written, in pieces of at most 1 MiB; a piece of zeros is not written (a hole), and the
-file is truncated to its size if it ends in one. Only if the digest is the payload's is the file
+**Writing one file** (`restore`). The content comes from a stream, a window at a time; each
+1 MiB leaf is written by the thread that hashes it (`fsb_tree_add_each`), and a leaf of zeros is
+not written (a hole). The first write that fails fails the file; one that ends in a hole is
+truncated to its size. Only if the digest is the payload's is the file
 made readable by its owner, executable where the payload's mode says so (`0400` or `0500`), never
 writable, and put in place. A new file is written unnamed in its own directory (`O_TMPFILE`) and
 linked into place (`linkat` with `AT_EMPTY_PATH`, else through `/proc/self/fd/<n>`, after which

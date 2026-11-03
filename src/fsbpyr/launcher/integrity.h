@@ -40,6 +40,13 @@ struct fsb_tree {
 };
 void fsb_tree_init(struct fsb_tree *tree);
 int fsb_tree_add(struct fsb_tree *tree, const uint8_t *data, uint64_t length); /* 0 or ENOMEM */
+/* fsb_tree_add, and ``each`` called on every leaf by the thread that hashed it, once its digest
+ * is taken: the leaf's data, its offset in ``data`` and its size. Work done per leaf runs on the
+ * hashing threads, within their bound (D31, D39): the cache's writes of what it hashes. */
+int fsb_tree_add_each(struct fsb_tree *tree, const uint8_t *data, uint64_t length,
+                      void (*each)(void *context, const uint8_t *leaf, uint64_t offset,
+                                   size_t size),
+                      void *context);
 void fsb_tree_final(struct fsb_tree *tree, uint8_t digest[FSB_DIGEST_SIZE]);
 
 /* The digest of data[0, length): fsb_tree_digests of one buffer. */

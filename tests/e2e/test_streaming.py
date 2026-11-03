@@ -1,7 +1,8 @@
 """Extraction and reads stream at run time, with no limit of ours (D38, Phase 8b): files larger
 than the old 1 GiB cap extract, a window at a time, in far less resident memory than their size;
 runs of zeros become holes; resources opened as files stream and seek; _fsbpyr.read() returns
-what the app asked for, whatever its size."""
+what the app asked for, whatever its size. A raw file's windows are read, and every file's
+leaves written, on the threads that hash them (D31, D39): each leaf lands where it belongs."""
 
 import hashlib
 import json
@@ -13,7 +14,7 @@ from typing import Any
 import pytest
 
 from fsbpyr.assemble import App, build_executable
-from fsbpyr.payload.format import XZ_PIECE, FileKind
+from fsbpyr.payload.format import DIGEST_LEAF, XZ_PIECE, FileKind
 from fsbpyr.payload.spec import Blob, File
 from fsbpyr.runtime.registry import Runtime
 
@@ -24,6 +25,8 @@ pytestmark = pytest.mark.slow
 ZEROS = 1536 << 20  # past the old 1 GiB cap; a few KiB as zstd
 RAW = 600 << 20  # stored raw: read through the mapping, past the 256 MiB sweep (payload.c)
 PIECES = 20 * XZ_PIECE  # an xz library of 20 pieces: two windows of up to 16
+HOLES = 67 * DIGEST_LEAF + 1000  # raw, over a window: zeros between data, a short last leaf
+DATA_LEAVES = (0, *range(60, 68))  # the others are zeros: holes in the executable and the cache
 PEAK = 512 << 20  # what extraction, or a stream, may add to the resident peak
 
 _APP = """\
@@ -49,7 +52,7 @@ def digest(read):
 
 def main():
     out, cache = {}, resource_cache()
-    names = ("big/zeros.bin", "big/raw.bin", "big/libpieces.so")
+    names = ("big/zeros.bin", "big/raw.bin", "big/libpieces.so", "big/holes.bin")
     indices = [_fsbpyr.find_file(name)[0] for name in names]
     reset()
     base = peak()
@@ -80,6 +83,15 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _holes() -> bytes:
+    data, pattern = bytearray(HOLES), bytes(range(1, 256)) * (DIGEST_LEAF // 255 + 1)
+    for leaf in DATA_LEAVES:
+        start = leaf * DIGEST_LEAF
+        end = min(start + DIGEST_LEAF, HOLES)
+        data[start:end] = pattern[: end - start]
+    return bytes(data)
+
+
 @pytest.fixture(scope="module")
 def big_app(runtime: Runtime, tmp_path_factory: pytest.TempPathFactory) -> Path:
     zeros, raw = bytes(ZEROS), (bytes(range(1, 256)) * (RAW // 255 + 1))[:RAW]
@@ -88,7 +100,8 @@ def big_app(runtime: Runtime, tmp_path_factory: pytest.TempPathFactory) -> Path:
     big = (File("big/zeros.bin", FileKind.RESOURCE, Blob.zstd(zeros)),
            File("big/raw.bin", FileKind.RESOURCE, Blob.raw(raw)),
            File("big/libpieces.so", FileKind.NATIVE_LIB, Blob.xz(library, digest=True),
-                mode=0o755))  # fmt: skip
+                mode=0o755),
+           File("big/holes.bin", FileKind.RESOURCE, Blob.raw(_holes())))  # fmt: skip
     assert big[2].blob.pieces and len(big[2].blob.pieces) == PIECES // XZ_PIECE
     app = tmp_path_factory.mktemp("big") / "app"
     build_executable(runtime, App("x", "x:main", modules=modules, files=(*files, *big)), app)
@@ -109,7 +122,7 @@ def test_files_past_the_old_cap_extract_in_bounded_memory(report: dict[str, Any]
     raw = (bytes(range(1, 256)) * (RAW // 255 + 1))[:RAW]
     library = b"".join(b"%08d " % i for i in range(PIECES // 9 + 1))[:PIECES]
 
-    assert report["written"] == 3
+    assert report["written"] == 4
     assert report["big/zeros.bin"][:2] == [ZEROS, _sha256(bytes(ZEROS))]
     assert report["big/raw.bin"][:2] == [RAW, _sha256(raw)]
     assert report["big/libpieces.so"][:2] == [PIECES, _sha256(library)]
@@ -121,6 +134,15 @@ def test_runs_of_zeros_become_holes(report: dict[str, Any]) -> None:
 
     assert allocated < (1 << 20), f"{allocated} bytes allocated for {ZEROS} bytes of zeros"
     assert report["big/raw.bin"][2] >= RAW
+
+
+def test_a_raw_file_read_and_written_on_many_threads_is_whole_with_its_holes(
+    report: dict[str, Any],
+) -> None:
+    size, digest, allocated = report["big/holes.bin"]
+
+    assert [size, digest] == [HOLES, _sha256(_holes())]
+    assert allocated < 2 * len(DATA_LEAVES) * DIGEST_LEAF, f"{allocated} bytes allocated"
 
 
 def test_resources_opened_as_files_stream_and_seek(report: dict[str, Any]) -> None:
