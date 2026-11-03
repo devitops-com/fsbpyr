@@ -10,6 +10,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-11-03
+
 ### Added
 - **`make mirror`** brings GitLab along: its main and the release tags follow this checkout's main
   once GitHub holds the same, whatever disagrees stops it before the first push, and a branch goes
