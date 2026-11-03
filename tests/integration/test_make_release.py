@@ -21,7 +21,7 @@ PART = """#!/usr/bin/env bash
 echo "$(basename "$0") $*" >> "$LOG"
 echo "output of $(basename "$0")"
 echo "errors of $(basename "$0")" >&2
-case " ${HANG-} " in *" $(basename "$0") "*) touch "$LOG.hanging"; sleep 60 ;; esac
+case " ${HANG-} " in *" $(basename "$0") "*) echo "$$" > "$LOG.hanging"; exec sleep 60 ;; esac
 case " ${FAIL-} " in *" $(basename "$0") "*) exit 1 ;; esac
 """
 FAKE_GH = """#!/usr/bin/env bash
@@ -366,16 +366,38 @@ def test_nothing_of_the_run_is_left_beside_the_report(tree: Tree) -> None:
     assert len(names) == 2 and "latest.json" in names
 
 
+def _held_in_its_part(tree: Tree) -> bool:
+    """The release is held in release-assets.sh until a signal ends it, so it does not matter
+    when the SIGINT comes: the part, whose pid its marker holds, has become `sleep`, which a
+    SIGINT ends, and what it printed is in the step's log, which the report is made from.
+    Each condition closes a race seen under load. A SIGINT that came between the part's last
+    command and its `sleep` was taken by bash for that command, which exited by itself, and the
+    part slept through it (6 of 3600 runs; full-suite run 41655931574). And tee, which a SIGINT
+    ends too, had at times not read the part's output yet, which was lost (4 of 1200)."""
+    try:
+        pid = tree.log.with_name("log.hanging").read_text()
+        if not pid.endswith("\n"):  # not written yet, or not all of it
+            return False
+        if (Path("/proc") / pid.strip() / "comm").read_text() != "sleep\n":
+            return False
+        logs = (tree.state / "reports").glob(".run.*/log")
+        return any("output of release-assets.sh" in log.read_text() for log in logs)
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+
+
 def test_an_interrupted_release_says_so_with_what_it_had_printed(tree: Tree) -> None:
     with subprocess.Popen(["bash", "tools/release/release.sh"], cwd=tree.tree,  # noqa: S607
                           env={**tree.env, "HANG": "release-assets.sh"}, text=True,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                           stdin=subprocess.DEVNULL, start_new_session=True) as process:  # fmt: skip
-        hanging = tree.log.with_name("log.hanging")
         for _ in range(600):
-            if hanging.exists():
+            if _held_in_its_part(tree):
                 break
             time.sleep(0.05)
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+            pytest.fail("the release never slept in release-assets.sh with its output logged")
         running = tree.report()
         os.killpg(process.pid, signal.SIGINT)
         process.communicate(timeout=30)
