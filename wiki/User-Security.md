@@ -197,15 +197,16 @@ prints `VERIFIED`, and the last two lines show the same digest. Use the full pat
 earlier on `PATH` can lie. Someone with root can fake that one too, so then copy the file to another
 machine and check it there.
 
-**With an OpenSSL older than 3.5 this is not a full verification.** A release carries two signatures,
-and a check passes only if both do. ML-DSA-65 needs OpenSSL 3.5, so an older one cannot do the second
-half, and `release-signing.sh` stops and says so:
+**With an OpenSSL older than 3.5 there is no full verification.** A release carries two signatures,
+and a check passes only if both do. ML-DSA-65 needs OpenSSL 3.5, so `release-signing.sh` stops
+before it checks either, and says so; `openssl pkeyutl -verify` run by hand can check only what the
+last column says:
 
-| OpenSSL | For example | Ed25519 | ML-DSA-65 |
+| OpenSSL | For example | `release-signing.sh verify` | `openssl` by hand |
 |---|---|---|---|
-| 3.5 or newer | Debian 13 | Checked | Checked: a full verification |
-| 3.0 to 3.4 | Debian 12, Ubuntu 24.04 | Checked | Not possible: `Could not read public key` |
-| 1.1.1 | EL8 | Not possible: `unknown option -rawin` | Not possible |
+| 3.5 or newer | Debian 13 | `VERIFIED`: a full verification | both signatures |
+| 3.0 to 3.4 | Debian 12, Ubuntu 24.04 | `OpenSSL 3.0.13 … has no ML-DSA-65: OpenSSL 3.5 or newer is needed` | Ed25519 only; ML-DSA-65 gives `Could not read public key` |
+| 1.1.1 | EL8 | `openssl cannot list its signature algorithms` | neither: `unknown option -rawin` |
 
 `openssl version` shows yours. On an older system, do the check on a machine with OpenSSL 3.5 or
 newer, a container will do, and only compare the digest here: `SHA256SUMS` and its signature are

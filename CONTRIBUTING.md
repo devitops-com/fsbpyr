@@ -215,11 +215,11 @@ The tiers, from fastest to most complete:
   from the commit's sources in independent caches (`tools/release/el8-stub.py` checks it needs no
   GLIBC symbol above 2.28 and carries the runtime id its release's fsbpyr expects) and the two
   must be byte for byte identical; a link takes nothing from a tag, so these are the bytes
-  `el8.yml` publishes for that commit. The portability and VM jobs build their apps with an
+  `el8.yml` puts in that commit's companion release. The portability and VM jobs build their apps with an
   fsbpyr of the commit tagged, in the job only, as the version it declares (`el8-build`): only a
   release's fsbpyr pairs itself with a stub placed beside it, as users do.
-  **`.github/workflows/el8.yml` publishes the stubs and tests nothing; it is not part of the
-  release and does not gate it**: `release.yml` does not wait for it or know it, and a release
+  **`.github/workflows/el8.yml` builds the stubs into a draft of the companion release and tests
+  nothing; it is not part of the release and does not gate it**: `release.yml` does not wait for it or know it, and a release
   may have EL8 stubs or not. It starts on the push of a version tag, in parallel with
   `release.yml`, and runs on the tag itself (a workflow that ran in the default branch's context
   and checked out a tag's code was flagged by CodeQL, D46); its `plan` job checks that the tagged

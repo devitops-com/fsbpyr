@@ -77,8 +77,8 @@ in the wiki); the launcher checks each file's digest before it is loaded.
   `.../vX.Y.Z/`), which catches a damaged or swapped file but not a release whose assets and
   sums were both replaced; the attestations of el8.yml (a run on the release's tag `vX.Y.Z`, never the default branch's context
   executing the tag's code) catch that, and fsbpyr does not check them itself. Releases are
-  immutable, and el8.yml publishes the companion release whole, so its assets cannot be replaced
-  after publication. A stub placed beside the fsbpyr executable, or
+  immutable, and the companion release is published whole (el8.yml leaves it as a draft, and
+  `make release-sign` signs and publishes it), so its assets cannot be replaced after publication. A stub placed beside the fsbpyr executable, or
   already in the cache, is accepted on the runtime id it embeds (a hash of the launcher sources and the compile and link flags,
   the Python pin, the sysroot and the layout version), not on its digest: that detects a stub
   built from other inputs (another Python, target or sysroot, other launcher sources), not a
