@@ -37,7 +37,8 @@ for every file.
 
 **The EL8 stubs** are not executables and live in a release of their own, the companion
 release `el8-vX.Y.Z` of `vX.Y.Z`, on the same commit: one `fsbpyr-stub-3.X-<target>-glibc2.28.xz`
-per Python and target, and `SHA256SUMS-glibc2.28`, whose sums are of the unpacked stubs. A
+per Python and target, and `SHA256SUMS-glibc2.28`, signed as `SHA256SUMS` is, with the sums of
+each stub and of its `.xz`. A
 `--glibc 2.28` build downloads the one it needs by itself; on a machine without access to
 GitHub, place it next to the fsbpyr executable ([Building for EL8](User-Building.md#building-for-el8-glibc-228)).
 Not every release has a companion release. It is published as not the latest release, so the
@@ -64,7 +65,8 @@ a download is checked before it is used. It:
   completions under its prefix's `share/` (`~/.local/share/man/man1/fsbpyr.1` and so on);
 - when that directory is not on `PATH`, writes `env` and `env.fish` scripts next to the
   executable and sources them from `~/.profile`, from `~/.bashrc` and `~/.zshrc` when they
-  exist, and from fish's `conf.d` when fish is installed or configured.
+  exist, and from fish's `conf.d` when fish is installed or configured (in GitHub Actions it adds
+  the directory to `$GITHUB_PATH` instead).
 
 | Option or variable | Effect |
 |---|---|
@@ -74,8 +76,8 @@ a download is checked before it is used. It:
 | `FSBPYR_INSTALL_DIR` | install into this directory |
 | `-q/--quiet`, `-v/--verbose`, `-h/--help` | as usual |
 
-The installer sees the architecture for itself, so the command is the same on x86-64 and aarch64.
-Options go after `sh -s --`, and variables before `sh`:
+The command is the same on x86-64 and aarch64. Options go after `sh -s --`, and variables before
+`sh`:
 
 ```sh
 url=https://github.com/devitops-com/fsbpyr/releases/latest/download/install.sh
@@ -116,13 +118,11 @@ Shell completion and the man page are printed by fsbpyr itself; see
 
 ```console
 $ fsbpyr self update
-fsbpyr: downloading fsbpyr v0.30.0
-fsbpyr: updated /home/me/.local/bin/fsbpyr to fsbpyr v0.30.0
-$ fsbpyr self update
-fsbpyr: fsbpyr is up to date (0.30.0-1a2b3c4d; latest release v0.30.0)
+fsbpyr: fsbpyr is up to date (0.30.0-8d35b93c; latest release v0.30.0)
 ```
 
-That is all there is to it. In that one command, nothing from the download runs until all of this
+When a newer release is out, it prints `downloading fsbpyr vX.Y.Z` and then
+`updated PATH to fsbpyr vX.Y.Z`. In that one command, nothing from the download runs until all of this
 has passed:
 
 1. The release's `SHA256SUMS` is checked against the keys built into your fsbpyr: both signatures,
@@ -156,7 +156,7 @@ result](User-Security.md#checking-an-installed-fsbpyr).
 
 ```console
 $ fsbpyr --version
-0.28.0-b9b1144d
+0.30.0-8d35b93c
 ```
 
 A build from an untagged commit prints `untagged-<commit>`. What changed in each release is in

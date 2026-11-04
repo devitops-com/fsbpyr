@@ -1,3 +1,5 @@
+// _fsbpyr_boot.run() of src/fsbpyr/boot/_fsbpyr_boot.py at fsbpyr v0.30.0, from the launcher's
+// Py_RunMain to the app's target, in the order of the code (wiki/Dev-Boot-Modules.md).
 digraph boot_startup {
   graph [fontname="Helvetica" fontsize=11 rankdir=LR bgcolor="white" pad=0.3 nodesep=0.35 ranksep=0.5];
   node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#fdf1e3" color="#c77d2a"];
@@ -52,7 +54,7 @@ digraph boot_startup {
   extras -> d_links;
   trace -> d_links [style=dashed];
 
-  d_links -> links [label="yes" minlen=2];
+  d_links -> links [label="yes, unless\nFSBPYR_GC=background" minlen=2];
   d_links -> argv0 [label="no"];
   argv0 -> restart -> table -> service;
   service -> d_mp;

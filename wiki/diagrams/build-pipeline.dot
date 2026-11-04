@@ -1,7 +1,8 @@
-// fsbpyr build, from command line to executable (v0.27.0): cli.build_command, then build.build
+// fsbpyr build, from command line to executable (v0.30.0): cli.build_command, then build.build
 // and build._build. Each phase is a box whose numbered steps run in order; an input points at the
 // step that reads it. A to E are the kinds of input of build-inputs.dot: a step marked with
-// some of them runs, or takes that branch, only for those. Steps 4 to 21 are build.build.
+// some of them runs, or takes that branch, only for those. Steps 4 to 21 are build.build;
+// build_command then prints the result and, with a signing key, signs the output.
 // Italic lines are what a --glibc 2.28 build (EL8) does differently.
 digraph build_pipeline {
   graph [fontname="Helvetica" fontsize=11 rankdir=LR bgcolor="white" pad=0.3 nodesep=0.35 ranksep=0.5];
@@ -11,7 +12,7 @@ digraph build_pipeline {
   cli [shape=plain style="" label=<
     <TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" STYLE="rounded" BGCOLOR="#eef3fb" COLOR="#4a6fa5">
       <TR><TD COLSPAN="2"><B>command line</B></TD></TR>
-      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s1">1</TD><TD ALIGN="LEFT" BALIGN="LEFT">cli.build_command</TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s1">1</TD><TD ALIGN="LEFT" BALIGN="LEFT">cli.build_command,<BR/>signing.take_build_variables</TD></TR>
       <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s2">2</TD><TD ALIGN="LEFT" BALIGN="LEFT">project.Project.load: A to E,<BR/>config.load_config</TD></TR>
       <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s3">3</TD><TD ALIGN="LEFT" BALIGN="LEFT">pyversion.resolve; another<BR/>Python: dispatch.run</TD></TR>
     </TABLE>>];
@@ -51,7 +52,7 @@ digraph build_pipeline {
       <TR><TD COLSPAN="2"><B>writing</B></TD></TR>
       <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s19">19</TD><TD ALIGN="LEFT" BALIGN="LEFT">assemble.build_temporary</TD></TR>
       <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s20">20</TD><TD ALIGN="LEFT" BALIGN="LEFT">build.smoke_test, smoke_run</TD></TR>
-      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s21">21</TD><TD ALIGN="LEFT" BALIGN="LEFT">payload.writer.commit;<BR/>several commands:<BR/>links.make_links</TD></TR>
+      <TR><TD ALIGN="RIGHT" VALIGN="TOP" PORT="s21">21</TD><TD ALIGN="LEFT" BALIGN="LEFT">payload.writer.commit;<BR/>several commands:<BR/>links.make_links; with a key:<BR/>signing.sign_output</TD></TR>
     </TABLE>>];
 
   cli -> checks -> staging -> content -> writing;
@@ -61,7 +62,7 @@ digraph build_pipeline {
   uv [label="uv"];
   index [label="package index\nwheels, sdists"];
   sysroot [label="glibc sysroot: Debian 12's\npackages (2.36), or for 2.28\nRocky Linux 8.10's RPMs"];
-  el8 [label="release el8-vA.B.C:\nfsbpyr-stub-X.Y-TARGET-\nglibc2.28.xz, SHA256SUMS-glibc2.28"];
+  el8 [label="release el8-vA.B.C:\nfsbpyr-stub-X.Y-TARGET-\nglibc2.28.xz, SHA256SUMS-glibc2.28\nand its .sig"];
 
   // data on disk
   node [fillcolor="#eaf5ea" color="#3d8b3d"];
@@ -70,7 +71,8 @@ digraph build_pipeline {
   venv [label="the scripts' venv\n(C, D; read as files)"];
   runtime [label="runtime: this fsbpyr's\nown, or the cache"];
   stub [label="2.28 stub: beside the\nfsbpyr executable,\nor cached"];
-  out [label="executable (-o, or\ndist/NAME) and a\nlink per command"];
+  key [label="signing key (.key):\n--signing-key or\nFSBPYR_SIGNING_KEY"];
+  out [label="executable (-o, or\ndist/NAME), a link per\ncommand, and its .sig\nwhen signed"];
 
   projdir -> cli:s2:w;
   uv -> checks:s6:w;
@@ -84,6 +86,7 @@ digraph build_pipeline {
   index -> staging:s10:w;
   index -> staging:s12:w;
   sysroot -> staging:s12:w;
+  key -> writing:s21:w;
   writing -> out;
 
   { rank=same; projdir; cli; }

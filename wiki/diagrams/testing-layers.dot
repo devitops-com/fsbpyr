@@ -1,4 +1,4 @@
-// The test layers of fsbpyr v0.28.0: which make target runs each (left), the test
+// The test layers of fsbpyr v0.30.0: which make target runs each (left), the test
 // directories and tools/vm-smoke.py (middle), and what each exercises (right). Colours on the
 // right follow the wiki's legend: build time (blue), run time inside a built executable
 // (orange), external inputs (purple). Make targets and test directories are neutral (grey,
@@ -52,7 +52,7 @@ digraph testing_layers {
 
   test_ci -> unit;
   test_ci -> integration;
-  test_ci -> e2e [label="13 files,\nrelease launcher"];
+  test_ci -> e2e [label="15 files,\nrelease launcher"];
   test -> unit;
   test -> integration;
   test -> e2e;

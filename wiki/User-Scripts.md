@@ -3,7 +3,7 @@
 Not every Python program is a packaged project. fsbpyr also builds a project without a build
 system, a directory of loose scripts, a single script, and the tools a requirements file names.
 The result is the same kind of executable as for a project, with a command per script and a
-link per command. This page shows each case with a real run of fsbpyr 0.28.0, then how to
+link per command. This page shows each case with a real run of fsbpyr 0.30.0, then how to
 deploy the result, and what scripts find next to the executable. What is common to every build
 (options, locks, the Python version) is on [Building an app](User-Building.md).
 
@@ -230,8 +230,8 @@ fsbpyr: error: --strict: the build has 2 warnings; nothing was written:
 
 When the build finds a venv the scripts run in (`.venv`, `venv` or `env` in the directory, with a
 `pyvenv.cfg`, else `$VIRTUAL_ENV`), the warning's last hint is about it instead: a venv supplies
-pins only when nothing declares a dependency and it holds a distribution that provides the
-import, and `uv pip freeze --python .venv/bin/python > requirements.txt` writes what the venv
+pins only to a directory or a script that declares no dependency, when it holds a distribution
+that provides the import, and `uv pip freeze --python .venv/bin/python > requirements.txt` writes what the venv
 holds for the build to read. The hint names the venv the build found, relative to the directory
 when it is inside it; for a single script it has no `> requirements.txt`, and lists what to put
 in the block. Python 2 is not bundled: an extensionless file with a `python2` shebang is no
@@ -241,8 +241,9 @@ warning.
 
 ### Dependencies from the venv the scripts run in
 
-When nothing declares a dependency (no requirements file, `pylock.toml`, lock or PEP 723
-`dependencies`) and a command's import is unresolved, the build reads the venv the scripts run
+When a directory of scripts or a single script declares no dependency (no requirements file,
+`pylock.toml`, lock or PEP 723 `dependencies`) and a command's import is unresolved, the build
+reads the venv the scripts run
 in: `.venv`, `venv` or `env` in the directory (one with a `pyvenv.cfg`), else `$VIRTUAL_ENV`. It
 reads files only and never starts the venv's Python: each installed distribution's `METADATA`,
 `top_level.txt` and `RECORD` say which one provides the import (a package name is never guessed

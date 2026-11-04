@@ -1,6 +1,6 @@
 // Which launcher source calls which (solid) and which header includes or is included where no
 // call shows it (dashed), from the #include lines and the fsb_* calls of src/fsbpyr/launcher/*.c
-// at fsbpyr v0.27.0. A ".c/.h" node is a source file with its own header. Purple: libraries the
+// at fsbpyr v0.30.0. A ".c/.h" node is a source file with its own header. Purple: libraries the
 // stub links from python-build-standalone (and glibc, linked dynamically).
 digraph launcher_files {
   graph [fontname="Helvetica" fontsize=11 rankdir=LR bgcolor="white" pad=0.3 nodesep=0.35 ranksep=0.5];
@@ -18,6 +18,7 @@ digraph launcher_files {
   way       [label="way.c/.h"];
   due       [label="due.c/.h"];
   slots     [label="slots.c/.h"];
+  sig       [label="sig.c/.h"];
   glibc_c   [label="glibc.c"];
   format    [label="format.h"];
   zstd_h    [label="vendor/zstd/\nzstd.h, zstd_errors.h"];
@@ -26,7 +27,7 @@ digraph launcher_files {
   cpython   [label="CPython\n(libpython.a)"];
   libzstd   [label="libzstd.a"];
   liblzma   [label="liblzma"];
-  openssl   [label="OpenSSL\n(SHA-256)"];
+  openssl   [label="OpenSSL\n(SHA-256, signatures)"];
   glibc     [label="glibc"];
 
   main -> payload   [label="fsb_payload_open,\nrecords, fsb_read_blob"];
@@ -39,6 +40,7 @@ digraph launcher_files {
   module -> payload   [label="lookups, reads,\nstreams"];
   module -> cache     [label="fsb_cache_sync,\nfsb_cache_safe"];
   module -> integrity [label="fsb_integrity_ns"];
+  module -> sig       [label="fsb_sig_methods"];
   module -> cpython   [label="C API"];
 
   payload -> integrity [label="fsb_check_integrity"];
@@ -48,6 +50,9 @@ digraph launcher_files {
 
   integrity -> parallel [label="fsb_parallel,\nfsb_monotonic_ns"];
   integrity -> openssl  [label="SHA256_*"];
+
+  sig -> integrity [label="fsb_sha256_*"];
+  sig -> openssl   [label="EVP_*, PEM_*"];
 
   cache -> payload   [label="records, streams,\ndecoders"];
   cache -> integrity [label="fsb_tree_*"];
@@ -62,6 +67,7 @@ digraph launcher_files {
   edge [style=dashed label="#include"];
   main -> launcher;
   module -> launcher;
+  sig -> launcher;
   launcher -> payload;
   launcher -> cpython [label="#include\nPython.h"];
   payload -> format;

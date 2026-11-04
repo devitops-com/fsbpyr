@@ -1,5 +1,5 @@
-// The chain of trust of a fsbpyr release: from the maintainer's commit to the fsbpyr that installs
-// it, and where a stolen GitHub account stops. docs/signing.md §5 is the procedure.
+// The chain of trust of a fsbpyr release (v0.30.0): from the maintainer's commit to the fsbpyr
+// that installs it, and where a stolen GitHub account stops. docs/signing.md §5 is the procedure.
 digraph security_chain {
   graph [fontname="Helvetica" fontsize=11 rankdir=TB bgcolor="white" pad=0.3 nodesep=0.45 ranksep=0.42 compound=true];
   node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#eef3fb" color="#4a6fa5"];

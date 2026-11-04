@@ -86,7 +86,7 @@ path, and the build refuses `hello.cli:main`.
 
 The corpus app [`pandas-csv`](../tests/corpus/pandas-csv)
 sums a CSV file with pandas. Its `pyproject.toml` has `requires-python = ">=3.12"`, a console
-script `corpus-pandas-csv` and a `uv.lock`. Built with fsbpyr 0.28.0 for Python 3.14:
+script `corpus-pandas-csv` and a `uv.lock`. Built with fsbpyr 0.30.0 for Python 3.14:
 
 ```console
 $ fsbpyr build --python 3.14
@@ -96,7 +96,7 @@ fsbpyr: uv: installing the locked distributions
 fsbpyr: uv: installing the project's wheel
 fsbpyr: collecting 5 distributions
 fsbpyr: writing .../pandas-csv/dist/corpus-pandas-csv
-fsbpyr: smoke-testing .../pandas-csv/dist/.corpus-pandas-csv.2z6d6aoz.tmp
+fsbpyr: smoke-testing .../pandas-csv/dist/.corpus-pandas-csv.rs9gcg2h.tmp
 fsbpyr: built .../pandas-csv/dist/corpus-pandas-csv (65.1 MB, entry corpus_pandas_csv.cli:main, glibc >= 2.34)
 fsbpyr: target needs: glibc >= 2.34; libgcc_s.so.1 (GCC_4.3.0); libstdc++.so.6 (CXXABI_1.3.9, GLIBCXX_3.4.21); libz.so.1
 $ dist/corpus-pandas-csv work/sales.csv
@@ -122,8 +122,8 @@ What happened:
    system libraries the native code links that no wheel bundles. Here those are libstdc++,
    libgcc_s and zlib, which nearly every Linux system has.
 
-The uv on this build machine is the one that built the fsbpyr release (0.13.6 for 0.28.0). With
-another uv the build also warns, for example `fsbpyr: warning: uv 0.13.5 is not uv 0.13.6,
+The uv on this build machine is the one that built the fsbpyr release (0.13.6 for 0.30.0). With
+another uv the build also warns, for example `fsbpyr: warning: uv 0.13.7 is not uv 0.13.6,
 which built this fsbpyr: the executable can differ from one built with uv 0.13.6, even from
 identical sources`: uv builds the project's wheel and installs every distribution, so another
 uv can give other bytes from the same sources. The warning does not stop the build, and
@@ -151,24 +151,24 @@ lock source names a version in `_meta.requires` (`"python_version": "3.12"`): it
 (unsupported, or outside `requires-python`) is a warning, and the rule decides.
 
 The patch release is the one that fsbpyr variant embeds: 3.12.16, 3.13.18, 3.14.10 or 3.15.2 in
-0.28.0. When the chosen version is not the running fsbpyr's, the build is handed over. The same
+0.30.0. When the chosen version is not the running fsbpyr's, the build is handed over. The same
 `pandas-csv` project built without `--python`: `requires-python = ">=3.12"` picks 3.12, so the
 3.14 fsbpyr fetches its release's 3.12 variant once and runs it:
 
 ```console
 $ fsbpyr build
-fsbpyr: fetching fsbpyr-3.12-x86_64-linux-gnu of release v0.28.0
-fsbpyr: the project builds with Python 3.12: running ~/.cache/fsbpyr/downloads/fsbpyr-3.12-x86_64-linux-gnu-v0.28.0
+fsbpyr: fetching fsbpyr-3.12-x86_64-linux-gnu of release v0.30.0
+fsbpyr: the project builds with Python 3.12: running ~/.cache/fsbpyr/downloads/fsbpyr-3.12-x86_64-linux-gnu-v0.30.0
 fsbpyr: staging corpus-pandas-csv from uv.lock
 ...
 fsbpyr: built .../pandas-csv/dist/corpus-pandas-csv (64.3 MB, entry corpus_pandas_csv.cli:main, glibc >= 2.34)
 ```
 
 The variant is checked as `fsbpyr self update` checks a download before anything runs it, and
-kept under `~/.cache/fsbpyr/downloads/` (`$FSBPYR_CACHE_DIR/downloads/` when that is set), so a
-later build uses it without a download, offline too. With `--offline`, a build that needs a
+kept under `${XDG_CACHE_HOME:-~/.cache}/fsbpyr/downloads/` (`$FSBPYR_CACHE_DIR/downloads/`
+when that is set), so a later build uses it without a download, offline too. With `--offline`, a build that needs a
 variant not yet in the cache stops instead of fetching it: `this project builds with Python
-3.12, which needs fsbpyr-3.12-x86_64-linux-gnu of release v0.28.0; it is not in the cache and
+3.12, which needs fsbpyr-3.12-x86_64-linux-gnu of release v0.30.0; it is not in the cache and
 --offline fetches nothing: run the build once without --offline`. `fsbpyr cache gc` leaves the
 variant alone; delete it by hand to reclaim the space. A developer build never downloads a
 variant: it says how to build one from a checkout.
@@ -216,6 +216,11 @@ fsbpyr: staging foreign-poetry from poetry.lock
 fsbpyr: collecting 6 distributions
 ...
 fsbpyr: built .../poetry2/dist/foreign-poetry (32.1 MB, entry _fsbpyr_scripts.main, glibc >= 2.34)
+fsbpyr: target needs: glibc >= 2.34
+fsbpyr: to deploy, copy the file and link it by each command's name (DEST: a directory on the host):
+fsbpyr:   install -m 755 .../poetry2/dist/foreign-poetry "$DEST"/foreign-poetry
+fsbpyr: or let the copy make the links (and x.py for each script x) on the host: FSBPYR_INSTALL_LINKS="$DEST" "$DEST"/foreign-poetry
+fsbpyr: a crontab, unit or agent line such as `python3 $DEST/x.py` must become `$DEST/x` or `$DEST/x.py` run directly: the link is an executable, not a Python file
 $ dist/foreign-poetry
 click 8.5.0
 rich 15.0.0
@@ -264,7 +269,7 @@ lrwxrwxrwx  multi-beta -> multi
 The executable is named after the project (or the `-o` path), and each command gets a relative
 symlink beside it. A start runs the command its name says; under any other name, the first
 argument names the command, and with none the executable lists its commands and exits 2
-(each command prints its name and `sys.argv`):
+(each command prints its name and `sys.argv`, `argv[0]` without its directory):
 
 ```console
 $ dist/multi-alpha x --y
@@ -343,9 +348,9 @@ script that is not Python (a shell script) is not packaged, and the build warns,
 | `--strict / --no-strict` | `strict` | fail the build on any warning about the app and on an unlocked build |
 | `-v, --verbose` | — | print each uv command and let uv's error output through |
 
-The size figures come from the project's measurements in [Performance](Dev-Performance.md)
-(`--fast-compression` with 0.14.0 and 0.15.0 on a PyTorch app, `--best-compression` with
-0.20.0).
+The size figures come from the project's measurements in [Performance](Dev-Performance.md),
+made with 0.30.0 (`--fast-compression` on the corpus's torch app, `--best-compression` on the
+`heavy` test app).
 
 ### `--entry`
 
@@ -378,7 +383,7 @@ fails and the file at `-o` stays as it was:
 $ fsbpyr build --python 3.14 --smoke-args no-such-file.csv -o dist/pandas-csv-smoke2
 ...
 fsbpyr: running the new executable with no-such-file.csv
-fsbpyr: error: smoke run of the new .../dist/pandas-csv-smoke2 with arguments 'no-such-file.csv' failed (exit 1):
+fsbpyr: error: smoke run of the new .../pandas-csv/dist/pandas-csv-smoke2 with arguments 'no-such-file.csv' failed (exit 1):
 Traceback (most recent call last):
   ...
 FileNotFoundError: [Errno 2] No such file or directory: 'no-such-file.csv'
@@ -422,7 +427,7 @@ fsbpyr inspect --json dist/mytool | jq -e '.glibc | split(".") | map(tonumber) <
 By default an executable holds every module twice: as compiled bytecode, which is what runs,
 and as its `.py` source, which is only read when something asks for it. `--no-source` leaves the
 sources of the app and its dependencies out. For `pandas-csv` the file shrinks from 65.1 MB to
-59.3 MB (measured here with 0.28.0). What changes:
+59.3 MB (measured here with 0.30.0). What changes:
 
 - tracebacks name the file and line but show no source line;
 - `inspect.getsource()` raises `OSError: could not get source code`, which breaks libraries that
@@ -497,8 +502,8 @@ block). For 2.28 the build differs in four places:
 
 **Where the stub comes from.** A released fsbpyr carries its standard library, but the stub for
 glibc 2.28 is published apart, in the companion release `el8-vX.Y.Z` of its own release
-(`el8-v0.28.0` for 0.28.0): one `fsbpyr-stub-3.X-<target>-glibc2.28.xz` per Python and target,
-and `SHA256SUMS-glibc2.28`. The build takes the stub, in this order:
+(`el8-v0.30.0` for 0.30.0): one `fsbpyr-stub-3.X-<target>-glibc2.28.xz` per Python and target,
+and `SHA256SUMS-glibc2.28` with its `.sig`. The build takes the stub, in this order:
 
 1. from a file placed next to the fsbpyr executable (next to the path it was run by, or next to
    the file a link to it leads to), named like the asset with or without `.xz`
@@ -516,9 +521,7 @@ The build refuses a placed or downloaded stub whose id is not the one this fsbpy
 its own, and downloads again in place of a cached one with another id: a stub for another
 Python or target, or linked from other launcher sources, never goes into an app. The id does
 not name the release, so the stub of an earlier release whose launcher and pins are the same is
-accepted (0.26.0's and 0.27.0's are), and an update that leaves the stub unchanged reuses the
-cached one. 0.28.0 changed the launcher, the pinned CPython builds and the runtime layout, so
-its stubs are new. A placed file is accepted on that id, not on its digest, so check it against
+accepted, and an update that leaves the stub unchanged reuses the cached one. A placed file is accepted on that id, not on its digest, so check it against
 `SHA256SUMS-glibc2.28` before you place it (`xz -dc <asset>.xz | sha256sum`: the sums are of the
 unpacked stub).
 
@@ -530,30 +533,32 @@ wheel, or an executable built from an untagged commit) never downloads a stub: i
 runtime that `fsbpyr runtime build --glibc 2.28` made
 ([Other commands](User-Other-Commands.md#fsbpyr-runtime-list-and-fsbpyr-runtime-build)).
 
-Not every release has a companion release. Without one the build stops before staging; with
-fsbpyr 0.27.0, before `el8-v0.27.0` was published:
+Not every release has a companion release. Without one the build stops before staging; here
+fsbpyr 0.30.0 with a release server (`FSBPYR_RELEASE_DOWNLOADS`) that has no `el8-v0.30.0`:
 
 ```console
-$ fsbpyr build --glibc 2.28
-fsbpyr: error: release el8-v0.27.0 (the glibc 2.28 stubs of v0.27.0) does not exist or has none for this Python: EL8 stubs are published separately and not for every release; place fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28 (or fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz) next to .../fsbpyr, or use a release that has them: https://github.com/devitops-com/fsbpyr/releases
+$ fsbpyr build --python 3.14 --glibc 2.28
+fsbpyr: error: release el8-v0.30.0 (the glibc 2.28 stubs of v0.30.0) does not exist or has none for this Python: EL8 stubs are published separately and not for every release; place fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28 (or fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz) next to .../fsbpyr, or use a release that has them: https://github.com/devitops-com/fsbpyr/releases
 ```
 
 **An example.** The minimal `hello` project of [What a project needs](#what-a-project-needs),
-built for EL8 by the released fsbpyr 0.28.0, which fetches the stub on its own; the build output
-says nothing about it, and the stub is then kept in the cache:
+built for EL8 by the released fsbpyr 0.30.0, which fetches the stub on its own; the build output
+says nothing about it, and the stub is then kept in the cache (beside the 3.12 variant of the
+example above):
 
 ```console
-$ fsbpyr build --glibc 2.28
+$ fsbpyr build --python 3.14 --glibc 2.28
 ...
 fsbpyr: built .../hello/dist/hello (27.9 MB, entry hello.cli:main, glibc >= 2.28)
 fsbpyr: target needs: glibc >= 2.28
 $ ls ~/.cache/fsbpyr/downloads/
-fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28-cp314-x86_64-unknown-linux-gnu-c63bc5403081  ...
+fsbpyr-3.12-x86_64-linux-gnu-v0.30.0
+fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28-cp314-x86_64-unknown-linux-gnu-b9b259890514
 $ sha256sum ~/.cache/fsbpyr/downloads/fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28-*
-1575eff341a86bc8ba8278ddd74ed7686500a613ebeff5f883e8f4fbc63e28bb  ...
+40287e565c06c3a3e9e52fdcd6bec44bbdf5d99f898afc6e84e466811fbddb79  ...
 ```
 
-That is the sum `SHA256SUMS-glibc2.28` of `el8-v0.28.0` lists for the stub. Without network
+That is the sum `SHA256SUMS-glibc2.28` of `el8-v0.30.0` lists for the stub. Without network
 access the same stub can be placed next to fsbpyr; `pandas-csv` built that way:
 
 ```console
@@ -591,6 +596,6 @@ The same held in `almalinux:8`, and for the `hello` app built above.
 A file placed under the right name but for another Python is refused before the build starts:
 
 ```console
-$ fsbpyr build --glibc 2.28
-fsbpyr: error: .../fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz is not the stub this fsbpyr (v0.28.0) needs: it is the stub of runtime cp312-x86_64-unknown-linux-gnu-a722edaf960d, and this fsbpyr expects cp314-x86_64-unknown-linux-gnu-c63bc5403081; use the fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28 of release el8-v0.28.0
+$ fsbpyr build --python 3.14 --glibc 2.28
+fsbpyr: error: .../fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28.xz is not the stub this fsbpyr (v0.30.0) needs: it is the stub of runtime cp312-x86_64-unknown-linux-gnu-985dbe0ff5c4, and this fsbpyr expects cp314-x86_64-unknown-linux-gnu-b9b259890514; use the fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28 of release el8-v0.30.0
 ```

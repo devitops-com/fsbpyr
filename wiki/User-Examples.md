@@ -9,15 +9,14 @@ and how to try a corpus app yourself, walks through six of them, maps every app 
 stands for, and lists the examples of scripts, several commands and other locks that the other
 pages take from fsbpyr's test fixtures and end-to-end tests.
 
-All outputs on this page and the other User Guide pages come from fsbpyr 0.28.0 (the released
+All outputs on this page and the other User Guide pages come from fsbpyr 0.30.0 (the released
 `fsbpyr-3.14-x86_64-linux-gnu`) with uv 0.13.6, the uv the release was built with, on x86-64
-Linux, on 2026-10-27, unless they say otherwise. Paths are shortened to `...`, and `...` alone
+Linux, on 2026-11-03. Paths are shortened to `...`, and `...` alone
 stands for lines left out.
 
 ## Signing an app and checking it
 
-All of this takes fsbpyr and nothing else. The outputs come from the code after 0.29.0, on
-2026-11-02. [`tests/fixtures/projects/hello`](../tests/fixtures/projects/hello) is a small app; copy
+All of this takes fsbpyr and nothing else. [`tests/fixtures/projects/hello`](../tests/fixtures/projects/hello) is a small app; copy
 it out of a checkout:
 
 ```sh
@@ -32,7 +31,7 @@ $ fsbpyr key new hello
 Passphrase:
 Passphrase again:
 wrote hello.key (keep it secret) and hello.pub
-fingerprint SHA256:9d78f931bb685cbcdbf114803272eb638daa3770b8d8f9cd0a3198b27f882b3c
+fingerprint SHA256:e80b9f1d26da99f857fc9f3014a2b2c4870e04eef757cd00ffc5f045804aba0b
 ```
 
 Then build with the key. The build asks for the passphrase after its smoke test:
@@ -43,7 +42,7 @@ $ fsbpyr build --python 3.14 --signing-key hello.key
 fsbpyr: built .../hello/dist/hello (27.9 MB, entry hello.cli:main, glibc >= 2.34)
 fsbpyr: target needs: glibc >= 2.34
 Passphrase:
-fsbpyr: signed .../hello/dist/hello with key SHA256:9d78f931bb685cbcdbf114803272eb638daa3770b8d8f9cd0a3198b27f882b3c: .../hello/dist/hello.sig
+fsbpyr: signed .../hello/dist/hello with key SHA256:e80b9f1d26da99f857fc9f3014a2b2c4870e04eef757cd00ffc5f045804aba0b: .../hello/dist/hello.sig
 ```
 
 Publish `dist/hello` and `dist/hello.sig`. Hand out `hello.pub` and the fingerprint by a way your
@@ -52,10 +51,10 @@ users trust.
 **As a user**, save the key once, with the whole fingerprint, and check each download:
 
 ```console
-$ fsbpyr key trust hello hello.pub SHA256:9d78f931bb685cbcdbf114803272eb638daa3770b8d8f9cd0a3198b27f882b3c
-trusted the key of hello: SHA256:9d78f931bb685cbcdbf114803272eb638daa3770b8d8f9cd0a3198b27f882b3c
+$ fsbpyr key trust hello hello.pub SHA256:e80b9f1d26da99f857fc9f3014a2b2c4870e04eef757cd00ffc5f045804aba0b
+trusted the key of hello: SHA256:e80b9f1d26da99f857fc9f3014a2b2c4870e04eef757cd00ffc5f045804aba0b
 $ fsbpyr verify --project hello dist/hello
-VERIFIED  dist/hello  (project hello, Ed25519 + ML-DSA-65, key SHA256:9d78f931bb685cbcdbf114803272eb638daa3770b8d8f9cd0a3198b27f882b3c)
+VERIFIED  dist/hello  (project hello, Ed25519 + ML-DSA-65, key SHA256:e80b9f1d26da99f857fc9f3014a2b2c4870e04eef757cd00ffc5f045804aba0b)
 ```
 
 **When a check fails**, the exit code is 1. Here one byte of the app is changed, and then the
@@ -80,8 +79,8 @@ the result is worth:
 
 ```console
 $ fsbpyr verify ~/.local/bin/fsbpyr
-fsbpyr: downloading SHA256SUMS and SHA256SUMS.sig of v0.29.0
-VERIFIED  .../.local/bin/fsbpyr  (project fsbpyr, listed as fsbpyr-3.14-x86_64-linux-gnu in SHA256SUMS of v0.29.0, Ed25519 + ML-DSA-65, key SHA256:ffb630c522fdb1d0681f2e5027f6822d5c65b11e86539a83783382028a4efe27)
+fsbpyr: downloading SHA256SUMS and SHA256SUMS.sig of v0.30.0
+VERIFIED  .../.local/bin/fsbpyr  (project fsbpyr, listed as fsbpyr-3.14-x86_64-linux-gnu in SHA256SUMS of v0.30.0, Ed25519 + ML-DSA-65, key SHA256:ffb630c522fdb1d0681f2e5027f6822d5c65b11e86539a83783382028a4efe27)
 fsbpyr: WARNING ****************************************************************
 fsbpyr: WARNING  This check ran inside this fsbpyr, with the keys built into
 ...
@@ -138,8 +137,9 @@ def main() -> None:
 
 It needs no `[tool.fsbpyr]` table. The build and its output are on
 [Building an app](User-Building.md#a-first-build), and its `inspect` output on
-[Inspecting](User-Inspecting.md#the-summary). It is also the example for the `--strict`,
-`--no-source` (65.1 MB → 59.3 MB) and `--smoke-args` options, and for `FSBPYR_TRACE`.
+[Inspecting](User-Inspecting.md#the-summary). It is also the example for the
+`--no-source` (65.1 MB → 59.3 MB) and `--smoke-args` options, the glibc check of `--strict`, and
+`FSBPYR_TRACE`.
 
 ## 2. A web app with templates: `flask-jinja`
 
