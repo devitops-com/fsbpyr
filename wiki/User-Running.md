@@ -118,8 +118,9 @@ such a directory collected anyway: `touch "$FSBPYR_CACHE_DIR/.fsbpyr-cache"`.
 | `JOURNAL_STREAM` | set by systemd: a stdout or stderr that is the journal is line-buffered ([below](#under-systemd-in-a-container-from-cron)) |
 
 `FSBPYR_TRACE=1` writes a line that starts with `fsbpyr-trace ` followed by a JSON object with
-the keys `decompressed_bytes`, `extracted` (the files extracted in this run), `integrity_ns`,
-`modules`, `reads` and `stored_bytes`:
+the keys `decompressed_bytes`, `extracted` (the files extracted in this run), `hole_bytes` (what
+was found in holes of the executable instead of read), `integrity_ns`, `modules`, `reads` and
+`stored_bytes`:
 
 ```console
 $ FSBPYR_TRACE=1 dist/corpus-pandas-csv work/sales.csv 2>trace.txt >/dev/null

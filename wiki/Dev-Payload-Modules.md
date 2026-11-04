@@ -39,7 +39,7 @@ executable under a temporary name beside the output; `build.build` smoke-tests i
 | CLOSURES | `File.closure` (paths) | count word, then sorted FILES indices | `Payload.closure` |
 | DIGESTS | `Blob.sha256` | in blob order, for the blobs that have one | `Payload.digest` |
 | STARTUP | `ModuleFlag.STARTUP` on a `Module` | indices of the flagged modules | `Payload.startup_modules` |
-| Integrity digest | the bytes | `format.tree_digest`, `TreeHasher`, `file_digest` | `Executable.verify` |
+| Integrity digest | the bytes | `format.tree_digest`, `TreeHasher`, `file_digest` | `Executable.verify`, `Executable.verify_sha256` |
 
 `app_name`, `entrypoint` and `build_info` are ordinary STRTAB strings. The payload modules carry
 `entrypoint`, a target or the `name=target` lines `closure.command_table` makes for several
@@ -88,6 +88,9 @@ Public functions:
 - `file_digest(fd, size, offset=0)`: `tree_digest` of a range of a file, a leaf at a time on up
   to 8 threads in passes of 4096 leaves, so memory does not grow with the file; leaves inside
   holes are not read.
+- `executable_digests(fd, size)`: an executable's integrity digest and the plain SHA-256 of the
+  whole file from one read (`inspect --verify`): up to 7 threads read and hash its leaves, holes
+  unread, at most 64 leaves ahead of the calling thread, which feeds the SHA-256 in order.
 - `align(value, alignment)`: `value` rounded up.
 - `encode_text(text)`: UTF-8 bytes, rejecting lone surrogates and NUL.
 - `check_path(path)`: a site-relative POSIX path with no empty, `.` or `..` component, no
@@ -188,7 +191,9 @@ largest first, and compresses them in batches of 64 on up to `THREADS` threads, 
 hashed, compressed and appended on its thread; at most one batch is in memory. A file whose
 compressed pieces are not smaller than its content becomes an Extent of the original file;
 otherwise one piece is a ZSTD or XZ blob and several a ZSTD_PIECES or PIECES blob, as
-`Blob.zstd` and `Blob.from_xz` make them.
+`Blob.zstd` and `Blob.from_xz` make them. A piece inside a hole is neither read nor compressed:
+the zeros of its size are compressed once per call, under a lock, and every such piece takes
+those bytes, the ones compressing it would give (D15).
 
 Imports: `fsbpyr.compat`, `fsbpyr.payload.format`, `fsbpyr.payload.spec` (all top).
 Imported by: `fsbpyr.build`, `fsbpyr.classify`.
@@ -262,7 +267,8 @@ allocates at most its declared size plus one byte (a block member: its whole blo
 give exactly the recorded size. For an executable mapped from its file, `Executable` drops the
 pages of blob data already read (`madvise(MADV_DONTNEED)`), so resident memory does not grow with
 the blobs read. `Executable.verify` recomputes the trailer's digest, reading a file a leaf at a
-time (format versions 1 and 2: the SHA-256 of the payload).
+time (format versions 1 and 2: the SHA-256 of the payload); `Executable.verify_sha256` also
+returns the plain SHA-256 of the whole file, from the same read.
 
 Classes:
 

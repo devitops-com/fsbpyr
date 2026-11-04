@@ -74,10 +74,28 @@ class Spill:
         stream, or pieces of ZSTD_PIECE (XZ_PIECE) content (D33, D39), compressed into the
         spill. The pieces of every file are compressed together on up to THREADS threads,
         largest first, each read from its file (whole leaves of holes not read), hashed and
-        compressed on its thread and put here as it is done; a file whose compressed bytes are
-        not smaller is its own bytes, an Extent of it. A batch of pieces at most is in memory."""
+        compressed on its thread and put here as it is done; a piece inside a hole is neither
+        read nor compressed: the zeros of its size are compressed once, the same bytes each
+        time (D15). A file whose compressed bytes are not smaller is its own bytes, an Extent of
+        it. A batch of pieces at most is in memory."""
         each = XZ_PIECE if xz else ZSTD_PIECE
         sizes = {rel: os.stat(path).st_size for rel, path in paths.items()}
+        made: dict[int, tuple[bytes, bytes]] = {}
+        making = threading.Lock()
+
+        def holes(size: int) -> tuple[bytes, bytes]:
+            """A piece of ``size`` bytes inside a hole: its compressed bytes and its leaves'
+            digests, made once (under the lock: once however many threads ask)."""
+            with making:
+                if size not in made:
+                    zeros = bytes(size)
+                    stored = xz_stream(zeros) if xz else zstd.compress(zeros,
+                                                                        options=zstd_options(level))
+                    leaves = b"".join(ZERO_LEAF if size - at >= DIGEST_LEAF
+                                      else hashlib.sha256(zeros[at:]).digest()
+                                      for at in range(0, size, DIGEST_LEAF))  # fmt: skip
+                    made[size] = stored, leaves
+                return made[size]
 
         def count(rel: str) -> int:
             return max(1, -(-sizes[rel] // each))
@@ -86,8 +104,12 @@ class Spill:
             return min(each, sizes[job[0]] - job[1] * each)
 
         def compress(job: tuple[str, int]) -> tuple[Extent, int, bytes]:
+            start, size = job[1] * each, length(job)
             with _File(paths[job[0]]) as file:
-                piece, leaves = file.piece(job[1] * each, length(job))
+                if file.hole(start, size):
+                    stored, leaves = holes(size)
+                    return self.add(stored), size, leaves
+                piece, leaves = file.piece(start, size)
             stored = xz_stream(piece) if xz else zstd.compress(piece, options=zstd_options(level))
             return self.add(stored), len(piece), leaves
 
@@ -191,6 +213,10 @@ class _File:
                 raise OSError(f"{self.path} is shorter than it was (changed while built)")
             data += more
         return data
+
+    def hole(self, offset: int, length: int) -> bool:
+        """Whether [offset, offset + length) of the file lies inside a hole (is_hole)."""
+        return is_hole(self._fd, offset, length)
 
     def piece(self, offset: int, length: int) -> tuple[bytes, bytes]:
         """[offset, offset + length) of the file (whole leaves inside holes are zeros, not

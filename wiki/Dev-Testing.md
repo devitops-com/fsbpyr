@@ -169,7 +169,8 @@ The tests set `FSBPYR_CACHE_DIR` (a private cache for almost every executable th
 `FSBPYR_RELEASE_DOWNLOADS` to point downloads of release assets at a `FakeReleases` server.
 `contain.run` tags its processes with `FSBPYR_TEST_CONTAINED=<token>`. The C probes read
 `PROBE_*` switches (`PROBE_FREE`, `PROBE_RELEASE`, `PROBE_OUT`, `PROBE_SESSION`,
-`PROBE_OLD_GLIBC`, `PROBE_NO_LINK`, `PROBE_DECOY`, `PROBE_EUID`, `PROBE_VERIFY_RESULT`),
+`PROBE_OLD_GLIBC`, `PROBE_NO_LINK`, `PROBE_DECOY`, `PROBE_EUID`, `PROBE_VERIFY_RESULT`,
+`PROBE_NO_SPACE`, `PROBE_LONGER`),
 described in each probe's header comment.
 
 `make` variables ([`Makefile`](../Makefile)): `JOBS` (pytest-xdist processes, default 8),
@@ -614,7 +615,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,507 in 145 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,579 in 145 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -631,11 +632,11 @@ run with the release launcher only, those two portability tests also on the two 
 | `tests/unit` (top level) | 26 | 895 |
 | `tests/unit/boot` | 23 | 357 |
 | `tests/unit/builder` | 19 | 752 |
-| `tests/unit/payload` | 11 | 360 |
+| `tests/unit/payload` | 11 | 424 |
 | `tests/unit/runtime` | 9 | 249 |
 | `tests/integration` | 17 | 815 |
-| `tests/e2e` | 40 | 1,079 |
-| All | 145 | 4,507 |
+| `tests/e2e` | 40 | 1,087 |
+| All | 145 | 4,579 |
 
 ### tests/unit (top level): 26 files, 895 tests
 
@@ -729,7 +730,7 @@ locks, fake `uv` scripts and the uv command lines a plan records.
 | [`test_tools.py`](../tests/unit/builder/test_tools.py) | 47 | The tool binary (`fsbpyr.tools`) on hand-built staged sites: when a directory is one, which named distributions are tools, their scripts as commands, meta-packages and families (cycles and a depth limit stop), libraries, missing distributions, name clashes. |
 | [`test_venvdeps.py`](../tests/unit/builder/test_venvdeps.py) | 21 | The venv rung (`fsbpyr.venvdeps`): the venv found, the distributions providing unresolved imports and their `Requires-Dist` closure at installed versions, nothing guessed from PyPI, editable installs refused, the venv's Python never started, `inferred` in the lock record, `--strict`. |
 
-### tests/unit/payload: 11 files, 360 tests
+### tests/unit/payload: 11 files, 424 tests
 
 Writer and reader on specs from `make_spec`; edge cases from `tests/support/edges.py`.
 
@@ -737,11 +738,11 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 |---|---|---|
 | [`test_blocks.py`](../tests/unit/payload/test_blocks.py) | 20 | Small blobs in shared zstd blocks: placement, round trips, identical content once, the block cache, bad member records refused. |
 | [`test_edges.py`](../tests/unit/payload/test_edges.py) | 81 | The Python reader, with the stand-in's cache sync, on the intact edge-case executable and the 66 format and 14 path cases: refused with `PayloadError` (or `CacheError`, `OSError` where the cache refuses) or read, never failing otherwise. |
-| [`test_file_digest.py`](../tests/unit/payload/test_file_digest.py) | 20 | A file's integrity digest, streamed a leaf at a time: sizes around leaves, ranges, holes as zeros, short files. |
+| [`test_file_digest.py`](../tests/unit/payload/test_file_digest.py) | 80 | A file's integrity digest, streamed a leaf at a time: sizes around leaves, ranges, holes as zeros, short files; an executable's digest and plain SHA-256 from one read, on 1, 3 and 8 threads. |
 | [`test_hardening.py`](../tests/unit/payload/test_hardening.py) | 37 | Regression tests from review findings: hostile sizes, path traversal, reserved fields, overlapping sections, bad closures, zstd frames without checksum or content size, trailing bytes. |
 | [`test_integrity.py`](../tests/unit/payload/test_integrity.py) | 15 | The whole-file digest: the tree, leaf counts, one construction for every representation, any changed byte failing, older versions. |
 | [`test_roundtrip.py`](../tests/unit/payload/test_roundtrip.py) | 39 | Writer to reader: every table and field, lookups, deterministic encoding, deduplication, alignment, stub and trailer, an executable replaced only when committed. |
-| [`test_spill.py`](../tests/unit/payload/test_spill.py) | 20 | Compressed bytes in a spill file: the same blobs as in memory, sparse files, pieces on 1 and 8 threads. |
+| [`test_spill.py`](../tests/unit/payload/test_spill.py) | 24 | Compressed bytes in a spill file: the same blobs as in memory, sparse files, pieces on 1 and 8 threads, pieces inside holes compressed once into the bytes their zeros make. |
 | [`test_streaming_writer.py`](../tests/unit/payload/test_streaming_writer.py) | 7 | The streaming writer: the assembled image, zero runs as holes, a file changed since classification failing, the result verified. |
 | [`test_validation.py`](../tests/unit/payload/test_validation.py) | 80 | Malformed specs and bytes refused, and two Hypothesis properties, XOR masks (300 examples) and 64-bit overwrites (500), raising only `PayloadError`. |
 | [`test_xz.py`](../tests/unit/payload/test_xz.py) | 25 | xz natives: standard streams, raw when incompressible, pieces, streams and pieces that do not match their records refused. |
@@ -783,7 +784,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
 | [`test_worker_venvs.py`](../tests/integration/test_worker_venvs.py) | 10 | [`worker_venvs.py`](../tests/support/worker_venvs.py) on real pytest runs with three workers: each in an environment of its own, subprocesses included, removed after the run, and a worker in anything else stopping the run. |
 
-### tests/e2e: 40 files, 1,079 tests
+### tests/e2e: 40 files, 1,087 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -796,7 +797,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_signing.py`](../tests/e2e/test_signing.py) | 36 | `key`, `sign`, `verify` and signing in `build` on a built fsbpyr with test keys pinned, against the release script: the passphrase on a pty, what the build's processes get, where a `.sig` goes, planted modules, this tree's own pins refusing test keys. |
 | [`test_verify.py`](../tests/e2e/test_verify.py) | 66 | `verify` on a built fsbpyr with test keys pinned: files named by option and variable, no fallback; a file of fsbpyr against its release on a local server, with a replayed signature, another key or project, a forged tag, a bad file beside it, no network; the warning; the Security chapter's quick start as printed. |
 | [`test_selfupdate.py`](../tests/e2e/test_selfupdate.py) | 9 | `self update` of a built fsbpyr with test keys pinned, from `FakeGitHub`, to a second build: unsigned, signed by an unpinned key, a `.xz` not matching its line, an older build served as new, three pins, a client that skipped a key change. |
-| [`test_digests.py`](../tests/e2e/test_digests.py) | 4 | The launcher's digest routines through `probes/digests.c` against the Python reader's `tree_digest`. |
+| [`test_digests.py`](../tests/e2e/test_digests.py) | 6 | The launcher's digest routines through `probes/digests.c` against the Python reader's `tree_digest`; holes not read and leaves of zeros not hashed (`pread` and `SHA256_Update` counted), no hole past a file's end. |
 | [`test_dispatch.py`](../tests/e2e/test_dispatch.py) | 6 | A project, and a single script, that exclude the running Python build through the variant: fsbpyr built from the checkout on another Python, served by `FakeReleases`. Needs that Python installed with uv. Marked `version_rule`. |
 | [`test_due.py`](../tests/e2e/test_due.py) | 22 | When a cache collection is due, through `probes/due.c` (`statvfs` wrapped): a detached idle-priority process, one start of many claiming the run, `FSBPYR_GC`, the root the boot code finds. |
 | [`test_edges.py`](../tests/e2e/test_edges.py) | 156 | The launcher, release and sanitized, on every edge case that leaves an executable (63 of 66) and every path case: refusing to start (exit 70), refusing the record, or accepting, as the table says, never crashing. The app walks its records with `tests/support/walk.py`. |
@@ -817,13 +818,13 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_pid1.py`](../tests/e2e/test_pid1.py) | 3 | An app as process 1 of a PID namespace (`unshare --user --map-root-user --pid --fork --mount-proc`, else `podman run` of `debian:13`): SIGTERM ends it with 143 unless it has its own handler; not as process 1 it dies of the signal. |
 | [`test_pipfile_lock.py`](../tests/e2e/test_pipfile_lock.py) | 5 | `foreign/pipenv`: builds from the lock's `default` section, a stale lock warns (an error with `--strict`), a changed hash fails, a Python-less directory builds the tool. |
 | [`test_portability.py`](../tests/e2e/test_portability.py) | 35 | `hello`, `heavy`, `heavy-pip` and `compat` in each image with `podman run --network=none`, with `FSBPYR_SELFTEST=natives` and the reported libraries and glibc against `llvm-objdump`; `test_el8_apps_run_on_el8` (two items) runs glibc 2.28 builds of `hello` and a cryptography app (prebuilt `hello-el8` and `native-el8`, else built) on `rockylinux:8` and `almalinux:8`. Marked `podman`. |
-| [`test_restore.py`](../tests/e2e/test_restore.py) | 10 | The cache sync's writers through `probes/restore.c` (`renameat`, `linkat`, `pthread_create` wrapped): whole files, helper threads, unnamed files linked or renamed into place, the thread limit, the first failure in path order. |
-| [`test_runtime_app.py`](../tests/e2e/test_runtime_app.py) | 87 | Small apps from `build_app`, mostly marked `sanitized`: exit codes, tracebacks, signals, set-gid refusal, the whole-file check, damaged records, unsafe paths, resource limits, the block cache, an owner's set-uid start, the payload on a 64 KiB boundary. |
+| [`test_restore.py`](../tests/e2e/test_restore.py) | 12 | The cache sync's writers through `probes/restore.c` (`renameat`, `linkat`, `pthread_create`, `pwrite` wrapped): whole files, helper threads, unnamed files linked or renamed into place, the thread limit, the first failure in path order, a full disk under a leaf of a pooled file and of one in pieces. |
+| [`test_runtime_app.py`](../tests/e2e/test_runtime_app.py) | 89 | Small apps from `build_app`, mostly marked `sanitized`: exit codes, tracebacks, signals, set-gid refusal, the whole-file check, damaged records, unsafe paths, resource limits (the file-size one also on zstd pieces), the block cache, an owner's set-uid start, the payload on a 64 KiB boundary. |
 | [`test_scripts.py`](../tests/e2e/test_scripts.py) | 21 | The `scripts` fixture (`uv init --no-package`) runs as `uv run main.py` does: the tree untouched, reproducible builds, a module with `[project.scripts]`, no top-level code run by the build, several guarded modules, clashing names, missing imports, main-guard reads only for `--entry`'s module; and the `foreign` Poetry 2 and PDM projects. |
 | [`test_single_script.py`](../tests/e2e/test_single_script.py) | 12 | One script as an executable printing what `python3 <script>` prints: `dist/<stem>`, only its closure, `uv run` scripts, its block's dependencies, settings and `requires-python`, the freeze hint, a venv's pins and a script lock, nothing written beside it. |
 | [`test_slots.py`](../tests/e2e/test_slots.py) | 29 | The instance limit through `probes/slots.c` (`geteuid` wrapped): slots held and freed, forks and execs, files not ours alone, the override and its malformed values, the default. |
 | [`test_stream_windows.py`](../tests/e2e/test_stream_windows.py) | 21 | The launcher's blob streams through `probes/streams.c` with 2 MiB windows: every codec around window boundaries, from the start and after seeks. |
-| [`test_streaming.py`](../tests/e2e/test_streaming.py) | 4 | A 1.5 GiB file extracts in bounded memory, zero runs become holes, resources stream and seek, `_fsbpyr.read()` returns what was asked. |
+| [`test_streaming.py`](../tests/e2e/test_streaming.py) | 6 | A 1.5 GiB file extracts in bounded memory, zero runs become holes, a raw file with holes between its data extracts whole and its leaves in the executable's holes are not read, resources stream and seek, `_fsbpyr.read()` returns what was asked. |
 | [`test_stub_hardening.py`](../tests/e2e/test_stub_hardening.py) | 6 | The stub read with `readelf` and `objdump`: position independent, glibc libraries only, bound at load time, RELRO, non-executable stack, stack protector. |
 | [`test_tool_binary.py`](../tests/e2e/test_tool_binary.py) | 17 | A Python-less directory with a requirements file as one executable of the tools' console scripts (real pyflakes, pycodestyle and flake8, local distributions): links printing what the tools print under uv, no script payload, licences, freezes, `pylock.toml`, `--requirements`, `--entry`, gui scripts, meta-packages, the errors, a venv never read. |
 | [`test_unbuffered.py`](../tests/e2e/test_unbuffered.py) | 8 | `PYTHONUNBUFFERED` set and non-empty: a line printed to a pipe arrives at once and survives SIGTERM; `JOURNAL_STREAM` naming the stdout pipe makes it line-buffered; otherwise block-buffered. |
@@ -868,10 +869,10 @@ system call the test controls. Each probe's header comment lists its commands an
 
 | Program | Launcher sources | Build flags | Test |
 |---|---|---|---|
-| [`probes/digests.c`](../tests/probes/digests.c) | `integrity.c`, `parallel.c` | `-DFSB_PASS_LEAVES=3u`, ASan, UBSan | `test_digests.py` |
+| [`probes/digests.c`](../tests/probes/digests.c) | `integrity.c`, `parallel.c` | `-DFSB_PASS_LEAVES=3u`, `--wrap=pread,--wrap=SHA256_Update`, ASan, UBSan | `test_digests.py` |
 | [`probes/due.c`](../tests/probes/due.c) | `due.c`, `way.c` | `--wrap=statvfs`, UBSan | `test_due.py` |
 | [`probes/find_object.c`](../tests/probes/find_object.c) | `glibc.c` | `--wrap=_dl_find_object`, `--wrap=dlvsym` | `test_find_object.py` |
-| [`probes/restore.c`](../tests/probes/restore.c) | `cache.c`, `way.c`, `payload.c`, `integrity.c`, `parallel.c` | `--wrap=renameat,--wrap=linkat,--wrap=pthread_create`, ASan, UBSan | `test_restore.py` |
+| [`probes/restore.c`](../tests/probes/restore.c) | `cache.c`, `way.c`, `payload.c`, `integrity.c`, `parallel.c` | `--wrap=renameat,--wrap=linkat,--wrap=pthread_create,--wrap=pwrite`, ASan, UBSan | `test_restore.py` |
 | [`probes/sig.c`](../tests/probes/sig.c) | `sig.c`, `integrity.c`, `parallel.c` | `-DFSB_SIG_NO_PYTHON`, `--wrap=EVP_DigestVerify`, ASan, UBSan, LeakSanitizer | `test_signatures.py` |
 | [`probes/slots.c`](../tests/probes/slots.c) | `slots.c` | `--wrap=geteuid`, UBSan | `test_slots.py` |
 | [`probes/streams.c`](../tests/probes/streams.c) | `payload.c`, `integrity.c`, `parallel.c` | `-DFSB_STREAM_WINDOW` of 2 MiB, ASan, UBSan | `test_stream_windows.py` |

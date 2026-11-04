@@ -123,6 +123,8 @@ payload or starts CPython. The [digest](Dev-Executable-Format.md#integrity-diges
 file's last 32 bytes, covers everything before them. OpenSSL's low-level SHA-256 computes it, not
 the one-shot `SHA256()`, which may read `openssl.cnf` (`$OPENSSL_CONF`) before the check is done;
 the file is read, never mapped, so one that shrinks or cannot be read fails like a changed one.
+A leaf inside a hole (`SEEK_DATA`) is not read: its digest is that of zeros, what reading it
+would give; past the file's end there is no hole, so a file that shrank is still read, and fails.
 On a mismatch the launcher prints
 
 ```
@@ -143,9 +145,10 @@ it into place.
 
 `fsbpyr inspect` shows the stored digest, which proves nothing by itself. `--verify`
 (`read(path, verify=True)` in [`inspection.py`](../src/fsbpyr/inspection.py)) recomputes it from
-the very file it opened, a leaf at a time (`Executable.verify` in
+the very file it opened, a leaf at a time (`Executable.verify_sha256` in
 [`payload/reader.py`](../src/fsbpyr/payload/reader.py)), fails with `<path> is damaged or was
-changed after its build`, and prints the plain SHA-256 a GitHub attestation names as `sha256`.
+changed after its build`, and prints the plain SHA-256 a GitHub attestation names as `sha256`,
+taken from the same read.
 It refuses a path that is not a regular file (a FIFO would block the open), and prints
 unprintable build information as its `repr`. Standard tools give the same digest:
 

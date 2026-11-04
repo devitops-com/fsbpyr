@@ -29,20 +29,21 @@
 #define SMALL_FILE (UINT64_C(64) << 10)
 #define BATCH_BUFFER (UINT64_C(16) << 20)
 #define HELD_FILES 64u
-/* Restored files are written in pieces of at most WRITE_PIECE: written whole, a 438 MB library
- * stayed in the page cache as 2 MiB folios, which the dynamic loader maps whole, and torch's
- * libtorch_cpu.so took 156 MB of RSS instead of 60 MB (XFS, Linux 6.12; D36). A piece of zeros
- * is not written: runs of zeros become holes (D38). */
+/* Restored files are written a leaf at a time, in writes of at most WRITE_PIECE: written whole,
+ * a 438 MB library stayed in the page cache as 2 MiB folios, which the dynamic loader maps whole,
+ * and torch's libtorch_cpu.so took 156 MB of RSS instead of 60 MB (XFS, Linux 6.12; D36). A leaf
+ * of zeros is not written: runs of zeros become holes (D38). */
 #define WRITE_PIECE (UINT64_C(1) << 20)
 #define DECODER_BLOCKS 4u /* blocks a sync's own decoder keeps (D30): files restored in path order */
 /* Files are written once every file of the sync is checked, on up to 8 threads (D39): those of
  * at most POOLED_FILE bytes, raw, in one zstd frame or in a block, a chunk of neighbours at a
  * time, CHUNK_FILES or CHUNK_BYTES and the rest of the last one's block, so that a block is
- * decoded once. Larger files, xz and pieces are written by the calling thread, one at a time:
- * their pieces are decoded in parallel already, and a thread each would hold up to 8 stream
- * windows (64 MiB) and xz dictionaries at once (D38). torch's 12,139 files that are no native
- * library took 302 ms to write on one thread, 140 on 8 (XFS, Core Ultra 9 285): threads that
- * write in one large directory wait for one another there. */
+ * decoded once. Larger files, xz and pieces are written one at a time: their pieces are decoded
+ * in parallel already, their leaves written by the threads that hash them (write_leaf), and a
+ * thread each would hold up to 8 stream windows (64 MiB) and xz dictionaries at once (D38).
+ * torch's 12,139 files that are no native library took 302 ms to write on one thread, 140 on 8
+ * (XFS, Core Ultra 9 285): threads that write in one large directory wait for one another
+ * there. */
 #define POOLED_FILE FSB_ZSTD_PIECE
 #define CHUNK_FILES 32u
 #define CHUNK_BYTES (UINT64_C(2) << 20)
@@ -160,34 +161,48 @@ static bool file_failed(struct state *s, int error, const struct entry *e) {
     return false;
 }
 
-static bool zeros(const uint8_t *data, size_t size) {
-    return size == 0 || (data[0] == 0 && memcmp(data, data + 1, size - 1) == 0);
-}
+_Static_assert(FSB_DIGEST_LEAF <= WRITE_PIECE, "a leaf is written in one piece");
 
-/* data[0, length) at ``offset`` of the file open as ``fd``, in pieces of at most WRITE_PIECE;
- * a piece of zeros is skipped (a hole). *end: where the last piece written ends. 0 or an errno. */
-static int write_window(int fd, uint64_t offset, const uint8_t *data, uint64_t length,
-                        uint64_t *end) {
-    for (uint64_t at = 0; at < length;) {
-        size_t size = (size_t)(length - at < WRITE_PIECE ? length - at : WRITE_PIECE);
-        if (!zeros(data + at, size)) {
-            for (size_t done = 0; done < size;) {
-                ssize_t n = pwrite(fd, data + at + done, size - done, (off_t)(offset + at + done));
-                if (n < 0 && errno == EINTR) continue;
-                if (n < 0) return errno;
-                if (n == 0) return EIO;
-                done += (size_t)n;
-            }
-            *end = offset + at + size;
-        }
-        at += size;
+/* data[0, size) at ``offset`` of the file open as ``fd``; 0 or an errno. */
+static int write_all(int fd, uint64_t offset, const uint8_t *data, size_t size) {
+    for (size_t done = 0; done < size;) {
+        ssize_t n = pwrite(fd, data + done, size - done, (off_t)(offset + done));
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) return errno;
+        if (n == 0) return EIO;
+        done += (size_t)n;
     }
     return 0;
 }
 
+/* A file's content as the hashing threads write it (write_leaf): the window's offset in the
+ * file, the first write's errno (0: none failed) and where the furthest leaf written ends. */
+struct leaf_writes {
+    int fd;
+    uint64_t offset;
+    atomic_int error;
+    _Atomic uint64_t end;
+};
+
+/* fsb_tree_add_each's work: the leaf written where it belongs in the file, by the thread that
+ * hashed it (D31, D39: within the hashing threads' bound), unless it is zeros (a hole, D38) or a
+ * write failed. */
+static void write_leaf(void *context, const uint8_t *leaf, uint64_t at, size_t size, bool zeros) {
+    struct leaf_writes *w = context;
+    if (zeros || atomic_load(&w->error) != 0) return;
+    int error = write_all(w->fd, w->offset + at, leaf, size), none = 0;
+    if (error != 0) {
+        atomic_compare_exchange_strong(&w->error, &none, error);
+        return;
+    }
+    uint64_t end = w->offset + at + size;
+    for (uint64_t seen = atomic_load(&w->end); end > seen;)
+        if (atomic_compare_exchange_weak(&w->end, &seen, end)) break;
+}
+
 /* The entry's content from the payload a window at a time (D38): its digest into ``digest``
- * and, if ``fd`` >= 0, the content written to the file open as ``fd``. False with the failure
- * set. */
+ * and, if ``fd`` >= 0, the content written to the file open as ``fd``, each leaf by the thread
+ * that hashed it. False with the failure set. */
 static bool stream_content(struct state *s, const struct entry *e, int fd,
                            uint8_t digest[FSB_DIGEST_SIZE]) {
     if (s->decoder == NULL && (s->decoder = fsb_decoder_new(DECODER_BLOCKS)) == NULL)
@@ -196,16 +211,19 @@ static bool stream_content(struct state *s, const struct entry *e, int fd,
     if (stream == NULL) return out_of_memory(s);
     struct fsb_tree tree;
     fsb_tree_init(&tree);
+    struct leaf_writes writes = {.fd = fd};
+    atomic_init(&writes.error, 0);
+    atomic_init(&writes.end, 0);
     const uint8_t *data;
-    uint64_t length, offset = 0, end = 0;
+    uint64_t length;
     int status, error = 0;
     while ((status = fsb_stream_next(stream, &data, &length)) == FSB_STREAM_DATA) {
-        if (fsb_tree_add(&tree, data, length) != 0) {
+        if (fsb_tree_add_each(&tree, data, length, fd >= 0 ? write_leaf : NULL, &writes) != 0) {
             status = FSB_STREAM_MEMORY;
             break;
         }
-        if (fd >= 0 && (error = write_window(fd, offset, data, length, &end)) != 0) break;
-        offset += length;
+        if ((error = atomic_load(&writes.error)) != 0) break;
+        writes.offset += length;
     }
     if (status == FSB_STREAM_SYSTEM) error = fsb_stream_error(stream); /* reading the executable */
     fsb_stream_close(stream);
@@ -213,7 +231,8 @@ static bool stream_content(struct state *s, const struct entry *e, int fd,
     if (status == FSB_STREAM_MEMORY) return out_of_memory(s);
     if (status != FSB_STREAM_END) return corrupt(s, "blob data of file", e->index);
     /* a hole at the end: the file gets its size (a truncate costs XFS a transaction: only then) */
-    if (fd >= 0 && end < e->blob.size && ftruncate(fd, (off_t)e->blob.size) != 0)
+    if (fd >= 0 && atomic_load(&writes.end) < e->blob.size &&
+        ftruncate(fd, (off_t)e->blob.size) != 0)
         return file_failed(s, errno, e);
     fsb_tree_final(&tree, digest);
     return true;
@@ -950,7 +969,7 @@ static void mark(struct state *s) {
         return;
     int fd = openat(s->root, MARKER, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (fd < 0) return; /* marked meanwhile, or not ours to mark */
-    (void)write_window(fd, 0, (const uint8_t *)MARKER_TEXT, strlen(MARKER_TEXT), &(uint64_t){0});
+    (void)write_all(fd, 0, (const uint8_t *)MARKER_TEXT, strlen(MARKER_TEXT));
     close(fd);
 }
 

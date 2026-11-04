@@ -26,9 +26,10 @@ typedef union {
  * does not grow with the buffers' sizes (D38). A buffer whose data[i] is NULL is the file open
  * as fds[i] (``fds`` may be NULL if there is none): each thread reads its leaves through a
  * small buffer of its own, so a large file never takes its size of resident memory, as it would
- * mapped (D36). A leaf that cannot be read whole gets a digest that cannot match. 0; EIO if some
- * leaf could not be read (its digest is set all the same); ENOMEM if out of memory (no digest
- * set). Reentrant: no shared state. */
+ * mapped (D36), and a leaf inside a hole is not read (fsb_in_hole). A whole leaf of zeros takes
+ * the digest of zeros unhashed. A leaf that cannot be read whole gets a digest that cannot
+ * match. 0; EIO if some leaf could not be read (its digest is set all the same); ENOMEM if out
+ * of memory (no digest set). Reentrant: no shared state. */
 int fsb_tree_digests(uint64_t count, const uint8_t *const data[], const int fds[],
                      const uint64_t lengths[], uint8_t (*digests)[FSB_DIGEST_SIZE]);
 
@@ -40,6 +41,14 @@ struct fsb_tree {
 };
 void fsb_tree_init(struct fsb_tree *tree);
 int fsb_tree_add(struct fsb_tree *tree, const uint8_t *data, uint64_t length); /* 0 or ENOMEM */
+/* fsb_tree_add, and ``each`` called on every leaf by the thread that hashed it, once its digest
+ * is taken: the leaf's data, its offset in ``data``, its size and whether it is all zeros. Work
+ * done per leaf runs on the hashing threads, within their bound (D31, D39): the cache's writes
+ * of what it hashes. */
+int fsb_tree_add_each(struct fsb_tree *tree, const uint8_t *data, uint64_t length,
+                      void (*each)(void *context, const uint8_t *leaf, uint64_t offset,
+                                   size_t size, bool zeros),
+                      void *context);
 void fsb_tree_final(struct fsb_tree *tree, uint8_t digest[FSB_DIGEST_SIZE]);
 
 /* The digest of data[0, length): fsb_tree_digests of one buffer. */
@@ -48,6 +57,15 @@ bool fsb_tree_digest(const uint8_t *data, uint64_t length, uint8_t digest[FSB_DI
 /* The digest of the first ``length`` bytes of the file open as ``fd``, read in leaves; 0, EIO
  * or ENOMEM as fsb_tree_digests. */
 int fsb_file_digest(int fd, uint64_t length, uint8_t digest[FSB_DIGEST_SIZE]);
+
+/* Whether data[0, size) is all zeros. */
+bool fsb_zeros(const uint8_t *data, size_t size);
+
+/* Whether [start, start + size) of the file open as ``fd`` lies inside a hole: SEEK_DATA, which
+ * moves the descriptor's offset (every descriptor given here is read with pread only). Past the
+ * file's end there is no hole: a file that shrank must not read as zeros (D38). False where the
+ * file system cannot tell: the range is then read. */
+bool fsb_in_hole(int fd, uint64_t start, uint64_t size);
 
 /* The plain SHA-256 of a file open as ``fd``, whatever its position (which stays), or of bytes in
  * memory (docs/signing.md §4): OpenSSL's low-level one, as everything here, which reads no

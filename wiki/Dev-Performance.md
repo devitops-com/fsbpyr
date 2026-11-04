@@ -1,7 +1,7 @@
 # Performance
 
-Where the time, memory and bytes of an fsbpyr executable go, measured with the release 0.30.0, so
-that a regression can be traced to the part that grew. The mechanisms are described on
+Where the time, memory and bytes of an fsbpyr executable go, measured with the release 0.30.0 (very
+large files also with the code since), so that a regression can be traced to the part that grew. The mechanisms are described on
 [Dev-Launcher](Dev-Launcher.md), [Dev-Executable-Format](Dev-Executable-Format.md) and
 [Dev-Security](Dev-Security.md).
 
@@ -67,7 +67,8 @@ leaves (`LEAVES_PER_THREAD`), at most 8 (`FSB_PARALLEL_MAX_THREADS`) and never m
 cores the process may use (`sched_getaffinity`). The SHA-256 is OpenSSL's from the static runtime,
 with SHA-NI where the CPU has it. Each thread reads its leaves with `pread` through a 64 KiB
 buffer of its own (`READ_PIECE`), never mapping the file, so its size stays out of resident
-memory; a pass hashes at most 4096 leaves (`FSB_PASS_LEAVES`). `FSBPYR_TRACE` reports the time as
+memory; a leaf inside a hole is not read, and a leaf of zeros takes the digest of zeros unhashed
+([Very large files](#very-large-files)); a pass hashes at most 4096 leaves (`FSB_PASS_LEAVES`). `FSBPYR_TRACE` reports the time as
 `integrity_ns`.
 
 `hello` (27.9 MB) and the same app with 206 MB and 996 MB of random data, which does not
@@ -311,26 +312,38 @@ stay on one thread (the GIL).
 
 [`tests/e2e/test_large.py`](../tests/e2e/test_large.py)'s app, with its own build script: one
 sparse file of zeros, built compressed (zstd) and raw, run (the integrity check, a stream through
-it, an extraction), and `inspect --verify` of the raw one; each process's peak RSS (`VmHWM`), from
-v0.30.0's tree. Wall times, one run each:
+it, an extraction), and `inspect --verify` of the raw one; each process's peak RSS (`VmHWM`). Wall
+times, one run each, of release 0.30.0 and of the code since (one sparse file of 5 GiB is 5.4 GB,
+40 MB on disk, raw, and 28.1 MB compressed; 1 TiB is 1.1 TB, 40 MB on disk, and 69.8 MB):
 
-| | Executable | Build | Run | `inspect --verify` | Peak RSS, build / run |
-|---|---|---|---|---|---|
-| 5 GiB compressed | 28.1 MB | 1.1 s | 2.4 s | — | 317 / 120 MiB |
-| 5 GiB raw | 5.4 GB, 40 MB on disk | 0.4 s | 3.6 s | 1.5 s | 106 / 119 MiB |
-| 1 TiB compressed | 69.8 MB | 149.5 s | 486.6 s | — | 435 / 158 MiB |
-| 1 TiB raw | 1.1 TB, 40 MB on disk | 14.7 s | 991.1 s | 324.3 s | 106 / 119 MiB |
+| | 0.30.0 | Since 0.30.0 |
+|---|---|---|
+| 5 GiB compressed: build / run | 1.1 / 2.4 s | 0.3 / 1.9 s |
+| 5 GiB raw: build / run / `inspect --verify` | 0.4 / 3.6 / 1.5 s | 0.4 / 1.8 / 1.2 s |
+| 1 TiB compressed: build / run | 149.5 / 486.6 s | 4.8 / 394.2 s |
+| 1 TiB raw: build / run / `inspect --verify` | 14.7 / 991.1 / 324.3 s | 14.3 / 347.5 / 216.2 s |
+| 1 TiB raw: the launcher's check at start | 68.8 s | 0.4 s |
+| Peak RSS, builds / runs | 106–435 / 118–158 MiB | 106–180 / 119–158 MiB |
 
-The runs had a task limit; the compressed 1 TiB one also `MemoryMax=8G`, under which the raw run
-took 1,151 s and its `inspect` 336 s, since the page cache counts against the limit.
+The runs had a task limit; the compressed ones also `MemoryMax=8G`, the raw ones since 0.30.0
+`MemoryMax=48G`. Under 8G the 0.30.0 raw run took 1,151 s and its `inspect` 336 s, since the
+page cache counts against the limit.
 
-Compressed, the file is zstd pieces of 8 MiB, compressed and decoded on up to 8 threads. A raw
-build finds holes on the calling thread and reads only data on the threads (`is_hole` and
-`file_digest` in `payload/format.py`); the executable and the extracted file stay sparse. Of the
-raw run, only the integrity check is spread over threads: 68.8 s for the 1.1 TB, about 16 GB/s.
-The extraction reads each 64 MiB window with one `pread` and writes it on one thread, hashing
-only its leaves on up to 8, and the test app counts the zeros it streams on one core.
-`inspect --verify` adds the file's plain SHA-256 on one core after the tree digest.
+Compressed, the file is zstd pieces of 8 MiB, compressed and decoded on up to 8 threads; a piece
+inside a hole is not compressed: the zeros of its size are compressed once per build and every
+such piece takes those bytes, the ones compressing it gives (D15; the 1 TiB executables are the
+same bytes). A raw build finds holes on the calling thread and reads only data on the threads
+(`is_hole` and `file_digest` in `payload/format.py`); the executable and the extracted file stay
+sparse. A raw window is read on up to 8 threads, a leaf each (`raw_window` in
+`launcher/payload.c`), every leaf is written by the thread that hashes it (`write_leaf` in
+`launcher/cache.c`), a leaf inside a hole is not read (`fsb_in_hole`: reading a hole fills
+page-cache pages with zeros), and a leaf of zeros takes the digest of zeros unhashed and is not
+written. 0.30.0 read each 64 MiB window with one `pread`, read and hashed the holes, and wrote
+on one thread. On 64 GiB, 19 of the raw run's 27 s are the test app's own `bytes.count`, on one
+thread; extraction runs at 24.6 GiB/s stored raw (0.30.0: 2.2) and 18.7 GiB/s compressed (6.8).
+`inspect --verify` takes the integrity digest and the plain SHA-256 from one read
+(`executable_digests` in `payload/format.py`), other threads reading and hashing the leaves;
+0.30.0 read the file twice. The SHA-256 is one thread's and sets the time: 216 s for 1.1 TB.
 
 ## Building a runtime
 
@@ -464,7 +477,7 @@ every start unpacks its archive into a new `_MEI` directory under `TMPDIR` and r
 1. `FSBPYR_TRACE=1 app ...` prints one `fsbpyr-trace` JSON line on stderr at exit
    ([`_fsbpyr_rt/trace.py`](../src/fsbpyr/boot/_fsbpyr_rt/trace.py), counters from
    `_fsbpyr.stats` in `launcher/module.c`): `integrity_ns` (the whole-file check), `reads`,
-   `decompressed_bytes` and `stored_bytes` (payload reads), `extracted` (files written to the
+   `decompressed_bytes`, `stored_bytes` and `hole_bytes` (payload reads), `extracted` (files written to the
    cache) and `modules` (the modules loaded per distribution). Under cProfile, `_fsbpyr.sync` is
    the cache check, and the extraction on a first run.
 2. `FSBPYR_IMPORTTIME=1 app ...`: CPython's import-time table, per module (the launcher sets

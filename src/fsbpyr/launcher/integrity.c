@@ -8,6 +8,7 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 /* Leaves per thread: waking more threads costs more than they save on small files (21 MB:
@@ -34,6 +35,23 @@ static void sha256(const uint8_t *data, size_t length, uint8_t digest[FSB_DIGEST
     SHA256_Final(digest, &context);
 }
 
+/* The SHA-256 of FSB_DIGEST_LEAF zeros (format.ZERO_LEAF): every whole leaf of zeros, a hole's
+ * or one in memory, takes it unhashed. */
+static const uint8_t ZERO_LEAF[FSB_DIGEST_SIZE] = {
+    0x30, 0xe1, 0x49, 0x55, 0xeb, 0xf1, 0x35, 0x22, 0x66, 0xdc, 0x2f, 0xf8, 0x06, 0x7e, 0x68, 0x10,
+    0x46, 0x07, 0xe7, 0x50, 0xab, 0xb9, 0xd3, 0xb3, 0x65, 0x82, 0xb8, 0xaf, 0x90, 0x9f, 0xcb, 0x58};
+
+bool fsb_zeros(const uint8_t *data, size_t size) {
+    return size == 0 || (data[0] == 0 && memcmp(data, data + 1, size - 1) == 0);
+}
+
+bool fsb_in_hole(int fd, uint64_t start, uint64_t size) {
+    off_t data = lseek(fd, (off_t)start, SEEK_DATA);
+    if (data >= 0) return (uint64_t)data >= start + size;
+    struct stat st; /* ENXIO: no data from ``start`` on, or ``start`` past the end */
+    return errno == ENXIO && fstat(fd, &st) == 0 && (uint64_t)st.st_size >= start + size;
+}
+
 struct trees {
     uint64_t count;
     const uint8_t *const *data; /* a NULL entry is read from its descriptor */
@@ -44,6 +62,9 @@ struct trees {
     uint8_t *digests;      /* FSB_DIGEST_SIZE per leaf of the pass */
     uint8_t *buffers;      /* READ_PIECE bytes per worker, for leaves read from a descriptor */
     atomic_bool unreadable;
+    void (*each)(void *context, const uint8_t *leaf, uint64_t offset, size_t size,
+                 bool zeros); /* or NULL */
+    void *each_context;
 };
 
 /* A leaf read from a descriptor is hashed READ_PIECE bytes at a time. With a whole 1 MiB leaf
@@ -79,16 +100,28 @@ static void hash_leaf(void *context, uint64_t item, unsigned worker) {
     size_t size = (size_t)(rest < FSB_DIGEST_LEAF ? rest : FSB_DIGEST_LEAF);
     uint8_t *digest = t->digests + item * FSB_DIGEST_SIZE;
     if (t->data[low] != NULL) {
-        sha256(t->data[low] + start, size, digest);
+        const uint8_t *leaf_data = t->data[low] + start;
+        bool zeros = fsb_zeros(leaf_data, size);
+        if (zeros && size == FSB_DIGEST_LEAF)
+            memcpy(digest, ZERO_LEAF, FSB_DIGEST_SIZE);
+        else
+            sha256(leaf_data, size, digest);
+        if (t->each != NULL) t->each(t->each_context, leaf_data, start, size, zeros);
         return;
     }
     assert(worker < FSB_PARALLEL_MAX_THREADS);
     uint8_t *piece = t->buffers + (size_t)worker * READ_PIECE;
+    bool hole = fsb_in_hole(t->fds[low], start, size); /* zeros, not read */
+    if (hole && size == FSB_DIGEST_LEAF) {
+        memcpy(digest, ZERO_LEAF, FSB_DIGEST_SIZE);
+        return;
+    }
+    if (hole) memset(piece, 0, READ_PIECE);
     fsb_sha256_context hashing;
     SHA256_Init(&hashing);
     for (size_t done = 0; done < size;) {
         size_t part = size - done < READ_PIECE ? size - done : READ_PIECE;
-        if (!read_piece(t->fds[low], piece, part, start + done)) {
+        if (!hole && !read_piece(t->fds[low], piece, part, start + done)) {
             /* unreadable, or shorter than it was: no digest over this one can match */
             memset(digest, 0, FSB_DIGEST_SIZE);
             atomic_store(&t->unreadable, true);
@@ -156,13 +189,21 @@ void fsb_tree_init(struct fsb_tree *tree) {
     tree->ended = false;
 }
 
-int fsb_tree_add(struct fsb_tree *tree, const uint8_t *data, uint64_t length) {
+int fsb_tree_add_each(struct fsb_tree *tree, const uint8_t *data, uint64_t length,
+                      void (*each)(void *context, const uint8_t *leaf, uint64_t offset,
+                                   size_t size, bool zeros),
+                      void *context) {
     assert(!tree->ended);
     tree->ended = length % FSB_DIGEST_LEAF != 0;
     uint64_t first[2] = {0, (length + FSB_DIGEST_LEAF - 1) / FSB_DIGEST_LEAF};
-    struct trees t = {.count = 1, .data = &data, .lengths = &length, .first = first};
+    struct trees t = {.count = 1, .data = &data, .lengths = &length, .first = first,
+                      .each = each, .each_context = context};
     atomic_init(&t.unreadable, false);
     return hash_passes(&t, &tree->root) ? 0 : ENOMEM;
+}
+
+int fsb_tree_add(struct fsb_tree *tree, const uint8_t *data, uint64_t length) {
+    return fsb_tree_add_each(tree, data, length, NULL, NULL);
 }
 
 void fsb_tree_final(struct fsb_tree *tree, uint8_t digest[FSB_DIGEST_SIZE]) {

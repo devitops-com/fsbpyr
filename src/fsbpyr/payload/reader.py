@@ -54,6 +54,7 @@ from .format import (
     canonical_dist_name,
     check_module_name,
     check_path,
+    executable_digests,
     extractable,
     file_digest,
     parallel,
@@ -731,6 +732,17 @@ class Executable:
                 scope, actual = "payload", hashlib.sha256(window).digest()
         if actual != self.digest:
             raise PayloadError(f"{scope} digest mismatch")
+
+    def verify_sha256(self) -> bytes:
+        """verify(), and the plain SHA-256 of the whole file: from one read of it where the digest
+        covers the file and it is open (executable_digests)."""
+        if not (self.covers_file and self._fd >= 0):
+            self.verify()
+            return hashlib.sha256(self._view).digest()
+        actual, whole = executable_digests(self._fd, len(self._view))
+        if actual != self.digest:
+            raise PayloadError("file digest mismatch")
+        return whole
 
     def close(self) -> None:
         """Release all views and the mapping; safe to call more than once."""

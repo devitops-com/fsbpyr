@@ -186,7 +186,8 @@ Python: `BLOB = struct.Struct("<QQQBBHI")`; C: `struct fsb_blob`.
   identical content is one member whether the spec gave it raw or as a zstd frame.
 - **Raw blobs and holes (D38).** Writers leave whole leaves of zeros of a raw blob unwritten, so
   one of `DIGEST_LEAF` bytes or more may hold holes and a file of zeros stays sparse. The
-  launcher reads such blobs with `pread` ([payload.c](Dev-Launcher.md#payloadc-and-payloadh)).
+  launcher reads such blobs with `pread`, a leaf inside a hole not at all (`SEEK_DATA`)
+  ([payload.c](Dev-Launcher.md#payloadc-and-payloadh)).
 - **Blocks (D30).** A blob of codec 2 has no stored bytes: its content is in block `offset`, a
   zstd blob of at most `MAX_BLOCK_SIZE` (1 MiB) that only members reference. The writer packs
   every non-empty blob under 64 KiB except natives into blocks, one stream per placement class

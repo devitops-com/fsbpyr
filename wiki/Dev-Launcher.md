@@ -266,7 +266,7 @@ give a blob's content in windows of at most `FSB_STREAM_WINDOW` (64 MiB; smaller
 but the last whole 1 MiB leaves, to be hashed as they come. A zstd frame is checked to its end,
 checksum included, before the stream ends, and a seek backwards restarts it; xz and block blobs are
 decoded whole, pieces a window at a time in parallel, a large raw blob read with `pread` from
-the stream's own descriptor. `fsb_stream_next` returns `FSB_STREAM_DATA`, `_END`, `_CORRUPT`,
+the stream's own descriptor, a window's leaves on up to 8 threads (`fsb_parallel`, 4 a thread). `fsb_stream_next` returns `FSB_STREAM_DATA`, `_END`, `_CORRUPT`,
 `_MEMORY` or `_SYSTEM`; after a failure every later call fails the same way.
 
 **Raw blobs and holes.** The writer leaves whole leaves of zeros of a raw blob unwritten, so one
@@ -274,12 +274,14 @@ of 1 MiB or more may hold holes. It is read from the file, never through the map
 hole on tmpfs would take a page of memory for every page read and could end the process with
 `SIGBUS`, through a duplicate of the kept descriptor if that still is the executable (same device
 and inode; the app may have closed it), else `/proc/self/exe` opened again and checked the same
-way, else `ESTALE`.
+way, else `ESTALE`. A leaf inside a hole of the executable (`fsb_in_hole`, `SEEK_DATA`) is not
+read, since reading a hole fills page-cache pages with zeros: the buffer gets zeros, and
+`fsb_hole_bytes` counts them.
 
 **Memory.** Pages read through the mapping count as resident though they are page cache, so every
 256 MiB read through it the data area's pages are dropped (`madvise(MADV_DONTNEED)`).
-`fsb_stored_bytes` and `fsb_decompressed_bytes`, for `_fsbpyr.stats()`, count what was read and
-decompressed.
+`fsb_stored_bytes`, `fsb_decompressed_bytes` and `fsb_hole_bytes`, for `_fsbpyr.stats()`, count
+what was read, decompressed and found in holes.
 
 ### integrity.c and integrity.h
 
@@ -292,14 +294,19 @@ own file and for every file it extracts to the cache.
   4 GiB of data, 128 KiB of leaf digests) on `fsb_parallel`, one thread per 4 leaves
   (`LEAVES_PER_THREAD`), folded into each root before the next pass, so memory does not grow
   with file size. A file is read with `pread` into a 64 KiB buffer per thread, never mapped, so
-  its size never shows in resident memory. A leaf that cannot be read whole (the file shrank or
-  failed to read) gets a digest of zeros, which cannot match, and the call returns `EIO`;
-  `ENOMEM` if out of memory; else 0.
+  its size never shows in resident memory; a leaf inside a hole is not read. A whole leaf of
+  zeros, a hole's or one in memory, takes the digest of zeros (`ZERO_LEAF`) unhashed. A leaf that
+  cannot be read whole (the file shrank or failed to read) gets a digest of zeros, which cannot
+  match, and the call returns `EIO`; `ENOMEM` if out of memory; else 0.
+- `fsb_in_hole(fd, start, size)` says whether a range lies inside a hole (`SEEK_DATA`); past the
+  file's end there is none, so a file that shrank is read, and fails. `fsb_zeros` says whether
+  bytes are all zeros.
 - `fsb_tree_digest` and `fsb_file_digest` are the one-buffer and one-file forms;
   `fsb_tree_init`, `_add` and `_final` hash content that comes a window of whole leaves at a
-  time, as a cache sync writes it; `fsb_sha256_file` and `fsb_sha256_bytes` give the plain
+  time, as a cache sync writes it; `fsb_tree_add_each` also hands each leaf, and whether it is
+  zeros, to a function on the thread that hashed it; `fsb_sha256_file` and `fsb_sha256_bytes` give the plain
   SHA-256 for `sig.c`.
-- `fsb_check_integrity(fd, size)` ([line 216][integrity.c#L216]) returns `NULL` if the last 32
+- `fsb_check_integrity(fd, size)` ([line 257][integrity.c#L257]) returns `NULL` if the last 32
   bytes are the digest of the bytes before them, else a static message (the step 2 reasons), and
   stores its time in `fsb_integrity_ns` (`_fsbpyr.stats()`, printed by `FSBPYR_TRACE`).
 
@@ -411,7 +418,7 @@ before it first uses them. [`cache.h`][cache.h] describes the layout,
 chain's parent (`runtime/<generation>`) is a tree, with its `.lock` and `.scratch`, that a
 collector may remove once no process uses it; the root holds the marker `.fsbpyr-cache`.
 
-`fsb_cache_sync(payload, job)` ([line 1009][cache.c#L1009]) takes a `struct fsb_cache_sync`: the
+`fsb_cache_sync(payload, job)` ([line 1028][cache.c#L1028]) takes a `struct fsb_cache_sync`: the
 root, the chain, the FILES indices to sync (ascending, so directories are opened once), whether
 resources may be extracted, an outcome byte per file, and whether to hold the tree. It sets
 `failure` (`FSB_CACHE_OK`, `_CORRUPT` with a reason and index, `_FOREIGN`, `_SYSTEM` with
@@ -451,13 +458,14 @@ number of files (D38). In order:
 5. **Write the queued files**, in path order. Files of at most 8 MiB stored raw, as one zstd
    frame or in a block go to a pool on up to 8 threads (`fsb_parallel`), in chunks of 32 files
    or 2 MiB that never split a block, each writer with its own directories and decoder; larger
-   files, xz and pieces follow on the calling thread, their pieces decoded in parallel. The
+   files, xz and pieces follow one at a time, their pieces decoded in parallel and their leaves
+   written by the threads that hash them. The
    descriptor table is grown once first (`make_room`). The failure reported is the first in path
    order; if the pool ran out of descriptors or memory, the calling thread writes what it left.
 
-**Writing one file** (`restore`). The content comes from a stream, a window at a time, hashed as
-it is written in pieces of at most 1 MiB; a piece of zeros is left a hole, and a file ending in
-one is truncated to its size. Only with the payload's digest is the file made `0400`, or `0500`
+**Writing one file** (`restore`). The content comes from a stream, a window at a time; each 1 MiB
+leaf is written by the thread that hashes it (`fsb_tree_add_each`), a leaf of zeros is left a
+hole, the first failed write fails the file, and a file ending in a hole is truncated to its size. Only with the payload's digest is the file made `0400`, or `0500`
 where the payload's mode is executable, and put in place. A new file is written unnamed
 (`O_TMPFILE`) and linked into place (`linkat` with `AT_EMPTY_PATH`, else through
 `/proc/self/fd/<n>`, after which the linked name must be the file written), so a killed process
@@ -471,7 +479,7 @@ disk: a file a crash left incomplete fails its digest and the next process repla
 
 [`module.c`][module.c] is `_fsbpyr`, the built-in module through which the
 [boot modules](Dev-Boot-Modules.md) reach the payload (`fsb_self`). `PyInit__fsbpyr`
-([line 819][module.c#L819]) creates it with the type `Stream`, the exceptions `PayloadError`
+([line 821][module.c#L821]) creates it with the type `Stream`, the exceptions `PayloadError`
 (a `ValueError`) and `CacheError` (an `ImportError`: the native cache cannot be used, or the
 payload's data for it is corrupt), the constant `NONE` (`0xFFFFFFFF`), and the private `_sha256`,
 `_key_new`, `_sign` and `_verify` of [`sig.c`][sig.c], the crypto of
@@ -492,7 +500,7 @@ payload's data for it is corrupt), the constant `NONE` (`0xFFFFFFFF`), and the p
 | `files_below(path)` | a `range` of the FILES indices below a directory, from two binary searches ([FILES](Dev-Executable-Format.md#files-record-24-bytes-keyed-by-site-relative-posix-path)); `''` is every file |
 | `find_dist(name)`, `dists()` | `(index, name, dist_info, version)` of one distribution by canonical name, or of all |
 | `info()` | a dict: `executable`, `execfn`, `app_name`, `entrypoint`, `build_info`, `generation_id`, `python_hexversion`, `payload_size`, `modules`, `files` |
-| `stats()` | a dict: `reads`, `stored_bytes`, `decompressed_bytes`, `integrity_ns` |
+| `stats()` | a dict: `reads`, `stored_bytes`, `decompressed_bytes`, `hole_bytes`, `integrity_ns` |
 | `sync(root, chain, files, checked, resources[, written])` | the number of files written to the cache (below) |
 
 A name or path that cannot be encoded as UTF-8 cannot be in the payload: lookups return `None`,
@@ -613,7 +621,7 @@ record accessors, lookups, path checks and blob decoding any bytes, and `sig_fuz
 [payload.c#L108]: ../src/fsbpyr/launcher/payload.c#L108
 [payload.h]: ../src/fsbpyr/launcher/payload.h
 [integrity.c]: ../src/fsbpyr/launcher/integrity.c
-[integrity.c#L216]: ../src/fsbpyr/launcher/integrity.c#L216
+[integrity.c#L257]: ../src/fsbpyr/launcher/integrity.c#L257
 [parallel.c]: ../src/fsbpyr/launcher/parallel.c
 [slots.c]: ../src/fsbpyr/launcher/slots.c
 [slots.c#L86]: ../src/fsbpyr/launcher/slots.c#L86
@@ -623,12 +631,12 @@ record accessors, lookups, path checks and blob decoding any bytes, and `sig_fuz
 [way.c#L171]: ../src/fsbpyr/launcher/way.c#L171
 [way.h]: ../src/fsbpyr/launcher/way.h
 [cache.c]: ../src/fsbpyr/launcher/cache.c
-[cache.c#L1009]: ../src/fsbpyr/launcher/cache.c#L1009
+[cache.c#L1028]: ../src/fsbpyr/launcher/cache.c#L1028
 [cache.h]: ../src/fsbpyr/launcher/cache.h
 [module.c]: ../src/fsbpyr/launcher/module.c
 [module.c#L338]: ../src/fsbpyr/launcher/module.c#L338
 [module.c#L510]: ../src/fsbpyr/launcher/module.c#L510
-[module.c#L819]: ../src/fsbpyr/launcher/module.c#L819
+[module.c#L821]: ../src/fsbpyr/launcher/module.c#L821
 [sig.c]: ../src/fsbpyr/launcher/sig.c
 [glibc.c]: ../src/fsbpyr/launcher/glibc.c
 [format.h]: ../src/fsbpyr/launcher/format.h

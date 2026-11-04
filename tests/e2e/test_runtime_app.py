@@ -23,6 +23,7 @@ from fsbpyr.payload.format import (
     DIGEST_LEAF,
     DIGEST_SIZE,
     TRAILER_SIZE,
+    ZSTD_PIECE,
     Codec,
     FileKind,
     Section,
@@ -250,14 +251,17 @@ def main():
 
 
 @pytest.mark.sanitized
+@pytest.mark.parametrize("size", [3 << 20, ZSTD_PIECE + (1 << 20)])  # pooled; in zstd pieces
 def test_a_file_size_limit_fails_an_extraction_and_ends_nothing(
-    runtime: Runtime, tmp_path: Path
+    runtime: Runtime, tmp_path: Path, size: int
 ) -> None:
     """D38 (security review): under ulimit -f, writing a library past the limit fails with EFBIG
-    and the sync says so; SIGXFSZ used to end the process with a core dump."""
+    and the sync says so; SIGXFSZ used to end the process with a core dump. A library in pieces
+    has its leaves written by the threads that hash them: the first failure among them is the
+    sync's."""
     import resource  # noqa: PLC0415
 
-    content = random.Random(8).randbytes(3 << 20)  # noqa: S311  # incompressible test data
+    content = random.Random(8).randbytes(size)  # noqa: S311  # incompressible test data
     native = File("x.libs/libbig.so", FileKind.NATIVE_LIB, Blob.zstd(content, digest=True),
                   mode=0o755)  # fmt: skip
     modules, files = app_content({"x.py": _EXTRACTS_UNDER_A_FILE_SIZE_LIMIT})

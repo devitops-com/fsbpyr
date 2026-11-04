@@ -1,6 +1,7 @@
 """The integrity digest of a file, streamed (D38, Phase 8c): the builder and ``inspect --verify``
 hash files of any size a leaf at a time, on threads, and a leaf inside a hole is not read (its
-digest is that of zeros): a sparse terabyte hashes in seconds."""
+digest is that of zeros): a sparse terabyte hashes in seconds. ``inspect --verify`` takes an
+executable's integrity digest and its plain SHA-256 from one read of it (executable_digests)."""
 
 import hashlib
 import os
@@ -9,10 +10,13 @@ from pathlib import Path
 
 import pytest
 
+from fsbpyr.payload import format as payload_format
 from fsbpyr.payload.format import (
     DIGEST_LEAF,
+    DIGEST_SIZE,
     ZERO_LEAF,
     TreeHasher,
+    executable_digests,
     file_digest,
     is_hole,
     tree_digest,
@@ -98,3 +102,58 @@ def test_content_hashed_in_pieces_of_any_size_has_its_tree_digest(piece: int) ->
 
 def test_the_digest_of_a_zero_leaf_is_written_out_correctly() -> None:
     assert hashlib.sha256(bytes(DIGEST_LEAF)).digest() == ZERO_LEAF
+
+
+def _both(path: Path, size: int | None = None) -> tuple[bytes, bytes]:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        return executable_digests(fd, os.fstat(fd).st_size if size is None else size)
+    finally:
+        os.close(fd)
+
+
+def _expected(content: bytes) -> tuple[bytes, bytes]:
+    return tree_digest(content[:-DIGEST_SIZE]), hashlib.sha256(content).digest()
+
+
+@pytest.mark.parametrize("threads", [1, 3, 8])  # on this thread alone; 2 helpers; 7
+@pytest.mark.parametrize("ahead", [1, 2, 64])  # leaves read ahead: one; fewer than the leaves
+@pytest.mark.parametrize("size", [DIGEST_SIZE + s for s in SIZES])
+def test_an_executable_has_the_digests_of_its_bytes_from_one_read(
+    size: int, ahead: int, threads: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(payload_format, "THREADS", threads)
+    monkeypatch.setattr(payload_format, "_AHEAD", ahead)
+    data = random.Random(size).randbytes(size)  # noqa: S311  # test data
+    (tmp_path / "f").write_bytes(data)
+
+    assert _both(tmp_path / "f") == _expected(data)
+
+
+@pytest.mark.parametrize(
+    "extents",
+    [[], [(0, b"head")], [(3 * DIGEST_LEAF + 17, b"middle")], [(9 * DIGEST_LEAF - 2, b"end")],
+     [(9 * DIGEST_LEAF + 1, b"the digest's bytes")]],
+    ids=["all hole", "head", "middle", "last leaf", "in the digest"],
+)  # fmt: skip
+def test_an_executables_holes_hash_as_zeros_in_both_digests(
+    extents: list[tuple[int, bytes]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(payload_format, "_AHEAD", 2)
+    size = 9 * DIGEST_LEAF + 1 + DIGEST_SIZE  # nine leaves and a byte, then the digest's place
+    with (tmp_path / "f").open("wb") as file:
+        file.truncate(size)
+        for offset, data in extents:
+            file.seek(offset)
+            file.write(data)
+    content = (tmp_path / "f").read_bytes()
+
+    assert len(content) == size
+    assert _both(tmp_path / "f") == _expected(content)
+
+
+def test_an_executable_shorter_than_asked_is_an_error(tmp_path: Path) -> None:
+    (tmp_path / "f").write_bytes(bytes(DIGEST_SIZE + 5))
+
+    with pytest.raises(OSError, match="shorter"):
+        _both(tmp_path / "f", DIGEST_SIZE + 6)
