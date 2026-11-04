@@ -10,6 +10,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-11-04
+
 ### Changed
 - **The EL8 stubs are tested in the full suite, before a release, and gate it.** `el8.yml` tested
   them on the release tag while `make release` waited; it now only links them from the tag and
