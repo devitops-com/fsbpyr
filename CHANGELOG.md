@@ -13,8 +13,14 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ### Changed
 - **Large files are extracted on up to 8 threads throughout.** A raw file's windows are read from
   the executable a leaf per thread, and every leaf is written to the cache by the thread that
-  hashes it, within the same bound of 8 threads (D31, D39). A run that streams and extracts a
-  1 TiB file of zeros took 606 s instead of 991 stored raw, and 453 s instead of 487 compressed.
+  hashes it, within the same bound of 8 threads (D31, D39).
+- **The launcher skips holes.** Its own check at start, the check of cached files and the reading
+  of raw files leave every 1 MiB leaf inside a hole unread, and a leaf of zeros is no longer
+  hashed: it has the digest of zeros. Against 0.30.0, the start of a 64 GiB sparse executable
+  took 0.05 s instead of 3.7, and extracting its 64 GiB of zeros 2.6 s instead of 29.4 stored
+  raw, 3.4 s instead of 9.4 compressed. With the change above, a run that checks, streams and
+  extracts a 1 TiB file of zeros took 348 s instead of 991 stored raw, 394 s instead of 487
+  compressed.
 - **`fsbpyr inspect --verify` reads the file once.** The integrity digest and the plain SHA-256
   come from the same read, other threads reading and hashing the leaves, holes unread: 217 s
   instead of 324 for a 1 TiB executable, 1.2 s instead of 1.5 for a 5 GiB one.

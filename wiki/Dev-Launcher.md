@@ -421,13 +421,15 @@ raw blob of 1 MiB or more may hold holes; it is read from the file, never throug
 where a hole on tmpfs would take a page of memory for every page read and could end the process
 with `SIGBUS`. The descriptor is a duplicate of the one kept open if that one still is the
 executable (same device and inode; the app may have closed it), else `/proc/self/exe` opened
-again and checked the same way, else `ESTALE`.
+again and checked the same way, else `ESTALE`. A leaf of a window that lies inside a hole of the
+executable (`fsb_in_hole`, `SEEK_DATA`) is not read: the buffer gets zeros, and
+`fsb_hole_bytes` counts it. Reading a hole would fill page-cache pages with zeros.
 
 **Memory.** Pages read through the mapping stay in the process's resident memory, though they
 are only page cache: after every 256 MiB read through the mapping, the data area's pages are
 dropped with `madvise(MADV_DONTNEED)`; the mapping is read-only, so a page used again is read
-again. `fsb_stored_bytes` and `fsb_decompressed_bytes` count what was read and decompressed;
-`_fsbpyr.stats()` reports them.
+again. `fsb_stored_bytes`, `fsb_decompressed_bytes` and `fsb_hole_bytes` count what was read,
+decompressed and found in holes; `_fsbpyr.stats()` reports them.
 
 ### integrity.c and integrity.h
 
@@ -443,14 +445,20 @@ extracts to the cache. The format is described in
   leaf digests), each pass on `fsb_parallel` with one thread per 4 leaves (`LEAVES_PER_THREAD`),
   and folded into each buffer's root before the next pass, so the memory needed does not grow
   with the files' sizes. A file is read with `pread` into a 64 KiB buffer per thread, never
-  mapped. A leaf that cannot be read whole gets a digest of zeros, which cannot match, and the
-  call returns `EIO`; `ENOMEM` if out of memory; else 0.
+  mapped, and a leaf inside a hole is not read at all. A whole leaf of zeros, a hole's or one in
+  memory, takes the digest of zeros (`ZERO_LEAF`) without being hashed. A leaf that cannot be
+  read whole gets a digest of zeros, which cannot match, and the call returns `EIO`; `ENOMEM` if
+  out of memory; else 0.
+- `fsb_in_hole(fd, start, size)` says whether a range of a file lies inside a hole
+  (`SEEK_DATA`); past the file's end there is no hole, so a file that shrank is read, and fails,
+  rather than hashed as zeros. `fsb_zeros(data, size)` says whether bytes are all zeros.
 - `fsb_tree_digest` and `fsb_file_digest` are the one-buffer and one-file forms;
   `fsb_tree_init`, `fsb_tree_add` and `fsb_tree_final` hash content that comes a window at a
   time (every window but the last whole leaves), as a cache sync writes it.
-  `fsb_tree_add_each` also hands every leaf to a function, on the thread that hashed it: the
-  cache sync writes the leaf there, within the hashing threads' bound.
-- `fsb_check_integrity(fd, size)` ([line 192][integrity.c#L192]) returns `NULL` if the file's
+  `fsb_tree_add_each` also hands every leaf, with whether it is all zeros, to a function on the
+  thread that hashed it: the cache sync writes the leaf there, within the hashing threads'
+  bound, unless it is zeros.
+- `fsb_check_integrity(fd, size)` ([line 257][integrity.c#L257]) returns `NULL` if the file's
   last 32 bytes are the digest of the bytes before them, else a static message (see the step 2
   reasons above), and stores the time it took in `fsb_integrity_ns` (`_fsbpyr.stats()`, which
   `FSBPYR_TRACE` prints).
@@ -674,7 +682,7 @@ payload's data for it is corrupt), and the constant `NONE` (`0xFFFFFFFF`). Every
 | `files_below(path)` | a `range` of the FILES indices below a directory: two binary searches, from the first key starting with `path/` to the first starting with `path0` (`'0'` follows `'/'`); `''` is every file |
 | `find_dist(name)`, `dists()` | `(index, name, dist_info, version)` of one distribution by canonical name, or of all |
 | `info()` | a dict: `executable`, `execfn`, `app_name`, `entrypoint`, `build_info`, `generation_id`, `python_hexversion`, `payload_size`, `modules`, `files` |
-| `stats()` | a dict: `reads`, `stored_bytes`, `decompressed_bytes`, `integrity_ns` |
+| `stats()` | a dict: `reads`, `stored_bytes`, `decompressed_bytes`, `hole_bytes`, `integrity_ns` |
 | `sync(root, chain, files, checked, resources[, written])` | the number of files written to the cache (below) |
 
 A name or path that cannot be encoded as UTF-8 cannot be in the payload: the lookups return
@@ -837,7 +845,7 @@ refuses the default stub placed where the EL8 one belongs.
 [payload.c#L108]: ../src/fsbpyr/launcher/payload.c#L108
 [payload.h]: ../src/fsbpyr/launcher/payload.h
 [integrity.c]: ../src/fsbpyr/launcher/integrity.c
-[integrity.c#L192]: ../src/fsbpyr/launcher/integrity.c#L192
+[integrity.c#L257]: ../src/fsbpyr/launcher/integrity.c#L257
 [parallel.c]: ../src/fsbpyr/launcher/parallel.c
 [slots.c]: ../src/fsbpyr/launcher/slots.c
 [slots.c#L86]: ../src/fsbpyr/launcher/slots.c#L86

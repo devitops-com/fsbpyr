@@ -150,7 +150,9 @@ before them. The launcher hashes the leaves on up to 8 threads with OpenSSL's lo
 `SHA256_Init`/`Update`/`Final` from the static runtime, not the one-shot `SHA256()`: since
 OpenSSL 3 that goes through EVP, which may read `openssl.cnf` (`$OPENSSL_CONF`) before the
 check is done. The threads read the file with `pread` and never map it, so a file that shrinks
-or cannot be read while it is hashed fails the check like a changed one. On a mismatch the
+or cannot be read while it is hashed fails the check like a changed one. A leaf inside a hole
+(`SEEK_DATA`) is not read: its digest is that of zeros, which is what reading it would give.
+Past the file's end there is no hole, so a file that shrank is still read, and fails. On a mismatch the
 launcher prints
 
 ```

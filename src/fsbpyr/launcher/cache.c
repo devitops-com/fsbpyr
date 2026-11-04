@@ -29,10 +29,10 @@
 #define SMALL_FILE (UINT64_C(64) << 10)
 #define BATCH_BUFFER (UINT64_C(16) << 20)
 #define HELD_FILES 64u
-/* Restored files are written in pieces of at most WRITE_PIECE: written whole, a 438 MB library
- * stayed in the page cache as 2 MiB folios, which the dynamic loader maps whole, and torch's
- * libtorch_cpu.so took 156 MB of RSS instead of 60 MB (XFS, Linux 6.12; D36). A piece of zeros
- * is not written: runs of zeros become holes (D38). */
+/* Restored files are written a leaf at a time, in writes of at most WRITE_PIECE: written whole,
+ * a 438 MB library stayed in the page cache as 2 MiB folios, which the dynamic loader maps whole,
+ * and torch's libtorch_cpu.so took 156 MB of RSS instead of 60 MB (XFS, Linux 6.12; D36). A leaf
+ * of zeros is not written: runs of zeros become holes (D38). */
 #define WRITE_PIECE (UINT64_C(1) << 20)
 #define DECODER_BLOCKS 4u /* blocks a sync's own decoder keeps (D30): files restored in path order */
 /* Files are written once every file of the sync is checked, on up to 8 threads (D39): those of
@@ -161,27 +161,16 @@ static bool file_failed(struct state *s, int error, const struct entry *e) {
     return false;
 }
 
-static bool zeros(const uint8_t *data, size_t size) {
-    return size == 0 || (data[0] == 0 && memcmp(data, data + 1, size - 1) == 0);
-}
+_Static_assert(FSB_DIGEST_LEAF <= WRITE_PIECE, "a leaf is written in one piece");
 
-/* data[0, length) at ``offset`` of the file open as ``fd``, in pieces of at most WRITE_PIECE;
- * a piece of zeros is skipped (a hole). *end: where the last piece written ends. 0 or an errno. */
-static int write_window(int fd, uint64_t offset, const uint8_t *data, uint64_t length,
-                        uint64_t *end) {
-    for (uint64_t at = 0; at < length;) {
-        size_t size = (size_t)(length - at < WRITE_PIECE ? length - at : WRITE_PIECE);
-        if (!zeros(data + at, size)) {
-            for (size_t done = 0; done < size;) {
-                ssize_t n = pwrite(fd, data + at + done, size - done, (off_t)(offset + at + done));
-                if (n < 0 && errno == EINTR) continue;
-                if (n < 0) return errno;
-                if (n == 0) return EIO;
-                done += (size_t)n;
-            }
-            *end = offset + at + size;
-        }
-        at += size;
+/* data[0, size) at ``offset`` of the file open as ``fd``; 0 or an errno. */
+static int write_all(int fd, uint64_t offset, const uint8_t *data, size_t size) {
+    for (size_t done = 0; done < size;) {
+        ssize_t n = pwrite(fd, data + done, size - done, (off_t)(offset + done));
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) return errno;
+        if (n == 0) return EIO;
+        done += (size_t)n;
     }
     return 0;
 }
@@ -196,13 +185,17 @@ struct leaf_writes {
 };
 
 /* fsb_tree_add_each's work: the leaf written where it belongs in the file, by the thread that
- * hashed it (D31, D39: within the hashing threads' bound), unless it is zeros or a write failed. */
-static void write_leaf(void *context, const uint8_t *leaf, uint64_t at, size_t size) {
+ * hashed it (D31, D39: within the hashing threads' bound), unless it is zeros (a hole, D38) or a
+ * write failed. */
+static void write_leaf(void *context, const uint8_t *leaf, uint64_t at, size_t size, bool zeros) {
     struct leaf_writes *w = context;
-    if (atomic_load(&w->error) != 0) return;
-    uint64_t end = 0;
-    int error = write_window(w->fd, w->offset + at, leaf, size, &end), none = 0;
-    if (error != 0) atomic_compare_exchange_strong(&w->error, &none, error);
+    if (zeros || atomic_load(&w->error) != 0) return;
+    int error = write_all(w->fd, w->offset + at, leaf, size), none = 0;
+    if (error != 0) {
+        atomic_compare_exchange_strong(&w->error, &none, error);
+        return;
+    }
+    uint64_t end = w->offset + at + size;
     for (uint64_t seen = atomic_load(&w->end); end > seen;)
         if (atomic_compare_exchange_weak(&w->end, &seen, end)) break;
 }
@@ -976,7 +969,7 @@ static void mark(struct state *s) {
         return;
     int fd = openat(s->root, MARKER, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (fd < 0) return; /* marked meanwhile, or not ours to mark */
-    (void)write_window(fd, 0, (const uint8_t *)MARKER_TEXT, strlen(MARKER_TEXT), &(uint64_t){0});
+    (void)write_all(fd, 0, (const uint8_t *)MARKER_TEXT, strlen(MARKER_TEXT));
     close(fd);
 }
 

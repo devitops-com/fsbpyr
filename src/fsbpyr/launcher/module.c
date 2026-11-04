@@ -787,8 +787,10 @@ static PyObject *stats(PyObject *self, PyObject *noargs) {
     (void)self;
     (void)noargs;
     unsigned long long stored = fsb_stored_bytes, decompressed = fsb_decompressed_bytes;
-    return Py_BuildValue("{s:K,s:K,s:K,s:K}", "reads", reads, "stored_bytes", stored,
-                         "decompressed_bytes", decompressed, "integrity_ns", fsb_integrity_ns);
+    unsigned long long holes = fsb_hole_bytes;
+    return Py_BuildValue("{s:K,s:K,s:K,s:K,s:K}", "reads", reads, "stored_bytes", stored,
+                         "decompressed_bytes", decompressed, "hole_bytes", holes,
+                         "integrity_ns", fsb_integrity_ns);
 }
 
 static PyMethodDef methods[] = {

@@ -461,27 +461,31 @@ raw one; each process's peak RSS (`VmHWM`). Wall times, one run each:
 
 | | 0.14.0 | 0.15.0 | 0.15.1 | 0.30.0 | after 0.30.0 |
 |---|---|---|---|---|---|
-| 5 GiB compressed: build / run | 3.5 / 3.6 s | 1.0 / 2.4 s | — | 1.1 / 2.4 s | 1.1 / 2.3 s |
-| 5 GiB raw: build / run / inspect | 0.4 / 3.0 s / — | 0.6 / 3.0 s / — | — | 0.4 / 3.6 / 1.5 s | 0.4 / 2.6 / 1.2 s |
-| 1 TiB compressed: build / run | 643.6 / 733.2 s | 150.3 / 484.9 s | — | 149.5 / 486.6 s | 149.9 / 453.2 s |
-| 1 TiB raw: build / run / inspect | 26.1 / 614.9 / 5.1 s | 65.7 / 606.3 / 4.8 s | 14.2 s (build) | 14.7 / 991.1 / 324.3 s | 15.9 / 606.4 / 216.5 s |
-| Peak, builds | 88–91 MiB | 240–414 MiB | 106 MiB (raw) | 106–435 MiB | 105–435 MiB |
-| Peak, runs | 118–184 MiB | 118–158 MiB | — | 118–158 MiB | 118–158 MiB |
+| 5 GiB compressed: build / run | 3.5 / 3.6 s | 1.0 / 2.4 s | — | 1.1 / 2.4 s | 1.0 / 1.9 s |
+| 5 GiB raw: build / run / inspect | 0.4 / 3.0 s / — | 0.6 / 3.0 s / — | — | 0.4 / 3.6 / 1.5 s | 0.4 / 1.8 / 1.2 s |
+| 1 TiB compressed: build / run | 643.6 / 733.2 s | 150.3 / 484.9 s | — | 149.5 / 486.6 s | 149.5 / 394.2 s |
+| 1 TiB raw: build / run / inspect | 26.1 / 614.9 / 5.1 s | 65.7 / 606.3 / 4.8 s | 14.2 s (build) | 14.7 / 991.1 / 324.3 s | 14.3 / 347.5 / 216.2 s |
+| Peak, builds | 88–91 MiB | 240–414 MiB | 106 MiB (raw) | 106–435 MiB | 106–435 MiB |
+| Peak, runs | 118–184 MiB | 118–158 MiB | — | 118–158 MiB | 119–158 MiB |
 
 Compressed, the file is zstd pieces of 8 MiB since 0.15.0, compressed and decoded on up to 8
 threads. 0.15.0's raw build was slower: it sent each 1 MiB leaf of the file to a thread, holes
 included, a million of them each holding 1 MiB of zeros; 0.15.1 finds holes on the calling
 thread and reads only data on the threads (64 GiB raw: 1.0 s, 0.14.0 1.9 s). A raw run reads and
-writes the whole file once. 0.30.0 read each 64 MiB window of a raw file with one `pread` and
-wrote it on the calling thread; after 0.30.0 a window is read on up to 8 threads, a leaf each,
-and every leaf is written by the thread that hashes it (`raw_window` in `launcher/payload.c`,
-`write_leaf` in `launcher/cache.c`): 1 TiB raw ran in 606 s instead of 991 (0.30.0 without a
-memory limit; after 0.30.0 under 48 GiB), and the 5 GiB run spent 6% of its samples on at most
-1.2 cores instead of 59%. The launcher's own check of the 1 TiB executable took 69 and 73 s of
-it. `inspect --verify` also prints the file's plain SHA-256, which 0.30.0 took from a second
-read of the whole file, holes read as zeros; after 0.30.0 one read gives both digests
-(`executable_digests` in `payload/format.py`), other threads reading and hashing the leaves. The
-SHA-256 itself is one thread's, which sets the time: 216.5 s for 1.1 TB.
+writes the whole file once. 0.30.0 read each 64 MiB window of a raw file with one `pread` on one
+thread, read and hashed every leaf of the file's holes and wrote the window on the calling
+thread. After 0.30.0 a window is read on up to 8 threads, a leaf each, every leaf is written by
+the thread that hashes it (`raw_window` in `launcher/payload.c`, `write_leaf` in
+`launcher/cache.c`), a leaf inside a hole is not read (`fsb_in_hole`: reading a hole fills
+page-cache pages with zeros) and a leaf of zeros takes the digest of zeros unhashed and is not
+written. 1 TiB raw ran in 348 s instead of 991 (0.30.0 without a memory limit; after 0.30.0
+under 48 GiB), of which the launcher's own check took 0.4 s instead of 69. On 64 GiB, 19 of the
+run's 27 s were the test app's own `bytes.count`, on one thread, and extraction ran at 24.6
+GiB/s stored raw (0.30.0: 2.2) and 18.7 GiB/s compressed (6.8). `inspect --verify` also prints
+the file's plain SHA-256, which 0.30.0 took from a second read of the whole file, holes read as
+zeros; after 0.30.0 one read gives both digests (`executable_digests` in `payload/format.py`),
+other threads reading and hashing the leaves. The SHA-256 itself is one thread's, which sets the
+time: 216 s for 1.1 TB.
 
 ## The cache sync in the launcher (D35)
 

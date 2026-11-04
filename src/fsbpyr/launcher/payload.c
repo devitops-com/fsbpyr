@@ -270,7 +270,7 @@ static struct fsb_decoder *decoder(struct fsb_decoder *d) {
     return process;
 }
 
-_Atomic unsigned long long fsb_stored_bytes, fsb_decompressed_bytes;
+_Atomic unsigned long long fsb_stored_bytes, fsb_decompressed_bytes, fsb_hole_bytes;
 
 /* Payload pages read through the mapping stay in the process's resident memory while it is
  * mapped, though they are only the file's page cache: once SWEEP bytes were read since the
@@ -602,6 +602,11 @@ static void read_leaf(void *context, uint64_t item, unsigned worker) {
     struct raw_reads *r = context;
     uint64_t start = item * FSB_DIGEST_LEAF, rest = r->want - start;
     uint64_t size = rest < FSB_DIGEST_LEAF ? rest : FSB_DIGEST_LEAF;
+    if (fsb_in_hole(r->fd, r->at + start, size)) { /* read, a hole fills page-cache pages */
+        memset(r->buffer + start, 0, (size_t)size);
+        fsb_hole_bytes += size;
+        return;
+    }
     for (uint64_t got = 0; got < size && atomic_load(&r->status) == FSB_STREAM_DATA;) {
         ssize_t n = pread(r->fd, r->buffer + start + got, (size_t)(size - got),
                           (off_t)(r->at + start + got));
@@ -619,8 +624,8 @@ static void read_leaf(void *context, uint64_t item, unsigned worker) {
 }
 
 /* ``want`` bytes of a raw blob from the stream's position, read from the executable into the
- * buffer (read_raw), a leaf per item on up to 8 threads (D31, D39): a hole reads as zeros,
- * wherever the file is. */
+ * buffer (read_raw), a leaf per item on up to 8 threads (D31, D39); a leaf inside a hole is
+ * zeros, not read (fsb_in_hole), wherever the file is. */
 static int raw_window(struct fsb_stream *s, uint64_t want) {
     if (s->file < 0 && (s->file = open_self(s->payload)) < 0) {
         s->error = errno;

@@ -108,8 +108,9 @@ uint64_t fsb_stream_position(const struct fsb_stream *stream);
 uint64_t fsb_stream_size(const struct fsb_stream *stream);
 void fsb_stream_close(struct fsb_stream *stream);
 
-/* Payload bytes read and bytes decompressed so far, blocks included (FSBPYR_TRACE). */
-extern _Atomic unsigned long long fsb_stored_bytes, fsb_decompressed_bytes; /* any thread */
+/* Payload bytes read, bytes decompressed (blocks included) and bytes of raw blobs found in holes
+ * of the executable, not read, so far (FSBPYR_TRACE); any thread. */
+extern _Atomic unsigned long long fsb_stored_bytes, fsb_decompressed_bytes, fsb_hole_bytes;
 
 /* Binary search by key bytes; returns the record index or FSB_NONE. */
 uint32_t fsb_find_module(const struct fsb_payload *payload, const char *name, size_t length);
