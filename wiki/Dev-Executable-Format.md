@@ -98,8 +98,10 @@ before the trailer, the payload or CPython. It hashes the pieces on min(8, usabl
 one per 4 pieces, with the SHA-256 of the statically linked OpenSSL (SHA-NI where the CPU has
 it). It reads the file a piece at a time on its threads and never maps it, so a file that shrinks
 or fails to read while it is hashed (a failing disk, a network file system) fails the check like
-a changed one, and the file's size never shows in the process's resident memory. On a mismatch
-it prints
+a changed one, and the file's size never shows in the process's resident memory. A piece inside
+a hole of the file (`SEEK_DATA`) is not read: its digest is that of zeros, which reading it would
+give. Past the file's end there is no hole, so a file that shrank is still read, and fails. On a
+mismatch it prints
 `fsbpyr: cannot start <path>: integrity check failed: the file was modified or damaged`
 and exits with status 70. The time the check took is `integrity_ns` in `FSBPYR_TRACE`.
 
@@ -118,8 +120,8 @@ larger ones are held open and read a piece at a time by the hashing threads. A c
 one that cannot be read, is reported on stderr and restored. When the files a pass holds leave
 no descriptor or memory to open the next file or its directories, the pass is checked first; if
 that is not enough, the run fails. A file changed while a process runs is noticed by the next
-one. Files are written a window at a time, hashed as they are written, in pieces of at most
-1 MiB (a piece of zeros is left a hole), and put in place only if their digest is right: a new
+one. Files are written a window at a time, each 1 MiB piece by the thread that hashes it (a
+piece of zeros is left a hole), and put in place only if their digest is right: a new
 file is written unnamed in its directory and linked into place, one that replaces another (or
 cannot be linked) is written under a temporary name and renamed. Nothing is synced to disk: a
 file a crash left incomplete fails its check and is restored. Content is decoded a window of at
@@ -254,7 +256,8 @@ Python: `BLOB = struct.Struct("<QQQBBHI")`; C: `struct fsb_blob`.
 - **Raw blobs and holes.** For codec 0, `stored_size == size`. A raw blob of `DIGEST_LEAF`
   bytes or more may hold holes (D38): writers leave whole leaves of zeros unwritten, so a file
   of zeros stays sparse. The launcher reads such blobs from the file (`pread`), never through its
-  mapping, where a hole on tmpfs would take a page of memory for every page read.
+  mapping, where a hole on tmpfs would take a page of memory for every page read; a leaf inside
+  a hole it does not read at all (`SEEK_DATA`).
 - **Blocks (version 2, D30).** A blob of codec 2 has no stored bytes of its own: its content is
   the `size` bytes at `stored_size` in the content of block `offset`, a zstd blob (codec 1) of
   at most `MAX_BLOCK_SIZE` (1 MiB); the writer references blocks only from members. The writer

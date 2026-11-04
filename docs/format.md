@@ -68,7 +68,9 @@ equal), for two things:
   runs, without the message. The check reads the file a leaf at a time on its threads and never
   maps it (D36), so a file that shrinks or fails to read while it is hashed (a failing disk, a
   network file system) fails the check like a changed one, and its size never shows in the
-  process's resident memory. A cached file that shrinks or fails to read while it is hashed
+  process's resident memory. A leaf inside a hole of the file (`SEEK_DATA`) is not read: its
+  digest is that of zeros, which reading it would give; past the file's end there is no hole, so
+  a file that shrank is still read, and fails. A cached file that shrinks or fails to read while it is hashed
   counts as changed and is restored.
 - Files extracted to the cache (natives, FS_REQUIRED packages, resources asked for as paths)
   run outside the file, so each process hashes them against DIGESTS once, before it first uses
@@ -79,8 +81,7 @@ equal), for two things:
   restored. When the files a pass holds leave no descriptor or memory to open the next file or
   its directories, the pass is checked first; if that is not enough, the run fails. A file
   changed while a process runs is noticed by the next one. Files are written a window at a
-  time, hashed as they are written, in pieces of at most 1 MiB (a piece of zeros is left a
-  hole): a new file unnamed (`O_TMPFILE`) and linked into place (`linkat`) if its digest is
+  time, each 1 MiB leaf by the thread that hashes it (a leaf of zeros is left a hole): a new file unnamed (`O_TMPFILE`) and linked into place (`linkat`) if its digest is
   right; a replacement, or a file that cannot be written unnamed and linked (no `O_TMPFILE` on
   the file system), under a temporary name in a scratch directory and renamed (`renameat`).
   Nothing is synced: a file a crash left incomplete fails its check and is restored. Content is

@@ -592,7 +592,7 @@ process uses before it first uses them. [`cache.h`][cache.h] describes the layou
 is a tree a collector may remove once no process uses it; it holds the tree's `.lock` and the
 `.scratch` directory. The root holds the marker `.fsbpyr-cache`.
 
-**The job.** `fsb_cache_sync(payload, job)` ([line 1009][cache.c#L1009]) takes a
+**The job.** `fsb_cache_sync(payload, job)` ([line 1028][cache.c#L1028]) takes a
 `struct fsb_cache_sync`: the root, the chain, the FILES indices to sync (in ascending order, so
 directories are opened once), whether resources may be extracted, an outcome byte per file, and
 whether to hold the tree. It sets `failure` (`FSB_CACHE_OK`, `_CORRUPT` with a reason and the
@@ -662,7 +662,7 @@ replaces it.
 
 [`module.c`][module.c] is `_fsbpyr`, the built-in module through which the
 [boot modules](Dev-Boot-Modules.md) reach the payload. `PyInit__fsbpyr`
-([line 817][module.c#L817]) creates it with the type `Stream`, the exceptions `PayloadError`
+([line 821][module.c#L821]) creates it with the type `Stream`, the exceptions `PayloadError`
 (a `ValueError`) and `CacheError` (an `ImportError`: the native cache cannot be used, or the
 payload's data for it is corrupt), and the constant `NONE` (`0xFFFFFFFF`). Every function reads
 `fsb_self`.
@@ -700,7 +700,7 @@ app was started by, made absolute, when its basename is that of `argv[0]` and it
 or `module`, or for several commands a table of `name=target` lines, which only the boot code
 parses ([Executable format](Dev-Executable-Format.md#payload-header)).
 
-**`read`** ([line 336][module.c#L336]) checks a zstd frame's header before it allocates the
+**`read`** ([line 338][module.c#L338]) checks a zstd frame's header before it allocates the
 result. It releases the GIL for xz, pieces, raw blobs of 1 MiB or more and blobs larger than the
 stream window, which use no shared decoder; zstd frames and block members use the process's
 decoder and keep the GIL. It raises `MemoryError` for `ENOMEM`, `OSError` if the executable
@@ -712,7 +712,7 @@ current window only the offset moves, else nothing is decoded until the next rea
 members. After a window fails, every later call fails; a stream used on two threads at once
 raises `RuntimeError`, a closed one `ValueError`.
 
-**`sync`** ([line 508][module.c#L508]) extracts the files (a `range` such as `files_below` gives,
+**`sync`** ([line 510][module.c#L510]) extracts the files (a `range` such as `files_below` gives,
 or a sequence of FILES indices) missing below `<root>/<chain>` and replaces those that differ.
 `chain` must pass `fsb_cache_safe`. `checked` is a writable buffer of one bit per FILES record
 (bit `i % 8` of byte `i // 8`), set once a file is checked or written, so a process checks each
@@ -855,12 +855,12 @@ refuses the default stub placed where the EL8 one belongs.
 [way.c#L171]: ../src/fsbpyr/launcher/way.c#L171
 [way.h]: ../src/fsbpyr/launcher/way.h
 [cache.c]: ../src/fsbpyr/launcher/cache.c
-[cache.c#L1009]: ../src/fsbpyr/launcher/cache.c#L1009
+[cache.c#L1028]: ../src/fsbpyr/launcher/cache.c#L1028
 [cache.h]: ../src/fsbpyr/launcher/cache.h
 [module.c]: ../src/fsbpyr/launcher/module.c
-[module.c#L336]: ../src/fsbpyr/launcher/module.c#L336
-[module.c#L508]: ../src/fsbpyr/launcher/module.c#L508
-[module.c#L817]: ../src/fsbpyr/launcher/module.c#L817
+[module.c#L338]: ../src/fsbpyr/launcher/module.c#L338
+[module.c#L510]: ../src/fsbpyr/launcher/module.c#L510
+[module.c#L821]: ../src/fsbpyr/launcher/module.c#L821
 [glibc.c]: ../src/fsbpyr/launcher/glibc.c
 [format.h]: ../src/fsbpyr/launcher/format.h
 [launcher.h]: ../src/fsbpyr/launcher/launcher.h
