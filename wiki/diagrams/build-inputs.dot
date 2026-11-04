@@ -1,4 +1,4 @@
-// What fsbpyr build starts from (v0.28.0): project.Project.load (_read, _bare, _script) decides
+// What fsbpyr build starts from (v0.30.0): project.Project.load (_read, _bare, _script) decides
 // which of five kinds of input PROJECT is. The letters are the ones the step-by-step section and
 // build-pipeline.dot use.
 digraph build_inputs {

@@ -1,4 +1,4 @@
-// Byte layout of an fsbpyr executable, format version 7 (docs/format.md,
+// Byte layout of an fsbpyr executable at v0.30.0, format version 7 (docs/format.md,
 // src/fsbpyr/payload/format.py, src/fsbpyr/launcher/format.h). Offsets read top to bottom.
 // P is payload_offset; offset[i] is section i's offset in the header's section table, relative
 // to P. The order of the eight tables is the one fsbpyr's writer uses (writer.py _layout); the

@@ -14,12 +14,12 @@ and every option, using the `pandas-csv` corpus app built in [Building an app](U
 ```console
 $ fsbpyr inspect dist/corpus-pandas-csv
 app        corpus-pandas-csv 1.0.0
-built with fsbpyr 0.28.0-b9b1144d
+built with fsbpyr 0.30.0-8d35b93c
 python     3.14.10, glibc >= 2.34
 uv         0.13.6
 size       65.1 MB, 5 distributions
 compressed zstd 9, native files zstd 9
-digest     75131ac9434c9710b7b3c53533ad14fa6a472a561c652b38f67c45e7b2744182
+digest     5044ecffcb09da759f67bd4636c97808fd2c7e8281834b14ec2b718fe2c0c39e
 toolchain  clang version 23.1.3
            clang version 23.1.3 (https://github.com/llvm/llvm-project 0d261d1ca552c95a8f007e061c787ac7132fbcbc)
            GCC: (Debian 12.2.0-14+deb12u1) 12.2.0
@@ -51,8 +51,8 @@ modules: 5 top-level names in 5 distributions
 standard library and fsbpyr: 187 top-level names
   __future__  ...
 stored bytes (without the trailer):
-  stub                                   20,997,993
-  zero padding to the 64 KiB boundary        39,063
+  stub                                   21,002,921
+  zero padding to the 64 KiB boundary        34,135
   payload header                                208
   index and string tables                   564,884
   blob alignment padding                      8,167
@@ -84,6 +84,7 @@ stored bytes (without the trailer):
 | `commands` | instead of `entry`, for an executable of several commands: each command and what it runs (`multi-alpha = multi.cli:alpha`) |
 | `needs` | what the target must provide: glibc, and each system library with the newest symbol version used (`GLIBCXX`, `CXXABI`, `GCC`, `ZLIB`) |
 | `system libraries` | every library the launcher and native files take from the system |
+| `may load from the system` | only after `--hints`: libraries the code may open by name (guesses) |
 | `shared libraries`, `extension modules` | bundled native files, extracted to the cache on first use |
 | `modules` | the top-level names of each distribution, in as many columns as the terminal fits |
 | `stored bytes` | where the file's bytes go: the launcher stub (with CPython), the index, the standard library, and per distribution its bytecode, sources, data and native files |
@@ -100,7 +101,7 @@ than `glibc >= 2.28`, even where its launcher uses only older symbol versions.
 | `--verify` | recomputes the digest (`verified` after it, or an error), and prints the file's plain SHA-256 as `sha256` |
 | `--json` | everything as JSON |
 | `--all-modules` | every module, not only top-level names |
-| `--files` | every packaged file with its SHA-256, size, kind and distribution |
+| `--files` | every file of the distributions, with its SHA-256, size, kind and distribution |
 | `--licenses` | the licence notices the executable carries, instead of the summary |
 
 ### `--verify`
@@ -108,11 +109,11 @@ than `glibc >= 2.28`, even where its launcher uses only older symbol versions.
 ```console
 $ fsbpyr inspect --verify dist/corpus-pandas-csv
 ...
-digest     75131ac9434c9710b7b3c53533ad14fa6a472a561c652b38f67c45e7b2744182 verified
-sha256     6b68dbc82308fe1a31fcf8bb97bf6b388557893b171977997be3e592c5e400e1
+digest     5044ecffcb09da759f67bd4636c97808fd2c7e8281834b14ec2b718fe2c0c39e verified
+sha256     78429f68ef848cc9d4668da7a8a93889e9eb251846e13b7a4df1fbfd4464377a
 ...
 $ sha256sum dist/corpus-pandas-csv
-6b68dbc82308fe1a31fcf8bb97bf6b388557893b171977997be3e592c5e400e1  dist/corpus-pandas-csv
+78429f68ef848cc9d4668da7a8a93889e9eb251846e13b7a4df1fbfd4464377a  dist/corpus-pandas-csv
 ```
 
 `digest` is fsbpyr's own, checked at every start. `sha256` is the plain hash that `sha256sum`
@@ -121,7 +122,7 @@ stays fast.
 
 ### `--json`
 
-For scripts. The top-level keys in 0.28.0:
+For scripts. The top-level keys in 0.30.0:
 
 ```
 all_modules  app  build_info  built_with  digest  digest_covers  distributions  entry
@@ -135,7 +136,7 @@ target, and its `entry` is the table of `name=target` lines. `glibc_baseline` is
 app built the default way and `2.28` for one built with `--glibc 2.28`. With `--files` there is also
 `files`, the list `--files` prints.
 
-`schema` is the number of the JSON format, 1 in 0.28.0. `build_info` holds the build information recorded in
+`schema` is the number of the JSON format, 1 in 0.30.0. `build_info` holds the build information recorded in
 the file (project, lock, settings, runtime, git commit and more), described in
 [Executable format](Dev-Executable-Format.md). For example, the glibc check from
 [Building an app](User-Building.md#--strict):
@@ -147,8 +148,8 @@ true
 
 ### `--files`
 
-Lists each packaged file with its SHA-256 (from the distribution's `RECORD`), size, kind and
-owner:
+Lists each file a distribution's `RECORD` names, with the SHA-256 and size recorded there, its
+kind and its distribution:
 
 ```console
 $ fsbpyr inspect --files dist/corpus-pandas-csv

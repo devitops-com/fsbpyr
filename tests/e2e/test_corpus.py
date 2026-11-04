@@ -11,8 +11,8 @@ split between them.
 Runs in full-suite.yml's corpus job (`make test-corpus` here), not in ``make test-ci``: the
 corpus needs the network for its wheels, and several apps carry hundreds of megabytes of
 native code. An app's temporary files (venv, executable and cache: gigabytes for torch) are
-removed when it passes. el8.yml runs a few of the apps (FSBPYR_CORPUS_APPS) with the glibc 2.28
-stub (FSBPYR_TEST_GLIBC=2.28).
+removed when it passes. full-suite.yml's el8-corpus job runs a few of the apps
+(FSBPYR_CORPUS_APPS) with the glibc 2.28 stub (FSBPYR_TEST_GLIBC=2.28).
 """
 
 import os

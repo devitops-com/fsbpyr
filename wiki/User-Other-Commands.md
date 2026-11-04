@@ -1,7 +1,7 @@
 # Other commands
 
-Besides `build` and `inspect`, fsbpyr has commands for its caches, its runtimes, updating itself,
-shell completion and the man page. This page describes each one.
+Besides `build` and `inspect`, fsbpyr has commands for signing, its caches, its runtimes, updating
+itself, shell completion and the man page. This page describes each one.
 
 ```console
 $ fsbpyr --help
@@ -18,9 +18,12 @@ Commands:
   cache       manage fsbpyr's caches
   completion  print the shell completion script for SHELL
   inspect     show what an executable was built from
+  key         make signing keys, and trust the keys of projects
   man         print the man page (roff)
   runtime     manage runtimes (native stub + stdlib)
   self        manage this fsbpyr executable
+  sign        sign a file, writing FILE.sig
+  verify      check a file's signature
 ```
 
 ## `fsbpyr key`, `sign` and `verify`
@@ -56,8 +59,9 @@ every app cache it finds: those in `${XDG_CACHE_HOME:-~/.cache}`, and `$FSBPYR_C
 it is one. Without it, every app, fsbpyr included, collects its cache by itself in the
 background, and fsbpyr collects the rest of its own cache when `build`, `inspect` or `runtime`
 starts, a day after the last time (an hour, when the file system has less than 10% free). The
-variants of other Pythons that a build downloaded (`~/.cache/fsbpyr/downloads/fsbpyr-3.X-...`) are left alone; delete them by hand to
-reclaim the space.
+variants of other Pythons that a build downloaded
+(`${XDG_CACHE_HOME:-~/.cache}/fsbpyr/downloads/fsbpyr-3.X-...`) are left alone; delete them by
+hand to reclaim the space.
 
 ## `fsbpyr runtime list` and `fsbpyr runtime build`
 
@@ -67,17 +71,13 @@ never need to build one to build apps.
 
 ```console
 $ fsbpyr runtime list
-cp314-x86_64-unknown-linux-gnu-6fe9008f23af  Python 3.14.10  glibc 2.34
-cp314-x86_64-unknown-linux-gnu-5bb7820024be  Python 3.14.9  glibc 2.34
-cp314-x86_64-unknown-linux-gnu-942f7ca276a0  Python 3.14.9  glibc 2.34
-cp314-x86_64-unknown-linux-gnu-add67757fca9  Python 3.14.9  glibc 2.34
-cp315-x86_64-unknown-linux-gnu-730de4afe228  Python 3.15.1  glibc 2.34
+cp314-x86_64-unknown-linux-gnu-ce4c77296a2f  Python 3.14.10  glibc 2.34
 ```
 
 lists the runtime embedded in the running fsbpyr first, then the runtimes in the cache, each with
-its Python and the glibc its launcher stub is linked for. (On the machine this ran on, the cache
-also held runtimes of earlier fsbpyr versions: the id changes with the launcher's sources, the
-CPython build and the sysroot, and the cache collects runtimes no one has used for 7 days.)
+its Python and the glibc its launcher stub is linked for. The id changes with the launcher's
+sources, the CPython build and the sysroot, and the cache collects runtimes no one has used for
+7 days.
 
 ```
 fsbpyr runtime build [--python X.Y] [--glibc 2.34|2.28] [--clang PATH]
@@ -85,9 +85,10 @@ fsbpyr runtime build [--python X.Y] [--glibc 2.34|2.28] [--clang PATH]
 
 fetches CPython from python-build-standalone, links the launcher and compiles the standard
 library (`--python` defaults to the Python fsbpyr runs on). It is needed only when fsbpyr runs
-from a source checkout or a wheel rather than as its own executable; it needs clang and lld 23 or
-newer. Without `--clang` it tries `clang-23` to `clang-32`, then `clang`, on `PATH`, and takes
-the first of version 23 or newer that has a matching `ld.lld`. Such an fsbpyr without a runtime
+from a source checkout or a wheel rather than as its own executable, and for a `--glibc 2.28`
+build with a developer build; it needs clang and lld 23 or newer. Without `--clang` it tries
+`clang-23` to `clang-32`, then `clang`, on `PATH`, and takes the first of version 23 or newer
+that has a matching `ld.lld`. Such an fsbpyr without a runtime
 in the cache says
 ``no runtime for Python 3.14; run `fsbpyr runtime build --python 3.14`, or use the release binary, which carries its own``.
 

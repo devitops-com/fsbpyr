@@ -35,10 +35,10 @@ empty cache and then again (the columns are the trace's keys):
 
 | Run | `extracted` | `decompressed_bytes` | `stored_bytes` | `integrity_ns` |
 |---|---|---|---|---|
-| first | 57 files | 77,023,578 | 22,466,605 | 4,917,785 (4.9 ms) |
-| second | 0 files | 18,460,205 | 6,960,357 | 3,159,106 (3.2 ms) |
+| first | 57 files | 77,023,578 | 22,466,605 | 3,670,605 (3.7 ms) |
+| second | 0 files | 18,460,205 | 6,960,357 | 4,511,068 (4.5 ms) |
 
-(One run each on a 24-core x86-64 machine with the file in the page cache, fsbpyr 0.28.0. The
+(One run each on a 24-core x86-64 machine with the file in the page cache, fsbpyr 0.30.0. The
 project's own measurements, release by release, are in [Performance](Dev-Performance.md).)
 
 ## Integrity
@@ -118,8 +118,9 @@ such a directory collected anyway: `touch "$FSBPYR_CACHE_DIR/.fsbpyr-cache"`.
 | `JOURNAL_STREAM` | set by systemd: a stdout or stderr that is the journal is line-buffered ([below](#under-systemd-in-a-container-from-cron)) |
 
 `FSBPYR_TRACE=1` writes a line that starts with `fsbpyr-trace ` followed by a JSON object with
-the keys `decompressed_bytes`, `extracted` (the files extracted in this run), `integrity_ns`,
-`modules`, `reads` and `stored_bytes`:
+the keys `decompressed_bytes`, `extracted` (the files extracted in this run), `hole_bytes` (what
+was found in holes of the executable instead of read), `integrity_ns`, `modules`, `reads` and
+`stored_bytes`:
 
 ```console
 $ FSBPYR_TRACE=1 dist/corpus-pandas-csv work/sales.csv 2>trace.txt >/dev/null
@@ -239,8 +240,8 @@ The main differences:
 - `sys.prefix` is the executable's directory; files a wheel installs outside `site-packages`
   (`share/`, `etc/`, scripts) are not in the app.
 - `tkinter`, `idlelib`, `ensurepip`, `turtledemo` and `test` are left out of the standard
-  library, and so are `_dbm` and `_gdbm`, so `dbm.ndbm` and `dbm.gnu` are missing; `dbm.sqlite3`
-  and `dbm.dumb` work.
+  library, and so are `_dbm` and `_gdbm`, so `dbm.ndbm` and `dbm.gnu` are missing; `dbm.dumb`
+  and, from Python 3.13, `dbm.sqlite3` work.
 - `sys.frozen` is not set (it is PyInstaller's flag, and code that sees it looks for PyInstaller's
   layout).
 - On Python 3.15, an uncaught `ModuleNotFoundError` for a module outside the standard library

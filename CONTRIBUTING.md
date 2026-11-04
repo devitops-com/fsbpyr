@@ -196,30 +196,35 @@ The tiers, from fastest to most complete:
   suite job, with the aarch64 executable and two fixtures it builds (`hello`, and `native` with
   two native extensions). It is not part of `make test`: the VM is no pytest test, and
   `tests/unit/test_vm_smoke.py` covers the pin table and the script's own code.
-- EL8 (glibc 2.28), outside the release gate: `make test-el8` runs the stub-dependent tests with
+- EL8 (glibc 2.28): `make test-el8` runs the stub-dependent tests with
   the EL8 stub (`make test-el8-stub`: the launcher, the `_fsbpyr` contract and native wheels at
   manylinux_2_28, in the EL8 test mode `FSBPYR_TEST_GLIBC=2.28`, in which every `fsbpyr build`
   of a test is `--glibc 2.28` and `tests/e2e/test_el8.py` runs besides, with both runtimes) and
   the portability matrix with apps built for glibc 2.28, on the 12 images and `rockylinux:8` and
   `almalinux:8` (`make test-el8-portability`, podman; EL8 images are in no other run).
-  `.github/workflows/el8.yml` runs them for a release, per target, on the default Python only
-  (every Python's stub is still linked and checked, below), with a native-heavy corpus subset
-  (`FSBPYR_CORPUS_APPS`, the mode's `pandas-csv`, `lxml`, `pillow` and `scipy`) and, on aarch64,
-  the 64 KiB-page VM smoke test with the EL8 userland (`tools/vm-smoke.py --kernel 64k
-  --userland el8`; a pinned file gone from its mirror fails this job, since nothing else tests
-  the 64 KiB pages: renew the pin and retry). Only what differs from a default build is tested:
-  the stub. (`tests/e2e/test_el8_use_cases.py`, EL8 builds of a directory of scripts, a single
+  The `el8-*` jobs of `.github/workflows/full-suite.yml` run them on every push to main, per
+  target, on the default Python only (every Python's stub is still linked and checked, below),
+  with a native-heavy corpus subset (`FSBPYR_CORPUS_APPS`, the mode's `pandas-csv`, `lxml`,
+  `pillow` and `scipy`) and, on aarch64, the 64 KiB-page VM smoke test with the EL8 userland
+  (`tools/vm-smoke.py --kernel 64k --userland el8`; a pinned file gone from its mirror is a
+  warning, as in the `vm-smoke` job: renew the pin). They gate the release like every other job
+  of the full suite (owner, 2026-11-03). Only what differs from a default build is tested: the
+  stub. (`tests/e2e/test_el8_use_cases.py`, EL8 builds of a directory of scripts, a single
   script and a project of several commands run on the host, builds the EL8 runtime itself and is
   in none of these lists: `make test` and the full suite run it.) The EL8 stub is linked twice
-  from the tag's sources in independent caches (`tools/release/el8-stub.py` checks it needs no
+  from the commit's sources in independent caches (`tools/release/el8-stub.py` checks it needs no
   GLIBC symbol above 2.28 and carries the runtime id its release's fsbpyr expects) and the two
-  must be byte for byte identical. **The workflow is not part of the release and does not gate
-  it**: `release.yml` and `full-suite.yml` do not wait for it or know it, and a release may have
-  EL8 stubs or not. It starts on the push of a version tag, in parallel with `release.yml`, and runs
-  on the tag itself (a workflow that ran in the default branch's context and checked out a tag's
-  code was flagged by CodeQL, D46); a `build` job builds the tag's executable as `build.yml`
-  does (reproducible: the release asset's bytes) for the portability and VM jobs. Only the
-  `draft` job, after every other job passed, writes: it creates the companion release `el8-vX.Y.Z`
+  must be byte for byte identical; a link takes nothing from a tag, so these are the bytes
+  `el8.yml` puts in that commit's companion release. The portability and VM jobs build their apps with an
+  fsbpyr of the commit tagged, in the job only, as the version it declares (`el8-build`): only a
+  release's fsbpyr pairs itself with a stub placed beside it, as users do.
+  **`.github/workflows/el8.yml` builds the stubs into a draft of the companion release and tests
+  nothing; it is not part of the release and does not gate it**: `release.yml` does not wait for it or know it, and a release
+  may have EL8 stubs or not. It starts on the push of a version tag, in parallel with
+  `release.yml`, and runs on the tag itself (a workflow that ran in the default branch's context
+  and checked out a tag's code was flagged by CodeQL, D46); its `plan` job checks that the tagged
+  commit passed `full-suite.yml` (`tools/release/green-run.sh`) and its `stub` job links each
+  stub once. Only the `draft` job, after every other job passed, writes: it creates the companion release `el8-vX.Y.Z`
   as a draft on the tag `el8-vX.Y.Z`, which `make release` pushed with `vX.Y.Z` on the same
   commit (GitHub refuses the workflow's token a release or tag whose target is a commit that
   changes a workflow file, as a release's merge often does), uploads the eight `fsbpyr-stub-3.X-<target>-glibc2.28.xz` and
@@ -238,8 +243,9 @@ The tiers, from fastest to most complete:
   --glibc`, `tools/release/el8-stub.py`, `tests/support/baseline.py`, el8.yml itself); an older
   one fails in the first job with a message. On a 24-core machine `make test-el8-stub` takes about 3.5 minutes with 4 processes
   (the EL8 and default runtimes linked from cached downloads) and `make test-el8` about 3
-  minutes once the runtimes and images are cached; how long the jobs take on a runner is not yet
-  measured (each is meant to stay near 20 minutes).
+  minutes once the runtimes and images are cached. On the runners (v0.30.0's run, when these
+  jobs were still `el8.yml`'s) the stub-dependent tests took 7.5 to 9 minutes, every other EL8
+  job 1 to 4.5, about 65 runner-minutes in all.
 
 ### What the tests need
 

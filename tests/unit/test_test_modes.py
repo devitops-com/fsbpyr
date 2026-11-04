@@ -1,5 +1,6 @@
 """The EL8 test mode and the corpus selection (tests/support/baseline.py, corpus.py): the same
-tests run for glibc 2.34 or 2.28, and a few corpus apps can be run alone (el8.yml)."""
+tests run for glibc 2.34 or 2.28, and a few corpus apps can be run alone (full-suite.yml's
+el8-corpus job)."""
 
 from pathlib import Path
 

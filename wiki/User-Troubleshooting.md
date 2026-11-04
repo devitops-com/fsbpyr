@@ -44,7 +44,7 @@ fsbpyr's [compatibility notes](Dev-Compatibility.md); the rest from running the
 |---|---|---|
 | `NotADirectoryError: [Errno 20] Not a directory: '<exe>/<pkg>/data.json'`, often with `fsbpyr: <path> is inside the executable; <package> reads files next to its __file__: rebuild with --fs-package <package>` | A package reads files next to its `__file__` | `--fs-package <package>` ([Settings](User-Settings.md#fs-packages)) |
 | A template, data file or plugin is not found (`TemplateNotFound`, an empty plugin list, an HTTP 500) | Same cause, but the app or library catches the error | Same fix; `fsbpyr build --hints` lists likely packages (guesses) |
-| `fsbpyr: refusing to run <what> as Python: the app started itself as a helper interpreter`, exit 70; joblib's `TerminatedWorkerError` | A child started as `sys.executable -m/-c/<script>` | `--interpreter-reexec` ([Settings](User-Settings.md#interpreter-reexec)) |
+| ``fsbpyr: refusing to run `<what>` as Python: the app started itself as a helper interpreter``, exit 70; joblib's `TerminatedWorkerError` | A child started as `sys.executable -m/-c/<script>` | `--interpreter-reexec` ([Settings](User-Settings.md#interpreter-reexec)) |
 | `fsbpyr: refusing to start: <N> copies of this app are running already, as many as this user may run at once`, exit 70 | The instance limit was reached | Find what keeps starting the app (`ps -f`); or raise `FSBPYR_MAX_INSTANCES` |
 | `fsbpyr: cannot start ...: integrity check failed: the file was modified or damaged` | The file changed after the build | Copy or download it again; check it with `fsbpyr inspect --verify` |
 | `fsbpyr: cannot start <executable>: refusing cache directory <path>: other users may write to it` (or `owned by another user`), exit 70 (common in CI containers) | A directory on the way to the cache belongs to another user or is writable by others; the app stops when it first extracts a file into the cache | Set `FSBPYR_CACHE_DIR` (or `XDG_CACHE_HOME`) to a directory in the user's own tree |
@@ -52,7 +52,7 @@ fsbpyr's [compatibility notes](Dev-Compatibility.md); the rest from running the
 | ``ImportError: ... version `GLIBC_2.xx' not found ...; the build requires glibc ..., this system has ...`` | A native file needs a newer glibc, libstdc++ or libgcc_s than the target has | Build with wheels for the build's baseline (`manylinux_2_34`, or `manylinux_2_28` with `--glibc 2.28`), or run on a newer system; check targets first with `FSBPYR_SELFTEST=natives` |
 | On RHEL 8, Rocky Linux 8 or AlmaLinux 8, the executable stops at once with lines such as ``/lib64/libc.so.6: version `GLIBC_2.34' not found (required by ...)`` | The app was built the default way, for glibc 2.34; EL8 has 2.28 | Build it with `--glibc 2.28` ([Building for EL8](User-Building.md#building-for-el8-glibc-228)) |
 | The shell says the executable is "not found", though the file exists | No glibc loader at the path the executable names (musl, such as Alpine) | Run it on a glibc system |
-| `ModuleNotFoundError` for `tkinter`, `idlelib`, `ensurepip`, `turtledemo` or `test`; `dbm.ndbm` and `dbm.gnu` missing | Left out of the standard library | Do not import them; `dbm.sqlite3` and `dbm.dumb` work |
+| `ModuleNotFoundError` for `tkinter`, `idlelib`, `ensurepip`, `turtledemo` or `test`; `dbm.ndbm` and `dbm.gnu` missing | Left out of the standard library | Do not import them; `dbm.dumb` and, from Python 3.13, `dbm.sqlite3` work |
 | `ValueError: payload resources are read-only; invalid mode ...` | Resources are served from the file and cannot be written | Write to a path of your own |
 | `PYTHONPATH` and similar variables have no effect | The interpreter runs isolated; only `PYTHONUNBUFFERED` is read | Use the app's own options or `FSBPYR_*` variables ([Running](User-Running.md#environment-variables)) |
 | `usage: app COMMAND [ARGUMENT...]` and a list of commands, exit 2 | An executable of several commands was started under its own name with no command, or an unknown one | Start it through a command's link, or as `app COMMAND` ([Building](User-Building.md#several-commands-in-one-executable)) |
@@ -66,8 +66,8 @@ fsbpyr's [compatibility notes](Dev-Compatibility.md); the rest from running the
 
 ## Updates, signatures and tampering
 
-[Messages to watch for](User-Security.md#messages-to-watch-for) has every one, with what it means
-and what to do. The two you are most likely to see:
+[Messages to watch for](User-Security.md#messages-to-watch-for) has the main ones, with what each
+means and what to do. The two you are most likely to see:
 
 | Symptom | Cause | Fix |
 |---|---|---|

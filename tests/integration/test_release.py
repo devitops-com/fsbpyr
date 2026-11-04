@@ -1206,9 +1206,9 @@ def test_the_image_is_pinned_by_digest_in_the_workflow_and_the_containerfile() -
         )
     }
 
-    # build and reproduce (REP-2) use the image, the suite and corpus jobs, and the
-    # Containerfile once
-    assert [len(found) for found in pins.values()] == [2, 2, 1], pins
+    # build and reproduce (REP-2) use the image; the suite and corpus jobs and the EL8 jobs in a
+    # container (el8-stub, el8-build, el8-tests, el8-corpus); and the Containerfile once
+    assert [len(found) for found in pins.values()] == [2, 6, 1], pins
     assert len({digest for found in pins.values() for digest in found}) == 1  # the same digest
     for path in pins:
         text = (ROOT / path).read_text(encoding="utf-8")
@@ -1255,9 +1255,10 @@ def test_the_full_suite_runs_on_main_and_weekly_once_per_python_version() -> Non
     assert "push:\n    branches: [main]" in workflow
     assert "workflow_dispatch:" in workflow
     assert f'WEEKLY="{weekly}"' in workflow  # the fuzzing time reads the weekly schedule
-    # the suite, the corpus and the portability matrix
-    assert len(re.findall(r'python: \["3.12", "3.13", "3.14", "3.15"\]', workflow)) == 3
-    assert len(re.findall(r'target: \["x86_64-linux-gnu", "aarch64-linux-gnu"\]', workflow)) == 3
+    # the suite, the corpus, the portability matrix and el8-stub; the other EL8 jobs with a
+    # matrix run every target on the default Python only (test_el8_workflow.py)
+    assert len(re.findall(r'python: \["3.12", "3.13", "3.14", "3.15"\]', workflow)) == 4
+    assert len(re.findall(r'target: \["x86_64-linux-gnu", "aarch64-linux-gnu"\]', workflow)) == 8
     assert "options: --privileged" in workflow and "timeout-minutes: 60" in workflow
     assert "--ignore=tests/e2e/test_portability.py" in workflow
     assert "--ignore=tests/e2e/test_corpus.py" in workflow  # the corpus job's
@@ -1277,7 +1278,7 @@ def test_the_corpus_job_runs_make_test_corpus() -> None:
 
 def test_the_portability_job_runs_on_the_host_after_the_suite() -> None:
     workflow = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
-    job = workflow.split("\n  portability:\n")[1]
+    job = workflow.split("\n  portability:\n")[1].split("\n  vm-smoke:\n")[0]
 
     assert "needs: suite" in job and "runs-on: ${{ matrix.runner }}" in job
     assert "container:" not in job

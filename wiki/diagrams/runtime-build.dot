@@ -1,3 +1,5 @@
+// fsbpyr runtime build at fsbpyr v0.30.0: registry.build_runtime and the modules of
+// src/fsbpyr/runtime/ it calls, with what each reads and writes (wiki/Dev-Runtime-Modules.md).
 digraph runtime_build {
   graph [fontname="Helvetica" fontsize=11 rankdir=LR bgcolor="white" pad=0.3 nodesep=0.35 ranksep=0.5];
   node [fontname="Helvetica" fontsize=10 shape=box style="rounded,filled" fillcolor="#eef3fb" color="#4a6fa5"];

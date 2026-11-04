@@ -45,8 +45,8 @@ strict = true                      # as --strict
 An unknown key stops the build and names the supported keys; a value of the wrong type stops it
 and names the key and the value. `fast-compression` and `best-compression` exclude each other,
 and a compression flag on the command line replaces the other one set in the table. `--offline`,
-`--hints`, `--smoke`, `--signing-key` and `--verbose` exist on the command line only: a key's path
-belongs to the machine that builds. What each setting does is on
+`--hints`, `--smoke`, `--signing-key` and `--verbose` exist on the command line only (a signing
+key's path belongs to the machine that builds). What each setting does is on
 [Building an app](User-Building.md#options).
 
 ## Settings without a project
@@ -131,7 +131,7 @@ cannot find the template and answers 500:
 
 ```console
 $ dist/no-setting
-[2026-10-27 22:02:29,175] ERROR in app: Exception on /Ada [GET]
+[2026-11-03 20:27:40,813] ERROR in app: Exception on /Ada [GET]
 Traceback (most recent call last):
   ...
 jinja2.exceptions.TemplateNotFound: hello.html

@@ -109,7 +109,7 @@ since the app does not run: fsbpyr reads its bytes.
 | `fsbpyr: …/… was modified after extraction; restoring it` | | A file in your cache changed after fsbpyr wrote it. The app goes on with the good copy | Find out what changed it: only you can write there |
 | `refusing cache directory …: owned by another user`, `…: other users may write to it` | 70 | Someone else could plant code where the app loads it from | Fix the directory, or set `FSBPYR_CACHE_DIR` |
 | `fsbpyr: cannot start APP: refusing a privileged start (set-uid, set-gid or file capabilities): …` | 70 | The file was given privileges, which fsbpyr does not run with | Remove them, and find out who set them |
-| `dist/myapp is NOT SIGNED: …` | 0 | Your build finished, unsigned: the key could not be used | Do not publish it. Fix the key, or sign with `fsbpyr sign` |
+| `…/dist/myapp is NOT SIGNED: …` | 0 | Your build finished, unsigned: the key could not be used | Do not publish it. Fix the key, or sign with `fsbpyr sign` |
 
 An executable also exits 70 for reasons that are no threat, such as an instance limit: [Running a
 built app](User-Running.md#refusals-exit-70) lists them all.
@@ -132,13 +132,13 @@ file records, checks them, and says what that is worth:
 
 ```console
 $ fsbpyr verify ~/.local/bin/fsbpyr
-fsbpyr: downloading SHA256SUMS and SHA256SUMS.sig of v0.29.0
-VERIFIED  /home/me/.local/bin/fsbpyr  (project fsbpyr, listed as fsbpyr-3.14-x86_64-linux-gnu in SHA256SUMS of v0.29.0, Ed25519 + ML-DSA-65, key SHA256:ffb6…)
+fsbpyr: downloading SHA256SUMS and SHA256SUMS.sig of v0.30.0
+VERIFIED  /home/me/.local/bin/fsbpyr  (project fsbpyr, listed as fsbpyr-3.14-x86_64-linux-gnu in SHA256SUMS of v0.30.0, Ed25519 + ML-DSA-65, key SHA256:ffb6…)
 fsbpyr: WARNING ****************************************************************
 fsbpyr: WARNING  This check ran inside this fsbpyr, with the keys built into
 fsbpyr: WARNING  it, on files downloaded from GitHub.
 fsbpyr: WARNING  It CAN show that the file is the one the release keys signed
-fsbpyr: WARNING  for v0.29.0, so damage or a changed file is found, even if
+fsbpyr: WARNING  for v0.30.0, so damage or a changed file is found, even if
 fsbpyr: WARNING  GitHub was hacked, as long as this fsbpyr is genuine.
 fsbpyr: WARNING  It CANNOT show that this fsbpyr is genuine: a tampered fsbpyr
 fsbpyr: WARNING  can print the same result. To check it with tools it does not
@@ -197,15 +197,16 @@ prints `VERIFIED`, and the last two lines show the same digest. Use the full pat
 earlier on `PATH` can lie. Someone with root can fake that one too, so then copy the file to another
 machine and check it there.
 
-**With an OpenSSL older than 3.5 this is not a full verification.** A release carries two signatures,
-and a check passes only if both do. ML-DSA-65 needs OpenSSL 3.5, so an older one cannot do the second
-half, and `release-signing.sh` stops and says so:
+**With an OpenSSL older than 3.5 there is no full verification.** A release carries two signatures,
+and a check passes only if both do. ML-DSA-65 needs OpenSSL 3.5, so `release-signing.sh` stops
+before it checks either, and says so; `openssl pkeyutl -verify` run by hand can check only what the
+last column says:
 
-| OpenSSL | For example | Ed25519 | ML-DSA-65 |
+| OpenSSL | For example | `release-signing.sh verify` | `openssl` by hand |
 |---|---|---|---|
-| 3.5 or newer | Debian 13 | Checked | Checked: a full verification |
-| 3.0 to 3.4 | Debian 12, Ubuntu 24.04 | Checked | Not possible: `Could not read public key` |
-| 1.1.1 | EL8 | Not possible: `unknown option -rawin` | Not possible |
+| 3.5 or newer | Debian 13 | `VERIFIED`: a full verification | both signatures |
+| 3.0 to 3.4 | Debian 12, Ubuntu 24.04 | `OpenSSL 3.0.13 … has no ML-DSA-65: OpenSSL 3.5 or newer is needed` | Ed25519 only; ML-DSA-65 gives `Could not read public key` |
+| 1.1.1 | EL8 | `openssl cannot list its signature algorithms` | neither: `unknown option -rawin` |
 
 `openssl version` shows yours. On an older system, do the check on a machine with OpenSSL 3.5 or
 newer, a container will do, and only compare the digest here: `SHA256SUMS` and its signature are
@@ -229,8 +230,8 @@ gh attestation verify "$exe" --repo devitops-com/fsbpyr \
 ```
 
 Every release also carries an SBOM, `fsbpyr-3.X-<target>.cdx.json`, attested with its executable.
-`fsbpyr inspect` names the runtime and, for builds that record them, the versions of the libraries
-in it.
+`fsbpyr inspect` names the versions of the libraries in the runtime, for builds that record them,
+and `--json` the runtime's id (`build_info.runtime`).
 
 ### By building it yourself
 
@@ -241,7 +242,7 @@ The most work, and you trust nothing but the sources you read.
 /usr/bin/sha256sum ../my-fsbpyr "$exe"
 ```
 
-The two digests must be the same; for v0.29.0 they were. A build with a released fsbpyr checks
+The two digests must be the same; for v0.30.0 they were. A build with a released fsbpyr checks
 fsbpyr's Python code only, and a `make bootstrap` build trusts no fsbpyr at all.
 [Verifying a release](../CONTRIBUTING.md#verifying-a-release) has the full comparison.
 
@@ -331,9 +332,9 @@ prints a warning, finishes unsigned and exits 0. Signing is optional for apps:
 
 ```text
 fsbpyr: WARNING ****************************************************************
-fsbpyr: WARNING  dist/myapp is NOT SIGNED: cannot open /home/me/keys/myapp.key:
-fsbpyr: WARNING  wrong passphrase? Unset FSBPYR_SIGNING_KEY to build unsigned
-fsbpyr: WARNING  without this warning.
+fsbpyr: WARNING  /home/me/src/myapp/dist/myapp is NOT SIGNED: cannot open
+fsbpyr: WARNING  /home/me/keys/myapp.key: wrong passphrase? Unset
+fsbpyr: WARNING  FSBPYR_SIGNING_KEY to build unsigned without this warning.
 fsbpyr: WARNING ****************************************************************
 ```
 
@@ -459,9 +460,9 @@ releases are, not where your publisher keeps theirs.
 | `NOT VERIFIED: myapp: myapp.sig is not a signature (N bytes)` | 1 |
 | `NOT VERIFIED: myapp: SHA256SUMS is not signed by the trusted key of myapp` | 1 |
 | `NOT VERIFIED: myapp: the signed SHA256SUMS does not list it` | 1 |
-| `cannot read path/myapp.sig: No such file or directory` | 2 |
-| `no trusted key for myapp: get the publisher's key and its fingerprint, then: fsbpyr key trust myapp KEY.pub SHA256:…` | 2 |
-| `myapp has no build info: name its project with --project` | 2 |
+| `fsbpyr: error: cannot read path/myapp.sig: No such file or directory` | 2 |
+| `fsbpyr: error: no trusted key for myapp: get the publisher's key and its fingerprint, then: fsbpyr key trust myapp KEY.pub SHA256:…` | 2 |
+| `fsbpyr: error: myapp has no build info: name its project with --project` | 2 |
 
 Exit 2 is a usage or setup error: nothing was said about the file. Build info is at the end of the
 file, so a file changed there can end in the last line of this table, and with `--project` in NOT
@@ -569,9 +570,9 @@ install from the release page: never run anything else an alert links to.
 public issue. Reports are acknowledged within 7 days, and [SECURITY.md](../SECURITY.md) has the
 policy.
 
-**Fixes.** Only the latest release is supported. When a security issue is fixed in CPython or a
-library linked into it, a patch release follows, within 7 days for high or critical issues and 30
-otherwise. Its CHANGELOG entry names what changed and says "rebuild your executables": an app
+**Fixes.** Only the latest release is supported. When python-build-standalone fixes a security
+issue in CPython or a library linked into it, a patch release follows, within 7 days for high or
+critical issues and 30 otherwise. Its CHANGELOG entry names what changed and says "rebuild your executables": an app
 built before it keeps the old runtime, and rebuilding it is the only fix.
 
 **How it all works** is in the Developer Guide: [Security](Dev-Security.md) has the threat model,

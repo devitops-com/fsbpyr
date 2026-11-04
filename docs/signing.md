@@ -1139,7 +1139,8 @@ tests/integration/test_el8_workflow.py runs one today (`step_script`, :34):
 - el8.yml: the sums are made in `prepare`; a published companion without its `.sig` fails "Is it
   published"; in recovery a draft is kept, and `publish` stops at it.
 - `publish`'s condition: the shape tests (§12 step 4) check that `prepare` needs every job that
-  `publish` needs today, so a failed `sbom` job or test job of el8.yml publishes nothing.
+  `publish` needs today, so a failed `sbom` job, or a failed `plan` or `stub` job of el8.yml,
+  publishes nothing.
 - The previous release: a burned tag, an `el8-v…` tag on the same commit, the tag itself, v0.9.0
   against v0.30.0, a shallow checkout, a failed API call, a list longer than one page. Any
   release but the one named in tools/release/first-signed-release fails when its previous

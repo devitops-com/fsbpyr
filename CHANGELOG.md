@@ -11,6 +11,17 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Changed
+- **The EL8 stubs are tested in the full suite, before a release, and gate it.** `el8.yml` tested
+  them on the release tag while `make release` waited; it now only links them from the tag and
+  publishes them, once the tagged commit has passed `full-suite.yml`. The full suite's `el8-*` jobs
+  link every Python's stub twice and compare the links, and on the default Python run the
+  stub-dependent tests, the portability matrix with apps built `--glibc 2.28` (with Rocky and Alma
+  Linux 8), a corpus subset and the 64 KiB-page VM with the EL8 userland, with an fsbpyr of the
+  commit tagged, in its job only, as its release. A failure there now holds the release back.
+- **The wiki describes 0.30.0.** Every page and diagram was checked against the code and
+  corrected, every example was run with the released 0.30.0, and the Developer Guide is 30%
+  shorter. Performance was measured again with 0.30.0, the comparison with PyInstaller, pex and
+  PyApp included; the measurements of earlier releases are gone.
 - **Large files are extracted on up to 8 threads throughout.** A raw file's windows are read from
   the executable a leaf per thread, and every leaf is written to the cache by the thread that
   hashes it, within the same bound of 8 threads (D31, D39).

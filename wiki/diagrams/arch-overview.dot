@@ -23,7 +23,7 @@ digraph G {
   subgraph cluster_exe {
     label="The executable (one file)"; style="rounded"; color="#3d8b3d";
     exe [shape=record fillcolor="#eaf5ea" color="#3d8b3d" style="filled"
-         label="{ELF stub: C launcher + static CPython|zero padding to 64 KiB|payload header|index: modules, files, distributions|stdlib + boot modules (bytecode)|app and dependencies: bytecode, sources, resources, natives|trailer: digest}"];
+         label="{ELF stub: C launcher + static CPython|zero padding to 64 KiB|payload header|index: modules, files, distributions|stdlib + boot modules: bytecode, sources, resources|app and dependencies: bytecode, sources, resources, natives|trailer: digest}"];
   }
 
   links [label="dist/<command>\na symlink per command" fillcolor="#eaf5ea" color="#3d8b3d"];

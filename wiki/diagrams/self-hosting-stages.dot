@@ -1,4 +1,4 @@
-// fsbpyr builds itself in three stages, two ways in (wiki/Dev-Self-Hosting.md). Left: make
+// fsbpyr v0.30.0 builds itself in three stages, two ways in (wiki/Dev-Self-Hosting.md). Left: make
 // bootstrap (tools/bootstrap.sh --from-source, then make install): the runtime is linked from
 // the launcher's C sources and the pinned CPython, and fsbpyr run from source in the
 // checkout's venv builds stage 1. Right: a released fsbpyr executable builds stage 1 with the
