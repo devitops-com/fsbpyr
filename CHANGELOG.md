@@ -10,6 +10,15 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Changed
+- **The EL8 stubs are tested in the full suite, before a release, and gate it.** `el8.yml` tested
+  them on the release tag while `make release` waited; it now only links them from the tag and
+  publishes them, once the tagged commit has passed `full-suite.yml`. The full suite's `el8-*` jobs
+  link every Python's stub twice and compare the links, and on the default Python run the
+  stub-dependent tests, the portability matrix with apps built `--glibc 2.28` (with Rocky and Alma
+  Linux 8), a corpus subset and the 64 KiB-page VM with the EL8 userland, with an fsbpyr of the
+  commit tagged, in its job only, as its release. A failure there now holds the release back.
+
 ## [0.30.0] - 2026-11-03
 
 ### Added

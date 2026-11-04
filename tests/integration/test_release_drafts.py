@@ -20,7 +20,7 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 JOB = re.compile(r"^  ([a-z][a-z-]*):\n(.*?)(?=^  [a-z][a-z-]*:\n|\Z)", re.MULTILINE | re.DOTALL)
 NAMES = ("release.yml", "el8.yml")
 BEFORE = {"release.yml": "[build, sbom]",
-          "el8.yml": "[plan, stub, build, tests, portability, corpus, vm-smoke]"}  # fmt: skip
+          "el8.yml": "[plan, stub]"}  # fmt: skip
 
 
 def jobs(name: str) -> dict[str, str]:

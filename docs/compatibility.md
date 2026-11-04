@@ -110,16 +110,18 @@ Apps built with `--glibc 2.28` (the pure-Python `hello` and an app with a manyli
 | `docker.io/library/rockylinux:8` | 2.28 |
 | `docker.io/library/almalinux:8` | 2.28 |
 
-The EL8 workflow (`.github/workflows/el8.yml`, which publishes the glibc 2.28 stubs in the
-companion release `el8-vX.Y.Z` and is no part of the release gate) links the stub of every Python and target twice and
-compares them. On the default Python only, it runs the stub tests, the four portability apps
-(built with `--glibc 2.28` by the tag's fsbpyr, built in the workflow) on the twelve distributions above and on
-these two, and a small corpus subset against its venvs; on aarch64 it also runs a pure-Python
-and a native app in the VM described below.
+The EL8 jobs of `full-suite.yml`, which gate the release like its other jobs, link the stub of
+every Python and target twice and compare them. On the default Python only, they run the stub
+tests, the four portability apps (built with `--glibc 2.28` by an fsbpyr of the commit tagged as
+its release, beside the stub) on the twelve distributions above and on these two, and a small
+corpus subset against its venvs; on aarch64 they also run a pure-Python and a native app in the
+VM described below. The EL8 workflow (`.github/workflows/el8.yml`, no part of the release gate)
+only links the stubs from a release's tag and publishes them in the companion release
+`el8-vX.Y.Z`.
 
 aarch64 kernels with 64K pages (EL8's) are smoke-tested in a QEMU system VM, not on hardware
-(`make test-vm`; the `vm-smoke` job of `full-suite.yml`, and the EL8 workflow with the EL8
-userland): a few built apps start and run. The container matrix above runs on 4K-page kernels.
+(`make test-vm`; the `vm-smoke` job of `full-suite.yml`, and its `el8-vm-smoke` job with the
+EL8 userland): a few built apps start and run. The container matrix above runs on 4K-page kernels.
 Kernels with 16K pages (the Raspberry Pi 5's default kernel, Asahi Linux on Apple Silicon) are
 not tested and not supported for now (owner decision 2026-10-27: too few users); a Raspberry
 Pi 5 can boot its 4K kernel with `kernel=kernel8.img` in `config.txt`.
