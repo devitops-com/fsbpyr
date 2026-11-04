@@ -75,14 +75,17 @@ memory; a leaf inside a hole is not read, and a leaf of zeros takes the digest o
 compress, built with `--fast-compression` (244 MB and 1,073 MB); median of 31 runs, warm page
 cache:
 
-| Executable | Up to 8 threads | One core | Up to 8 threads, no SHA-NI | One core, no SHA-NI |
+| Executable | SHA-NI, up to 8 threads | SHA-NI, one core | Worst case (no SHA-NI), up to 8 threads | Worst case (no SHA-NI), one core |
 |---|---|---|---|---|
 | 27.9 MB | 1.65 ms | 6.9 ms | 6.4 ms | 34.8 ms |
 | 244 MB | 9.6 ms | 61.6 ms | 44.3 ms | 305 ms |
 | 1,073 MB | 40.3 ms | 266 ms | 181 ms | 1,340 ms |
 | per GB (from 1,073 MB) | 38 ms | 248 ms | 168 ms | 1,250 ms |
 
-"One core" is `taskset -c 2`, "no SHA-NI" `OPENSSL_ia32cap=:~0x20000000`. Past a few hundred MB
+The machine has SHA-NI; CPUs without it (Intel cores before Ice Lake, such as Skylake and
+Cascade Lake Xeons) are the worst case, about 4.5 times as slow on 8 threads. "One core" is
+`taskset -c 2`, "no SHA-NI" `OPENSSL_ia32cap=:~0x20000000` on this CPU, which leaves the rest of
+it as fast as it is: an older CPU is slower again. Past a few hundred MB
 the time grows linearly with the size. The check reads the file from the page cache; after a
 reboot the disk read comes on top ([Cold start](#cold-start)). Reproduce, from a checkout, with
 `fsbpyr` installed:

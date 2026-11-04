@@ -72,7 +72,7 @@ integrity check costs what hashing the file costs.
 Hashing the whole executable before anything else (D31), as `FSBPYR_TRACE` reports it
 (`integrity_ns`), launcher of 0.6.0/0.7.0:
 
-| Executable | Up to 8 threads | One core | Up to 8 threads, no SHA-NI | One core, no SHA-NI |
+| Executable | SHA-NI, up to 8 threads | SHA-NI, one core | Worst case (no SHA-NI), up to 8 threads | Worst case (no SHA-NI), one core |
 |---|---|---|---|---|
 | no-op app, 28 MB | 2.0 ms | 6.9 ms | 7.1 ms | 34 ms |
 | no-op app plus 120 MB of data, 148 MB | 8.9 ms | 38 ms | 30 ms | 184 ms |
@@ -95,7 +95,7 @@ The same check with the launcher since D36 (files read in pieces, not mapped), f
 does not compress), `integrity_ns` from `FSBPYR_TRACE`, median of 31 runs each, warm page
 cache, fsbpyr 0.20.0-7064cb77:
 
-| Executable | Up to 8 threads | One core | Up to 8 threads, no SHA-NI | One core, no SHA-NI |
+| Executable | SHA-NI, up to 8 threads | SHA-NI, one core | Worst case (no SHA-NI), up to 8 threads | Worst case (no SHA-NI), one core |
 |---|---|---|---|---|
 | 27.7 MB | 1.72 ms | 7.8 ms | 7.3 ms | 45.7 ms |
 | 244 MB | 11.4 ms | 83.5 ms | 58.3 ms | 411 ms |
