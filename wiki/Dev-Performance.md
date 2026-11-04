@@ -1,7 +1,7 @@
 # Performance
 
 Where the time, memory and bytes of an fsbpyr executable go, measured with the release 0.30.0 (very
-large files also with the code since), so that a regression can be traced to the part that grew. The mechanisms are described on
+large files also with 0.31.0), so that a regression can be traced to the part that grew. The mechanisms are described on
 [Dev-Launcher](Dev-Launcher.md), [Dev-Executable-Format](Dev-Executable-Format.md) and
 [Dev-Security](Dev-Security.md).
 
@@ -313,10 +313,11 @@ stay on one thread (the GIL).
 [`tests/e2e/test_large.py`](../tests/e2e/test_large.py)'s app, with its own build script: one
 sparse file of zeros, built compressed (zstd) and raw, run (the integrity check, a stream through
 it, an extraction), and `inspect --verify` of the raw one; each process's peak RSS (`VmHWM`). Wall
-times, one run each, of release 0.30.0 and of the code since (one sparse file of 5 GiB is 5.4 GB,
-40 MB on disk, raw, and 28.1 MB compressed; 1 TiB is 1.1 TB, 40 MB on disk, and 69.8 MB):
+times, one run each, of release 0.30.0 and of 0.31.0, measured on its code before the release
+(e1ebe49, which differs from v0.31.0 only in the version number). One sparse file of 5 GiB is 5.4
+GB, 40 MB on disk, raw, and 28.1 MB compressed; 1 TiB is 1.1 TB, 40 MB on disk, and 69.8 MB:
 
-| | 0.30.0 | Since 0.30.0 |
+| | 0.30.0 | 0.31.0 |
 |---|---|---|
 | 5 GiB compressed: build / run | 1.1 / 2.4 s | 0.3 / 1.9 s |
 | 5 GiB raw: build / run / `inspect --verify` | 0.4 / 3.6 / 1.5 s | 0.4 / 1.8 / 1.2 s |
@@ -325,7 +326,7 @@ times, one run each, of release 0.30.0 and of the code since (one sparse file of
 | 1 TiB raw: the launcher's check at start | 68.8 s | 0.4 s |
 | Peak RSS, builds / runs | 106–435 / 118–158 MiB | 106–180 / 119–158 MiB |
 
-The runs had a task limit; the compressed ones also `MemoryMax=8G`, the raw ones since 0.30.0
+The runs had a task limit; the compressed ones also `MemoryMax=8G`, the raw ones of 0.31.0
 `MemoryMax=48G`. Under 8G the 0.30.0 raw run took 1,151 s and its `inspect` 336 s, since the
 page cache counts against the limit.
 
