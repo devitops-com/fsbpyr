@@ -1,4 +1,4 @@
-// The launcher's startup sequence at fsbpyr v0.27.0: main() in src/fsbpyr/launcher/main.c,
+// The launcher's startup sequence at fsbpyr v0.30.0: main() in src/fsbpyr/launcher/main.c,
 // with fsb_payload_open (payload.c), fsb_check_integrity (integrity.c), fsb_hold_slot (slots.c)
 // and fsb_collect_when_due (due.c). Steps run top to bottom; red edges are the failure exits.
 // After step 13 the boot code ends a start with 70 itself when the C code refuses the cache
@@ -36,9 +36,9 @@ digraph launcher_startup {
 
   node [width=0];
   x1  [label="exit 70: needs /proc"];
-  x2  [label="exit 70: check failed (mismatch,\nread error, no memory)"];
-  x3  [label="exit 70: no payload, or trailer invalid"];
-  x4  [label="exit 70: cannot map, or header invalid"];
+  x2  [label="exit 70: check failed (mismatch,\n32 bytes or fewer, read error,\nno memory)"];
+  x3  [label="exit 70: trailer unreadable,\nno payload, or trailer invalid"];
+  x4  [label="exit 70: cannot map, or header\nor section table invalid"];
   x5  [label="exit 70: refusing a privileged start"];
   x6  [label="exit 70: different Python version"];
   x7  [label="exit 70: refusing to start (all slots taken);\nexit 0 if FSBPYR_GC=background"];

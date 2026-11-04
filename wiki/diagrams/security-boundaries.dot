@@ -1,4 +1,4 @@
-// Trust boundaries of fsbpyr v0.27.0 and where each check runs. Numbers in brackets are the
+// Trust boundaries of fsbpyr v0.30.0 and where each check runs. Numbers in brackets are the
 // checks the Dev-Security page lists under "Where each check happens".
 digraph security_boundaries {
   graph [fontname="Helvetica" fontsize=11 rankdir=TB bgcolor="white" pad=0.3 nodesep=0.35 ranksep=0.5];
@@ -44,7 +44,7 @@ digraph security_boundaries {
 
   pbs -> runtime_build [label="[1] pinned SHA-256"];
   sysroot -> runtime_build [label="[1] pinned SHA-256"];
-  companion -> el8stub [label="[13] listed SHA-256,\nruntime id; kept"];
+  companion -> el8stub [label="[13] signed sums' SHA-256,\nruntime id; kept"];
   el8stub -> build [label="[13] runtime id"];
   runtime_build -> runtime [label="[2] digests recorded"];
   runtime -> build [label="[2] digests checked"];

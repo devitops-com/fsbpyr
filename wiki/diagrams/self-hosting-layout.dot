@@ -1,8 +1,8 @@
 // The parts of an fsbpyr executable (wiki/Dev-Executable-Format.md, Layout) in the three
 // stages of fsbpyr's self-hosting build (wiki/Dev-Self-Hosting.md): where each part's bytes
 // come from, from source (make bootstrap) and from a released fsbpyr whose launcher sources and
-// boot code differ from the checkout's. Measured on 2026-10-28 with the 0.28.0 release for
-// CPython 3.14 on x86-64 and a scratch commit on main that changed a boot module's docstring and
+// boot code differ from the checkout's. Measured on 2026-11-03 with the 0.30.0 release for
+// CPython 3.14 on x86-64 and a scratch commit on 976dd4f that changed a boot module's docstring and
 // added a comment line to launcher/main.c (every header field, table record and blob compared
 // with fsbpyr's payload reader).
 // Green: the checkout's. Purple: the release's, or what differs from stage 2 because of it.
@@ -59,7 +59,7 @@ digraph self_hosting_layout {
     <TD ALIGN="LEFT" BALIGN="LEFT">build_info: fsbpyr_version</TD>
     <TD ALIGN="LEFT">the builder's version</TD>
     <TD COLSPAN="3" BGCOLOR="#cfe8cf">the checkout's (untagged-&lt;commit&gt;)</TD>
-    <TD BGCOLOR="#e2d5f5">the release's<BR/>(0.28.0-b9b1144d)</TD>
+    <TD BGCOLOR="#e2d5f5">the release's<BR/>(0.30.0-8d35b93c)</TD>
     <TD COLSPAN="2" BGCOLOR="#cfe8cf">the checkout's (stage 1's)</TD>
   </TR>
   <TR>
@@ -134,9 +134,9 @@ digraph self_hosting_layout {
   <TR>
     <TD ALIGN="LEFT" BALIGN="LEFT"><B>measured SHA-256</B><BR/>(the scratch commit)</TD>
     <TD ALIGN="LEFT"></TD>
-    <TD COLSPAN="3">bd865477… in all three</TD>
-    <TD>b98cdb8c…</TD>
-    <TD COLSPAN="2">9e7ee8e7… in both</TD>
+    <TD COLSPAN="3">27f2242b… in all three</TD>
+    <TD>6a175382…</TD>
+    <TD COLSPAN="2">581e589b… in both</TD>
   </TR>
   <TR>
     <TD COLSPAN="8" ALIGN="LEFT">

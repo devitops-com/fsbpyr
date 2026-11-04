@@ -18,6 +18,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   stub-dependent tests, the portability matrix with apps built `--glibc 2.28` (with Rocky and Alma
   Linux 8), a corpus subset and the 64 KiB-page VM with the EL8 userland, with an fsbpyr of the
   commit tagged, in its job only, as its release. A failure there now holds the release back.
+- **The wiki describes 0.30.0.** Every page and diagram was checked against the code and
+  corrected, every example was run with the released 0.30.0, and the Developer Guide is 30%
+  shorter. Performance was measured again with 0.30.0, the comparison with PyInstaller, pex and
+  PyApp included; the measurements of earlier releases are gone.
 
 ## [0.30.0] - 2026-11-03
 

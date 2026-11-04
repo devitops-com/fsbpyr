@@ -1,9 +1,7 @@
 # The repository
 
-The wiki describes how fsbpyr works. Plans, decisions, the continuous integration setup and the
-release process live in the repository, versioned with the code. This page points to them. Links
-go to the commit the wiki was published from, whose code is that of v@VERSION@; the `main` branch
-has the current state.
+Plans, decisions, CI and the release process live in the repository. Links go to the commit the
+wiki was published from (the code of v@VERSION@); `main` has the current state.
 
 Repository: <https://github.com/devitops-com/fsbpyr>
 
@@ -13,62 +11,57 @@ Repository: <https://github.com/devitops-com/fsbpyr>
 |---|---|
 | [`src/fsbpyr/`](../src/fsbpyr) | the Python package: build side ([Build modules](Dev-Build-Modules.md)), [`payload/`](Dev-Payload-Modules.md), [`runtime/`](Dev-Runtime-Modules.md), [`boot/`](Dev-Boot-Modules.md) |
 | [`src/fsbpyr/launcher/`](../src/fsbpyr/launcher) | the C launcher ([Launcher](Dev-Launcher.md)) |
-| [`stubs/_fsbpyr.pyi`](../stubs/_fsbpyr.pyi) | the type stub for `_fsbpyr`, the built-in module that `launcher/module.c` implements for the boot code |
-| [`tests/`](../tests) | unit, integration and end-to-end tests, C probes, the fuzzer, fixtures, the corpus and the support code the tests share, among it what they need from the machine (`tests/support/requires.py`, which `make test-prereqs` runs) ([Testing](Dev-Testing.md)) |
+| [`stubs/_fsbpyr.pyi`](../stubs/_fsbpyr.pyi) | the type stub of `_fsbpyr`, the boot code's built-in module (`launcher/module.c`) |
+| [`tests/`](../tests) | unit, integration and end-to-end tests, C probes, the fuzzer, fixtures, the corpus, support code ([Testing](Dev-Testing.md)) |
 | [`docs/`](../docs) | design documents, below |
-| [`tools/`](../tools) | `bootstrap.sh` (`make bootstrap`), `check-c.py` (`make check-c`), `test-setup.sh`, `portability-apps.sh`, `vm-smoke.py` with its pinned kernels and root file systems `vm-pins.toml` (`make test-vm`, [Testing](Dev-Testing.md)), and the watchers for new upstream and toolchain releases |
-| [`tools/release/`](../tools/release) | the release scripts (`check-release.sh` checks a published release as its users get it), the pinned uv (`uv.version`) and LLVM (`llvm23`), the installer template `install.sh.in`, the SBOM generator; `el8-stub.py` takes the EL8 stub out of a runtime built with `--glibc 2.28`, checks that it needs no glibc symbol above 2.28 and carries the expected runtime id, and writes it under its release asset name |
-| [`wiki/`](../wiki) | this wiki's pages and the Graphviz sources of its diagrams, changed with the code they describe; `make wiki-publish` publishes them to the GitHub and GitLab wikis ([CONTRIBUTING.md](../CONTRIBUTING.md#the-wiki)) |
-| [`tools/wiki/`](../tools/wiki) | the wiki's build: the link check (`make wiki-lint`), the published form of the pages, the diagrams and import graphs, the PDFs (pandoc filters and LaTeX templates) and the publishing (`make wiki-build`, `make wiki-publish`) |
-| [`spikes/`](../spikes) | experiments kept for reference: Phase 0's static link, initialisation path and marshal spikes, and Phase 9's trial links of other Python versions |
-| [`Makefile`](../Makefile) | every developer task: `make help` lists them |
-| [`Containerfile`](../Containerfile) | the Debian trixie image for bootstrap and tests on hosts other than trixie |
-| [`.github/workflows/`](../.github/workflows) | CI: the full suite, the release build and reproduction, the release, the upstream watch, an attestation example for apps, and a separate workflow, `el8.yml`, that links the glibc 2.28 (EL8) stubs from a release's tag and publishes them in the companion release `el8-vX.Y.Z` (the full suite tests them) |
+| [`tools/`](../tools) | `bootstrap.sh`, `check-c.py`, `test-setup.sh`, `portability-apps.sh`, `runner-disk.sh`, `vm-smoke.py` and its pins `vm-pins.toml`, and watchers for upstream and toolchain releases |
+| [`tools/release/`](../tools/release) | release scripts, pinned uv (`uv.version`) and LLVM (`llvm23`), the installer template `install.sh.in`, the SBOM generator, and `el8-stub.py`, which takes a `--glibc 2.28` runtime's stub out and checks it |
+| [`wiki/`](../wiki) | this wiki's pages and diagram sources, changed with the code ([CONTRIBUTING.md](../CONTRIBUTING.md#the-wiki)) |
+| [`tools/wiki/`](../tools/wiki) | the wiki's build: link check (`make wiki-lint`), pages, diagrams, PDFs, and publishing to the GitHub and GitLab wikis (`make wiki-build`, `make wiki-publish`) |
+| [`spikes/`](../spikes) | experiments of Phases 0 and 9, kept for reference |
+| [`Makefile`](../Makefile) | every developer task (`make help`) |
+| [`Containerfile`](../Containerfile) | the Debian trixie image for bootstrap and tests on other hosts |
+| [`.github/workflows/`](../.github/workflows) | CI: the full suite, release build and reproduction, release, upstream watch, an attestation example for apps, and `el8.yml`, which links a release's glibc 2.28 (EL8) stubs and leaves them in a draft of the companion release `el8-vX.Y.Z` |
 
 ## Documents in `docs/`
 
 | Document | What it is | In the wiki |
 |---|---|---|
-| [`IMPLEMENTATION_PLAN.md`](../docs/IMPLEMENTATION_PLAN.md) | the requirements, the numbered design decisions (D1, D2, ...), the architecture as planned, and the phases with their status | referenced only; the decision numbers that comments in the code cite are defined here |
-| [`improvement-plan.md`](../docs/improvement-plan.md) | a review of the project (2026-10-16, revised against 0.20.0) and the improvements it proposed | referenced only |
+| [`IMPLEMENTATION_PLAN.md`](../docs/IMPLEMENTATION_PLAN.md) | requirements, design decisions (D1, D2, ...) that code comments cite, planned architecture, phases | referenced only |
+| [`improvement-plan.md`](../docs/improvement-plan.md) | a project review against 0.20.0, with proposed improvements | referenced only |
 | [`format.md`](../docs/format.md) | the executable format | [Executable format](Dev-Executable-Format.md) |
-| [`executable-parts.md`](../docs/executable-parts.md) | which parts of executables are shared across apps | [Executable format](Dev-Executable-Format.md) |
-| [`compatibility.md`](../docs/compatibility.md) | differences from a venv, target requirements, the tested distributions and apps | [Compatibility](Dev-Compatibility.md) |
+| [`executable-parts.md`](../docs/executable-parts.md) | which parts of executables apps share | [Executable format](Dev-Executable-Format.md) |
+| [`compatibility.md`](../docs/compatibility.md) | differences from a venv, target requirements, tested distributions and apps | [Compatibility](Dev-Compatibility.md) |
 | [`performance.md`](../docs/performance.md) | measurements per release | [Performance](Dev-Performance.md) |
 | [`security.md`](../docs/security.md) | the threat model | [Security](Dev-Security.md) |
-| [`eval.md`](../docs/eval.md) | fsbpyr compared with similar projects (updated 2026-10-25, for 0.25.0) | referenced only |
-| [`spikes.md`](../docs/spikes.md) | Phase 0 findings, 2026-10-06 | referenced only |
-| [`use-case-research.md`](../docs/use-case-research.md) | research on use cases that need no questions (2026-10-25, against 0.25.0), which the 0.26.0 work built on | referenced only; the use cases 0.26.0 implements are in [Overview](Dev-Overview.md#by-how-the-code-is-kept) |
-| `python_cli_runtime_manifest.pdf` | the project's original kick-off document, superseded | not used |
+| [`signing.md`](../docs/signing.md) | signed releases and apps: formats, commands, keys, the release pipeline | [Security](Dev-Security.md), [User security](User-Security.md) |
+| [`eval.md`](../docs/eval.md) | fsbpyr compared with similar projects, for 0.25.0 | referenced only |
+| [`spikes.md`](../docs/spikes.md) | Phase 0 findings | referenced only |
+| [`use-case-research.md`](../docs/use-case-research.md) | use cases that need no questions, against 0.25.0 | referenced only; [Overview](Dev-Overview.md#by-how-the-code-is-kept) has those implemented |
+| `python_cli_runtime_manifest.pdf` | the original kick-off document, superseded | not used |
 
 ## Other files
 
 | File | Contents |
 |---|---|
-| [`README.md`](../README.md) | the repository's front page for users, with a quickstart that `tests/e2e/test_build.py` runs ([Testing](Dev-Testing.md#the-readmes-quickstart-as-a-test)) and links to this wiki |
+| [`README.md`](../README.md) | the front page for users, with a quickstart that `tests/e2e/test_build.py` runs ([Testing](Dev-Testing.md#the-readmes-quickstart-as-a-test)) |
 | [`CHANGELOG.md`](../CHANGELOG.md) | changes per release, with **Breaking:** marks |
-| [`CONTRIBUTING.md`](../CONTRIBUTING.md) | building from source, how to contribute and run the tests, the test tiers and what the tests need, the CI and release flow, and verifying a release |
+| [`CONTRIBUTING.md`](../CONTRIBUTING.md) | building from source, contributing, the tests and what they need, CI, releases, verifying a release |
 | [`SECURITY.md`](../SECURITY.md) | how to report a vulnerability ([Security](Dev-Security.md)) |
 | [`LICENSE`](../LICENSE) | MIT, with a runtime exception for the launcher and boot modules |
 
 ## Continuous integration and releases
 
-The wiki does not describe them. In short, and in detail in
-[`CONTRIBUTING.md`](../CONTRIBUTING.md): the
-full test suite runs in GitHub Actions for every Python and target, a release is tagged only from
-a commit whose full run passed, the release workflow builds and attests the executables and leaves
-a draft, and the admin signs and publishes it from their own machine ([below](#release-keys)). How
-users verify a download is in
-[Security](User-Security.md#checking-an-installed-fsbpyr).
+[`CONTRIBUTING.md`](../CONTRIBUTING.md) describes them. CI builds, attests and stops at a draft:
+[`release.yml`](../.github/workflows/release.yml) and [`el8.yml`](../.github/workflows/el8.yml)
+hold no key and publish nothing. Users verify a download as
+[Security](User-Security.md#checking-an-installed-fsbpyr) says.
 
 ## Release keys
 
-[`docs/signing.md`](../docs/signing.md) §5 is the whole procedure. Everything is built and attested
-on GitHub, and CI stops at a draft: [`release.yml`](../.github/workflows/release.yml) and
-[`el8.yml`](../.github/workflows/el8.yml) hold no key and publish nothing. The admin signs on their
-own machine and pushes only the signature, so someone who steals the GitHub account gets a release
-that no fsbpyr accepts. This rests on GitHub itself being sound; if it is not, far more than fsbpyr
-is at stake.
+The admin signs on their own machine and pushes only the signature
+([Security](Dev-Security.md#signatures) says why); [`docs/signing.md`](../docs/signing.md) §5
+has the whole procedure.
 
 A release is one command, on main, at the release commit, and it asks nothing:
 
@@ -77,33 +70,28 @@ $ git checkout main && git pull --ff-only hub main    # after looking at what yo
 $ make release
 ```
 
-It takes what it needs from two variables, which you set once:
+Two variables, set once:
 
 | Variable | What it names |
 |---|---|
-| `FSBPYR_RELEASE_KEY_FILE` | The release key's file (`KEY=PATH` on the command line overrides it). |
-| `FSBPYR_RELEASE_PASSPHRASE_FILE` | The absolute path of a file that holds its passphrase, or of a program that prints it on standard output. |
+| `FSBPYR_RELEASE_KEY_FILE` | The release key's file; `KEY=PATH` overrides it. |
+| `FSBPYR_RELEASE_PASSPHRASE_FILE` | The absolute path of a file holding its passphrase, or of a program that prints it. |
 
-A file that can be executed is run, with nothing on its standard input; any other file is read. The
-passphrase is one line. The file must be yours or root's, nobody else may write it, a file that
-holds the passphrase must be mode 600 or tighter, and neither the key nor this file may be inside
-the checkout. A file beside the key adds no protection against someone with your account, so
-prefer a program that asks something else, such as a password manager or a hardware token.
+An executable file is run with nothing on its standard input; any other is read. The passphrase
+is one line. The file must be yours or root's, writable by nobody else, mode 600 or tighter if it
+holds the passphrase, and, like the key, outside the checkout. Beside the key, it does not stop
+someone with your account.
 
-Both are checked before anything is tagged: the key must open with the passphrase and be one that
-this tree pins. It never pulls: a pull in the command would sign whatever GitHub's main says.
+`make release` checks that the key opens with the passphrase and is pinned by this tree, runs the
+audit, tags and pushes, waits for both workflows, signs and publishes both releases (neither
+before both are signed), and runs `make release-check`, `make wiki-publish` and `make mirror`. It
+never pulls, which would sign whatever GitHub's main says. Rerun it after any stop; finished
+steps are skipped. A failed `el8.yml` does not hold the release back: it says so, and `make
+release-sign` signs the companion once a run passes. A merge into main between the tag and the
+signature makes `make release-sign` refuse.
 
-It runs the audit, tags and pushes, waits for `release.yml` and `el8.yml`, signs both releases,
-publishes them, checks the result as
-users get it (`make release-check`), publishes the wiki and brings GitLab along (`make mirror`). Run
-it again after any stop, such as a mistyped passphrase: what is done is left out. Nothing is
-published until both are signed. A failed
-`el8.yml` does not hold the release back: it says so, and `make release-sign` signs the companion
-once a run has passed.
-
-What every step printed also goes into a report, in JSON, for reading later. It is rewritten at
-each step, so it shows how far a run got however that run ended. Reports stay under
-`$XDG_STATE_HOME/fsbpyr-release/reports` (or `FSBPYR_RELEASE_STATE`), one per run, named after the tag and the
+Each step's output also goes into a JSON report, rewritten at each step. Reports stay under
+`$XDG_STATE_HOME/fsbpyr-release/reports` (or `$FSBPYR_RELEASE_STATE/reports`), one per run, named after the tag and the
 time, and `latest.json` leads to the newest:
 
 ```console
@@ -116,78 +104,65 @@ $ jq -r '.steps[] | select(.result != "success") | .title, .output[]' latest.jso
 `exit_code`, times and `output`, one string per line. A run that was killed outright stays at
 `running`, with `running_step` saying where.
 
-Each part is a target of its own: `make release-assets`, `make release-sign KEY=PATH`, `make
-release-check`, `make wiki-publish`, `make mirror`. Do not merge into main between the tag and the
-signature: `make release-sign` refuses while GitHub's main is not your commit.
+`make release-sign` refuses unless your HEAD, GitHub's main and tag and the sums file's
+attestation name one commit, every job of the attested run ran on GitHub's machines, the tree is
+clean, the key is outside the checkout and the audit passes; the attested sums then vouch for
+the draft's files. It checks the signature against the pins of this tag and the previous
+release and rereads the draft and the `.sig` before publishing
+([§5.3](../docs/signing.md#53-release-pipeline)). What you tag, K signs.
 
-After a merge that no release follows, `make mirror` on main, once you have pulled and looked, is
-all there is to do. GitLab's main and release tags follow, and a branch goes from both remotes when
-main holds every commit of it. It pushes your checkout's main, not GitHub's, and only once GitHub
-holds the same: a commit someone slipped into one remote reaches no second one. If the two disagree
-about main or a tag, it stops before the first push. Running it again changes nothing.
-
-`make release-sign` refuses unless your HEAD, GitHub's main, GitHub's tag and the attestation of the
-sums file all name one commit, every job of the attested run ran on GitHub's machines, the tree is
-clean, the key is outside the checkout and the audit passes. The attested sums then vouch for every
-file of the draft. Then it signs with K, checks the signature against the keys this tag and the
-previous release pin, reads the draft again, uploads the `.sig`, reads it again, publishes, and
-records the release. It is only as good as what you pulled into main: what you tag, K signs.
-
-- **K** signs on the admin's machine, from an encrypted file on a medium plugged in to sign. **R**,
-  the recovery key, stays offline, apart from it. Neither ever reaches GitHub, not even for a
-  moment. Both come from `bash tools/release/release-signing.sh new-key NAME`. fsbpyr stores no
-  private key.
-- **The pins** are the `.pub` files in [`src/fsbpyr/release-keys/`](../src/fsbpyr/); a signature by
-  any of them passes. `make release` refuses a tree without any, which would burn the version.
-  Each change of them changes the "Release keys" section of
-  [Security](User-Security.md#release-keys) too, which the suite compares with them.
-- **One-time setup**: make K and R; pin both keys, with the first signed version in
+- **K**, the release key, is an encrypted file on a medium plugged in to sign; **R**, the recovery
+  key, stays offline, apart from it; neither reaches GitHub.
+  `bash tools/release/release-signing.sh new-key NAME` makes each; fsbpyr stores no private key.
+- **The pins** are the `.pub` files in [`src/fsbpyr/release-keys/`](../src/fsbpyr/release-keys); a signature
+  by any of them passes. `make release` refuses a tree without any, which would burn the version.
+  The suite compares them with [Security](User-Security.md#release-keys)'s "Release keys".
+- **One-time setup** ([§5.2](../docs/signing.md#52-one-time-setup)): make and pin K and R, with
+  the first signed version in
   [`tools/release/first-signed-release`](../tools/release/first-signed-release); remove the
-  organization's GitHub App's access to this repository, or trust it as you trust yourself; and
-  start the audit's record with `bash tools/release/audit.sh --accept`, after reading GitHub's
-  state.
-- **A planned change of K** takes two releases. Release N pins old K, new K and R, and is signed by
-  the old K, with its companion. N+1 drops the old K and is signed by the new one.
-- **K lost or stolen**: release N pins a new K and R and drops the old K, so only R is pinned by
-  both N and the release before it: `make release-sign KEY=~/release-r.key`, which makes the same
-  checks.
-- **R lost**: the next release pins a new R. **Both lost**: users reinstall.
+  organization's GitHub App's access or trust it as yourself; start the audit's record with
+  `bash tools/release/audit.sh --accept`.
+- **Key changes** ([§5.4](../docs/signing.md#54-changing-keys)): a planned change of K takes two
+  releases; the first pins old K, new K and R and is signed by the old K, the second by the new.
+  After K is lost or stolen, R signs the release that pins a new K and R
+  (`make release-sign KEY=~/release-r.key`); after R is lost, the next release pins a new one;
+  with both lost, users reinstall.
+
+After a merge with no release, `make mirror` on main (pulled and looked at) brings GitLab's main
+and release tags along and removes branches main fully holds from both remotes, pushing only what
+your checkout and GitHub agree on, else nothing; a rerun changes nothing.
 
 ### The audit
 
-`make release-audit` compares GitHub with what your machine recorded, so that you are the first to
-see a tampered account or repository, not a user: every tag; that your main holds GitHub's; every
-release with its files, signature and immutability; drafts that are not yours; which release is the
-latest; and the settings someone changes to stay, from members and apps to rulesets, secrets,
-runners and the wiki's head. A valid signature on a release that is not on record means a stolen
-key. `make release` and `make release-sign` run it and stop if it does not pass; run it from cron as
-well, on any machine with a clone: it needs no key. It does not run in GitHub Actions, which whoever
-holds the account could turn off. The record is on that machine, in
-`$XDG_STATE_HOME/fsbpyr-release`, with the sums files and signatures it has read, so that a run
-checks every signature and takes seconds, not minutes.
+`make release-audit` compares GitHub with your machine's record, to see a tampered account or
+repository before a user does: tags, that your main holds GitHub's, releases with their files,
+signatures and immutability, drafts not yours, the latest release, and the settings someone
+changes to stay, from members and apps to rulesets, secrets, runners and the wiki's head. `make
+release` and `make release-sign` stop if it fails. Run it from cron too, on any machine with a
+clone (it needs no key), not in GitHub Actions, which whoever holds the account could turn off.
+Its record, with the sums files and signatures read so far, is in
+`$XDG_STATE_HOME/fsbpyr-release`.
 
-Exit 1 means treat GitHub as tampered with until each finding is explained. Exit 2 means it could
-not check, which is never a pass. After a change of yours, such as a new secret or a published wiki,
-it reports the difference: read it, then take it as the record with `bash tools/release/audit.sh
---accept`. `make wiki-publish` records the wiki's new head itself. If GitHub was tampered with, stop releasing, recover the account, and tell users through
-CVEs, advisories and mailing lists. A GitHub advisory needs the account, so keep a mailing list
-ready before it happens.
+Exit 1: treat GitHub as tampered with until each finding is explained; exit 2: it could not
+check, never a pass. Accept your own change, such as a new secret, with `bash
+tools/release/audit.sh --accept` after reading the difference; `make wiki-publish` records the
+wiki's new head itself. If GitHub was tampered with, stop releasing, recover the account and warn
+users through CVEs, advisories and a mailing list kept ready, since an advisory needs the
+account.
 
 ## Developer tasks
 
-`make help` in a checkout:
-
 | Target | Does |
 |---|---|
-| `make bootstrap` | from source to an installed fsbpyr: runtime, three-stage build, install ([Self-hosting](Dev-Self-Hosting.md)) |
+| `make bootstrap` | from source to an installed fsbpyr ([Self-hosting](Dev-Self-Hosting.md)) |
 | `make build` | build `dist/fsbpyr` with the installed fsbpyr (`PYTHON=3.X`: a variant from source) |
 | `make install`, `make uninstall` | install or remove `dist/fsbpyr`, its man page and completions |
 | `make check` | ruff and mypy |
 | `make check-c` | clang's static analyser over the launcher (informational) |
-| `make test-ci`, `make test`, `make test-corpus`, `make test-container`, `make test-portability` | the test tiers ([Testing](Dev-Testing.md)) |
-| `make test-prereqs` | list the tools and environment conditions the full test suite needs that this machine lacks ([Testing](Dev-Testing.md#when-the-machine-lacks-something)) |
-| `make test-vm` | aarch64 apps in a QEMU virtual machine with EL8's 64K-page kernel ([Testing](Dev-Testing.md)) |
-| `make test-el8`, `make test-el8-stub`, `make test-el8-portability` | the EL8 test mode: the tests that run the stub with the glibc 2.28 runtime, and the portability matrix with apps built for glibc 2.28 ([Testing](Dev-Testing.md)) |
-| `make release-prep`, `make release` | the release: end a branch with the release commit, then [everything else](#release-keys) |
-| `make release-assets`, `make release-sign`, `make release-check`, `make release-audit` | the parts of `make release`, one at a time |
+| `make test-ci`, `make test`, `make test-corpus`, `make test-container`, `make test-portability` | the test tiers ([Testing](Dev-Testing.md#make-targets)) |
+| `make test-prereqs` | [what the full suite needs](Dev-Testing.md#when-the-machine-lacks-something) that this machine lacks |
+| `make test-vm` | [aarch64 apps in a QEMU VM](Dev-Testing.md#the-page-size-smoke-test) with EL8's 64K-page kernel |
+| `make test-el8`, `make test-el8-stub`, `make test-el8-portability` | [the EL8 test mode](Dev-Testing.md#the-el8-test-mode) |
+| `make release-prep`, `make release` | end a branch with the release commit; then [everything else](#release-keys) |
+| `make release-assets`, `make release-sign`, `make release-check`, `make release-audit` | the parts of `make release` |
 | `make clean` | remove `dist/` |
