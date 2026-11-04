@@ -1,7 +1,8 @@
 """A build's compressed bytes go to a spill file, not memory (D38, Phase 8c): files are
 compressed a piece at a time from disk into it, their pieces on up to 8 threads (D39), giving
 the very blobs compressing their bytes in memory gives, and blobs made in memory move their
-bytes there; the writer streams them."""
+bytes there; the writer streams them. A piece inside a hole is not compressed: the zeros of its
+size are, once."""
 
 import dataclasses
 import random
@@ -10,9 +11,10 @@ from typing import Any
 
 import pytest
 
+from fsbpyr.compat import zstd
 from fsbpyr.payload import format as format_module
 from fsbpyr.payload.format import DIGEST_LEAF, XZ_PIECE, ZSTD_PIECE, Codec, tree_digest
-from fsbpyr.payload.spec import Blob, Extent, stored_bytes
+from fsbpyr.payload.spec import Blob, Extent, stored_bytes, xz_stream
 from fsbpyr.payload.spill import Spill
 from fsbpyr.payload.writer import assemble, encode_payload, write_executable
 
@@ -166,3 +168,43 @@ def test_holes_are_never_sent_to_the_threads(
     assert sent == [5 * DIGEST_LEAF, 30 * DIGEST_LEAF]
     assert b"".join(piece for piece, _ in leaves) == path.read_bytes()
     assert [hole for _, hole in leaves].count(False) == 2
+
+
+@pytest.mark.parametrize("xz", [False, True])
+@pytest.mark.parametrize("threads", [1, 8])
+def test_pieces_inside_holes_are_compressed_once_into_the_bytes_their_zeros_make(
+    xz: bool, threads: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Four pieces and 5 bytes, data in the second piece only: the three pieces of holes take
+    the bytes of one compression of a piece of zeros, and the short last one of 5 zeros, the very
+    blob compressing the file's bytes in memory gives (D15)."""
+    each = XZ_PIECE if xz else ZSTD_PIECE
+    path = tmp_path / "sparse"
+    with path.open("wb") as file:
+        file.truncate(4 * each + 5)
+        file.seek(each + 3)
+        file.write(b"data")
+    data = path.read_bytes()
+    in_memory = Blob.xz(data, digest=True) if xz else Blob.zstd(data, digest=True)
+    monkeypatch.setattr(format_module, "THREADS", threads)
+    compressed: list[int] = []
+    real_zstd = zstd.compress
+
+    def counted_xz(content: bytes) -> bytes:
+        compressed.append(len(content))
+        return xz_stream(content)
+
+    def counted_zstd(content: bytes, **options: Any) -> bytes:
+        compressed.append(len(content))
+        stored: bytes = real_zstd(content, **options)
+        return stored
+
+    if xz:
+        monkeypatch.setattr("fsbpyr.payload.spill.xz_stream", counted_xz)
+    else:
+        monkeypatch.setattr(zstd, "compress", counted_zstd)  # the module spill.py calls
+    with Spill(tmp_path) as spill:
+        blob = spill.compress_files({"sparse": path}, xz=xz, digest=True)["sparse"]
+
+        _blobs_alike(blob, in_memory)
+        assert sorted(compressed) == [5, each, each]  # the zeros of each size once; the data

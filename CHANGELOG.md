@@ -21,6 +21,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   raw, 3.4 s instead of 9.4 compressed. With the change above, a run that checks, streams and
   extracts a 1 TiB file of zeros took 348 s instead of 991 stored raw, 394 s instead of 487
   compressed.
+- **A build compresses a piece of holes once.** A piece of a file that lies inside a hole takes
+  the bytes the zeros of its size compress to, made once per build, the same bytes as before:
+  a 1 TiB sparse file built compressed in 4.8 s instead of 150, in at most 180 MiB instead of
+  435.
 - **`fsbpyr inspect --verify` reads the file once.** The integrity digest and the plain SHA-256
   come from the same read, other threads reading and hashing the leaves, holes unread: 217 s
   instead of 324 for a 1 TiB executable, 1.2 s instead of 1.5 for a 5 GiB one.

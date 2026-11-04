@@ -246,7 +246,9 @@ each piece read from its file, hashed and compressed on its thread and appended 
 as it is done. A file whose compressed pieces are not smaller than its content becomes an
 Extent of the original file; otherwise one piece is a ZSTD or XZ blob and several are a
 ZSTD_PIECES or PIECES blob, as `Blob.zstd` and `Blob.from_xz` would make them. At most one
-batch of pieces is in memory.
+batch of pieces is in memory. A piece that lies inside a hole is neither read nor compressed:
+the zeros of its size are compressed once per call, under a lock, and every such piece takes
+those bytes, which are the ones compressing it would give (D15).
 
 Rules it enforces: an `Extent` it hands out is checked against its identity when the writer
 reads it (by `Extent.leaves`); `_File` raises `OSError` when a file turns out shorter than it
