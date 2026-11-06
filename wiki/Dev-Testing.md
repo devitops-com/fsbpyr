@@ -545,7 +545,7 @@ the probes and the fuzz harness, when `FSBPYR_LLVM_COV_DIR` is set.
 | Target | What it runs |
 |---|---|
 | `make check` | `ruff check` and `mypy` (strict, over `src` and `tests` but the fixtures and the corpus). |
-| `make check-c` | clang's static analyzer over the launcher's C sources (`tools/check-c.py`); informational, exits 1 on findings. |
+| `make check-c` | clang's static analyzer over the launcher's C sources (`tools/check-c.py`); exits 1 on findings, which fails `full-suite.yml`'s run. |
 | `make test-ci` | The core: `tests/unit`, `tests/integration`, and fifteen end-to-end files: `test_build.py`, `test_runtime_app.py`, `test_imports.py`, `test_stub_hardening.py`, `test_multicall.py`, `test_scripts.py`, `test_loose_directory.py`, `test_single_script.py`, `test_install_links.py`, `test_pid1.py`, `test_unbuffered.py`, `test_file_overlay.py`, `test_pipfile_lock.py`, `test_signing.py` and `test_selfupdate.py`, in `JOBS` pytest-xdist processes (`--dist loadfile`), with `-k "not (sanitized and not release)"` (the release half of the `sanitized` tests) and coverage. |
 | `make test` | Everything but the corpus, in `JOBS` processes (`--dist loadfile`: each file in one process). |
 | `make test-prereqs` | `python -m tests.support.requires` ([When the machine lacks something](#when-the-machine-lacks-something)). No pytest run. |

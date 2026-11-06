@@ -110,8 +110,8 @@ Nothing in the test suite skips: a test either runs or fails, naming the tool or
 it lacks. Install everything under "What the tests need" below before you run them, and run
 `make test-prereqs` to see what this machine still lacks, all at once. `make check` runs the static checks (ruff and mypy), `make test-ci` the core of the suite,
 `make test` all of it but the corpus, and `make test-corpus` the corpus. `make check-c` runs
-clang's static analyzer over the launcher's C sources; it is informational (full-suite.yml runs
-it with `continue-on-error`) and exits 1 when the analyzer has findings. Every target that
+clang's static analyzer over the launcher's C sources and exits 1 when the analyzer has
+findings, which fails full-suite.yml's run. Every target that
 checks or tests but `make test-vm` takes `PYTHON=3.X` (3.12 to 3.15, on the command line only)
 to run on that Python's variant. The end-to-end tests
 use a cached runtime or build one, which needs clang and lld 23 or newer: the `make` targets

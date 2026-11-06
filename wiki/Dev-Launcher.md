@@ -188,7 +188,7 @@ A file that is not an fsbpyr executable, or one cut short, fails at step 2 with
 - **Static analysis.** `make check-c` ([`tools/check-c.py`][check-c]) runs `clang --analyze` over
   each source with `COMPILE_FLAGS` minus `-O2 -flto=full -fPIE -pie`, against the PBS
   distribution of the Python running it and the host's target, and exits 1 on any finding or
-  failed compile; the Makefile calls it informational.
+  failed compile, which fails `full-suite.yml`'s run.
 
 Compile-time guards: `format.h` stops on a big-endian target, `module.c` on a free-threaded
 CPython (`Py_GIL_DISABLED`: `read()` shares the process's zstd decoder, which the GIL

@@ -160,7 +160,7 @@ account.
 | `make build` | build `dist/fsbpyr` with the installed fsbpyr (`PYTHON=3.X`: a variant from source) |
 | `make install`, `make uninstall` | install or remove `dist/fsbpyr`, its man page and completions |
 | `make check` | ruff and mypy |
-| `make check-c` | clang's static analyser over the launcher (informational) |
+| `make check-c` | clang's static analyser over the launcher; a finding fails the full suite's run |
 | `make test-ci`, `make test`, `make test-corpus`, `make test-container`, `make test-portability` | the test tiers ([Testing](Dev-Testing.md#make-targets)) |
 | `make test-prereqs` | [what the full suite needs](Dev-Testing.md#when-the-machine-lacks-something) that this machine lacks |
 | `make test-vm` | [aarch64 apps in a QEMU VM](Dev-Testing.md#the-page-size-smoke-test) with EL8's 64K-page kernel |

@@ -246,9 +246,9 @@ check: ## Static checks: ruff + mypy
 	$(UVRUN) mypy
 
 # clang's static analyzer over the launcher, compiled with its flags against the cached PBS
-# headers (a runtime that is not cached is fetched). Informational: full-suite.yml runs it
-# with continue-on-error; it exits 1 when the analyzer has findings.
-check-c: ## Static analysis of the launcher's C sources (clang --analyze; informational)
+# headers (a runtime that is not cached is fetched). It exits 1 when the analyzer has findings,
+# which fails full-suite.yml's run.
+check-c: ## Static analysis of the launcher's C sources (clang --analyze)
 	$(WITH_LLVM23) $(UVRUN) python tools/check-c.py
 
 # --- Release ---

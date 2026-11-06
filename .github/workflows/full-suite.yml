@@ -270,10 +270,9 @@ jobs:
       - name: make check
         run: as-tester make check $MAKE_ARGS
 
-      # Informational: clang's static analyzer over the launcher sources; its findings are in
-      # the log, and a finding does not fail the run.
+      # clang's static analyzer over the launcher sources: a finding fails the run, as the
+      # launcher has none and clang is pinned (tools/release/llvm23), so its output does not drift.
       - name: make check-c (clang --analyze)
-        continue-on-error: true
         run: as-tester make check-c $MAKE_ARGS
 
       # Everything but the portability tests and the corpus (the jobs below), in one process
