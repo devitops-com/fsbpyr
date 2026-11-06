@@ -28,8 +28,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # The runner user cannot write /usr/local/bin, so uv goes into a user directory on PATH.
-          curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$HOME/.local/bin" UV_NO_MODIFY_PATH=1 sh
+          # The uv that tools/release/uv.version pins, checked against its SHA-256 before it is
+          # unpacked, as build.yml installs it. The runner user cannot write /usr/local/bin, so uv
+          # goes into a user directory on PATH.
+          sh tools/release/install-uv.sh "$HOME/.local/bin" > /dev/null
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           # the latest release's fsbpyr on this runner's Python and target
           gh release download --repo devitops-com/fsbpyr --pattern fsbpyr-3.14-x86_64-linux-gnu \

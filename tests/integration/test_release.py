@@ -1956,10 +1956,13 @@ def test_install_uv_takes_one_directory(tmp_path: Path) -> None:
 
 
 def test_the_workflows_install_uv_with_the_script_and_not_the_x86_64_tarball() -> None:
-    for name in ("build.yml", "full-suite.yml"):
+    """The pinned uv, checked by its SHA-256; never uv's own installer, which is not pinned."""
+    for name in ("build.yml", "full-suite.yml", "attest-example.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
         assert "uv-x86_64-unknown-linux-gnu" not in workflow, name
         assert "sh tools/release/install-uv.sh" in workflow, name
+    for path in (ROOT / ".github/workflows").glob("*.yml"):
+        assert "astral.sh/uv/install.sh" not in path.read_text(encoding="utf-8"), path.name
 
 
 # ------------------------------------------------------------------------- check-release.sh
