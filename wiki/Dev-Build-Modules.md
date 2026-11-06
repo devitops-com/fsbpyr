@@ -317,6 +317,9 @@ Rules it enforces:
   relative, and no absolute home in the passwd entry) makes `build`, `runtime build`,
   `runtime list` and `cache gc` exit 1 with `fsbpyr: error: cannot find the home directory; set
   HOME, XDG_CACHE_HOME or FSBPYR_CACHE_DIR` (a `RuntimeCacheError`).
+- A host that is none of the targets (a released fsbpyr under `setarch i686`, say) makes `build`
+  exit 1 with `fsbpyr: error: unsupported host linux/i686` (`targets.UnsupportedHost`), not an
+  internal error.
 - `main` makes SIGTERM raise `KeyboardInterrupt`, so a terminated build unwinds like an
   interrupted one. It reports click usage errors with click's exit status, an interrupt as
   `fsbpyr: interrupted` with exit 130, and any other exception as an internal error with its
@@ -326,9 +329,9 @@ Rules it enforces:
 
 - Imports, all lazy: `assemble`, `build`, `bytecode`, `classify`, `closure`, `config`,
   `dispatch`, `inspection`, `licensing`, `links`, `manpage`, `project`, `pyversion`,
-  `selfupdate`, `signing`, `staging`, `text`, `vcs`, `boot._fsbpyr_rt.gc`, `payload.format`,
-  `runtime.collect`, `runtime.pbs`, `runtime.registry`, `runtime.stdlib`, `runtime.stub`,
-  `runtime.sysroot`, `runtime.toolchain`.
+  `selfupdate`, `signing`, `staging`, `targets`, `text`, `vcs`, `boot._fsbpyr_rt.gc`,
+  `payload.format`, `runtime.collect`, `runtime.pbs`, `runtime.registry`, `runtime.stdlib`,
+  `runtime.stub`, `runtime.sysroot`, `runtime.toolchain`.
 - Imported by: `__main__`.
 
 ### `dispatch`
@@ -1758,8 +1761,8 @@ lists `x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-linux-musl`, `aarch64-lin
 | `host_target()` | `detect` for this process. |
 
 - Imports: nothing from fsbpyr.
-- Imported by: `build`, `dispatch`, `elf`, `natives`, `selfupdate`, `payload.spec`,
-  `runtime.collect`, `runtime.registry`, `runtime.stubs`, `runtime.sysroot`.
+- Imported by: `build`, `cli` (lazy), `dispatch`, `elf`, `natives`, `selfupdate`,
+  `payload.spec`, `runtime.collect`, `runtime.registry`, `runtime.stubs`, `runtime.sysroot`.
 
 ### `compat`
 

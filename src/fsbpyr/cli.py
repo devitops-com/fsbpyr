@@ -204,6 +204,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
     from .pyversion import resolve  # noqa: PLC0415
     from .runtime.registry import RuntimeCacheError  # noqa: PLC0415
     from .staging import StagingError  # noqa: PLC0415
+    from .targets import UnsupportedHost  # noqa: PLC0415
     from .text import plural  # noqa: PLC0415
 
     try:
@@ -212,7 +213,7 @@ def build_command(  # noqa: PLR0913  click passes every option by name
         raise click.UsageError(f"--smoke-args: {exc}") from exc
     errors = (AssemblyError, BuildError, BytecodeError, ClassifyError, ClosureError, ConfigError,
               DispatchError, PayloadError, ProjectError, RuntimeCacheError, StagingError,
-              OSError)  # fmt: skip
+              UnsupportedHost, OSError)  # fmt: skip
     try:
         loaded = Project.load(project, requirements)
         config = load_config(
