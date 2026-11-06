@@ -1534,8 +1534,13 @@ release as its users get it: the assets and their checksums, the attestations, e
 executable on this target and, under podman, on the other, the installer for every Python,
 dispatch to another Python and `self update` from the previous release. It rebuilt each
 executable from the tag until the owner dropped that on 2026-10-27 ("download and
-attestations should be enough"; `full-suite.yml` still rebuilds and compares every asset
-before a release). A
+attestations should be enough"). Before a release, `full-suite.yml` rebuilds the executables
+and their SBOMs and compares them byte for byte, as an untagged build of the commit makes them
+(the tag is pushed after that run, or after later commits that change only documentation:
+`green-run.sh`). Nothing else is rebuilt independently: not the tagged bytes the release ships
+(`el8-build` makes the default Python's from the commit tagged in its job, and compares them
+with nothing), the `.xz` files, the `THIRD_PARTY_LICENSES-*.txt` notices, `install.sh` or
+`SHA256SUMS`. A
 version whose release workflow fails is burned. The rest of this section is the plan and its
 dated progress; where it names glibc 2.28, Debian 10, `release.yml`'s build, reproduce and
 compare jobs or the short asset names, later entries below and D42 apply.

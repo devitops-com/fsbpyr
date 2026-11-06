@@ -3,7 +3,9 @@ name: Full suite
 # Every test and check there is, so that a release only builds and publishes (release.yml tests
 # nothing):
 #   - build (build.yml, with its checks): the release build, its smoke test and an independent
-#     rebuild compared byte for byte, exactly as release.yml then builds the tagged commit;
+#     rebuild, the executables and their SBOMs compared byte for byte. release.yml builds the
+#     tagged commit the same way, and differs in the tag the executables record (vcs.git_state):
+#     the run a release stands on comes before its tag, so here they record none;
 #   - suite: the whole test suite but the portability tests and the corpus, as an unprivileged
 #     user in a Debian trixie container: natives, compatibility, the ASan/UBSan launcher, the
 #     fuzzer, the cache-directory and GC tests, the ownership checks, and the coverage gates;
