@@ -492,8 +492,9 @@ disk: a file a crash left incomplete fails its digest and the next process repla
 [`module.c`][module.c] is `_fsbpyr`, the built-in module through which the
 [boot modules](Dev-Boot-Modules.md) reach the payload (`fsb_self`). `PyInit__fsbpyr`
 ([line 821][module.c#L821]) creates it with the type `Stream`, the exceptions `PayloadError`
-(a `ValueError`) and `CacheError` (an `ImportError`: the native cache cannot be used, or the
-payload's data for it is corrupt), the constant `NONE` (`0xFFFFFFFF`), and the private `_sha256`,
+(a `ValueError`), `CacheError` (an `ImportError`: the native cache cannot be used, or the
+payload's data for it is corrupt) and `CacheRefused` (a `CacheError`: the cache's directory is
+refused), the constant `NONE` (`0xFFFFFFFF`), and the private `_sha256`,
 `_key_new`, `_sign` and `_verify` of [`sig.c`][sig.c], the crypto of
 [Signatures](Dev-Security.md#signatures).
 
@@ -546,13 +547,14 @@ it runs is found by the next process. Files go to `fsb_cache_sync` 4096 at a tim
 GIL. After each chunk every CHANGED file is reported on stderr (not as a warning, which an app
 could silence): `fsbpyr: <root>/<chain>/<path> was modified after extraction; restoring it`;
 written paths are appended to `written` if it is a list; and a failure is raised: `CacheError`
-for a corrupt record (`corrupt executable payload: <reason> <index>`) or a refused directory
-(`refusing cache directory <path>: owned by another user`, or `...: other users may write to
-it`), `OSError` with the path, or `MemoryError`. The first sync into a tree holds it, and the
+for a corrupt record (`corrupt executable payload: <reason> <index>`), `CacheRefused` for a
+refused directory (`refusing cache directory <path>: owned by another user`, or `...: other
+users may write to it`), `OSError` with the path, or `MemoryError`. The first sync into a tree holds it, and the
 lock's descriptor is kept for the process's life, taken again if the app closed it.
 
 A refused cache directory ends the start (D41): `NativeCache.extract` in
-[`_fsbpyr_rt/native.py`](../src/fsbpyr/boot/_fsbpyr_rt/native.py) writes
+[`_fsbpyr_rt/native.py`](../src/fsbpyr/boot/_fsbpyr_rt/native.py) catches `CacheRefused`, by its
+type, and writes
 `fsbpyr: cannot start <path>: <message>` (`<path>` the `executable` of `info()`, as `fatal()`
 names it) to descriptor 2 and calls `os._exit(70)`, with no traceback; other `CacheError`s and
 `OSError`s stay errors the app sees

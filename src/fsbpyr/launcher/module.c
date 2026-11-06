@@ -35,7 +35,7 @@
 #error "the _fsbpyr module needs a CPython with the GIL"
 #endif
 
-static PyObject *PayloadError, *CacheError;
+static PyObject *PayloadError, *CacheError, *CacheRefused;
 static unsigned long long reads;
 
 static PyObject *corrupt(const char *what, unsigned long long index) {
@@ -439,10 +439,10 @@ static int synced(const struct fsb_cache_sync *job, PyObject *root, uint8_t *mem
                      (unsigned)job->file);
         break;
     case FSB_CACHE_FOREIGN:
-        PyErr_Format(CacheError, "refusing cache directory %U: owned by another user", path);
+        PyErr_Format(CacheRefused, "refusing cache directory %U: owned by another user", path);
         break;
     case FSB_CACHE_EXPOSED:
-        PyErr_Format(CacheError, "refusing cache directory %U: other users may write to it",
+        PyErr_Format(CacheRefused, "refusing cache directory %U: other users may write to it",
                      path);
         break;
     case FSB_CACHE_SYSTEM:
@@ -835,8 +835,13 @@ PyMODINIT_FUNC PyInit__fsbpyr(void) {
         "_fsbpyr.CacheError",
         "The native cache cannot be used, or the payload's data for it is corrupt.",
         PyExc_ImportError, NULL);
+    CacheRefused = CacheError == NULL ? NULL : PyErr_NewExceptionWithDoc(
+        "_fsbpyr.CacheRefused",
+        "The native cache's directory is refused: another user's, or other users may write to it.",
+        CacheError, NULL);
     if (PayloadError == NULL || PyModule_AddObjectRef(m, "PayloadError", PayloadError) < 0 ||
         CacheError == NULL || PyModule_AddObjectRef(m, "CacheError", CacheError) < 0 ||
+        CacheRefused == NULL || PyModule_AddObjectRef(m, "CacheRefused", CacheRefused) < 0 ||
         PyModule_AddIntConstant(m, "NONE", FSB_NONE) < 0) {
         Py_DECREF(m);
         return NULL;

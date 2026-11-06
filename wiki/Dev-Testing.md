@@ -615,7 +615,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,589 in 147 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,590 in 147 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -630,13 +630,13 @@ run with the release launcher only, those two portability tests also on the two 
 | Layer | Files | Tests |
 |---|---|---|
 | `tests/unit` (top level) | 26 | 895 |
-| `tests/unit/boot` | 23 | 357 |
+| `tests/unit/boot` | 23 | 358 |
 | `tests/unit/builder` | 19 | 752 |
 | `tests/unit/payload` | 11 | 424 |
 | `tests/unit/runtime` | 9 | 249 |
 | `tests/integration` | 17 | 815 |
 | `tests/e2e` | 42 | 1,097 |
-| All | 147 | 4,589 |
+| All | 147 | 4,590 |
 
 ### tests/unit (top level): 26 files, 895 tests
 
@@ -669,7 +669,7 @@ run with the release launcher only, those two portability tests also on the two 
 | [`test_vm_smoke.py`](../tests/unit/test_vm_smoke.py) | 29 | `tools/vm-smoke.py` without a VM ([The page-size smoke test](#the-page-size-smoke-test)): the pins file, the cpio writer and initramfs, the RPM reader, failing or mismatching downloads, console parsing and checks, the QEMU and kernel command lines, `/init`'s log level, a QEMU that exits at once. |
 | [`test_wiki.py`](../tests/unit/test_wiki.py) | 54 | The wiki's pages and `tools/wiki/`: every link of `wiki/*.md` has its target, the published form of a page, the import graphs the build draws, how publishing treats the wikis' history, and the messages, refusal and pinned keys that [User-Security](User-Security.md) shows against the code. The PDFs need pandoc and LuaLaTeX and are not built here (`make wiki-build`). |
 
-### tests/unit/boot: 23 files, 357 tests
+### tests/unit/boot: 23 files, 358 tests
 
 Most build an app with `FAKE_RUNTIME` and run the boot code in-process through the `boot`
 fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fixups.py`,
@@ -689,7 +689,7 @@ fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fix
 | [`test_init_module.py`](../tests/unit/boot/test_init_module.py) | 3 | `pkg.__init__` imports as a module of its own (`from .__init__ import x`), as in a venv. |
 | [`test_links_names.py`](../tests/unit/boot/test_links_names.py) | 4 | `_fsbpyr_rt.links`: a command name with a directory part (`../../evil`, `a/b`, `..`, `.`) makes no link. |
 | [`test_mp.py`](../tests/unit/boot/test_mp.py) | 40 | `_fsbpyr_rt.mp`: multiprocessing's re-execution command lines (spawn, forkserver, resource tracker) accepted only from children of the same executable with the same ids, never evaluated. One test fails by design under user-mode QEMU. |
-| [`test_native.py`](../tests/unit/boot/test_native.py) | 35 | `_fsbpyr_rt.native`, with `dlopen` faked: cache directory precedence, extension specs, a closure extracted once, damaged or symlinked cached files, unwritable caches, unsafe app names, bundled libraries by file name; a refused cache directory ending the start with exit 70 while other extraction failures stay errors; the `--fs-package` note. |
+| [`test_native.py`](../tests/unit/boot/test_native.py) | 36 | `_fsbpyr_rt.native`, with `dlopen` faked: cache directory precedence, extension specs, a closure extracted once, damaged or symlinked cached files, unwritable caches, unsafe app names, bundled libraries by file name; a refused cache directory (`CacheRefused`) ending the start with exit 70 while other extraction failures stay errors, whatever their message; the `--fs-package` note. |
 | [`test_native_xz.py`](../tests/unit/boot/test_native_xz.py) | 1 | xz natives and their pieces extract without a thread of the runtime. |
 | [`test_pth_roots.py`](../tests/unit/boot/test_pth_roots.py) | 1 | Modules under a `.pth` directory import by their names relative to it. |
 | [`test_reexec.py`](../tests/unit/boot/test_reexec.py) | 45 | `_fsbpyr_rt.reexec`: `-m`, `-c` and payload scripts from the app's children run with interpreter-reexec, are refused without it, run the app with `false`; other callers get the app; `exe COMMAND -m word` runs that command. Without the setting, the app's own command scripts run as `python script` would, for its children only. |
