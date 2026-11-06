@@ -10,6 +10,24 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Fixed
+- **The installer writes only into files it made.** It staged the executable, the man page and
+  the completions under names known in advance (`.fsbpyr.<process id>.tmp`), so a link planted
+  under such a name by someone who could write the directory was written through. `mktemp` makes
+  them now; the files keep the modes they had.
+- **The builder and `inspect` read a file whose file system has no `SEEK_DATA`.** Any error of
+  `SEEK_DATA` but "no data after this offset" stopped them; now that range is read, as the
+  launcher always read it.
+- **The threat model describes the signed downloads.** `docs/security.md` still said that an EL8
+  stub download is checked against unsigned sums and that self update checks only the new file's
+  own digest; both check sums signed by keys fsbpyr pins.
+
+### Changed
+- **The installer can be checked before it runs.** The installing page shows how, with fsbpyr or
+  with system tools, from the release's signed `SHA256SUMS`.
+- The building page says to build only projects you trust, since their build code runs with your
+  rights, and the attestation example installs the pinned uv, checked by its SHA-256.
+
 ## [0.31.0] - 2026-11-04
 
 ### Changed

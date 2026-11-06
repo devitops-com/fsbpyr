@@ -34,7 +34,9 @@ of a project without a build system, of a directory and a single script are read
 script runs as `__main__`, and the smoke test only checks that it is there. (A
 `module:function` command that a project without a build system declares in
 `[project.scripts]` is imported like any console script.) Dependencies built from source
-distributions run their own build code in every case.
+distributions run their own build code in every case. That code runs with your rights, so build
+only projects you trust, or build an unknown one in an isolated, unprivileged environment such as
+a container or a throwaway account ([the project on the build host](Dev-Security.md#the-project-on-the-build-host)).
 
 ## What a project needs
 

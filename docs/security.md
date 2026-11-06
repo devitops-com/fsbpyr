@@ -48,7 +48,7 @@ targets are in [SECURITY.md](../SECURITY.md).
 | D14 (`FSBPYR_INSTALL_LINKS`) | A caller using the links feature to create files as another user: it is an environment variable only, with no `--install` argument, because under a `<binary> *` sudo rule an argument would let any caller create root-owned links anywhere, and sudo's `env_reset` (a default) drops `FSBPYR_*` unless `env_keep` or `SETENV` allows it. It makes symlinks to the executable's real path only (`name` and `name.py`), never replaces a file, directory or a link to anything else (reported, exit 1), refuses names that are not plain file names, and cannot run in a privileged start (D41 exits first). |
 | D24 (overlay) | A file planted beside the executable running as code: in an app of scripts, `__file__` is `dirname(executable)/<path>` so that config, state and logs deployed beside the binary are read by `open(dirname(__file__) + ...)`; the modules themselves always come from the payload (the path hook claims those directories, so a `.py` copy on the disk never shadows one). Data beside the executable is read as the app's input, so keep that directory writable by its owner only. |
 | D5 (UC3, UC6) | Project code on the build host, for a project with no build system, a directory of scripts and a single script: no build backend runs and no script command is imported (the smoke test only finds a script module). A `module:function` command that such a project declares in `[project.scripts]` is the exception: the smoke test imports its module (`_check_entrypoint`, `_resolve`), so its top-level code runs on the build host. In a git work tree the wheel is written by fsbpyr from the `*.py` files (and extensionless files with a python or `uv run` shebang) that `git ls-files` lists as tracked, so an untracked `secrets.py` is never in it; a link to a file outside the project directory is an error. A venv's `*.dist-info`, `Pipfile.lock`, `poetry.lock`, `pdm.lock`, requirements files and PEP 723 blocks are read as data (METADATA, RECORD, TOML, `ast`), never executed, and the unresolved-import check follows imports with `ast` alone. |
-| D46 | A stub built from other inputs (another Python, target or sysroot, other launcher sources) in an app: every stub embeds the runtime id it was linked as, and the build refuses a stub it is handed, the EL8 ones today (`--glibc 2.28`), whose id differs from the id it computes (`stubs._checked`). Any other build takes its runtime's stub, checked by the runtime's digests, or the running fsbpyr's own, and compares no ids. A download is checked against the published SHA-256 and kept whole or not at all. |
+| D46 | A stub built from other inputs (another Python, target or sysroot, other launcher sources) in an app: every stub embeds the runtime id it was linked as, and the build refuses a stub it is handed, the EL8 ones today (`--glibc 2.28`), whose id differs from the id it computes (`stubs._checked`). Any other build takes its runtime's stub, checked by the runtime's digests, or the running fsbpyr's own, and compares no ids. A download is checked against its companion release's `SHA256SUMS-glibc2.28`, whose signature by a key fsbpyr pins is checked first (`signed_sums`), and kept whole or not at all. |
 
 The service policies change no trust: `JOURNAL_STREAM` only line-buffers a stream that is the
 file it names (a malformed value or another file does nothing), and as process 1 an app turns
@@ -74,9 +74,11 @@ in the wiki); the launcher checks each file's digest before it is loaded.
   download comes from the companion release `el8-vX.Y.Z` and is checked against
   `SHA256SUMS-glibc2.28` of the same release (over HTTPS; `FSBPYR_RELEASE_DOWNLOADS` can point
   elsewhere, and a mirror must serve the stubs under `.../el8-vX.Y.Z/<asset>`, not under
-  `.../vX.Y.Z/`), which catches a damaged or swapped file but not a release whose assets and
-  sums were both replaced; the attestations of el8.yml (a run on the release's tag `vX.Y.Z`, never the default branch's context
-  executing the tag's code) catch that, and fsbpyr does not check them itself. Releases are
+  `.../vX.Y.Z/`), after that file's signature by a key fsbpyr pins (`signed_sums`). That catches
+  a damaged or swapped file and a release whose assets and sums were both replaced, since no
+  release key is on GitHub. The attestations of el8.yml (a run on the release's tag `vX.Y.Z`,
+  never the default branch's context executing the tag's code) are a check from outside, which
+  fsbpyr does not make itself. Releases are
   immutable, and the companion release is published whole (el8.yml leaves it as a draft, and
   `make release-sign` signs and publishes it), so its assets cannot be replaced after publication. A stub placed beside the fsbpyr executable, or
   already in the cache, is accepted on the runtime id it embeds (a hash of the launcher sources and the compile and link flags,
@@ -87,10 +89,11 @@ in the wiki); the launcher checks each file's digest before it is loaded.
   Whoever can write the directory of the fsbpyr executable or `downloads/` in the cache can put
   code into every EL8 app built there; D20 keeps the cache to the user, and a placed file
   should be checked against the sums first.
-- **Self update** verifies the new executable's digest (`inspect --verify`) and refuses one
-  whose glibc baseline is newer than the host's before replacing anything; that is a guard
-  against a broken install, not a trust check. Stubs placed beside the executable are not
-  touched. The update names those that are not the new release's published stubs (their
+- **Self update** checks the release's `SHA256SUMS` against the keys fsbpyr pins and the `.xz`
+  of its own asset against its line before unpacking it, then verifies the new executable's
+  digest, asset name and version (`selfupdate.update`). Its refusal of one whose glibc baseline
+  is newer than the host's is a guard against a broken install, not a trust check. Stubs placed
+  beside the executable are not touched. The update names those that are not the new release's published stubs (their
   SHA-256 is not in its companion's `SHA256SUMS-glibc2.28`), which a build refuses unless they
   carry the same runtime id (a build accepts a stub on its id, not its bytes); when it cannot
   read that file, it names all of them, as refused if the runtime id changed.

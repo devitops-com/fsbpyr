@@ -92,6 +92,28 @@ The shell the installer ran from does not see the change: the installer prints t
 line that puts the directory on its `PATH` (`source $HOME/.local/bin/env`). Until you run it or
 start a new shell, call fsbpyr by its path (`~/.local/bin/fsbpyr`).
 
+### Checking the installer before it runs
+
+`curl … | sh` runs the script as GitHub serves it: the script checks every download, but
+nothing checks the script. The release's signed `SHA256SUMS` lists `install.sh`, so it can be
+checked first. In an empty directory:
+
+```sh
+base=https://github.com/devitops-com/fsbpyr/releases/download/v@VERSION@
+for file in install.sh SHA256SUMS SHA256SUMS.sig; do curl -fLO "$base/$file"; done
+```
+
+With a fsbpyr you already checked, on this machine or another:
+
+```sh
+fsbpyr verify --project fsbpyr install.sh
+```
+
+Without one, follow [With system tools](User-Security.md#with-system-tools) in the same
+directory, with `tag=v@VERSION@ asset=install.sh exe=install.sh`: no fsbpyr takes part. Run
+`sh install.sh` (options after it, variables before `sh`) only when the check passes: `VERIFIED`,
+naming `install.sh`.
+
 ## Manually
 
 Set your Python, and the rest of the name follows from the machine:
