@@ -1098,6 +1098,35 @@ def test_make_passes_only_a_command_line_version_to_the_release_scripts(
     assert result.stdout.splitlines() == [f"bash tools/release/{script}{version}"]
 
 
+# What make runs for each target without and with a KEY that counts.
+KEY_COMMANDS = {
+    "release": ("bash tools/release/release.sh",
+                "FSBPYR_RELEASE_KEY_FILE='/k.key' bash tools/release/release.sh"),
+    "release-sign": ("bash tools/release/release-sign.sh ''",
+                     "bash tools/release/release-sign.sh '/k.key'"),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("target", KEY_COMMANDS)
+@pytest.mark.parametrize(
+    ("args", "env", "counts"),
+    [
+        ([], {}, False),
+        (["KEY=/k.key"], {}, True),
+        # An exported KEY (another tool's) is not the release key.
+        ([], {"KEY": "/k.key"}, False),
+    ],
+    ids=["plain", "command-line", "environment"],
+)
+def test_make_passes_only_a_command_line_key_to_the_release_scripts(
+    target: str, args: list[str], env: dict[str, str], counts: bool
+) -> None:
+    result = run_script(["make", "-n", target, *args], {"PATH": SYSTEM_PATH} | env, ROOT)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [KEY_COMMANDS[target][counts]]
+
+
 # --------------------------------------------------------------------------- release-notes.sh
 
 NOTES_CHANGELOG = """\

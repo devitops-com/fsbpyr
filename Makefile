@@ -272,7 +272,7 @@ release-assets: ## Only tag main's tested HEAD; CI builds and attests it and lea
 
 # Only the signature goes to GitHub, never KEY.
 release-sign: ## Only check the draft against your commit, sign it with KEY=PATH and publish it
-	@bash tools/release/release-sign.sh '$(KEY)'$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
+	@bash tools/release/release-sign.sh '$(if $(filter command line,$(origin KEY)),$(KEY))'$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
 
 release-audit: ## Compare GitHub with what this machine recorded: tags, releases, settings
 	@bash tools/release/audit.sh
