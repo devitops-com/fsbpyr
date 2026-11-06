@@ -615,7 +615,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,579 in 145 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,581 in 146 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -635,8 +635,8 @@ run with the release launcher only, those two portability tests also on the two 
 | `tests/unit/payload` | 11 | 424 |
 | `tests/unit/runtime` | 9 | 249 |
 | `tests/integration` | 17 | 815 |
-| `tests/e2e` | 40 | 1,087 |
-| All | 145 | 4,579 |
+| `tests/e2e` | 41 | 1,089 |
+| All | 146 | 4,581 |
 
 ### tests/unit (top level): 26 files, 895 tests
 
@@ -784,7 +784,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
 | [`test_worker_venvs.py`](../tests/integration/test_worker_venvs.py) | 10 | [`worker_venvs.py`](../tests/support/worker_venvs.py) on real pytest runs with three workers: each in an environment of its own, subprocesses included, removed after the run, and a worker in anything else stopping the run. |
 
-### tests/e2e: 40 files, 1,087 tests
+### tests/e2e: 41 files, 1,089 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -828,6 +828,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_stub_hardening.py`](../tests/e2e/test_stub_hardening.py) | 6 | The stub read with `readelf` and `objdump`: position independent, glibc libraries only, bound at load time, RELRO, non-executable stack, stack protector. |
 | [`test_tool_binary.py`](../tests/e2e/test_tool_binary.py) | 17 | A Python-less directory with a requirements file as one executable of the tools' console scripts (real pyflakes, pycodestyle and flake8, local distributions): links printing what the tools print under uv, no script payload, licences, freezes, `pylock.toml`, `--requirements`, `--entry`, gui scripts, meta-packages, the errors, a venv never read. |
 | [`test_unbuffered.py`](../tests/e2e/test_unbuffered.py) | 8 | `PYTHONUNBUFFERED` set and non-empty: a line printed to a pipe arrives at once and survives SIGTERM; `JOURNAL_STREAM` naming the stdout pipe makes it line-buffered; otherwise block-buffered. |
+| [`test_way_targets.py`](../tests/e2e/test_way_targets.py) | 2 | The cache root's way through `probes/way.c` (`readlinkat` wrapped) on symlink targets no local file system makes: one of `PATH_MAX` bytes, which may have been cut short, refused; one a byte shorter followed to its end. |
 
 ## Support modules
 
@@ -876,6 +877,7 @@ system call the test controls. Each probe's header comment lists its commands an
 | [`probes/sig.c`](../tests/probes/sig.c) | `sig.c`, `integrity.c`, `parallel.c` | `-DFSB_SIG_NO_PYTHON`, `--wrap=EVP_DigestVerify`, ASan, UBSan, LeakSanitizer | `test_signatures.py` |
 | [`probes/slots.c`](../tests/probes/slots.c) | `slots.c` | `--wrap=geteuid`, UBSan | `test_slots.py` |
 | [`probes/streams.c`](../tests/probes/streams.c) | `payload.c`, `integrity.c`, `parallel.c` | `-DFSB_STREAM_WINDOW` of 2 MiB, ASan, UBSan | `test_stream_windows.py` |
+| [`probes/way.c`](../tests/probes/way.c) | `way.c` | `--wrap=readlinkat`, ASan, UBSan | `test_way_targets.py` |
 | [`fuzz/sig_fuzz.c`](../tests/fuzz/sig_fuzz.c) | `sig.c`, `integrity.c`, `parallel.c` | `-DFSB_SIG_NO_PYTHON`, libFuzzer, ASan, UBSan | `test_fuzz.py` |
 | [`fuzz/payload_fuzz.c`](../tests/fuzz/payload_fuzz.c) | `payload.c`, `integrity.c`, `parallel.c`, `cache.c`, `way.c` | `-fsanitize=fuzzer,address,undefined`, `-DFSB_STREAM_WINDOW` of one digest leaf | `test_fuzz.py` |
 

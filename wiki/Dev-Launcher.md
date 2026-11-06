@@ -403,12 +403,15 @@ in Python as `way_problem` in `_fsbpyr_rt/gc.py`:
 - the walk ends at the root, or at the first part that does not exist yet; a `..` after a
   missing part is refused, as the kernel would.
 
-`fsb_way_check(root, where, size, error)` ([line 171][way.c#L171]) walks with `O_PATH`
+`fsb_way_check(root, where, size, error)` ([line 174][way.c#L174]) walks with `O_PATH`
 descriptors from `/` (a relative root from the working directory) and returns
 `FSB_WAY_TRUSTED`, `FSB_WAY_PARTIAL` (trusted up to a part that does not exist: check again once
 it does), `FSB_WAY_FOREIGN` (owned by another user), `FSB_WAY_EXPOSED` (writable by other users),
 `FSB_WAY_SYSTEM` (an `errno` in `*error`) or `FSB_WAY_MEMORY`; `where` gets the path at fault.
-Its buffers are on the heap, so it is thread-safe. `due.c` and `cache.c` call it.
+A symlink's target is read into a buffer of `PATH_MAX` (4096) bytes; one that fills it may have
+been cut short and is refused with `ENAMETOOLONG`: `symlink()` makes none so long, but a FUSE or
+NFS server may give one. The walk's buffers are on the heap, so it is thread-safe. `due.c` and
+`cache.c` call it.
 
 ### cache.c and cache.h
 
@@ -628,7 +631,7 @@ record accessors, lookups, path checks and blob decoding any bytes, and `sig_fuz
 [due.c]: ../src/fsbpyr/launcher/due.c
 [due.c#L196]: ../src/fsbpyr/launcher/due.c#L196
 [way.c]: ../src/fsbpyr/launcher/way.c
-[way.c#L171]: ../src/fsbpyr/launcher/way.c#L171
+[way.c#L174]: ../src/fsbpyr/launcher/way.c#L174
 [way.h]: ../src/fsbpyr/launcher/way.h
 [cache.c]: ../src/fsbpyr/launcher/cache.c
 [cache.c#L1028]: ../src/fsbpyr/launcher/cache.c#L1028
