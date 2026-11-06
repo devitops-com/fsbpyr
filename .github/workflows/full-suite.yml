@@ -343,9 +343,12 @@ jobs:
           as-tester $UV_ENV $UV_RUN coverage report \
             --include='src/fsbpyr/payload/*,src/fsbpyr/elf.py' --fail-under=90
 
-      # Informational: the launcher sources (copied by each session, so listed by their temporary
-      # paths) that the probes and the fuzz harness exercised. llvm-profdata and llvm-cov are
-      # LLVM 23's (/home/tester/llvm23, first on PATH), as is the clang that instrumented them.
+      # Informational: the launcher sources that the probes and the fuzz harness exercised, one
+      # row each (each session compiles a copy, named by the sources' place in the repository:
+      # tests/e2e/conftest.py), the tests' own sources (tests/probes, tests/fuzz) left out. The
+      # lines and branches run, per file, go to launcher-coverage.lcov, uploaded beside the
+      # report. llvm-profdata and llvm-cov are LLVM 23's (/home/tester/llvm23, first on PATH), as
+      # is the clang that instrumented them.
       - name: Launcher coverage (llvm-cov)
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -357,7 +360,10 @@ jobs:
             set -- bin/*
             first="$1"; shift
             objects=(); for b in "$@"; do objects+=(-object "$b"); done
-            llvm-cov report "$first" "${objects[@]}" -instr-profile=all.profdata' | tee /home/tester/launcher-coverage.txt
+            llvm-cov export -format=lcov "$first" "${objects[@]}" -instr-profile=all.profdata \
+              "-ignore-filename-regex=/tests/(probes|fuzz)/" > /home/tester/launcher-coverage.lcov
+            llvm-cov report "$first" "${objects[@]}" -instr-profile=all.profdata \
+              "-ignore-filename-regex=/tests/(probes|fuzz)/"' | tee /home/tester/launcher-coverage.txt
           { echo '### Launcher coverage (llvm-cov, informational)'; echo '```'
             cat /home/tester/launcher-coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
@@ -371,6 +377,7 @@ jobs:
             /home/tester/src/full.xml
             /home/tester/src/coverage.xml
             /home/tester/launcher-coverage.txt
+            /home/tester/launcher-coverage.lcov
           if-no-files-found: warn
 
   # The real-world corpus (tests/corpus, TST-3): its apps built and compared with their venvs,

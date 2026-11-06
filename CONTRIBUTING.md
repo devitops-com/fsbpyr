@@ -31,7 +31,8 @@ and the targets that build a runtime fetch, once and with `curl`, the LLVM relea
 the host's architecture that `tools/release/llvm23` pins (its version, then the SHA-256 of the
 x86-64 and of the aarch64 tarball), check its SHA-256, and unpack what linking needs, about
 600 MB, with `zstd` into `${XDG_CACHE_HOME:-~/.cache}/fsbpyr/toolchains`. With
-`FSBPYR_LLVM23=0` they use a clang and lld 23 or newer on `PATH` instead.
+`FSBPYR_LLVM23=0` they use a clang and lld 23 or newer on `PATH` instead, with `llvm-profdata`
+and `llvm-cov` beside that clang.
 
 **`make bootstrap`** (`tools/bootstrap.sh`) takes a checkout to an installed fsbpyr:
 
@@ -148,7 +149,8 @@ The tiers, from fastest to most complete:
   of keys for a quarter of that, 30 s at least; what each finds (`FSBPYR_FUZZ_CORPUS`, and the
   `-sig` directory beside it) is kept in the Actions cache. The launcher programs the tests build
   are instrumented for llvm-cov (`FSBPYR_LLVM_COV_DIR`), and the run's summary shows the
-  report; it is informational. A run took 37 to 40 minutes in October 2026, while each suite
+  report, one row per launcher source, and the job's reports artifact holds its per-line data
+  (`launcher-coverage.lcov`); it is informational. A run took 37 to 40 minutes in October 2026, while each suite
   job ran its tests in one process; the job's limit is 60 minutes. Runners of one label differ
   in disk (most have 85 GB free, some 12 GB): the suite and corpus jobs first remove software of
   the runner image they never use and stop at once unless 20 GiB beyond a tenth of the disk are
@@ -263,8 +265,10 @@ util-linux coreutils podman uidmap passt` installs all of them but uv and LLVM 2
 - `uv` at the version `tools/release/uv.version` names (not packaged), with the Pythons 3.12 to
   3.15 it runs the tests on: `uv python install 3.12 3.13 3.14 3.15` (the tests never let uv
   download one);
-- clang and lld 23 (not packaged): the `make` targets put LLVM 23 first on PATH; run directly,
-  put fsbpyr's own (`bash tools/bootstrap.sh --llvm23`) there;
+- clang and lld 23 (not packaged), with LLVM's `llvm-profdata` and `llvm-cov` in the same
+  directory (`test_launcher_coverage.py` reads its profiles with them; fsbpyr's LLVM 23 has
+  both): the `make` targets put LLVM 23 first on PATH; run directly, put fsbpyr's own
+  (`bash tools/bootstrap.sh --llvm23`) there;
 - `cc` (gcc), `readelf` and `objdump` (binutils), `llvm-objdump` (llvm-22, or LLVM 23's own);
 - `strace` (strace) and `groff` (groff-base);
 - `zstd` (zstd), `tar` (tar), `xz` (xz-utils), `curl` (curl), `wget` (wget) and `jq` (jq);

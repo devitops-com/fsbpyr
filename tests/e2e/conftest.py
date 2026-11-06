@@ -28,9 +28,12 @@ type BuildApp = Callable[[dict[str, str], str], Path]
 DOWNLOADS_VARIABLE = "FSBPYR_TEST_DOWNLOADS"
 # A directory named by FSBPYR_LLVM_COV_DIR (full-suite.yml sets one) makes LauncherBuild.compile
 # build with llvm-cov's instrumentation and keep each program there, for the launcher coverage
-# report; LLVM_PROFILE_FILE says where the runs write their profiles.
+# report; LLVM_PROFILE_FILE says where the runs write their profiles. The copy of the launcher
+# sources is named by their place in the repository, so that each is one file of the report,
+# whichever session's copy a program was built from.
 COVERAGE_VARIABLE = "FSBPYR_LLVM_COV_DIR"
 COVERAGE_FLAGS = ("-fprofile-instr-generate", "-fcoverage-mapping")
+LAUNCHER_DIRECTORY = ROOT / "src" / "fsbpyr" / "launcher"
 _download_status: dict[str, str] = {}  # file name -> "seeded" or "fetched", for the summary
 
 
@@ -173,8 +176,9 @@ class LauncherBuild:
         """``files``: test sources, and launcher sources by name ("integrity.c")."""
         inputs = [os.fspath(f if isinstance(f, Path) else self.sources / f) for f in files]
         coverage = os.environ.get(COVERAGE_VARIABLE)
+        instrument = (*COVERAGE_FLAGS, f"-fcoverage-prefix-map={self.sources}={LAUNCHER_DIRECTORY}")
         command = [os.fspath(self.clang), "-std=c11", "-D_GNU_SOURCE", "-g", "-O1", *flags,
-                   *(COVERAGE_FLAGS if coverage else ()),
+                   *(instrument if coverage else ()),
                    f"-I{self.sources}", "-o", os.fspath(out), *inputs,
                    *map(os.fspath, self.libs), "-lpthread", "-ldl"]  # fmt: skip
         result = subprocess.run(command, capture_output=True, text=True, check=False)
