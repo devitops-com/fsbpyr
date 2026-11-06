@@ -233,12 +233,14 @@ Invariants:
   directory, such as `torchvision.libs`) and every NATIVE_LIB of the distributions its files
   belong to (by their `dist`: plugins it opens from a directory, such as openmm's), and the
   package's modules get `__file__`/`__path__` there.
-- Every `code` blob is a zstd frame with the content-checksum flag set, or a member of a block
-  (itself such a frame). `marshal.loads` is not safe against corrupt input, so the bytes it gets
-  have passed a checksum. The checksum covers a block's content, not which slice of it a member
-  selects: like every table field, a member's position and size are not checksummed.
+- Every `code` blob is a zstd frame with the content-checksum flag set, zstd frames in pieces,
+  or a member of a block (itself such a frame). `marshal.loads` is not safe against corrupt
+  input, so the bytes it gets have passed a checksum. The checksum covers a block's content, not
+  which slice of it a member selects: like every table field, a member's position and size are
+  not checksummed.
   STARTUP code is decompressed once by the launcher into memory that it then hands to CPython's
-  frozen-module table.
+  frozen-module table, so it is one zstd frame or a member of a block, never in pieces, of 1 byte
+  to 16 MiB (`MAX_STARTUP_CODE`).
 
 ### FILES record (24 B), keyed by site-relative POSIX path
 
@@ -322,9 +324,10 @@ rules it leaves to the integrity digest, which only the writer's output passes, 
   mypyc's `81d243bd2c585b0f4821__mypyc` through `importlib.import_module`.
   Dist names are canonical (launcher: digest, but for the paths of the files it extracts).
 - The module kind invariants (including checksummed code: a zstd frame, zstd frames in pieces, or inside a block), the
-  STARTUP rule (the STARTUP section lists exactly the flagged modules) and the closure rules
-  hold (launcher: digest, but for the flag and code of the STARTUP modules and the count and
-  order of each closure's members).
+  STARTUP rule (the STARTUP section lists exactly the flagged modules, and their code is one
+  zstd frame or inside a block, of 1 byte to 16 MiB) and the closure rules hold (launcher:
+  digest, but for the flag and code of the STARTUP modules and the count and order of each
+  closure's members).
 - Every zstd frame a reader decompresses must have the content-checksum flag set, declare its
   content size, equal to `size`, and end where its stored bytes end.
 - On decompression, the output must be exactly `size` bytes, with no trailing data, and must

@@ -29,6 +29,7 @@ XZ_PIECE = 4 << 20  # libraries larger than this are xz in pieces of this much c
 ZSTD_PIECE = 8 << 20  # content larger than this is zstd in pieces of this much content (D39)
 MAX_MODE = 0o777
 MAX_BLOB_SIZE = 1 << 62  # far inside off_t; no limit of ours below what OSes hold (D38)
+MAX_STARTUP_CODE = 16 << 20  # main.c's: startup code is decompressed into memory at every start
 MAX_STRTAB_SIZE = 0xFFFFFFFF
 
 TRAILER_MAGIC = b"FSBPYR\x00T"

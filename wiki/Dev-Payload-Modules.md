@@ -244,10 +244,11 @@ Rules it enforces (`_validate`, before anything is written): the
 names, canonical distribution names, mode at most `0o777`, a digest on every file extracted at
 run time, xz only on native files and never on a source, FS_REQUIRED_ROOT only on a PACKAGE, the
 module kind invariants with checksummed code, where raw bytes to be packed into a block count,
-and the closure rules, with no duplicate member); besides: `generation_id` 32 bytes,
-`bytecode_magic` 4 bytes, `python_hexversion` within 32 bits, `app_name` a single path component
-(not empty, `.` or `..`, no `/` or NUL), unique keys, a known distribution for every file and
-module, and no path both a file and a directory.
+the STARTUP modules' code as the launcher takes it (`_check_startup_code`: one zstd frame or
+packed into a block, of 1 byte to 16 MiB), and the closure rules, with no duplicate member);
+besides: `generation_id` 32 bytes, `bytecode_magic` 4 bytes, `python_hexversion` within 32 bits,
+`app_name` a single path component (not empty, `.` or `..`, no `/` or NUL), unique keys, a known
+distribution for every file and module, and no path both a file and a directory.
 
 Imports: `fsbpyr.compat`, `fsbpyr.payload.format`, `fsbpyr.payload.spec` (all top).
 Imported by: `fsbpyr.assemble`, `fsbpyr.build`, `fsbpyr.runtime.registry`.
