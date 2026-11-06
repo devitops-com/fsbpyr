@@ -1631,7 +1631,7 @@ completions. `dispatch` and
 | `signed_sums(url, signature_url, tag)` | A sums file, once a pinned key's signature of it passes; `UnsignedRelease` otherwise. |
 | `release_files(missing, log)` | For `verify` of a file of fsbpyr with nothing beside it: the sums file and signature of the `vX.Y.Z` release it records, unchecked. |
 | `listed_digest(sums, name, tag)` | The SHA-256 a checked sums file lists for `name`. |
-| `fetch_checked(url, digest, target, limit)` | Downloads an `.xz` (256 MiB at most), checks its SHA-256 against `digest`, then unpacks it into `target` (at most `limit` bytes). |
+| `fetch_checked(url, digest, target, limit)` | Downloads an `.xz` (256 MiB at most), checks its SHA-256 against `digest`, then unpacks it into `target`, at most `limit` bytes when a limit is given: `runtime.stubs` gives 256 MiB, self update and `dispatch` none (each `.xz` has matched the digest of a signed sums file by then). |
 | `check_release_identity(info, asset)` | A new executable's release numbers, once its build_info's `release_asset` is `asset`. |
 | `check_glibc(baseline, host)` | Refuses an executable whose recorded `glibc` is newer than the host's (`os.confstr("CS_GNU_LIBC_VERSION")`, major and minor); a non-glibc host and a build that records none pass. |
 | `update(log, warn)` | The update; False when already up to date. |
