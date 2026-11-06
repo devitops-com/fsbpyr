@@ -518,7 +518,9 @@ payload's data for it is corrupt), the constant `NONE` (`0xFFFFFFFF`), and the p
 A name or path that cannot be encoded as UTF-8 cannot be in the payload: lookups return `None`,
 an empty list or `False`. A record that fails its checks raises `PayloadError`
 (`corrupt executable payload: <what> <index>`). [`stubs/_fsbpyr.pyi`][pyi] declares the types for
-mypy (`mypy_path = "stubs"` in `pyproject.toml`).
+mypy (`mypy_path = "stubs"` in `pyproject.toml`), the four private functions included, so that
+mypy checks `signing.crypto()`'s `Crypto` protocol against them; `tests/e2e/test_runtime_app.py`
+compares its names and the keys of `info()` and `stats()` with the module's.
 
 **`info`**: `executable` is the path from step 1, `execfn` the path `execve` was given as the
 kernel passed it (`getauxval(AT_EXECFN)`, possibly relative) or `None`, both decoded as

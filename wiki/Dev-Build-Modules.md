@@ -1686,7 +1686,7 @@ nor check. The design is on [Security](Dev-Security.md#signatures) and in
 
 | Function | What it does |
 |---|---|
-| `crypto()` | The launcher's functions; `SigningError` from source. |
+| `crypto()` | The launcher's functions, which mypy checks against `Crypto` through `stubs/_fsbpyr.pyi`; `SigningError` from source. |
 | `available()` | Whether they exist. |
 | `pinned_keys()` | The `.pub` files of `src/fsbpyr/release-keys/`. |
 | `fingerprint(pub)` | `SHA256:<hex>` of a public key file. |
