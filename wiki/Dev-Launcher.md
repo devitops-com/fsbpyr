@@ -560,6 +560,59 @@ names it) to descriptor 2 and calls `os._exit(70)`, with no traceback; other `Ca
 `OSError`s stay errors the app sees
 ([Native code and the cache](Dev-Boot-Modules.md#native-code-and-the-cache)).
 
+### sig.c and sig.h
+
+[`sig.c`][sig.c] is the crypto of [Signatures](Dev-Security.md#signatures)
+([`docs/signing.md`](../docs/signing.md) sections 2 and 4): a signature is an Ed25519 and an
+ML-DSA-65 signature of a short statement, made and checked with the OpenSSL the runtime links for
+`_ssl` and `_hashlib`. Python reads the files, asks for the passphrase and prints; C does the
+rest. [`sig.h`][sig.h] declares:
+
+- `fsb_sig_key_new(passphrase, key, pub)`: a new pair, the `.key` (two `ENCRYPTED PRIVATE KEY`
+  blocks, Ed25519 then ML-DSA-65, each PKCS#8 encrypted as `release-signing.sh`'s
+  `openssl pkcs8 -topk8 -v2 aes-256-cbc -v2prf hmacWithSHA256 -iter 600000` does, with a random
+  salt) and the `.pub` (the two public keys as OpenSSL writes them).
+- `fsb_sig_sign(key, passphrase, statement, signature, pub)`: the signature, `FSB_SIG_SIZE`
+  (3,373) bytes, 64 of Ed25519 then 3,309 of ML-DSA-65, and the key file's `.pub`. The signature
+  is checked with the file's own keys before it is given, so a damaged key never yields one.
+- `fsb_sig_verify(pub, statement, signature)`: 1 if both halves are good for the two keys of the
+  `.pub`, 0 if not (for a signature of any other size too), -1 if `pub` is not a `.pub`, which is
+  checked first. Only OpenSSL's 1 passes a half; its 0 and its errors do not.
+- `fsb_sig_half(half, pem, message, signature)`: the check of one half (0 Ed25519, 1 ML-DSA-65)
+  against one public key, for the independent test vectors, whose keys come one at a time.
+
+Each status but `FSB_SIG_OK` says what is wrong: `FSB_SIG_BAD_KEY_FILE` (not two encrypted
+blocks with nothing around them, or a block labelled encrypted that never asked for the
+passphrase), `FSB_SIG_BAD_PASSPHRASE` (empty, over 1,024 bytes, `FSB_SIG_PASSPHRASE_MAX`, or a
+block it does not open), `FSB_SIG_BAD_KEY_TYPE` (opened, but not Ed25519, then ML-DSA-65) and
+`FSB_SIG_FAILED` (OpenSSL failed, or the new signature does not verify). Files are read only as
+they are written, at most `FSB_SIG_PEM_MAX` (16 KiB) each: `key_blocks` takes a `.key`'s two
+blocks with nothing before or between them and only LFs after them (the last one may be
+missing), where OpenSSL's reader would take text around a block, a block that is not encrypted
+and anything after it; `public_keys` reads each key of a `.pub` and writes it again, and the
+file must be those bytes exactly. The passphrase reaches OpenSSL through a callback
+(`give_passphrase`), never as `NULL`, without which OpenSSL would ask on the terminal; a `.pub`'s
+reader gets one that refuses (`no_passphrase`).
+
+`fsb_sig_key_new`, `fsb_sig_sign`, `fsb_sig_verify` and `fsb_sig_half` each make a library
+context of their own (`OSSL_LIB_CTX_new`), load no configuration into it and free it, so
+`openssl.cnf` and the default context change no result; each leaves the thread's error queue as
+it found it (`ERR_set_mark`, `ERR_pop_to_mark`), since CPython's `_ssl` reads that queue; and each
+takes its results from return values alone, so no OpenSSL text reaches Python. OpenSSL's
+functions are declared in the file, as PBS ships no headers; `tests/e2e/test_signatures.py`
+compiles it with Debian's headers included as well, so a declaration that does not match fails.
+
+`fsb_sig_methods`, which `module.c` adds to `_fsbpyr`, are the private functions `_sha256(file)`
+(the SHA-256 of bytes, or of a file descriptor's file read without the GIL: `fsb_sha256_bytes`
+and `fsb_sha256_file` of [`integrity.c`](#integrityc-and-integrityh); `OSError` if it cannot be
+read), `_key_new(passphrase)` (`(key, pub)`), `_sign(key, passphrase, statement)`
+(`(signature, pub)`) and `_verify(pub, statement, signature)` (`True` or `False`). A failed status
+raises `ValueError`: `not a key file`, `wrong passphrase?`, `it holds other keys than Ed25519,
+then ML-DSA-65` or `the signature could not be made`, and `not a public key file` from `_verify`.
+No key material is kept after a call; the new `.key`'s buffer is cleared (`OPENSSL_cleanse`)
+before it is freed. Built with `-DFSB_SIG_NO_PYTHON`, as `tests/probes/sig.c` and
+`tests/fuzz/sig_fuzz.c` build it, the file has no Python part.
+
 ### glibc.c
 
 [`glibc.c`][glibc.c] keeps the default stub within glibc 2.34 although it links against Debian
@@ -654,6 +707,7 @@ record accessors, lookups, path checks and blob decoding any bytes, and `sig_fuz
 [module.c#L510]: ../src/fsbpyr/launcher/module.c#L510
 [module.c#L821]: ../src/fsbpyr/launcher/module.c#L821
 [sig.c]: ../src/fsbpyr/launcher/sig.c
+[sig.h]: ../src/fsbpyr/launcher/sig.h
 [glibc.c]: ../src/fsbpyr/launcher/glibc.c
 [format.h]: ../src/fsbpyr/launcher/format.h
 [launcher.h]: ../src/fsbpyr/launcher/launcher.h
