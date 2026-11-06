@@ -180,8 +180,9 @@ rule of `loose._module_stem`).
 ## Uncaught exceptions
 
 The boot module's `sys.excepthook` hides the launcher's and its own frames at the top of the
-traceback. For an `OSError` in the exception's chain on a path below the executable it adds a
-note (D24; [Compatibility](Dev-Compatibility.md)):
+traceback. For an `OSError` in the exception's chain, as the traceback prints it (`raise ...
+from None` ends it), on a path below the executable it adds a note (D24;
+[Compatibility](Dev-Compatibility.md)):
 
 - below a regular package, naming the outermost one on the path: `fsbpyr: <path> is inside the
   executable; <package> reads files next to its __file__: rebuild with --fs-package <package>`;
@@ -199,11 +200,12 @@ directory the scripts root shows next to the executable gets `fsbpyr: <path> is 
 files a script reads next to its __file__ are read next to the executable, from <directory>/:
 deploy it there`.
 
-On Python 3.15 and later, for a `ModuleNotFoundError` of a module outside the standard library,
-the hook drops CPython's hint "did you forget to enable your virtual environment?" (it prints the
-traceback with `sys.flags.no_site` reading 0) and adds `fsbpyr: <name> is not in the executable:
-add it to the project's dependencies and rebuild`. None of this costs anything until an exception
-goes uncaught, nor happens when the app catches it or has replaced `sys.excepthook`.
+On Python 3.15 and later, for a `ModuleNotFoundError` in that chain of a module outside the
+standard library, the hook drops CPython's hint "did you forget to enable your virtual
+environment?" (it prints the traceback with `sys.flags.no_site` reading 0) and adds `fsbpyr:
+<name> is not in the executable: add it to the project's dependencies and rebuild`. None of
+this costs anything until an exception goes uncaught, nor happens when the app catches it or has
+replaced `sys.excepthook`.
 
 ## Native code and the cache
 

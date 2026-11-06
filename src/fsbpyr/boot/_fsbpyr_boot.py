@@ -523,6 +523,14 @@ class _FlagsWithSite:
         return 0 if name == "no_site" else getattr(self._flags, name)
 
 
+def _chained(exc: BaseException) -> BaseException | None:
+    """The exception after ``exc`` in its chain, as a traceback prints it: the cause, else the
+    context unless ``raise ... from None`` suppressed it."""
+    if exc.__cause__ is not None:
+        return exc.__cause__
+    return None if exc.__suppress_context__ else exc.__context__
+
+
 def _missing_module(exc: BaseException | None) -> str | None:
     """The name of a ModuleNotFoundError in the chain of ``exc`` that is not a standard library
     module (3.15 words those itself), or None. Costs nothing until an exception goes uncaught."""
@@ -532,7 +540,7 @@ def _missing_module(exc: BaseException | None) -> str | None:
         name = exc.name if isinstance(exc, ModuleNotFoundError) else None
         if name is not None and name.partition(".")[0] not in sys.stdlib_module_names:
             return name
-        exc = exc.__cause__ or exc.__context__
+        exc = _chained(exc)
     return None
 
 
@@ -559,7 +567,7 @@ def _inside_executable_note(exc: BaseException | None) -> str | None:
             and _overlay_finder(filename.rpartition("/")[0]) is not None
         ):
             return _deploy_note(filename)
-        exc = exc.__cause__ or exc.__context__
+        exc = _chained(exc)
     return None
 
 
