@@ -25,7 +25,7 @@ executable can build a runtime from its own payload.
 
 ![The launcher's startup: thirteen steps from opening /proc/self/exe to Py_RunMain, each with its failure exit](images/launcher-startup.svg)
 
-`main()` in [`main.c`][main.c#L129] runs these steps in order; steps 1 to 4 are
+`main()` in [`main.c`][main.c#L131] runs these steps in order; steps 1 to 4 are
 `fsb_payload_open` in [`payload.c`][payload.c].
 
 1. **Locate itself.** It reads the link `/proc/self/exe` for its path, opens `/proc/self/exe`
@@ -205,7 +205,9 @@ Arrows follow the `#include` lines and `fsb_*` calls; `payload.c/.h` is a file a
 
 [`main.c`][main.c]: `main()` runs the startup sequence; `fatal(what)` prints
 `fsbpyr: cannot start <path>: <what>` and exits 70 (`EXIT_CORRUPT`, `EX_SOFTWARE`);
-`check_versions()` is step 6; `startup_table()` and `startup_code()` are step 9 (the table
+`check_versions()` is step 6; `startup_table()` and `startup_code()` are step 9 (a module whose
+code cannot be read is `out of memory` when `fsb_read_blob` failed with `ENOMEM`, else
+`corrupt startup module`; the table
 `calloc`ed with a zeroed end entry, names pointing into the mapped string table, code into
 `malloc`ed memory, `is_package` set for PACKAGE modules; limits `MAX_STARTUP_MODULES` and
 `MAX_STARTUP_CODE`); `pin_prefixes()` sets the five prefixes to the executable's directory (`/`
@@ -252,7 +254,12 @@ records up; nothing is scanned.
 | 4, 5, pieces | piece *i* is blob `offset + i`, of the pieces' codec (3 or 1) and the expected size, decoded to its place in parallel through `fsb_parallel` (one item per piece, up to 8 threads) |
 
 A blob larger than the stream window (64 MiB), or a raw one of 1 MiB or more read from a file,
-goes through a stream. On failure `errno` is 0 for corrupt data, `ENOMEM`, or the read error.
+goes through a stream. On failure `errno` is 0 for corrupt data, `ENOMEM` when memory ran out, or
+the read error. The decoders say which: a decoder, zstd context or block slot that cannot be
+allocated, zstd's `memory_allocation` error and liblzma's `LZMA_MEM_ERROR` are out of memory,
+every other failure is corrupt data. Pieces decoded on helper threads, whose `errno` never reaches the
+caller, record a failure in their job: corrupt if any piece is, else out of memory if any piece
+was.
 
 **Decoders.** A `struct fsb_decoder` holds a zstd context, made on first use, and 1 MiB block
 slots reused least recently used first, so a block a package's modules share is decompressed
@@ -267,7 +274,8 @@ but the last whole 1 MiB leaves, to be hashed as they come. A zstd frame is chec
 checksum included, before the stream ends, and a seek backwards restarts it; xz and block blobs are
 decoded whole, pieces a window at a time in parallel, a large raw blob read with `pread` from
 the stream's own descriptor, a window's leaves on up to 8 threads (`fsb_parallel`, 4 a thread). `fsb_stream_next` returns `FSB_STREAM_DATA`, `_END`, `_CORRUPT`,
-`_MEMORY` or `_SYSTEM`; after a failure every later call fails the same way.
+`_MEMORY` (the decoders' failures as above, and a frame's window zstd cannot allocate) or
+`_SYSTEM`; after a failure every later call fails the same way.
 
 **Raw blobs and holes.** The writer leaves whole leaves of zeros of a raw blob unwritten, so one
 of 1 MiB or more may hold holes. It is read from the file, never through the mapping, where a
@@ -279,7 +287,8 @@ read, since reading a hole fills page-cache pages with zeros: the buffer gets ze
 `fsb_hole_bytes` counts them.
 
 **Memory.** Pages read through the mapping count as resident though they are page cache, so every
-256 MiB read through it the data area's pages are dropped (`madvise(MADV_DONTNEED)`).
+256 MiB read through it the data area's pages are dropped (`madvise(MADV_DONTNEED)`); a failed
+`madvise` (it fails in an app that locked its memory) leaves `errno` as the read had it.
 `fsb_stored_bytes`, `fsb_decompressed_bytes` and `fsb_hole_bytes`, for `_fsbpyr.stats()`, count
 what was read, decompressed and found in holes.
 
@@ -619,7 +628,7 @@ record accessors, lookups, path checks and blob decoding any bytes, and `sig_fuz
 [dir]: ../src/fsbpyr/launcher
 [vendor]: ../src/fsbpyr/launcher/vendor/zstd
 [main.c]: ../src/fsbpyr/launcher/main.c
-[main.c#L129]: ../src/fsbpyr/launcher/main.c#L129
+[main.c#L131]: ../src/fsbpyr/launcher/main.c#L131
 [payload.c]: ../src/fsbpyr/launcher/payload.c
 [payload.c#L108]: ../src/fsbpyr/launcher/payload.c#L108
 [payload.h]: ../src/fsbpyr/launcher/payload.h

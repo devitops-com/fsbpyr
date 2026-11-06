@@ -74,8 +74,9 @@ void fsb_decoder_free(struct fsb_decoder *decoder);
  * (zstd checksum verified; xz bounded to exactly one stream of ``size`` bytes; pieces decoded in
  * parallel), or sliced out of its block, which the decoder decompresses once and keeps since a
  * package's modules share blocks; a blob larger than a stream's window is streamed into ``dst``.
- * False on any corruption (errno 0), or if a stream could not read the executable (its errno)
- * or had no memory (ENOMEM). xz and pieces touch only the atomic counters (D33). */
+ * False on any corruption (errno 0), for want of memory (ENOMEM, a piece's decoder on another
+ * thread too), or if a stream could not read the executable (its errno). xz and pieces touch
+ * only the atomic counters (D33). */
 bool fsb_read_blob(const struct fsb_payload *payload, struct fsb_decoder *decoder,
                    const struct fsb_blob *b, void *dst);
 
