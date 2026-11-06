@@ -296,6 +296,9 @@ $ echo $?
   script's old file name works.
 - Only the exact name counts as the first argument: `multi /path/to/multi-beta` is not a
   command.
+- A command named like the executable (a project whose main script has its name) gets no link:
+  the executable is that command, whatever its first argument, and the build says to start the
+  others through their links (`start multi as multi, the others through their links`).
 - A link replaces a symlink, and the executable an earlier build of the same project wrote there
   for that one command (an fsbpyr executable of that name whose build information names the
   project), so a project that goes from one command to several replaces its own earlier output.

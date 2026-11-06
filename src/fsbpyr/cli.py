@@ -256,8 +256,8 @@ def build_command(  # noqa: PLR0913  click passes every option by name
              else f"entry {result.entrypoint}")
     print(f"fsbpyr: built {result.output} ({result.size / 1e6:.1f} MB, {entry}{glibc})")
     if result.commands:
-        print(f"fsbpyr: commands: {', '.join(result.commands)}; start one through its link, "
-              f"or as {result.output.name} COMMAND")  # fmt: skip
+        print(f"fsbpyr: commands: {', '.join(result.commands)}; "
+              f"{_commands_hint(result.output.name, result.commands)}")  # fmt: skip
     for link in result.links:
         print(f"fsbpyr: linked {link} -> {link.readlink()}")
     if result.target_needs:
@@ -269,6 +269,14 @@ def build_command(  # noqa: PLR0913  click passes every option by name
             print(f"fsbpyr: {line}")
     _sign_output(result.output, signing)
     return 0
+
+
+def _commands_hint(own: str, commands: Sequence[str]) -> str:
+    """How to start the commands: ``own COMMAND`` starts the command named ``own``, if there is
+    one, whatever its first argument."""
+    if own in commands:
+        return f"start {own} as {own}, the others through their links"
+    return f"start one through its link, or as {own} COMMAND"
 
 
 def _sign_output(output: Path, request: "BuildSigning") -> None:
