@@ -24,8 +24,8 @@ name: Full suite
 # GitHub applies it to a tag pushed on that commit too, and release.yml would not run. Also
 # weekly, with a longer fuzzing run (below), and on request; no nightly run: main changes by
 # merges only, so one would test the same commit night after night (owner, 2026-10-21). Pull
-# requests start nothing: a branch is tested locally before its pull request. The fuzz corpus
-# is kept in actions/cache (release.yml stays cache-free).
+# requests start nothing: a branch is tested locally before its pull request. The fuzz corpora
+# are kept in actions/cache (release.yml stays cache-free).
 # One fsbpyr per Python version and per target (Phase 9): every job but the EL8 ones (below) runs
 # once per (target, Python) entry, the development environment on that Python and that variant's
 # executable (dist/fsbpyr for the default version, the one .python-version pins; dist/fsbpyr-3.X
@@ -137,7 +137,8 @@ jobs:
           cp -a "$GITHUB_WORKSPACE" /home/tester/src
           # Inside a container: no systemd for cgroups or the event log, and an overlay
           # filesystem that podman's own overlay storage cannot stack on.
-          mkdir -p /home/tester/.config/containers /home/tester/run /home/tester/fuzz-corpus
+          mkdir -p /home/tester/.config/containers /home/tester/run /home/tester/fuzz-corpus \
+            /home/tester/fuzz-corpus-sig
           printf '[storage]\ndriver = "vfs"\n' > /home/tester/.config/containers/storage.conf
           printf '[engine]\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\n' \
             > /home/tester/.config/containers/containers.conf
@@ -166,7 +167,9 @@ jobs:
 
       # 600 s when the launcher or the fuzz harness changed since the last tag, so that the run
       # a release is made from fuzzes for 600 s whenever the launcher changed since the
-      # previous release; 600 s on the weekly schedule; else the test's 30 s default.
+      # previous release; 600 s on the weekly schedule; else the test's 30 s default. The readers
+      # of keys (tests/fuzz/sig_fuzz.c) explore for a quarter of it, 30 s at least
+      # (tests/e2e/test_fuzz.py): the suite waits for the worker that fuzzes.
       - name: Choose the fuzzing time
         env:
           SCHEDULE: ${{ github.event.schedule }}
@@ -191,11 +194,22 @@ jobs:
           key: fuzz-corpus-${{ matrix.target }}-${{ matrix.python }}-${{ github.run_id }}
           restore-keys: fuzz-corpus-${{ matrix.target }}-${{ matrix.python }}-
 
+      # The same for the readers of keys (test_fuzz.py): the directory beside the payload corpus
+      # whose name ends in -sig, in a cache of its own. Not inside the payload corpus: libFuzzer
+      # reads a corpus with its subdirectories.
+      - name: Restore the fuzz corpus of the readers of keys
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /home/tester/fuzz-corpus-sig
+          key: fuzz-corpus-sig-${{ matrix.target }}-${{ matrix.python }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-sig-${{ matrix.target }}-${{ matrix.python }}-
+
       - name: Show the corpus
         run: |
           echo "restored from: ${{ steps.corpus.outputs.cache-matched-key || 'nothing (empty corpus)' }}"
           echo "corpus files:  $(find /home/tester/fuzz-corpus -type f | wc -l)"
-          chown -R tester: /home/tester/fuzz-corpus
+          echo "sig corpus files: $(find /home/tester/fuzz-corpus-sig -type f | wc -l)"
+          chown -R tester: /home/tester/fuzz-corpus /home/tester/fuzz-corpus-sig
 
       # The default version (the Python of .python-version) is no variant: `make bootstrap`,
       # dist/fsbpyr, installed under ~/.local. Another is a variant: `make bootstrap PYTHON=3.X`

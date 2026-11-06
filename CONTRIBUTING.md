@@ -144,8 +144,9 @@ The tiers, from fastest to most complete:
   every tool and setting the tests need present (nothing skips), and `make release` and the
   draft job require a green run, aarch64 jobs included, for the commit a release is made
   from. The fuzzer runs for 600 s (`FSBPYR_FUZZ_SECONDS`) when `src/fsbpyr/launcher` or
-  `tests/fuzz` changed since the last tag and on the weekly run, else for 30 s; the corpus it finds
-  (`FSBPYR_FUZZ_CORPUS`) is kept in the Actions cache. The launcher programs the tests build
+  `tests/fuzz` changed since the last tag and on the weekly run, else for 30 s, and the readers
+  of keys for a quarter of that, 30 s at least; what each finds (`FSBPYR_FUZZ_CORPUS`, and the
+  `-sig` directory beside it) is kept in the Actions cache. The launcher programs the tests build
   are instrumented for llvm-cov (`FSBPYR_LLVM_COV_DIR`), and the run's summary shows the
   report; it is informational. A run took 37 to 40 minutes in October 2026, while each suite
   job ran its tests in one process; the job's limit is 60 minutes. Runners of one label differ
