@@ -1446,9 +1446,14 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
     default = (ROOT / ".python-version").read_text(encoding="utf-8").strip().rpartition(".")[0]
     assert default in supported  # 3.14 stays the default while 3.15 is new (owner, 2026-10-23)
     listed = ", ".join(f'"{version}"' for version in supported)
-    for name in ("build.yml", "release.yml", "full-suite.yml"):
-        workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
-        assert f"python: [{listed}]" in workflow, name
+    # every matrix's list, each on one line: the corpus job's as much as the suite's
+    lists: dict[str, list[str]] = {}
+    for path in (ROOT / ".github/workflows").glob("*.yml"):
+        workflow = path.read_text(encoding="utf-8")
+        lists[path.name] = re.findall(r"python: \[([^\]\n]*)\]", workflow)
+        assert len(lists[path.name]) == workflow.count("python: ["), path.name
+        assert set(lists[path.name]) <= {listed}, path.name
+    assert all(lists[name] for name in ("build.yml", "release.yml", "full-suite.yml", "el8.yml"))
     suite = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
     # the other runtime: test_dispatch's OTHER, the newest supported Python but the entry's own
     assert f"other={supported[-1]}\n" in suite
@@ -1778,8 +1783,11 @@ MATRIX_JOBS = [
 
 
 def workflow_jobs(name: str) -> dict[str, str]:
+    """Each job's text by its name, as test_el8_workflow.py reads them: after `jobs:`, so that
+    `on:`'s keys are none, and hyphens included, so that vm-smoke is not in portability's."""
     workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
-    return dict(re.findall(r"^  ([a-z]+):\n(.*?)(?=^  [a-z]+:\n|\Z)", workflow, re.M | re.S))
+    return dict(re.findall(r"^  ([a-z][a-z0-9-]*):\n(.*?)(?=^  [a-z][a-z0-9-]*:\n|\Z)",
+                           workflow.partition("\njobs:\n")[2], re.M | re.S))  # fmt: skip
 
 
 @pytest.mark.parametrize(("name", "job"), MATRIX_JOBS)
