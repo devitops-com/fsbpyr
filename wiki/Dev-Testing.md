@@ -615,7 +615,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,590 in 147 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,680 in 148 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -629,38 +629,38 @@ run with the release launcher only, those two portability tests also on the two 
 
 | Layer | Files | Tests |
 |---|---|---|
-| `tests/unit` (top level) | 26 | 895 |
-| `tests/unit/boot` | 23 | 358 |
-| `tests/unit/builder` | 19 | 752 |
-| `tests/unit/payload` | 11 | 424 |
-| `tests/unit/runtime` | 9 | 249 |
-| `tests/integration` | 17 | 815 |
-| `tests/e2e` | 42 | 1,097 |
-| All | 147 | 4,590 |
+| `tests/unit` (top level) | 26 | 912 |
+| `tests/unit/boot` | 23 | 361 |
+| `tests/unit/builder` | 19 | 785 |
+| `tests/unit/payload` | 11 | 437 |
+| `tests/unit/runtime` | 9 | 250 |
+| `tests/integration` | 17 | 831 |
+| `tests/e2e` | 43 | 1,104 |
+| All | 148 | 4,680 |
 
-### tests/unit (top level): 26 files, 895 tests
+### tests/unit (top level): 26 files, 912 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
 | [`test_bytecode.py`](../tests/unit/test_bytecode.py) | 29 | `fsbpyr.bytecode`'s canonical marshal of `compile()` output: round trips, idempotence, no dependence on reference counts or interned strings, sorted frozensets, equal constants merged, code objects never; malformed, recursive and too deep streams refused. |
-| [`test_cli.py`](../tests/unit/test_cli.py) | 53 | The CLI in-process: version, help, SIGTERM like SIGINT, which commands collect the cache, `runtime list` with each runtime's glibc, error output (tracebacks only for unexpected exceptions; without a usable home one line and exit 1), Pythons outside 3.12 to 3.15 refused, `--glibc` over the project's `glibc`, the Python from the lock source installed (two tests marked `version_rule`), the output path as given, `1 command`. |
+| [`test_cli.py`](../tests/unit/test_cli.py) | 56 | The CLI in-process: version, help, SIGTERM like SIGINT, which commands collect the cache, `runtime list` with each runtime's glibc, error output (tracebacks only for unexpected exceptions; without a usable home one line and exit 1), Pythons outside 3.12 to 3.15 refused, `--glibc` over the project's `glibc`, the Python from the lock source installed (two tests marked `version_rule`), the output path as given, `1 command`. |
 | [`test_cli_docs.py`](../tests/unit/test_cli_docs.py) | 35 | One source for help, completions and man page: bash completion, the man page's sections, options, keys, variables, exit statuses and examples (checked with groff); and docs against code: the README's quickstart, `CONTRIBUTING.md`'s release verification naming no version, `docs/compatibility.md`'s tables, quoted messages, `src/` paths in `docs/*.md`, `docs/format.md`'s version. |
 | [`test_compat.py`](../tests/unit/test_compat.py) | 3 | `fsbpyr.compat`: every module of the package imports, the zstd module, the usable core count. |
 | [`test_contain.py`](../tests/unit/test_contain.py) | 5 | `tests/support/contain.py` ([Containment](#containment-of-app-runs)) with commands that stop by themselves: a normal run, and a detached survivor, a pipe-holding descendant, a timeout and a self-restarting command killed and failing. |
 | [`test_corpus_locks.py`](../tests/unit/test_corpus_locks.py) | 75 | Each corpus app's lock against `no-wheels.txt` ([The corpus](#wheels-sdists-and-known-failures)), plus `locks.usable` and `locks.installed`. |
-| [`test_dispatch.py`](../tests/unit/test_dispatch.py) | 29 | `fsbpyr.dispatch`: a build for another Python runs that Python's variant of the same release, fetched from `FakeReleases` (`subprocess.run` recorded): caching, offline use, verification, truncated downloads, a too-new glibc, developer builds, names the collector keeps, `--glibc` passed on, and the variant told where the handing fsbpyr is. Marked `version_rule`. |
+| [`test_dispatch.py`](../tests/unit/test_dispatch.py) | 30 | `fsbpyr.dispatch`: a build for another Python runs that Python's variant of the same release, fetched from `FakeReleases` (`subprocess.run` recorded): caching, offline use, verification, truncated downloads, a too-new glibc, developer builds, names the collector keeps, `--glibc` passed on, and the variant told where the handing fsbpyr is. Marked `version_rule`. |
 | [`test_downloads.py`](../tests/unit/test_downloads.py) | 7 | `tests/support/downloads.py`: seeding from kept files, files not matching their pin, keeping a session's downloads, pruning only same-baseline runtimes, a kept PBS distribution. |
 | [`test_el8_stub_tool.py`](../tests/unit/test_el8_stub_tool.py) | 4 | `tools/release/el8-stub.py` on synthetic ELF stubs: one needing at most glibc 2.28 with the expected runtime id written under its asset name with its SHA-256; one needing `GLIBC_2.34` or carrying another runtime id exits 1; a missing runtime names `fsbpyr runtime build --python 3.14 --glibc 2.28`; a bad command line exits 2. |
 | [`test_elf_mutation.py`](../tests/unit/test_elf_mutation.py) | 1 | Hypothesis (1,000 examples): mutated ELF bytes are read by `fsbpyr.elf` or raise `ElfError`, nothing else. |
 | [`test_inspect.py`](../tests/unit/test_inspect.py) | 54 | `fsbpyr inspect` on `FAKE_RUNTIME` executables: text and JSON, columns, `--verify`, licences, files, lock and settings lines, older formats, damaged records, a glibc 2.28 app's `baseline` and `glibc_baseline`, file text that cannot drive the terminal. |
 | [`test_no_skips.py`](../tests/unit/test_no_skips.py) | 2 | The `ast` scan of [A skip fails the run](#a-skip-fails-the-run), and that it finds each use. |
-| [`test_poetry1.py`](../tests/unit/test_poetry1.py) | 16 | `fsbpyr.poetry1`: a Poetry 1 `pyproject.toml` without `[project]` read as one: constraints as PEP 440, `\|\|` and git dependencies refused, optional dependencies as extras, markers, which projects are unpackaged. |
+| [`test_poetry1.py`](../tests/unit/test_poetry1.py) | 26 | `fsbpyr.poetry1`: a Poetry 1 `pyproject.toml` without `[project]` read as one: constraints as PEP 440, `\|\|` and git dependencies refused, optional dependencies as extras, markers, which projects are unpackaged. |
 | [`test_portability_images.py`](../tests/unit/test_portability_images.py) | 4 | `tests/support/images.py`: all twelve images on x86-64, in order; those with an arm64 variant on aarch64. |
 | [`test_pyversion.py`](../tests/unit/test_pyversion.py) | 57 | The version rule (`fsbpyr.pyversion`): the Python that `requires-python`, a `.python-version` pin and `--python` give, and the errors. Marked `version_rule`. |
 | [`test_requires.py`](../tests/unit/test_requires.py) | 16 | `tests/support/requires.py` and `tests/conftest.py`'s hooks, with pytester, as [A skip fails the run](#a-skip-fails-the-run) lists. |
 | [`test_sbom.py`](../tests/unit/test_sbom.py) | 18 | The CycloneDX SBOM generator `tools/release/sbom.py`: identical bytes for identical input, CPEs and purls, the executable's hash, incomplete or unverified input refused. |
 | [`test_signing.py`](../tests/unit/test_signing.py) | 212 | `fsbpyr.signing` from source with real keys, the openssl command in place of `sig.c`: the statement, names from a user and from a file, forged build info, the trust store, sums files, each command's output and exit status. |
-| [`test_selfupdate.py`](../tests/unit/test_selfupdate.py) | 93 | `fsbpyr self update` against `FakeGitHub`: in-place update keeping the mode, variants, symlinks; bad, oversized or too-new-glibc downloads never installed; unwritable directories; man page and completions rewritten; placed glibc 2.28 stubs left alone, named only when the new companion release does not list them; a cut download an update error, not a traceback. |
+| [`test_selfupdate.py`](../tests/unit/test_selfupdate.py) | 96 | `fsbpyr self update` against `FakeGitHub`: in-place update keeping the mode, variants, symlinks; bad, oversized or too-new-glibc downloads never installed; unwritable directories; man page and completions rewritten; placed glibc 2.28 stubs left alone, named only when the new companion release does not list them; a cut download an update error, not a traceback. |
 | [`test_targets.py`](../tests/unit/test_targets.py) | 48 | The target table (`fsbpyr.targets`) and host detection: each target's and Python's pins and sysroot, the EL8 sysroot (Rocky Linux 8.10's `glibc`, `glibc-devel`, `glibc-headers`, `kernel-headers`, `libgcc` and `gcc` RPMs), other baselines refused, runtime ids per baseline, the manylinux platform, each target's loader, filter and machine. |
 | [`test_test_modes.py`](../tests/unit/test_test_modes.py) | 6 | `FSBPYR_CORPUS_APPS` and the [EL8 test mode](#the-el8-test-mode): builds for the run's baseline unless a `--glibc` says otherwise, `baseline.as_tuple`, the EL8 images. `make test-el8-stub` runs it in the mode. |
 | [`test_text.py`](../tests/unit/test_text.py) | 8 | `fsbpyr.text`: `plural`, and `tail_lines`, which cuts output at a line start and notes the earlier lines left out. |
@@ -669,7 +669,7 @@ run with the release launcher only, those two portability tests also on the two 
 | [`test_vm_smoke.py`](../tests/unit/test_vm_smoke.py) | 29 | `tools/vm-smoke.py` without a VM ([The page-size smoke test](#the-page-size-smoke-test)): the pins file, the cpio writer and initramfs, the RPM reader, failing or mismatching downloads, console parsing and checks, the QEMU and kernel command lines, `/init`'s log level, a QEMU that exits at once. |
 | [`test_wiki.py`](../tests/unit/test_wiki.py) | 54 | The wiki's pages and `tools/wiki/`: every link of `wiki/*.md` has its target, the published form of a page, the import graphs the build draws, how publishing treats the wikis' history, and the messages, refusal and pinned keys that [User-Security](User-Security.md) shows against the code. The PDFs need pandoc and LuaLaTeX and are not built here (`make wiki-build`). |
 
-### tests/unit/boot: 23 files, 358 tests
+### tests/unit/boot: 23 files, 361 tests
 
 Most build an app with `FAKE_RUNTIME` and run the boot code in-process through the `boot`
 fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fixups.py`,
@@ -678,7 +678,7 @@ fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fix
 
 | File | Tests | What it tests, and how |
 |---|---|---|
-| [`test_boot.py`](../tests/unit/boot/test_boot.py) | 44 | On `tests/support/apps.py`'s demo app: the path hook (never above the executable), specs and loader, namespace packages, `pkgutil`, `importlib.resources` (one resource name on 3.12), `importlib.metadata`, entry points, `boot.run()` (selftest, `exit`/`quit`/`help`, helper interpreters, multiprocessing children, the exit trace), argparse fixed in apps of scripts only, and the excepthook: no 3.15 site-initialization hint for a missing module, and a note naming the package `--fs-package` would take for an `OSError` inside the executable. |
+| [`test_boot.py`](../tests/unit/boot/test_boot.py) | 47 | On `tests/support/apps.py`'s demo app: the path hook (never above the executable), specs and loader, namespace packages, `pkgutil`, `importlib.resources` (one resource name on 3.12), `importlib.metadata`, entry points, `boot.run()` (selftest, `exit`/`quit`/`help`, helper interpreters, multiprocessing children, the exit trace), argparse fixed in apps of scripts only, and the excepthook: no 3.15 site-initialization hint for a missing module, and a note naming the package `--fs-package` would take for an `OSError` inside the executable. |
 | [`test_commands.py`](../tests/unit/boot/test_commands.py) | 32 | `_fsbpyr_rt.commands`: the `name=target` table, the command from `argv[0]` or else `argv[1]`, the list and exit 2 without one, the selftest importing every target, a link started with `-m`, a forkserver preloading the parent command's module. |
 | [`test_distutils.py`](../tests/unit/boot/test_distutils.py) | 2 | `import distutils` answers with setuptools' copy before setuptools is imported. |
 | [`test_execve_argv0.py`](../tests/unit/boot/test_execve_argv0.py) | 8 | `sys.argv[0]`: the path `execve` got (`execfn` in `_fsbpyr.info()`), made absolute without collapsing `..`; left alone without a path, after a renamed start or a re-exec, or without a working directory. |
@@ -702,7 +702,7 @@ fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fix
 | [`test_warning_frames.py`](../tests/unit/boot/test_warning_frames.py) | 3 | Import-time warnings with `stacklevel >= 2` name the importing module and show the payload file's source line. |
 | [`test_way.py`](../tests/unit/boot/test_way.py) | 20 | A cache root's way from `/` (`gc.way_problem`): owners and write permissions, sticky directories, symlinks, `..`, user namespaces, mapped uids; the tool's cache and the collector refuse an untrusted way. |
 
-### tests/unit/builder: 19 files, 752 tests
+### tests/unit/builder: 19 files, 785 tests
 
 The build pipeline in-process, on trees made in `tmp_path`: fake site-packages, synthetic ELF
 objects from `tests/support/elf.py`, local distributions, the `foreign` fixture's hand-written
@@ -710,27 +710,27 @@ locks, fake `uv` scripts and the uv command lines a plan records.
 
 | File | Tests | What it tests, and how |
 |---|---|---|
-| [`test_build.py`](../tests/unit/builder/test_build.py) | 54 | `fsbpyr.build`: the smoke test and its error output, the output replaced only after it passes, stub and natives' glibc requirement against the baseline (`glibc_baseline` for 2.28 only), the project's extension rebuilt against the sysroot, uv version warnings, `--strict`, `--offline`, and hints about unpinned requirements, sdists and helper interpreters. |
-| [`test_closure_and_classify.py`](../tests/unit/builder/test_closure_and_classify.py) | 79 | `fsbpyr.closure` and `fsbpyr.classify` on fake site-packages: the installed-dist index, the dependency walk, entry points, every file's class (modules, namespaces, natives, `.pth` files, fs-packages, shadowed modules, compression, spill), and the warnings and hints, among them main-guard reads next to `__file__` in the `__main__` module only. |
+| [`test_build.py`](../tests/unit/builder/test_build.py) | 55 | `fsbpyr.build`: the smoke test and its error output, the output replaced only after it passes, stub and natives' glibc requirement against the baseline (`glibc_baseline` for 2.28 only), the project's extension rebuilt against the sysroot, uv version warnings, `--strict`, `--offline`, and hints about unpinned requirements, sdists and helper interpreters. |
+| [`test_closure_and_classify.py`](../tests/unit/builder/test_closure_and_classify.py) | 83 | `fsbpyr.closure` and `fsbpyr.classify` on fake site-packages: the installed-dist index, the dependency walk, entry points, every file's class (modules, namespaces, natives, `.pth` files, fs-packages, shadowed modules, compression, spill), and the warnings and hints, among them main-guard reads next to `__file__` in the `__main__` module only. |
 | [`test_compiler.py`](../tests/unit/builder/test_compiler.py) | 10 | `fsbpyr.compiler`: worker processes compile what the build's process would, in order; small builds compile in-process; compile warnings come back with their line; main-guard reads scanned in the scripts root's commands only. |
 | [`test_early_checks.py`](../tests/unit/builder/test_early_checks.py) | 12 | Failures before uv stages anything: a script name that is no command, a static project without entry, a directory as output, an unknown extra. |
 | [`test_entry.py`](../tests/unit/builder/test_entry.py) | 11 | `fsbpyr.entry`: an `if __name__ == "__main__":` guard in a module's body only, and the entry candidates of an installed project and a source tree. |
-| [`test_foreign.py`](../tests/unit/builder/test_foreign.py) | 56 | `fsbpyr.foreign` on the `foreign` fixtures: `poetry.lock` (Poetry 2, 1.5 to 1.8, lock-version 1.0) and `pdm.lock` as a build's lock: the main group, markers, every hash demanded, extras, path, VCS and URL entries, other indexes refused, the stale-lock check, the lock's record and rank, option injection refused. |
+| [`test_foreign.py`](../tests/unit/builder/test_foreign.py) | 68 | `fsbpyr.foreign` on the `foreign` fixtures: `poetry.lock` (Poetry 2, 1.5 to 1.8, lock-version 1.0) and `pdm.lock` as a build's lock: the main group, markers, every hash demanded, extras, path, VCS and URL entries, other indexes refused, the stale-lock check, the lock's record and rank, option injection refused. |
 | [`test_legacy.py`](../tests/unit/builder/test_legacy.py) | 11 | `fsbpyr.legacy`: which `scripts=` files of the project's wheel are Python, their stored modules and clashes, warnings for dropped scripts. |
 | [`test_loose.py`](../tests/unit/builder/test_loose.py) | 58 | Projects without a build system (`fsbpyr.loose`, `fsbpyr.importcheck`): what makes one, which files are packaged (git decides in a work tree), fsbpyr's own wheel (a valid `RECORD`, the same bytes twice), the commands found, and the static import check (file and line, removed stdlib modules, the freeze hint, `--strict`). |
 | [`test_loose_directory.py`](../tests/unit/builder/test_loose_directory.py) | 93 | Directories of loose scripts: discovery and what it refuses, the directory's name, shebangs, packaged files and links, mangled names and clashes, commands, merged PEP 723 blocks, the deploy recipe, `sys.path` changes from `__file__`. Discovery runs no user code. |
 | [`test_manifest.py`](../tests/unit/builder/test_manifest.py) | 19 | `fsbpyr.manifest`: the lock and each distribution recorded with its artifact's hash, sdist builds, local dists, workspaces, the same records from two directories, the `compat` fixture traced to its `uv.lock`. |
 | [`test_multicall.py`](../tests/unit/builder/test_multicall.py) | 34 | A multi-command executable's build side: the sorted `name=target` table, command names, relative links beside the output and what they may replace, an earlier output replaced rather than written through, VCS requirement lines in a hashed file failing early. |
 | [`test_natives.py`](../tests/unit/builder/test_natives.py) | 44 | `fsbpyr.natives` and `fsbpyr.elf` on synthetic ELF objects and two host binaries: dynamic sections, RPATH and RUNPATH as ld.so applies them, libraries by name, unresolved libraries, symbol versions, malformed input. |
-| [`test_pipenv.py`](../tests/unit/builder/test_pipenv.py) | 45 | `fsbpyr.pipenv` on `foreign/pipenv`: the `default` section, markers, hashes, unpinned versions refused, git, path and file entries, other indexes, the stale-lock check, `_meta.requires` (two tests marked `version_rule`), the lock's rank, a Python-less directory as a tool binary. |
+| [`test_pipenv.py`](../tests/unit/builder/test_pipenv.py) | 50 | `fsbpyr.pipenv` on `foreign/pipenv`: the `default` section, markers, hashes, unpinned versions refused, git, path and file entries, other indexes, the stale-lock check, `_meta.requires` (two tests marked `version_rule`), the lock's rank, a Python-less directory as a tool binary. |
 | [`test_project_and_staging.py`](../tests/unit/builder/test_project_and_staging.py) | 78 | `fsbpyr.project` (discovery, lock source priority, settings, `glibc` among them) and `fsbpyr.staging` (uv commands per lock source, wheels for the baseline's platform, workspaces, rebuilds, `SOURCE_DATE_EPOCH`, pinned requirement lines, the source tree left as found). |
-| [`test_scan.py`](../tests/unit/builder/test_scan.py) | 39 | `fsbpyr.scan` on snippets: reads relative to `__file__` (in a command's main guard when asked; not existence checks, nor a script starting a sibling through `sys.executable`, though a package doing so is), libraries opened by a literal name. |
+| [`test_scan.py`](../tests/unit/builder/test_scan.py) | 44 | `fsbpyr.scan` on snippets: reads relative to `__file__` (in a command's main guard when asked; not existence checks, nor a script starting a sibling through `sys.executable`, though a package doing so is), libraries opened by a literal name. |
 | [`test_single_script.py`](../tests/unit/builder/test_single_script.py) | 20 | One script as the project: `.py` or extensionless `uv run` scripts, the import closure, one PEP 723 block, the directory's other files ignored, a script lock locking the build, nothing written beside it. |
 | [`test_system_report.py`](../tests/unit/builder/test_system_report.py) | 21 | `fsbpyr.system`: what the target must provide beyond glibc, each target's manylinux_2_34 and manylinux_2_28 floors (libstdc++, CXXABI, GCC, zlib), and the warnings. |
-| [`test_tools.py`](../tests/unit/builder/test_tools.py) | 47 | The tool binary (`fsbpyr.tools`) on hand-built staged sites: when a directory is one, which named distributions are tools, their scripts as commands, meta-packages and families (cycles and a depth limit stop), libraries, missing distributions, name clashes. |
-| [`test_venvdeps.py`](../tests/unit/builder/test_venvdeps.py) | 21 | The venv rung (`fsbpyr.venvdeps`): the venv found, the distributions providing unresolved imports and their `Requires-Dist` closure at installed versions, nothing guessed from PyPI, editable installs refused, the venv's Python never started, `inferred` in the lock record, `--strict`. |
+| [`test_tools.py`](../tests/unit/builder/test_tools.py) | 50 | The tool binary (`fsbpyr.tools`) on hand-built staged sites: when a directory is one, which named distributions are tools, their scripts as commands, meta-packages and families (cycles and a depth limit stop), libraries, missing distributions, name clashes. |
+| [`test_venvdeps.py`](../tests/unit/builder/test_venvdeps.py) | 24 | The venv rung (`fsbpyr.venvdeps`): the venv found, the distributions providing unresolved imports and their `Requires-Dist` closure at installed versions, nothing guessed from PyPI, editable installs refused, the venv's Python never started, `inferred` in the lock record, `--strict`. |
 
-### tests/unit/payload: 11 files, 424 tests
+### tests/unit/payload: 11 files, 437 tests
 
 Writer and reader on specs from `make_spec`; edge cases from `tests/support/edges.py`.
 
@@ -738,21 +738,21 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 |---|---|---|
 | [`test_blocks.py`](../tests/unit/payload/test_blocks.py) | 20 | Small blobs in shared zstd blocks: placement, round trips, identical content once, the block cache, bad member records refused. |
 | [`test_edges.py`](../tests/unit/payload/test_edges.py) | 81 | The Python reader, with the stand-in's cache sync, on the intact edge-case executable and the 66 format and 14 path cases: refused with `PayloadError` (or `CacheError`, `OSError` where the cache refuses) or read, never failing otherwise. |
-| [`test_file_digest.py`](../tests/unit/payload/test_file_digest.py) | 80 | A file's integrity digest, streamed a leaf at a time: sizes around leaves, ranges, holes as zeros, short files; an executable's digest and plain SHA-256 from one read, on 1, 3 and 8 threads, its holes unread (the reads counted). |
+| [`test_file_digest.py`](../tests/unit/payload/test_file_digest.py) | 83 | A file's integrity digest, streamed a leaf at a time: sizes around leaves, ranges, holes as zeros, short files; an executable's digest and plain SHA-256 from one read, on 1, 3 and 8 threads, its holes unread (the reads counted). |
 | [`test_hardening.py`](../tests/unit/payload/test_hardening.py) | 37 | Regression tests from review findings: hostile sizes, path traversal, reserved fields, overlapping sections, bad closures, zstd frames without checksum or content size, trailing bytes. |
 | [`test_integrity.py`](../tests/unit/payload/test_integrity.py) | 15 | The whole-file digest: the tree, leaf counts, one construction for every representation, any changed byte failing, older versions. |
 | [`test_roundtrip.py`](../tests/unit/payload/test_roundtrip.py) | 39 | Writer to reader: every table and field, lookups, deterministic encoding, deduplication, alignment, stub and trailer, an executable replaced only when committed. |
 | [`test_spill.py`](../tests/unit/payload/test_spill.py) | 24 | Compressed bytes in a spill file: the same blobs as in memory, sparse files, pieces on 1 and 8 threads, pieces inside holes compressed once into the bytes their zeros make. |
 | [`test_streaming_writer.py`](../tests/unit/payload/test_streaming_writer.py) | 7 | The streaming writer: the assembled image, zero runs as holes, a file changed since classification failing, the result verified. |
-| [`test_validation.py`](../tests/unit/payload/test_validation.py) | 80 | Malformed specs and bytes refused, and two Hypothesis properties, XOR masks (300 examples) and 64-bit overwrites (500), raising only `PayloadError`. |
+| [`test_validation.py`](../tests/unit/payload/test_validation.py) | 90 | Malformed specs and bytes refused, and two Hypothesis properties, XOR masks (300 examples) and 64-bit overwrites (500), raising only `PayloadError`. |
 | [`test_xz.py`](../tests/unit/payload/test_xz.py) | 25 | xz natives: standard streams, raw when incompressible, pieces, streams and pieces that do not match their records refused. |
 | [`test_zstd_pieces.py`](../tests/unit/payload/test_zstd_pieces.py) | 16 | zstd in pieces: a frame per piece, the same bytes on any thread count, round trips across boundaries, refusals. |
 
-### tests/unit/runtime: 9 files, 249 tests
+### tests/unit/runtime: 9 files, 250 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
-| [`test_collect.py`](../tests/unit/runtime/test_collect.py) | 20 | The tool's cache collector (`fsbpyr.runtime.collect`) and `fsbpyr cache gc`: what stays, what goes and when, the marker, a user's directory left alone. |
+| [`test_collect.py`](../tests/unit/runtime/test_collect.py) | 21 | The tool's cache collector (`fsbpyr.runtime.collect`) and `fsbpyr cache gc`: what stays, what goes and when, the marker, a user's directory left alone. |
 | [`test_fetch_and_build.py`](../tests/unit/runtime/test_fetch_and_build.py) | 39 | `fsbpyr.runtime.pbs` and the registry's build, on in-memory archives and a patched `urlopen`: verification, retries, path traversal refused, pins, runtime ids, a runtime per glibc baseline, `fsbpyr runtime build --glibc`, zstd's version from `libzstd.a`, a failing worker's output. |
 | [`test_notices.py`](../tests/unit/runtime/test_notices.py) | 15 | Licence notices of the libraries a runtime links, from a made-up PBS distribution; zstd's text for every Python. |
 | [`test_registry.py`](../tests/unit/runtime/test_registry.py) | 44 | `fsbpyr.runtime.registry`: payload to spec and back, saving and loading runtimes, app assembly, generation and resources ids, private directories, the embedded runtime, used for its own baseline only, a clear error without a home, the error naming `fsbpyr runtime build --python 3.14 --glibc 2.28`. |
@@ -762,7 +762,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_sysroot.py`](../tests/unit/runtime/test_sysroot.py) | 21 | The glibc sysroots: `ar` members, symlinks kept inside, escaping entries refused, verified HTTPS downloads, RPMs extracted as debs are, `lib` and `lib64` linked into `usr` for EL8 only. |
 | [`test_toolchain_and_link.py`](../tests/unit/runtime/test_toolchain_and_link.py) | 35 | `ar` listing, clang discovery and the stub's link: static PIE, hardening flags, the sanitized variant, aarch64's outlined atomics and Cortex-A53 erratum 843419 fix, mapped paths, the frame limit, `-DFSBPYR_RUNTIME_ID`, a failed link's output. |
 
-### tests/integration: 17 files, 827 tests
+### tests/integration: 17 files, 831 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -770,9 +770,9 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_check_release_el8.py`](../tests/integration/test_check_release_el8.py) | 16 | The two EL8 steps of `tools/release/check-release.sh` against a fake `gh` and `git`: no companion skips both; a draft, prerelease or latest companion, a misplaced tag, a missing asset and a failed attestation fail; a complete companion passes, and each release's stub is found where 0.26.0, 0.27.0 and later releases put it. |
 | [`test_check_release_install.py`](../tests/integration/test_check_release_install.py) | 7 | The `FSBPYR_VERIFY=1` install step of `check-release.sh`, with a stand-in `install.sh` and a fake `gh`: logged in and not, a release from before signing left out, and each wrong outcome a failure, a missing login that reads as tampering among them. |
 | [`test_el8_workflow.py`](../tests/integration/test_el8_workflow.py) | 36 | [`.github/workflows/el8.yml`](../.github/workflows/el8.yml) and `full-suite.yml`'s EL8 jobs, read as text: triggers and refs, nothing linked for a commit whose full suite failed, each stub linked once and nothing tested by el8.yml, EL8 jobs that fail the run, runners per architecture, pinned actions, write permissions in `draft` only, the companion a draft on its existing tag and not the latest; the draft job's steps also run against a fake `gh`. |
-| [`test_install.py`](../tests/integration/test_install.py) | 140 | `install.sh` from fake release assets over HTTPS on 127.0.0.1, with `HOME`, install directories and a `PATH` of chosen tools under `tmp_path`, so a test can leave out or fake `xz`, `curl`, `gh`, `uname` or `ldd`. Each installer test runs under dash, bash and busybox sh (132 of the 140); the rest test the generator and that dash and busybox parse the template. |
+| [`test_install.py`](../tests/integration/test_install.py) | 143 | `install.sh` from fake release assets over HTTPS on 127.0.0.1, with `HOME`, install directories and a `PATH` of chosen tools under `tmp_path`, so a test can leave out or fake `xz`, `curl`, `gh`, `uname` or `ldd`. Each installer test runs under dash, bash and busybox sh (132 of the 140); the rest test the generator and that dash and busybox parse the template. |
 | [`test_launcher_format.py`](../tests/integration/test_launcher_format.py) | 18 | `launcher/format.h` and `fsbpyr.payload.format` describe the same bytes: a C probe built with `cc` prints sizes, constants and offsets to compare. |
-| [`test_make_release.py`](../tests/integration/test_make_release.py) | 41 | `make release` (`tools/release/release.sh`) with stand-ins for its parts: their order, what each failure stops, going on after a stop, its JSON report and no passphrase in it, a passphrase file run only when it is a program, `KEY` taken from make's command line only, never pulling. |
+| [`test_make_release.py`](../tests/integration/test_make_release.py) | 42 | `make release` (`tools/release/release.sh`) with stand-ins for its parts: their order, what each failure stops, going on after a stop, its JSON report and no passphrase in it, a passphrase file run only when it is a program, `KEY` taken from make's command line only, never pulling. |
 | [`test_mirror.py`](../tests/integration/test_mirror.py) | 28 | `make mirror` (`tools/release/mirror.sh`) on two bare repositories: GitLab follows only what this checkout and GitHub agree on, a disagreement stops it before any push, a branch goes only when main holds it. |
 | [`test_pbs_distribution.py`](../tests/integration/test_pbs_distribution.py) | 8 | What the runtime build relies on in the pinned PBS distribution: startup modules, the compile worker, the link plan, licence texts. It comes from `FSBPYR_TEST_DOWNLOADS` or is fetched (`downloads.pbs_distribution`). |
 | [`test_pbs_stdlib_versions.py`](../tests/integration/test_pbs_stdlib_versions.py) | 12 | The stdlib selection and startup modules for each pinned CPython version. |
@@ -784,7 +784,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
 | [`test_worker_venvs.py`](../tests/integration/test_worker_venvs.py) | 10 | [`worker_venvs.py`](../tests/support/worker_venvs.py) on real pytest runs with three workers: each in an environment of its own, subprocesses included, removed after the run, and a worker in anything else stopping the run. |
 
-### tests/e2e: 42 files, 1,097 tests
+### tests/e2e: 43 files, 1,104 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -819,7 +819,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_pid1.py`](../tests/e2e/test_pid1.py) | 3 | An app as process 1 of a PID namespace (`unshare --user --map-root-user --pid --fork --mount-proc`, else `podman run` of `debian:13`): SIGTERM ends it with 143 unless it has its own handler; not as process 1 it dies of the signal. |
 | [`test_pipfile_lock.py`](../tests/e2e/test_pipfile_lock.py) | 5 | `foreign/pipenv`: builds from the lock's `default` section, a stale lock warns (an error with `--strict`), a changed hash fails, a Python-less directory builds the tool. |
 | [`test_portability.py`](../tests/e2e/test_portability.py) | 35 | `hello`, `heavy`, `heavy-pip` and `compat` in each image with `podman run --network=none`, with `FSBPYR_SELFTEST=natives` and the reported libraries and glibc against `llvm-objdump`; `test_el8_apps_run_on_el8` (two items) runs glibc 2.28 builds of `hello` and a cryptography app (prebuilt `hello-el8` and `native-el8`, else built) on `rockylinux:8` and `almalinux:8`. Marked `podman`. |
-| [`test_read_failures.py`](../tests/e2e/test_read_failures.py) | 7 | The launcher's blob reads out of memory through `probes/reads.c` (`ZSTD_createDCtx`, `ZSTD_decompress`, `ZSTD_decompressStream`, `lzma_stream_buffer_decode` and `madvise` wrapped): every codec read and streamed fails with `ENOMEM` and `FSB_STREAM_MEMORY`, pieces on helper threads too, and corrupt data stays corrupt when dropping the payload's pages fails; a stub linked with `probes/no_context.c` starts out of memory with `out of memory`, not `corrupt startup module`. |
+| [`test_read_failures.py`](../tests/e2e/test_read_failures.py) | 7 | The launcher's blob reads out of memory through `probes/reads.c` (`ZSTD_createDCtx`, `ZSTD_decompress`, `ZSTD_decompressStream`, `lzma_stream_buffer_decode` and `madvise` wrapped): every compressed codec's read or stream that the wrapped function serves fails with `ENOMEM` or `FSB_STREAM_MEMORY`, pieces on helper threads too, and corrupt data stays corrupt when dropping the payload's pages fails; a stub linked with `probes/no_context.c` starts out of memory with `out of memory`, not `corrupt startup module`. |
 | [`test_restore.py`](../tests/e2e/test_restore.py) | 12 | The cache sync's writers through `probes/restore.c` (`renameat`, `linkat`, `pthread_create`, `pwrite` wrapped): whole files, helper threads, unnamed files linked or renamed into place, the thread limit, the first failure in path order, a full disk under a leaf of a pooled file and of one in pieces. |
 | [`test_runtime_app.py`](../tests/e2e/test_runtime_app.py) | 90 | Small apps from `build_app`, mostly marked `sanitized`: exit codes, tracebacks, signals, set-gid refusal, the whole-file check, damaged records, unsafe paths, resource limits (the file-size one also on zstd pieces), the block cache, an owner's set-uid start, the payload on a 64 KiB boundary, `stubs/_fsbpyr.pyi` against the module. |
 | [`test_scripts.py`](../tests/e2e/test_scripts.py) | 21 | The `scripts` fixture (`uv init --no-package`) runs as `uv run main.py` does: the tree untouched, reproducible builds, a module with `[project.scripts]`, no top-level code run by the build, several guarded modules, clashing names, missing imports, main-guard reads only for `--entry`'s module; and the `foreign` Poetry 2 and PDM projects. |
@@ -876,7 +876,7 @@ controls. Each probe's header comment lists its commands and switches.
 |---|---|---|---|
 | [`probes/digests.c`](../tests/probes/digests.c) | `integrity.c`, `parallel.c` | `-DFSB_PASS_LEAVES=3u`, `--wrap=pread,--wrap=SHA256_Update`, ASan, UBSan | `test_digests.py` |
 | [`probes/due.c`](../tests/probes/due.c) | `due.c`, `way.c` | `--wrap=statvfs`, UBSan | `test_due.py` |
-| [`probes/find_object.c`](../tests/probes/find_object.c) | `glibc.c` | `--wrap=_dl_find_object`, `--wrap=dlvsym` | `test_find_object.py` |
+| [`probes/find_object.c`](../tests/probes/find_object.c) | `glibc.c` | `--wrap=_dl_find_object`, `--wrap=dlvsym` | `test_find_object.py`, `test_launcher_coverage.py` |
 | [`probes/no_context.c`](../tests/probes/no_context.c) | the whole stub (`build_stub`) | `--wrap=ZSTD_createDCtx` | `test_read_failures.py` |
 | [`probes/reads.c`](../tests/probes/reads.c) | `payload.c`, `integrity.c`, `parallel.c` | `--wrap=ZSTD_createDCtx,--wrap=ZSTD_decompress,--wrap=ZSTD_decompressStream,--wrap=lzma_stream_buffer_decode,--wrap=madvise`, ASan, UBSan | `test_read_failures.py` |
 | [`probes/restore.c`](../tests/probes/restore.c) | `cache.c`, `way.c`, `payload.c`, `integrity.c`, `parallel.c` | `--wrap=renameat,--wrap=linkat,--wrap=pthread_create,--wrap=pwrite`, ASan, UBSan | `test_restore.py` |
