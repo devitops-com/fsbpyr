@@ -194,12 +194,13 @@ _PASS_LEAVES = 4096  # leaves hashed per pass: their digests are all the memory 
 def is_hole(fd: int, start: int, length: int) -> bool:
     """Whether [start, start + length) of the file open as ``fd`` lies inside a hole (SEEK_DATA,
     which moves the descriptor's offset). Past the file's end there is no hole: OSError, the file
-    is shorter than it was."""
+    is shorter than it was. A SEEK_DATA that fails otherwise (a file system without it) finds no
+    hole: the range is read, as the launcher's fsb_in_hole reads it."""
     try:
         return os.lseek(fd, start, os.SEEK_DATA) >= start + length
     except OSError as exc:
         if exc.errno != errno.ENXIO:  # ENXIO: no data after ``start``
-            raise
+            return False
     if os.fstat(fd).st_size < start + length:
         raise OSError(errno.EIO, "file shorter than it was (changed while read)")
     return True  # a hole up to the end

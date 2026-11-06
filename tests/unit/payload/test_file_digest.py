@@ -3,6 +3,7 @@ hash files of any size a leaf at a time, on threads, and a leaf inside a hole is
 digest is that of zeros): a sparse terabyte hashes in seconds. ``inspect --verify`` takes an
 executable's integrity digest and its plain SHA-256 from one read of it (executable_digests)."""
 
+import errno
 import hashlib
 import os
 import random
@@ -88,6 +89,33 @@ def test_past_the_end_of_a_file_is_no_hole(tmp_path: Path) -> None:
             is_hole(fd, 2 * DIGEST_LEAF, 1)
     finally:
         os.close(fd)
+
+
+@pytest.mark.parametrize("error", [errno.EINVAL, errno.EOPNOTSUPP])
+def test_without_seek_data_a_range_is_read(
+    error: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file system whose SEEK_DATA fails with anything but ENXIO finds no hole: the range is
+    read, as the launcher's fsb_in_hole (integrity.c) reads it, and the digest is the same."""
+    with (tmp_path / "f").open("wb") as file:
+        file.truncate(3 * DIGEST_LEAF)
+        file.seek(DIGEST_LEAF + 5)
+        file.write(b"data")
+    content = (tmp_path / "f").read_bytes()
+    lseek = os.lseek
+
+    def no_seek_data(fd: int, position: int, how: int) -> int:
+        if how == os.SEEK_DATA:
+            raise OSError(error, os.strerror(error))
+        return lseek(fd, position, how)
+
+    monkeypatch.setattr(os, "lseek", no_seek_data)
+    fd = os.open(tmp_path / "f", os.O_RDONLY)
+    try:
+        assert not is_hole(fd, 2 * DIGEST_LEAF, DIGEST_LEAF)
+    finally:
+        os.close(fd)
+    assert _digest(tmp_path / "f") == tree_digest(content)
 
 
 @pytest.mark.parametrize("piece", [1, 4096, DIGEST_LEAF - 1, DIGEST_LEAF, 3 * DIGEST_LEAF])
