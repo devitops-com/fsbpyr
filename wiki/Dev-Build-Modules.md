@@ -885,8 +885,10 @@ Rules it enforces:
   64 hex digits); `hg`, `svn` and `bzr` are refused; a `path` entry installs as a regular package,
   except the project itself (`pipenv install -e .`); a `file` entry keeps its hash when the lock
   gives exactly one.
-- Extras that entries ask of their dependencies count as active in markers (Pipenv marks what an
-  extra needs `extra == 'x'`). A marker that cannot be evaluated is refused naming the entry.
+- Extras that the entries the target installs ask of their dependencies count as active in
+  markers (Pipenv marks what an extra needs `extra == 'x'`), until they bring in no other entry;
+  an entry whose own marker is false asks for none. A marker that cannot be evaluated is
+  refused naming the entry.
 - A package from an index other than PyPI is installed from the indexes uv is configured with;
   the lock's URL is never passed on (it may name credentials by variable), and the lock's hashes
   decide whether uv found the same files. The note is `Uncounted`.

@@ -102,6 +102,28 @@ def test_a_package_wanted_by_an_extra_stays_in_when_its_marker_names_the_extra(
     assert _names(exported.text) == ["pysocks==1.7.1", "requests==2.31.0"]
 
 
+def test_only_an_entry_the_target_installs_makes_its_extras_active(tmp_path: Path) -> None:
+    directory = _lock(tmp_path, {
+        "requests": _requirement("2.32.3", extras=["socks"], markers="sys_platform == 'win32'"),
+        "pysocks": _requirement("1.7.1", markers="extra == 'socks'"),
+        "six": _requirement("1.17.0"),
+    })
+
+    assert _names(export(directory, environment=LINUX).text) == ["six==1.17.0"]
+    assert _names(export(directory, environment=WINDOWS).text) == [
+        "pysocks==1.7.1", "requests==2.32.3", "six==1.17.0"]
+
+
+def test_an_extra_asked_by_an_entry_another_extra_brings_in_is_active_too(tmp_path: Path) -> None:
+    directory = _lock(tmp_path, {
+        "a": _requirement("1.0", extras=["x"]),
+        "b": _requirement("1.0", markers="extra == 'x'", extras=["y"]),
+        "c": _requirement("1.0", markers="extra == 'y'"),
+    })
+
+    assert _names(export(directory, environment=LINUX).text) == ["a==1.0", "b==1.0", "c==1.0"]
+
+
 @pytest.mark.parametrize("marker", UNEVALUABLE)
 def test_a_marker_that_cannot_be_evaluated_is_refused_naming_the_entry(
     tmp_path: Path, marker: str
