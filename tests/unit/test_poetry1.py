@@ -30,6 +30,26 @@ def test_a_poetry_constraint_becomes_a_pep_440_specifier(constraint: str, specif
     assert _dependencies(pkg=constraint) == [f"pkg{SpecifierSet(specifier)}"]
 
 
+@pytest.mark.parametrize(
+    ("constraint", "specifier"),
+    [("^1.2.0a1", ">=1.2.0a1,<2"), ("~1.2.0.post1", ">=1.2.0.post1,<1.3"),
+     ("^1.2.0.dev3", ">=1.2.0.dev3,<2"), ("~0.3rc2", ">=0.3rc2,<0.4"), ("^1!1.2", ">=1!1.2,<1!2")],
+)  # fmt: skip
+def test_a_caret_or_tilde_takes_any_pep_440_version(constraint: str, specifier: str) -> None:
+    """As poetry-core reads them: the bounds come from the release numbers."""
+    assert _dependencies(pkg=constraint) == [f"pkg{SpecifierSet(specifier)}"]
+
+
+@pytest.mark.parametrize(
+    ("constraint", "specifier"),
+    [(">=1.2 <2.0", ">=1.2,<2.0"), (">= 1.2 < 2.0", ">=1.2,<2.0"),
+     (">=1.2, <2.0,", ">=1.2,<2.0"), ("^1.2 !=1.5", ">=1.2,<2,!=1.5")],
+)  # fmt: skip
+def test_and_constraints_split_on_a_comma_or_a_space(constraint: str, specifier: str) -> None:
+    """As poetry-core splits them, not between an operator and its version."""
+    assert _dependencies(pkg=constraint) == [f"pkg{SpecifierSet(specifier)}"]
+
+
 def test_alternatives_are_refused() -> None:
     with pytest.raises(ProjectError, match="alternatives"):
         _dependencies(pkg="^1 || ^3")

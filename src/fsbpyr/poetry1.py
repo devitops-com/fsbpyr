@@ -3,11 +3,12 @@
 
 Poetry 1 keeps the name, the version, the dependencies and the scripts in ``[tool.poetry]``.
 The name and version, the scripts (``module:function`` strings) and the dependencies become the
-table loose.py reads; Poetry's version constraints (``^1.2``, ``~1.2``, a bare ``1.2.3``) become
-PEP 440 specifiers. The dependencies are the main group's; ``optional`` ones belong to the extras
-that ``[tool.poetry.extras]`` lists them in. A dependency from git, a path or a URL is refused
-(write the project with a ``[project]`` table, or lock it with ``--requirements``). The lock, when
-there is one, still decides what is installed (foreign.py).
+table loose.py reads; Poetry's version constraints (``^1.2``, ``~1.2``, a bare ``1.2.3``, AND
+constraints split on a comma or a space, ``>=1.2 <2.0``) become PEP 440 specifiers. The
+dependencies are the main group's; ``optional`` ones belong to the extras that
+``[tool.poetry.extras]`` lists them in. A dependency from git, a path or a URL is refused (write
+the project with a ``[project]`` table, or lock it with ``--requirements``). The lock, when there
+is one, still decides what is installed (foreign.py).
 """
 
 from __future__ import annotations
@@ -19,10 +20,14 @@ from typing import Any
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
+from packaging.version import VERSION_PATTERN, Version
 
 from .project import ProjectError
 
-_CARET_TILDE = re.compile(r"([\^~])\s*(\d+(?:\.\d+)*)$")
+_CARET_TILDE = re.compile(rf"([\^~])\s*({VERSION_PATTERN})$", re.VERBOSE | re.IGNORECASE)
+# poetry-core's split of AND constraints (constraints/version/parser.py): a comma or a space,
+# not after an operator nor beside the hyphen of a range
+_AND = re.compile(r"(?<!^)(?<![\^~=>< ,]) *(?<!-)[, ](?!-) *(?!,|$)")
 _BARE = re.compile(r"\d[\w.*+!-]*$")
 _UNSUPPORTED = ("git", "path", "url", "develop", "source")
 
@@ -33,15 +38,18 @@ def _constraint(text: str, where: str) -> str:
         raise ProjectError(f"pyproject.toml: {where}: {text!r} has alternatives (||), which a "
                            "PEP 440 specifier cannot say")  # fmt: skip
     parts: list[str] = []
-    for part in (p.strip() for p in text.split(",") if p.strip() and p.strip() != "*"):
+    for part in (p.strip() for p in _AND.split(text.strip().rstrip(","))
+                 if p.strip() and p.strip() != "*"):  # fmt: skip
         if match := _CARET_TILDE.match(part):
-            numbers = [int(n) for n in match[2].split(".")]
+            version = Version(match[2])  # the bounds come from its release numbers
+            numbers = list(version.release)
             if match[1] == "^":
                 index = next((i for i, n in enumerate(numbers) if n), len(numbers) - 1)
             else:
                 index = min(1, len(numbers) - 1)
             upper = [*numbers[:index], numbers[index] + 1]
-            parts += [f">={match[2]}", "<" + ".".join(map(str, upper))]
+            epoch = f"{version.epoch}!" if version.epoch else ""
+            parts += [f">={version}", f"<{epoch}" + ".".join(map(str, upper))]
         elif _BARE.match(part):
             parts.append(f"=={part}")
         else:
