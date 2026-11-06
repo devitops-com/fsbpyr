@@ -1,6 +1,7 @@
 """The tool binary (research candidate 10): which distributions a lock source names, which of them
 are the tools, and the commands they give. The staged site is built by hand."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,8 @@ from fsbpyr.config import BuildConfig
 from fsbpyr.loose import Package, directory_name
 from fsbpyr.project import LockSource, Project, ProjectError
 from fsbpyr.tools import Listed, Tools, listed_distributions, tool_scripts, with_commands
+
+from ...support.markers import UNEVALUABLE
 
 PYTHON = "3.14.0"
 
@@ -268,6 +271,16 @@ def test_a_requirement_under_a_false_marker_or_an_unasked_extra_does_not_hide_a_
                          source="r.txt", python_version=PYTHON)  # fmt: skip
 
     assert sorted(tools.scripts) == ["a", "b", "c"]
+
+
+@pytest.mark.parametrize("marker", UNEVALUABLE)
+def test_a_requirement_marker_that_cannot_be_evaluated_is_an_error_naming_it(marker: str) -> None:
+    index = _index(_dist("a", (f"b; {marker}",), "a = a:main"), _dist("b", (), "b = b:main"))
+
+    message = f"a: Requires-Dist b: cannot evaluate the marker {marker!r}: "
+    with pytest.raises(ClosureError, match=re.escape(message)):
+        tool_scripts(index, _listed_by(["a", "b"]), project="p", source="r.txt",
+                     python_version=PYTHON)  # fmt: skip
 
 
 def test_an_extra_asked_for_makes_its_dependency_a_dependency() -> None:

@@ -847,6 +847,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`elf.py`](../tests/support/elf.py) | `make_elf`: minimal ELF64 shared objects with chosen `DT_NEEDED`, RPATH, RUNPATH, SONAME, version needs, machine and type. |
 | [`images.py`](../tests/support/images.py) | The portability matrix's twelve images (glibc 2.34 to 2.44), `EL8_IMAGES` (`rockylinux:8` and `almalinux:8`, glibc 2.28, both with an arm64 variant), those without an arm64 variant, and `images_for(machine, glibc)`, which adds the EL8 images for glibc 2.28. |
 | [`locks.py`](../tests/support/locks.py) | What a `uv.lock` installs on Linux for one Python and machine (markers and extras evaluated), and which of those packages lack a wheel usable at `baseline.py`'s baseline: manylinux_2_34, or manylinux_2_28 in the EL8 test mode. |
+| [`markers.py`](../tests/support/markers.py) | `UNEVALUABLE`: markers that `packaging` parses but cannot evaluate, for the builder's tests of each place that evaluates one. |
 | [`no-wheels.txt`](../tests/support/no-wheels.txt) | Packages without a wheel, one Python's X.Y and its packages per line. |
 | [`probe.py`](../tests/support/probe.py) | Runs inside the demo executable: exercises `importlib.resources`, `pkgutil`, `importlib.util`, `importlib.metadata`, `inspect` and `linecache`, and prints the results as JSON. |
 | [`readme.py`](../tests/support/readme.py) | `quickstart()`: the README quickstart's shell lines. |

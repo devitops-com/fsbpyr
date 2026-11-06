@@ -778,7 +778,9 @@ Rules it enforces:
   else the build asks for `name @ URL`. A `pylock.toml` names its `[[packages]]`; a
   `Pipfile.lock` the Pipfile's `[packages]`, or its `default` entries (`pipenv.tool_names`).
 - A listed distribution whose marker is false is no tool; one not installed and without a marker
-  is a `ClosureError`. The extras listed items ask for count as active in markers.
+  is a `ClosureError`. The extras listed items ask for count as active in markers. A listed
+  item's marker that cannot be evaluated counts as true; a `Requires-Dist` marker that cannot
+  be evaluated is a `ClosureError` naming the distribution.
 - A file that lists every installed distribution (but the project, and `pip`, `setuptools`,
   `wheel` and `distribute`, which `pip freeze` leaves out) is a freeze: the tools are the listed
   distributions no other listed one requires under the runtime's markers. Otherwise every listed
@@ -841,13 +843,14 @@ Rules it enforces:
   in) as a regular `name @ file:...` that must exist, a VCS entry by its commit
   (`name @ git+URL@commit`, with its subdirectory), a URL with `#sha256=` when the lock has it.
 - Refused, naming the entry: a package from another index (its credentials are not in the lock),
-  a VCS entry without a commit, a missing path, a name, version or source with white space, and
-  a package locked at two versions that both apply to the target.
+  a VCS entry without a commit, a missing path, a name, version or source with white space, a
+  marker that cannot be evaluated (of a package, a dependency or a dependency of the project),
+  and a package locked at two versions that both apply to the target.
 - `stale` compares Poetry's `content-hash` with what `_poetry_hash` computes from the parts of
   `pyproject.toml` Poetry hashes, and PDM's `content_hash` with both formulas PDM has used (with
   and without `dependency-groups`).
 
-- Imports: `project`.
+- Imports: `closure`, `project`.
 - Imported by: `build`, `manifest`, `pipenv`, `staging`, `tools`.
 
 ### `pipenv`
@@ -875,7 +878,7 @@ Rules it enforces:
   except the project itself (`pipenv install -e .`); a `file` entry keeps its hash when the lock
   gives exactly one.
 - Extras that entries ask of their dependencies count as active in markers (Pipenv marks what an
-  extra needs `extra == 'x'`).
+  extra needs `extra == 'x'`). A marker that cannot be evaluated is refused naming the entry.
 - A package from an index other than PyPI is installed from the indexes uv is configured with;
   the lock's URL is never passed on (it may name credentials by variable), and the lock's hashes
   decide whether uv found the same files. The note is `Uncounted`.
@@ -885,7 +888,7 @@ Rules it enforces:
   [README](../tests/fixtures/projects/foreign/README.md)
   notes that the formula has not been checked against a lock that Pipenv wrote.
 
-- Imports: `foreign`, `project`.
+- Imports: `closure`, `foreign`, `project`.
 - Imported by: `build`, `manifest`, `project` (lazy), `staging`, `tools`.
 
 ### `venvdeps`
@@ -914,11 +917,12 @@ Rules it enforces:
 - A distribution provides an import when `top_level.txt` or the first part of a `RECORD` path
   names it; when several do (a namespace), those whose `RECORD` holds the module itself win.
 - The closure follows `Requires-Dist` lines whose marker holds for the target, not extras; a
-  requirement the venv lacks is left to uv.
+  requirement the venv lacks is left to uv, and a marker that cannot be evaluated raises
+  `ProjectError` naming the distribution.
 - A distribution with an invalid name or version, or a name not its directory's, is skipped; a
   needed editable or path install raises `ProjectError`: it is the user's own tree.
 
-- Imports: `project`.
+- Imports: `closure`, `project`.
 - Imported by: `build`, `manifest`.
 
 ## Static import check
@@ -1081,6 +1085,7 @@ not satisfy its requirement, and lists the distributions nothing requires.
 | Function | What it does |
 |---|---|
 | `marker_environment(python_version)` | This host's marker environment with the runtime's Python. |
+| `marker_holds(marker, environment, extras, error, where)` | Whether a marker holds with one of the extras; one that `packaging` parses but cannot evaluate (`~=` on a string, `extras`) raises the caller's `error`, naming `where`. |
 | `requirement_of(line, dist)` | A `Requires-Dist` line parsed; `ClosureError` when invalid. |
 | `several_scripts_error(name, scripts, candidates)` | The error for no `--entry` and no entry to take, listing the console scripts and inferred candidates. |
 | `check_command_names(names)` | `ClosureError` for a name that is not a `links.COMMAND_NAME`, of one command as of several. |
@@ -1091,15 +1096,16 @@ not satisfy its requirement, and lists the distributions nothing requires.
 
 Rules it enforces:
 
-- An editable install, a required distribution missing from the site and an invalid
-  `Requires-Dist` raise `ClosureError`.
+- An editable install, a required distribution missing from the site, an invalid
+  `Requires-Dist` and one whose marker cannot be evaluated raise `ClosureError`.
 - `--entry` must be a command name, or `module[:attribute]` made of identifiers, whose last part
   names the app.
 - Several inferred candidates, or a package and a module, raise the "choose one with --entry"
   error, which lists them.
 
 - Imports: `entry`, `links`, `loose`.
-- Imported by: `build`, `classify`, `cli` (lazy), `legacy`, `manifest`, `staging`, `tools`.
+- Imported by: `build`, `classify`, `cli` (lazy), `foreign`, `legacy`, `manifest`, `pipenv`,
+  `staging`, `tools`, `venvdeps`.
 
 ### `classify`
 

@@ -4,6 +4,7 @@ Python the lock asks for, the lock's place among the sources, and the tool binar
 The fixture is in tests/fixtures/projects/foreign/pipenv (README there)."""
 
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,8 @@ from fsbpyr.project import LockSource, Project, ProjectError
 from fsbpyr.pyversion import resolve
 from fsbpyr.staging import StagingOptions, staging_plan
 from fsbpyr.tools import listed_distributions
+
+from ...support.markers import UNEVALUABLE
 
 FIXTURE = Path(__file__).parents[2] / "fixtures" / "projects" / "foreign" / "pipenv"
 LINUX = marker_environment("3.14.1")
@@ -97,6 +100,17 @@ def test_a_package_wanted_by_an_extra_stays_in_when_its_marker_names_the_extra(
     exported = export(directory, environment=LINUX)
 
     assert _names(exported.text) == ["pysocks==1.7.1", "requests==2.31.0"]
+
+
+@pytest.mark.parametrize("marker", UNEVALUABLE)
+def test_a_marker_that_cannot_be_evaluated_is_refused_naming_the_entry(
+    tmp_path: Path, marker: str
+) -> None:
+    directory = _lock(tmp_path, {"six": _requirement("1.16.0", markers=marker)})
+
+    message = f"Pipfile.lock: six 1.16.0: cannot evaluate the marker {marker!r}: "
+    with pytest.raises(ForeignLockError, match=re.escape(message)):
+        export(directory, environment=LINUX)
 
 
 def test_a_version_that_is_not_pinned_is_refused_naming_the_entry(tmp_path: Path) -> None:

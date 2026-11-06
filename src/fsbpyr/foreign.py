@@ -27,6 +27,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 
+from .closure import marker_holds
 from .project import LockSource, ProjectError
 
 REGISTRY, INDEX, LOCAL, PATH, GIT, URL = "registry", "index", "local", "path", "git", "url"
@@ -187,7 +188,9 @@ def _poetry_roots(
             requirement = Requirement(line)
         except InvalidRequirement as exc:
             raise ForeignLockError(f"pyproject.toml: invalid dependency {line!r}: {exc}") from exc
-        if requirement.marker is None or requirement.marker.evaluate({**environment, "extra": ""}):
+        if requirement.marker is None or marker_holds(
+                requirement.marker, environment, ("",), ForeignLockError,
+                f"pyproject.toml: {requirement.name}"):  # fmt: skip
             roots.append((canonicalize_name(requirement.name),
                           tuple(canonicalize_name(x) for x in requirement.extras)))  # fmt: skip
     return roots
@@ -198,7 +201,8 @@ def _root_holds(name: str, fields: Mapping[str, Any], environment: Mapping[str, 
     ``python`` constraint when that is a PEP 440 specifier (Poetry's ``^`` and ``~`` are not)."""
     if marker := fields.get("markers"):
         try:
-            if not Marker(marker).evaluate({**environment, "extra": ""}):
+            if not marker_holds(Marker(marker), environment, ("",), ForeignLockError,
+                                f"pyproject.toml: {name}"):  # fmt: skip
                 return False
         except InvalidMarker as exc:
             raise ForeignLockError(f"pyproject.toml: {name}: invalid marker {marker!r}: "
@@ -359,8 +363,8 @@ def _marker(text: str, entry: Entry) -> Marker:
 
 def _applies(entry: Entry, environment: Mapping[str, str]) -> bool:
     """Whether the package's own marker holds for the target."""
-    return entry.marker is None or _marker(entry.marker, entry).evaluate({**environment,
-                                                                          "extra": ""})
+    return entry.marker is None or marker_holds(_marker(entry.marker, entry), environment, ("",),
+                                                ForeignLockError, entry.label)  # fmt: skip
 
 
 def _satisfies(entry: Entry, edge: Edge) -> bool:
@@ -378,8 +382,8 @@ def _edge_active(
         return False
     if edge.marker is None:
         return True
-    marker = _marker(edge.marker, entry)
-    return any(marker.evaluate({**environment, "extra": extra}) for extra in (active or {""}))
+    return marker_holds(_marker(edge.marker, entry), environment, active or {""},
+                        ForeignLockError, f"{entry.label}: dependency {edge.name}")  # fmt: skip
 
 
 def _closure(

@@ -2,6 +2,8 @@
 extras, path/VCS/URL entries, the stale-lock check, and the records a build keeps. The fixtures
 are in tests/fixtures/projects/foreign (README there)."""
 
+import json
+import re
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
@@ -14,6 +16,8 @@ from fsbpyr.foreign import ForeignLockError, export, stale
 from fsbpyr.manifest import LockError, lock_record, read_lock
 from fsbpyr.project import LockSource, Project
 from fsbpyr.staging import StagingOptions, staging_plan
+
+from ...support.markers import UNEVALUABLE
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "projects" / "foreign"
 LINUX = marker_environment("3.14.1")
@@ -190,6 +194,50 @@ def test_an_invalid_marker_in_the_lock_is_refused_naming_the_entry(tmp_path: Pat
     lock.write_text(lock.read_text().replace('sys_platform == \\"win32\\"', 'sys_platform =='))
 
     with pytest.raises(ForeignLockError, match=r"colorama 0.4.6: invalid marker"):
+        export(POETRY, project, environment=LINUX)
+
+
+@pytest.mark.parametrize("marker", UNEVALUABLE)
+@pytest.mark.parametrize(
+    ("old", "new", "entry"),
+    [('markers = "sys_platform == \\"win32\\""', "markers = {}", "colorama 0.4.6"),
+     ('pygments = ">=2.13.0,<3.0.0"', 'pygments = {{version = "<3", markers = {}}}',
+      "rich 15.0.0: dependency pygments")],
+    ids=["package", "dependency"],
+)  # fmt: skip
+def test_a_marker_that_cannot_be_evaluated_is_refused_naming_the_entry(
+    tmp_path: Path, marker: str, old: str, new: str, entry: str
+) -> None:
+    """A package's marker and a dependency's: packaging parses them and fails only to evaluate
+    them."""
+    project = _copy("poetry2", tmp_path)
+    lock = project / "poetry.lock"
+    assert old in lock.read_text()
+    lock.write_text(lock.read_text().replace(old, new.format(json.dumps(marker))))
+
+    message = f"{entry}: cannot evaluate the marker {marker!r}: "
+    with pytest.raises(ForeignLockError, match=re.escape(message)):
+        export(POETRY, project, environment=LINUX)
+
+
+@pytest.mark.parametrize("marker", UNEVALUABLE)
+@pytest.mark.parametrize(
+    ("pyproject", "name"),
+    [('[tool.poetry.dependencies]\ncolorama = {{version = "*", markers = {marker}}}\n',
+      "colorama"),
+     ('[project]\nname = "p"\ndependencies = [{requirement}]\n', "click")],
+    ids=["tool.poetry", "project"],
+)  # fmt: skip
+def test_a_marker_of_the_projects_dependency_that_cannot_be_evaluated_is_refused_naming_it(
+    tmp_path: Path, marker: str, pyproject: str, name: str
+) -> None:
+    """The project's dependencies root a lock without groups: [tool.poetry] and [project]."""
+    project = _copy("poetry1", tmp_path)
+    (project / "pyproject.toml").write_text(pyproject.format(
+        marker=json.dumps(marker), requirement=json.dumps(f"click; {marker}")))  # fmt: skip
+
+    message = f"pyproject.toml: {name}: cannot evaluate the marker {marker!r}: "
+    with pytest.raises(ForeignLockError, match=re.escape(message)):
         export(POETRY, project, environment=LINUX)
 
 

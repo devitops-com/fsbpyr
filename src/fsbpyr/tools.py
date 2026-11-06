@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from packaging.markers import InvalidMarker, Marker, UndefinedComparison, UndefinedEnvironmentName
+from packaging.markers import InvalidMarker, Marker, UndefinedComparison
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import (
     InvalidSdistFilename,
@@ -39,7 +39,14 @@ from packaging.utils import (
     parse_wheel_filename,
 )
 
-from .closure import ClosureError, InstalledDist, SiteIndex, marker_environment, requirement_of
+from .closure import (
+    ClosureError,
+    InstalledDist,
+    SiteIndex,
+    marker_environment,
+    marker_holds,
+    requirement_of,
+)
 from .foreign import ForeignLockError
 from .pipenv import tool_names
 from .project import LockSource, Project, ProjectError, requirement_lines
@@ -175,7 +182,7 @@ def _holds(marker: Marker | None, environment: dict[str, str], extras: frozenset
         return marker is None or any(
             marker.evaluate({**environment, "extra": extra}) for extra in ("", *extras)
         )
-    except (UndefinedComparison, UndefinedEnvironmentName):
+    except (UndefinedComparison, KeyError):  # UndefinedEnvironmentName from packaging 26.3 on
         return True
 
 
@@ -208,9 +215,9 @@ def _dependencies(
         dependency = canonicalize_name(requirement.name)
         if dependency == name:
             continue
-        if requirement.marker is None or any(
-            requirement.marker.evaluate({**environment, "extra": extra})
-            for extra in {"", *extras}
+        if requirement.marker is None or marker_holds(
+            requirement.marker, environment, {"", *extras}, ClosureError,
+            f"{name}: Requires-Dist {requirement.name}",
         ):
             found[dependency] = found.get(dependency, frozenset()) | frozenset(
                 canonicalize_name(extra) for extra in requirement.extras)

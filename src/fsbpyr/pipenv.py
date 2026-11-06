@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 from packaging.markers import InvalidMarker, Marker
 from packaging.utils import canonicalize_name
 
+from .closure import marker_holds
 from .foreign import (
     GIT,
     LOCAL,
@@ -145,8 +146,8 @@ def _applies(entry: Entry, environment: Mapping[str, str], extras: frozenset[str
     their dependencies counting as active: Pipenv marks what an extra needs ``extra == 'x'``."""
     if entry.marker is None:
         return True
-    marker = _marker(entry.marker, entry)
-    return any(marker.evaluate({**environment, "extra": extra}) for extra in ("", *extras))
+    return marker_holds(_marker(entry.marker, entry), environment, ("", *extras),
+                        ForeignLockError, f"{LOCK}: {entry.label}")  # fmt: skip
 
 
 def _own_directory(entry: Entry, directory: Path) -> bool:
