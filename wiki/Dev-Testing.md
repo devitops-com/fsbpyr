@@ -762,7 +762,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_sysroot.py`](../tests/unit/runtime/test_sysroot.py) | 21 | The glibc sysroots: `ar` members, symlinks kept inside, escaping entries refused, verified HTTPS downloads, RPMs extracted as debs are, `lib` and `lib64` linked into `usr` for EL8 only. |
 | [`test_toolchain_and_link.py`](../tests/unit/runtime/test_toolchain_and_link.py) | 35 | `ar` listing, clang discovery and the stub's link: static PIE, hardening flags, the sanitized variant, aarch64's outlined atomics and Cortex-A53 erratum 843419 fix, mapped paths, the frame limit, `-DFSBPYR_RUNTIME_ID`, a failed link's output. |
 
-### tests/integration: 17 files, 826 tests
+### tests/integration: 17 files, 827 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -776,7 +776,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_mirror.py`](../tests/integration/test_mirror.py) | 28 | `make mirror` (`tools/release/mirror.sh`) on two bare repositories: GitLab follows only what this checkout and GitHub agree on, a disagreement stops it before any push, a branch goes only when main holds it. |
 | [`test_pbs_distribution.py`](../tests/integration/test_pbs_distribution.py) | 8 | What the runtime build relies on in the pinned PBS distribution: startup modules, the compile worker, the link plan, licence texts. It comes from `FSBPYR_TEST_DOWNLOADS` or is fetched (`downloads.pbs_distribution`). |
 | [`test_pbs_stdlib_versions.py`](../tests/integration/test_pbs_stdlib_versions.py) | 12 | The stdlib selection and startup modules for each pinned CPython version. |
-| [`test_release.py`](../tests/integration/test_release.py) | 163 | The release scripts against throwaway git repositories, a bare origin and a fake `gh`, the companion release and its tag included; also the workflow files, `tools/bootstrap.sh` and the Makefile's `VERSION`, `KEY` and `PYTHON`. Nothing reaches GitHub. |
+| [`test_release.py`](../tests/integration/test_release.py) | 164 | The release scripts against throwaway git repositories, a bare origin and a fake `gh`, the companion release and its tag included; also the workflow files, `tools/bootstrap.sh` and the Makefile's `VERSION`, `KEY` and `PYTHON`. Nothing reaches GitHub. |
 | [`test_release_drafts.py`](../tests/integration/test_release_drafts.py) | 36 | No workflow can reach a release key, publish a release or read a variable, and `release.yml` and `el8.yml` stop at a draft; the draft job's file check runs for real against files and sums that the built code in `prepare` could choose. |
 | [`test_release_sign.py`](../tests/integration/test_release_sign.py) | 172 | `make release-sign` and `make release-audit` with the real scripts and keys and a bare `hub`, against [`FakeGitHub`](../tests/support/fakegithub.py), which can do all an account can but attest: moved commits and tags, foreign attestations, runners and builds, files swapped during signing, a second draft, a key in the checkout; each audit finding; no failed lookup ever a pass. |
 | [`test_release_signing.py`](../tests/integration/test_release_signing.py) | 113 | [`tools/release/release-signing.sh`](../tools/release/release-signing.sh), `previous-release.sh` and `check-signature.sh`, with fake programs on `PATH` and passphrases typed on a pty: bad key files and `.pub`s, nothing replaced, burned tags, companions, the previous-release lookup, each pin rule of the sign job. |

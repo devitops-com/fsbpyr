@@ -2010,6 +2010,21 @@ def test_the_workflows_install_uv_with_the_script_and_not_the_x86_64_tarball() -
         assert "astral.sh/uv/install.sh" not in path.read_text(encoding="utf-8"), path.name
 
 
+def test_the_attestation_example_names_the_ref_each_file_was_built_from() -> None:
+    """Without it, a check passes anything the workflow ever built, from any ref (wiki,
+    User-Security.md#by-attestation): fsbpyr is the latest release's, checked against its tag;
+    the app, against the ref the run built."""
+    workflow = (ROOT / ".github/workflows/attest-example.yml").read_text(encoding="utf-8")
+    checks = workflow.split("gh attestation verify ")[1:]
+    fsbpyr, app = [text.split("\n\n", 1)[0] for text in checks]
+    latest = 'tag="$(gh release view --repo devitops-com/fsbpyr --json tagName --jq .tagName)"'
+
+    assert latest in workflow
+    assert 'gh release download "$tag" --repo devitops-com/fsbpyr' in workflow
+    assert '--source-ref "refs/tags/$tag"' in fsbpyr
+    assert '--source-ref "$GITHUB_REF"' in app
+
+
 # ------------------------------------------------------------------------- check-release.sh
 
 CHECK_RELEASE_SH = ROOT / "tools" / "release" / "check-release.sh"
