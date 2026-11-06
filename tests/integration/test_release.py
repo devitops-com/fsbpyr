@@ -427,6 +427,8 @@ def test_release_refuses_a_head_without_a_full_suite_run_on_main(
 
     assert result.returncode == 1
     assert f"main at {head[:7]} has no full-suite.yml run" in result.stderr
+    # it counts push runs only: one started by hand never would
+    assert "a push to main starts it" in result.stderr and "workflow_dispatch" not in result.stderr
     assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
     check, recent = check_calls(tmp_path, "full-suite.yml")  # HEAD's run, then an ancestor's
     for option in ("--branch main", "--event push", f"--commit {head}"):
