@@ -180,6 +180,35 @@ def test_an_executables_holes_hash_as_zeros_in_both_digests(
     assert _both(tmp_path / "f") == _expected(content)
 
 
+def test_an_executables_holes_are_never_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D38: 0.21.0's plain SHA-256 for ``inspect --verify`` read a sparse executable's holes as
+    zeros, which took 1 TiB raw from 4.8 to 324 s. Only the leaves with data are read, and the
+    integrity digest's own bytes."""
+    path = tmp_path / "sparse"
+    size = 40 * DIGEST_LEAF + 7 + DIGEST_SIZE
+    with path.open("wb") as file:
+        file.truncate(size)
+        for leaf in (5, 30):
+            file.seek(leaf * DIGEST_LEAF + 3)
+            file.write(b"data")
+    read: list[tuple[int, int]] = []
+    real_read = payload_format._read
+
+    def counted(fd: int, start: int, length: int) -> bytes:
+        read.append((start, length))
+        return real_read(fd, start, length)
+
+    monkeypatch.setattr(payload_format, "_read", counted)
+
+    digests = _both(path)
+
+    assert sorted(read) == [(5 * DIGEST_LEAF, DIGEST_LEAF), (30 * DIGEST_LEAF, DIGEST_LEAF),
+                            (size - DIGEST_SIZE, DIGEST_SIZE)]  # fmt: skip
+    assert digests == _expected(path.read_bytes())
+
+
 def test_an_executable_shorter_than_asked_is_an_error(tmp_path: Path) -> None:
     (tmp_path / "f").write_bytes(bytes(DIGEST_SIZE + 5))
 
