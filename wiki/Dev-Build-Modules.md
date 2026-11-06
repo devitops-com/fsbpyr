@@ -74,7 +74,7 @@ A step marked with some of the letters runs, or takes that branch, only for thos
 **Command line** ([`cli.py`](../src/fsbpyr/cli.py))
 
 1. The console script `fsbpyr.cli:main`, also reached by `python -m fsbpyr`, is
-   [`main`](../src/fsbpyr/cli.py#L748): it runs the click group with the command line as the
+   [`main`](../src/fsbpyr/cli.py#L757): it runs the click group with the command line as the
    context's object.
    [`build_command`](../src/fsbpyr/cli.py#L164)
    takes both signing variables out of its environment (`signing.take_build_variables`), checks
@@ -123,8 +123,8 @@ A step marked with some of the letters runs, or takes that branch, only for thos
    dependency, [`infer_dependencies`](../src/fsbpyr/build.py#L553)
    follows the commands' imports ([`importcheck.check_command`](../src/fsbpyr/importcheck.py#L198));
    when the runtime lacks some and a venv is found
-   ([`venvdeps.find_venv`](../src/fsbpyr/venvdeps.py#L58)),
-   [`venvdeps.infer`](../src/fsbpyr/venvdeps.py#L179)
+   ([`venvdeps.find_venv`](../src/fsbpyr/venvdeps.py#L59)),
+   [`venvdeps.infer`](../src/fsbpyr/venvdeps.py#L182)
    pins the distributions that provide them; the lock source is then `inferred`, and a warning
    names the venv (`--strict` fails here).
    [`lock_warnings`](../src/fsbpyr/build.py#L361)
@@ -140,8 +140,8 @@ A step marked with some of the letters runs, or takes that branch, only for thos
     [`Package.write_wheel`](../src/fsbpyr/loose.py#L192)
     for B to E, then installed with the locked distributions for the glibc baseline
     ([`staging`](#staging)). A Poetry, PDM or Pipenv lock is first converted
-    ([`foreign.export`](../src/fsbpyr/foreign.py#L472),
-    [`pipenv.export`](../src/fsbpyr/pipenv.py#L157)).
+    ([`foreign.export`](../src/fsbpyr/foreign.py#L476),
+    [`pipenv.export`](../src/fsbpyr/pipenv.py#L159)).
 11. [`SiteIndex.scan`](../src/fsbpyr/closure.py#L99)
     reads the staged site's `*.dist-info`, and
     [`check_no_editable`](../src/fsbpyr/closure.py#L107)
@@ -159,7 +159,7 @@ A step marked with some of the letters runs, or takes that branch, only for thos
     [`legacy.attach`](../src/fsbpyr/legacy.py#L39)
     makes the wheel's `#!python` legacy scripts commands (A only). For E,
     [`tool_binary`](../src/fsbpyr/build.py#L614)
-    has [`tools.tool_scripts`](../src/fsbpyr/tools.py#L312)
+    has [`tools.tool_scripts`](../src/fsbpyr/tools.py#L319)
     choose the tools and their scripts, and `tools.with_commands` makes them the project's own.
 14. [`SiteIndex.walk`](../src/fsbpyr/closure.py#L126)
     follows `Requires-Dist` under the runtime's markers. For B, C and D,
@@ -167,7 +167,7 @@ A step marked with some of the letters runs, or takes that branch, only for thos
     skips, with a warning naming `file:line`, a command that imports what neither the project,
     the staged site nor the runtime holds; `--strict` fails on that, as does a build with no
     command left.
-    [`resolve_entry`](../src/fsbpyr/closure.py#L232)
+    [`resolve_entry`](../src/fsbpyr/closure.py#L246)
     gives the app's name and entry point. `_output_path` gives the output (`-o`, or
     `dist/<app name>`), `_commands_to_link` checks a table's link paths (`links.check_links`,
     [`links`](#links)) and refuses a command named `<output>.sig`, and the output's directory is
@@ -200,7 +200,7 @@ A step marked with some of the letters runs, or takes that branch, only for thos
 
 19. [`assemble.build_temporary`](../src/fsbpyr/assemble.py#L124)
     adds the boot modules and the runtime's build_info keys, and
-    [`payload.writer.write_temporary`](../src/fsbpyr/payload/writer.py#L589)
+    [`payload.writer.write_temporary`](../src/fsbpyr/payload/writer.py#L605)
     streams the executable into a new `.<name>.XXXX.tmp` beside the output. When `_build`
     returns, the spill is closed and the staging directory removed.
 20. Unless `--no-smoke`,
@@ -209,7 +209,7 @@ A step marked with some of the letters runs, or takes that branch, only for thos
     `--smoke-args`,
     [`smoke_run`](../src/fsbpyr/build.py#L661)
     also runs it as the app with those arguments.
-21. [`payload.writer.commit`](../src/fsbpyr/payload/writer.py#L617)
+21. [`payload.writer.commit`](../src/fsbpyr/payload/writer.py#L633)
     renames the new file over the output, once `build` has removed an `<output>.sig`, and syncs
     the directory; for a table
     [`links.make_links`](../src/fsbpyr/links.py#L67)
