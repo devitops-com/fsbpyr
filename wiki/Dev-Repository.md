@@ -77,10 +77,12 @@ Two variables, set once:
 | `FSBPYR_RELEASE_KEY_FILE` | The release key's file; `KEY=PATH` overrides it. |
 | `FSBPYR_RELEASE_PASSPHRASE_FILE` | The absolute path of a file holding its passphrase, or of a program that prints it. |
 
-An executable file is run with nothing on its standard input; any other is read. The passphrase
-is one line. The file must be yours or root's, writable by nobody else, mode 600 or tighter if it
-holds the passphrase, and, like the key, outside the checkout. Beside the key, it does not stop
-someone with your account.
+A program, an executable file that starts with `#!` or is an ELF file, or one you may run but
+not read, is run with nothing on its standard input, and what it writes on its standard error is
+dropped, since the report keeps what each step prints. Any other file is read, x bits or not: on exFAT or NTFS, or a vfat mounted
+by hand, every file has them. The passphrase is one line. The file must be yours or root's, and
+neither your group nor others may write it, nor read it if it holds the passphrase; like the key,
+it stays outside the checkout. Beside the key, it does not stop someone with your account.
 
 `make release` checks that the key opens with the passphrase and is pinned by this tree, runs the
 audit, tags and pushes, waits for both workflows, signs and publishes both releases (neither
