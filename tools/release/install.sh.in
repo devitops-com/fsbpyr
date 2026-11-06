@@ -211,11 +211,12 @@ check_attestation() { # file
 }
 
 # Downloads the executable into $STAGE (in the install directory, so that the rename is atomic
-# and no mount option of /tmp matters) and checks it three ways before it is installed.
+# and no mount option of /tmp matters) and checks it three ways before it is installed. mktemp
+# makes $STAGE, so no link planted under a name known in advance is written through.
 fetch_executable() {
     asset="$ASSET"
     WORK_DIR="$(mktemp -d)" || err "cannot make a temporary directory"
-    STAGE="$INSTALL_DIR/.fsbpyr.$$.tmp"
+    STAGE="$(mktemp "$INSTALL_DIR/.fsbpyr.XXXXXX")" || err "cannot create a file in $INSTALL_DIR"
     if have xz && [ -n "$(asset_field "$asset.xz" 2)" ]; then
         download "$BASE_URL/$asset.xz" "$WORK_DIR/download"
         check_sha256 "$WORK_DIR/download" "$asset.xz"
@@ -265,13 +266,17 @@ install_extras() {
     put_extra "$share/fish/vendor_completions.d/fsbpyr.fish" completion fish
 }
 
+# Into a file of mktemp's (mode 600), given the mode a redirection gives: 666 less the umask.
 put_extra() { # file, then the arguments of fsbpyr that print it
     file="$1"
     shift
+    new=
     mkdir -p "$(dirname "$file")" \
-        && "$INSTALL_DIR/fsbpyr" "$@" > "$file.$$.tmp" 2> /dev/null \
-        && mv -f "$file.$$.tmp" "$file" \
-        || { rm -f "$file.$$.tmp"; warn "could not write $file"; return 0; }
+        && new="$(mktemp "$file.XXXXXX")" \
+        && "$INSTALL_DIR/fsbpyr" "$@" > "$new" 2> /dev/null \
+        && chmod +rw "$new" \
+        && mv -f "$new" "$file" \
+        || { [ -z "$new" ] || rm -f "$new"; warn "could not write $file"; return 0; }
     say_verbose "  $file"
 }
 
