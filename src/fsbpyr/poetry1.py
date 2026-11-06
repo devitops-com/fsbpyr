@@ -104,16 +104,15 @@ def project_table(data: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(python, str) and (spec := _constraint(python, "python")):
         table["requires-python"] = spec
     main: list[str] = []
-    optional: dict[str, str] = {}
+    optional: dict[str, list[str]] = {}  # every alternative of a dependency
     for name, spec in dependencies.items():
         for line, is_optional in _requirements(name, spec):
             if is_optional:
-                optional[canonicalize_name(name)] = line
+                optional.setdefault(canonicalize_name(name), []).append(line)
             else:
                 main.append(line)
     table["dependencies"] = main
-    extras = {extra: [optional[canonicalize_name(n)] for n in names
-                      if canonicalize_name(n) in optional]
+    extras = {extra: [line for n in names for line in optional.get(canonicalize_name(n), [])]
               for extra, names in (poetry.get("extras") or {}).items()}  # fmt: skip
     if extras:
         table["optional-dependencies"] = extras

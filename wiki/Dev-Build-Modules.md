@@ -595,7 +595,8 @@ Rules it enforces:
   `ProjectError`.
 - A dependency's `extras`, `markers` and `python` constraint go into its requirement line, the
   `markers` parenthesised next to a `python` constraint so an `or` in it keeps apart.
-- An `optional` dependency belongs to the extras of `[tool.poetry.extras]` that list it.
+- An `optional` dependency, with every alternative of one written as a list of tables, belongs
+  to the extras of `[tool.poetry.extras]` that list it.
 - A `git`, `path`, `url`, `develop` or `source` dependency, and an invalid requirement, raise
   `ProjectError` (add a `[project]` table, or lock the build with `--requirements`).
 

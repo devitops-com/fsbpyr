@@ -69,6 +69,17 @@ def test_the_table_holds_name_version_python_dependencies_extras_and_scripts() -
     }  # fmt: skip
 
 
+def test_every_alternative_of_an_optional_dependency_belongs_to_its_extras() -> None:
+    data = _data(
+        '[tool.poetry.dependencies]\nfoo = [\n'
+        '    {version = "^1.0", markers = "sys_platform == \'linux\'", optional = true},\n'
+        '    {version = "^2.0", markers = "sys_platform == \'darwin\'", optional = true},\n]\n'
+        '[tool.poetry.extras]\nx = ["foo"]\n')
+
+    assert project_table(data)["optional-dependencies"] == {"x": [
+        "foo<2,>=1.0; sys_platform == 'linux'", "foo<3,>=2.0; sys_platform == 'darwin'"]}
+
+
 def test_a_git_dependency_is_refused() -> None:
     data = _data('[tool.poetry.dependencies]\nlib = {git = "https://example.com/lib.git"}\n')
 
