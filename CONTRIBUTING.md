@@ -126,10 +126,11 @@ The tiers, from fastest to most complete:
 - `make test-ci`: `tests/unit`, `tests/integration` and the core end-to-end tests
   (`test_build`, `test_runtime_app`, `test_imports`, `test_stub_hardening`, `test_multicall`,
   `test_scripts`, `test_loose_directory`, `test_single_script`, `test_install_links`,
-  `test_pid1`, `test_unbuffered`, `test_file_overlay` and `test_pipfile_lock`: real builds of
-  projects, several commands, projects without a build system, directories of scripts, single
-  scripts, install links, services as PID 1 with unbuffered output, the `__file__` overlay and
-  Pipfile.lock projects), in 8 processes (`JOBS=` to change it), with the coverage check.
+  `test_pid1`, `test_unbuffered`, `test_file_overlay`, `test_pipfile_lock`, `test_signing` and
+  `test_selfupdate`: real builds of projects, several commands, projects without a build
+  system, directories of scripts, single scripts, install links, services as PID 1 with
+  unbuffered output, the `__file__` overlay, Pipfile.lock projects, signatures and self
+  update), in 8 processes (`JOBS=` to change it), with the coverage check.
 - The full suite in CI (`.github/workflows/full-suite.yml`): every test and check there is, so
   that a release (`.github/workflows/release.yml`) only builds and publishes. The release build
   (`.github/workflows/build.yml`) with its smoke test and an independent rebuild compared byte
