@@ -12,6 +12,7 @@ import click
 import pytest
 
 import fsbpyr
+from fsbpyr import manpage
 from fsbpyr.build import BuildResult
 from fsbpyr.cli import cli, main
 from fsbpyr.project import Project
@@ -254,6 +255,17 @@ def test_on_off_options_switch_off_what_the_project_switches_on(
 
 
 def test_help_has_a_short_option(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["build", "-h"]) == 0
+    assert "--source / --no-source" in capsys.readouterr().out
+
+
+def test_the_man_page_leaves_every_command_its_short_help_option(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """click keeps a command's help option from the first context that asks for it, so the
+    man page's contexts carry the group's -h too."""
+    manpage.render(cli, "fsbpyr")
+
     assert main(["build", "-h"]) == 0
     assert "--source / --no-source" in capsys.readouterr().out
 
