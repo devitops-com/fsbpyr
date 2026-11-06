@@ -352,17 +352,18 @@ def _render(new: Path, command: tuple[str, ...]) -> bytes:
 
 
 def _stage_extras(
-    executable: Path, new: Path, warn: Callable[[str], None]
-) -> list[tuple[Path, Path]]:
-    """(temporary, final) for each man page or completion found under the executable's prefix,
-    written by the new executable beside the final file."""
+    executable: Path, new: Path, warn: Callable[[str], None], staged: list[tuple[Path, Path]]
+) -> None:
+    """(temporary, final) into ``staged`` for each man page or completion found under the
+    executable's prefix, written by the new executable beside the final file. A temporary is
+    in ``staged`` from the moment it exists, so the caller removes it whatever stops this; one
+    that cannot be written is removed here, with a warning."""
     prefix = executable.parent.parent
     if executable.parent.name != "bin":
         warn(f"not under a prefix with a bin directory: the man page and the completions are "
              f"left alone; write them with `{executable.name} man` and `{executable.name} "
              "completion SHELL`")  # fmt: skip
-        return []
-    staged: list[tuple[Path, Path]] = []
+        return
     missing = False
     for relative, command in _EXTRAS:
         final = prefix / relative
@@ -370,21 +371,24 @@ def _stage_extras(
             missing = True
             continue
         content = _render(new, command)
+        temporary: Path | None = None
         try:
             handle, name = tempfile.mkstemp(dir=final.parent, prefix=f".{final.name}.")
             temporary = Path(name)
+            staged.append((temporary, final))
             with os.fdopen(handle, "wb") as out:
                 out.write(content)
             temporary.chmod(stat.S_IMODE(final.stat().st_mode))
         except OSError as exc:
+            if temporary is not None:
+                staged.pop()
+                with contextlib.suppress(OSError):
+                    temporary.unlink()
             warn(f"{final} was not updated: {exc.strerror or exc}; write it with "
                  f"`fsbpyr {' '.join(command)}`")  # fmt: skip
-            continue
-        staged.append((temporary, final))
     if missing:
         warn(f"the man page or completions not found under {prefix} were left alone; write "
              "them with `fsbpyr man` and `fsbpyr completion SHELL`")  # fmt: skip
-    return staged
 
 
 def _warn_about_placed_stubs(executable: Path, tag: str, warn: Callable[[str], None]) -> None:
@@ -462,7 +466,7 @@ def update(
         if numbers != release.numbers:
             raise _not_installed(release.tag, f"the download is not fsbpyr {release.tag}", own)
         check_glibc(report.info.get("glibc"))
-        staged = _stage_extras(executable, new, warn)
+        _stage_extras(executable, new, warn, staged)
         new.rename(executable)
     except BaseException:
         with contextlib.suppress(OSError):
