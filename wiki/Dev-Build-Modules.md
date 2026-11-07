@@ -588,11 +588,12 @@ them into the `[project]` table of B. The lock still decides what is installed
 Rules it enforces:
 
 - Poetry's constraints become PEP 440 specifiers: `^1.2` is `>=1.2,<2`, `~1.2` is `>=1.2,<1.3`,
-  a bare version is `==`, `*` is any version. A caret or tilde takes a pre-, post- or
-  dev-release or an epoch too, its bounds from the release numbers (`^1.2.0a1` is
-  `>=1.2.0a1,<2`); a local label (`^1.2+local`) is refused, as a `>=` specifier cannot hold one. AND constraints are split on
-  a comma or a space, as poetry-core splits them (`>=1.2 <2.0`). An `||` alternative raises
-  `ProjectError`.
+  a bare version is `==`, `*` is any version. A caret raises the first of the major, minor and
+  patch numbers that is not 0, else the last of them, as poetry-core does (`^0.0.0.5` is
+  `>=0.0.0.5,<0.0.1`). A caret or tilde takes a pre-, post- or dev-release or an epoch too, its
+  bounds from the release numbers (`^1.2.0a1` is `>=1.2.0a1,<2`); a local label (`^1.2+local`)
+  is refused, as a `>=` specifier cannot hold one. AND constraints are split on a comma or a
+  space, as poetry-core splits them (`>=1.2 <2.0`). An `||` alternative raises `ProjectError`.
 - A dependency's `extras`, `markers` and `python` constraint go into its requirement line, the
   `markers` parenthesised next to a `python` constraint so an `or` in it keeps apart.
 - An `optional` dependency, with every alternative of one written as a list of tables, belongs

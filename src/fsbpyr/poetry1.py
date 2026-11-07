@@ -43,8 +43,8 @@ def _constraint(text: str, where: str) -> str:
         if match := _CARET_TILDE.match(part):
             version = Version(match[2])  # the bounds come from its release numbers
             numbers = list(version.release)
-            if match[1] == "^":
-                index = next((i for i, n in enumerate(numbers) if n), len(numbers) - 1)
+            if match[1] == "^":  # poetry-core's next_breaking: major, minor or patch
+                index = next((i for i, n in enumerate(numbers[:3]) if n), min(len(numbers), 3) - 1)
             else:
                 index = min(1, len(numbers) - 1)
             upper = [*numbers[:index], numbers[index] + 1]

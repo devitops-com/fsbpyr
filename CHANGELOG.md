@@ -69,7 +69,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   order does, is skipped too; the build warned about the reads in its body.
 - **Poetry 1 constraints take pre-releases, epochs and space-separated parts.** An unpackaged Poetry
   1 project with `^1.2.0a1`, `~1.2.0.post1` or `>=1.2 <2.0` was refused. These now read as
-  poetry-core reads them. A local label (`^1.2+local`) is still refused.
+  poetry-core reads them. A local label (`^1.2+local`) is still refused. A caret on a version of
+  more than three numbers raised the first that is not 0, wherever it was: `^0.0.0.5` was
+  `<0.0.0.6`. It now raises the major, minor or patch number, as poetry-core does (`<0.0.1`).
 - **An optional Poetry 1 dependency keeps all its alternatives.** For an optional dependency written
   as a list of tables, one per platform for example, the extras kept only the last table. An app
   built with `--extra` could then lack that dependency on the other platforms.

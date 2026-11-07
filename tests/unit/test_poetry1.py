@@ -42,6 +42,18 @@ def test_a_caret_or_tilde_takes_any_pep_440_version(constraint: str, specifier: 
 
 @pytest.mark.parametrize(
     ("constraint", "specifier"),
+    [("^0.0.0.5", ">=0.0.0.5,<0.0.1"), ("^0.0.0.0", ">=0.0.0.0,<0.0.1"),
+     ("^0.0.0.0.5", ">=0.0.0.0.5,<0.0.1"), ("^0.1.2.3", ">=0.1.2.3,<0.2"),
+     ("^1.2.3.4", ">=1.2.3.4,<2"), ("^0.0.0.5a1", ">=0.0.0.5a1,<0.0.1")],
+)  # fmt: skip
+def test_a_caret_raises_one_of_the_first_three_numbers(constraint: str, specifier: str) -> None:
+    """As poetry-core does (Version.next_breaking; 1.9.1 and 2.5.0 give these bounds, written
+    with as many numbers as the version has: <0.0.1.0 is 0.0.1)."""
+    assert _dependencies(pkg=constraint) == [f"pkg{SpecifierSet(specifier)}"]
+
+
+@pytest.mark.parametrize(
+    ("constraint", "specifier"),
     [(">=1.2 <2.0", ">=1.2,<2.0"), (">= 1.2 < 2.0", ">=1.2,<2.0"),
      (">=1.2, <2.0,", ">=1.2,<2.0"), ("^1.2 !=1.5", ">=1.2,<2,!=1.5")],
 )  # fmt: skip
