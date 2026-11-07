@@ -2,6 +2,7 @@
 are read as files and become pins; nothing in the venv is run or copied."""
 
 import json
+import re
 import stat
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -15,6 +16,8 @@ from fsbpyr.loose import Package
 from fsbpyr.manifest import inferred_lock
 from fsbpyr.project import LockSource, Project, ProjectError
 from fsbpyr.venvdeps import Inferred, find_venv, infer, read_venv
+
+from ...support.markers import UNEVALUABLE
 
 ENVIRONMENT = marker_environment("3.14.9")
 
@@ -147,6 +150,20 @@ def test_the_requires_dist_closure_as_installed_is_pinned_markers_for_the_target
 
     assert found is not None
     assert found.pins == ("app-lib==1.0", "dep-a==2.5", "dep-b==0.3", "dep-new==1.1")
+
+
+@pytest.mark.parametrize("marker", UNEVALUABLE)
+def test_a_marker_that_cannot_be_evaluated_is_an_error_naming_the_distribution(
+    tmp_path: Path, marker: str
+) -> None:
+    venv = _venv(tmp_path)
+    _dist(venv, "app-lib", "1.0", files=["app_lib/__init__.py"], requires=[f"dep-a; {marker}"])
+    _dist(venv, "dep-a", "2.5")
+
+    message = (f"app-lib 1.0 in the venv: Requires-Dist dep-a: cannot evaluate the marker "
+               f"{marker!r}: ")  # fmt: skip
+    with pytest.raises(ProjectError, match=re.escape(message)):
+        infer(venv, ["app_lib"], ENVIRONMENT)
 
 
 # --- the user's own trees --------------------------------------------------------------------

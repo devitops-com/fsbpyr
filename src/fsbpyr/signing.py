@@ -91,7 +91,8 @@ def crypto() -> Crypto:
         import _fsbpyr  # noqa: PLC0415  # only in executables
     except ImportError:
         raise SigningError(_BUILT_ONLY) from None
-    return cast("Crypto", _fsbpyr)
+    functions: Crypto = _fsbpyr  # checked against stubs/_fsbpyr.pyi
+    return functions
 
 
 def available() -> bool:

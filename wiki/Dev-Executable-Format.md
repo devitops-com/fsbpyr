@@ -241,7 +241,8 @@ Invariants:
   since `marshal.loads` is not safe against corrupt input. The checksum covers a block's
   content, not which slice a member selects: like every table field, a member's position and
   size are not checksummed. The launcher decompresses STARTUP code once, into memory it hands to
-  CPython's frozen-module table.
+  CPython's frozen-module table, so it is one zstd frame or a member of a block, never in pieces,
+  of 1 byte to 16 MiB (`MAX_STARTUP_CODE`).
 
 ### FILES record (24 bytes), keyed by site-relative POSIX path
 
@@ -292,8 +293,9 @@ it would be read in memory.
 
 ### STARTUP
 
-u32 MODULES indices, strictly ascending: exactly the modules flagged STARTUP. The launcher builds
-CPython's frozen-module table from this list and never scans MODULES.
+u32 MODULES indices, strictly ascending: exactly the modules flagged STARTUP, at most 4096
+(`MAX_STARTUP_MODULES`). The launcher builds CPython's frozen-module table from this list and
+never scans MODULES.
 
 ## Validation rules
 
@@ -322,7 +324,8 @@ The writer's output keeps these, and the Python reader checks them all
   mypyc's `81d243bd2c585b0f4821__mypyc` through `importlib.import_module`. Dist names are
   canonical.
 - The module kind invariants (checksummed code included), the STARTUP rule (the section lists
-  exactly the flagged modules) and the closure rules hold.
+  exactly the flagged modules, at most 4096, and their code is codec 1 or 2, of 1 byte to
+  16 MiB) and the closure rules hold.
 - Every zstd frame a reader decompresses must be at least 6 bytes with the zstd magic, have the
   content-checksum flag (bit 2 of byte 4, the frame header descriptor) set, declare its content
   size, equal to `size`, and end where its stored bytes end; the output must be exactly `size`
@@ -356,7 +359,7 @@ passes. The [boot modules](Dev-Boot-Modules.md) use what `_fsbpyr` returns.
 | blob placement, `size` ≤ 2^62, codec 0 sizes, block members, piece counts | checked (`fsb_get_blob`) |
 | codecs 3 and 4 only for natives; codec allowed by the version | not checked: left to the integrity digest |
 | module kind invariants | a STARTUP module's code must be codec 1 or 2 and 1 byte to 16 MiB; the others are not checked in C |
-| STARTUP rule | each listed module must be flagged STARTUP; not that every flagged module is listed, nor the order |
+| STARTUP rule | at most 4096 listed modules, each flagged STARTUP; not that every flagged module is listed, nor the order |
 | closure rules | count at least 1 and at most the FILES count, members in range and strictly ascending; member kinds and self-listing not checked |
 | path rules | checked for every file before it is extracted (`fsb_cache_safe`) |
 | zstd frames and exact output sizes | checked on every decode |
@@ -380,6 +383,8 @@ passes. The [boot modules](Dev-Boot-Modules.md) use what `_fsbpyr` returns.
 | `MAX_MODE` | `FSB_MAX_MODE` | `0o777` |
 | `MAX_BLOB_SIZE` | `FSB_MAX_BLOB_SIZE` | 2^62 |
 | `MAX_BLOCK_SIZE` | `FSB_MAX_BLOCK_SIZE` | 2^20 (1 MiB) |
+| `MAX_STARTUP_CODE` | `MAX_STARTUP_CODE` (in `main.c`) | 16 MiB |
+| `MAX_STARTUP_MODULES` | `MAX_STARTUP_MODULES` (in `main.c`) | 4096 |
 | `XZ_MEMLIMIT` | `FSB_XZ_MEMLIMIT` | 64 MiB |
 | `XZ_PIECE` | `FSB_XZ_PIECE` | 4 MiB |
 | `ZSTD_PIECE` | `FSB_ZSTD_PIECE` | 8 MiB |

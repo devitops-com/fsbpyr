@@ -1,9 +1,9 @@
 """Past every 32-bit size, within 1 GB of resident memory throughout (D38, Phase 8c exit): a
 package with a 5 GiB file (sparse, of zeros) builds, compressed as a build compresses it or
 stored raw (a 5 GiB executable, sparse as well), checks itself, streams the file and extracts it,
-and `fsbpyr inspect --verify` reads it, none of them taking more than a fraction of a GB. On
-demand, the same runs with 1 TB: FSBPYR_LARGE_SIZE=1099511627776 (docs/IMPLEMENTATION_PLAN.md,
-Phase 8c)."""
+and `fsbpyr inspect --verify` reads it, none of them taking more than a fraction of a GB, nor
+reading the holes. On demand, the same runs with 1 TB: FSBPYR_LARGE_SIZE=1099511627776
+(docs/IMPLEMENTATION_PLAN.md, Phase 8c)."""
 
 import json
 import os
@@ -20,13 +20,24 @@ pytestmark = pytest.mark.slow
 
 SIZE = int(os.environ.get("FSBPYR_LARGE_SIZE", str(5 << 30)))
 LIMIT = 1 << 30  # D38: fsbpyr's own work, whatever the input's size
+# Bytes read by each process: what is not a hole is read, the holes never are (reading them
+# would add SIZE). Far above what XFS may preallocate in the executable (asserted below: under
+# 256 MiB), whose range SEEK_DATA may take for data depending on the page cache.
+READ_LIMIT = 1 << 30
 
 # A process's own peak: VmHWM starts afresh at exec, where ru_maxrss keeps the peak of the
 # process that exec'd (with vfork, pytest's own: past 1 GB when the suite built a runtime).
+# Its bytes read: rchar counts every read and pread of the process, its threads and the children
+# it waited for, not the pages of a mapping.
 _PEAK = """\
 def peak():
     with open("/proc/self/status") as status:
         return next(int(line.split()[1]) for line in status if line.startswith("VmHWM:")) << 10
+
+
+def read():
+    with open("/proc/self/io") as io:
+        return next(int(line.split()[1]) for line in io if line.startswith("rchar:"))
 """
 
 _APP = (
@@ -46,7 +57,7 @@ def main():
         report["streamed"] = [size, zeros]
     with as_file(files("big").joinpath("zeros.bin")) as path:
         report["extracted"] = [os.path.getsize(path), os.stat(path).st_blocks * 512]
-    report["peak"] = peak()
+    report["peak"], report["read"] = peak(), read()
     print(json.dumps(report))
 """
 )
@@ -75,7 +86,7 @@ with Spill(out.parent) as spill:
     files = content.files
     app = App("big", "big:main", modules=content.modules, files=files, dists=content.dists)
     build_executable(runtime, app, out)
-print(json.dumps({"peak": peak(),
+print(json.dumps({"peak": peak(), "read": read(),
                   "codec": int(next(f for f in files if f.path == "big/zeros.bin").blob.codec)}))
 """
 )
@@ -104,7 +115,7 @@ _INSPECT = (
 import json, sys
 from fsbpyr.cli import main
 code = main(["inspect", "--verify", sys.argv[1]])
-print(json.dumps({"code": code, "peak": peak()}))
+print(json.dumps({"code": code, "peak": peak(), "read": read()}))
 """
 )
 
@@ -128,6 +139,8 @@ def test_a_5_gib_file_builds_runs_and_extracts_in_bounded_memory(
     assert report["streamed"] == [SIZE, SIZE]
     assert report["extracted"][0] == SIZE and report["extracted"][1] < (64 << 20)  # holes
     assert build["peak"] < LIMIT and report["peak"] < LIMIT, (build["peak"], report["peak"])
+    assert build["read"] < READ_LIMIT, build
+    assert report["read"] < READ_LIMIT, report
     if stored == "raw":  # a sparse executable past 5 GiB
         assert os.path.getsize(app) > SIZE and os.stat(app).st_blocks * 512 < (256 << 20)
 
@@ -146,3 +159,5 @@ def test_inspect_verifies_a_5_gib_executable_in_bounded_memory(
     assert inspected.returncode == 0, inspected.stderr
     report = json.loads(inspected.stdout.splitlines()[-1])  # measured in the process itself
     assert report["code"] == 0 and 0 < report["peak"] < LIMIT, report
+    assert 0 < report["read"] < READ_LIMIT, report
+    assert os.stat(app).st_blocks * 512 < (256 << 20)  # what READ_LIMIT allows for

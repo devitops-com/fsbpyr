@@ -383,6 +383,7 @@ def test_a_failed_rebuild_keeps_the_hosts_build_with_a_warning(
     def failed(*_: object, **__: object) -> None:
         raise StagingError("uv pip install ... failed:\n  error: command 'g++' failed\n\n")
 
+    monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr("fsbpyr.build.fetch_sysroot", lambda pin, cache: tmp_path)
     monkeypatch.setattr("fsbpyr.build.rebuild", failed)
 
@@ -390,6 +391,29 @@ def test_a_failed_rebuild_keeps_the_hosts_build_with_a_warning(
         "cxx-ext: building from source against the glibc 2.36 sysroot failed, the build host's "
         "builds are packaged: error: command 'g++' failed"
     ]
+
+
+def test_the_sysroot_goes_into_a_cache_root_of_the_users_own_and_0700(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D20: a build that only rebuilds native wheels against the sysroot makes its cache root
+    private too, as the other build paths do."""
+    root = tmp_path / "cache"
+    root.mkdir()
+    root.chmod(0o775)
+    monkeypatch.setenv("FSBPYR_CACHE_DIR", str(root))
+    caches: list[Path] = []
+
+    def fetched(pin: pins.SysrootPin, cache: Path) -> Path:
+        caches.append(cache)
+        return tmp_path / "sysroot"
+
+    monkeypatch.setattr("fsbpyr.build.fetch_sysroot", fetched)
+    monkeypatch.setattr("fsbpyr.build.rebuild", lambda *_, **__: None)
+
+    assert _rebuild(tmp_path) == []
+    assert caches == [root]
+    assert root.stat().st_mode & 0o777 == 0o700
 
 
 @pytest.mark.parametrize(("names", "rebuilt"), [(["cext", "posix-ipc"], True),
@@ -413,6 +437,7 @@ def test_the_projects_own_extension_is_rebuilt_with_the_sysroot_flags(
                 env: dict[str, str], **_: object) -> None:  # fmt: skip
         installed.append((wheel, names, env))
 
+    monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr("fsbpyr.build.fetch_sysroot", lambda pin, cache: tmp_path / "sysroot")
     monkeypatch.setattr("fsbpyr.build.rebuild_wheel", rebuild_wheel)
     monkeypatch.setattr("fsbpyr.build.rebuild", rebuild)

@@ -68,6 +68,27 @@ def test_a_commands_main_guard_read_is_found_when_asked() -> None:
     assert file_relative_reads(source, "m.py") == []
 
 
+@pytest.mark.parametrize(
+    ("source", "on_import"),
+    [("if __name__ == '__main__':\n    open(__file__).read()\n", []),
+     ("if __name__ != '__main__':\n    open(__file__).read()\n", [2]),
+     ("if __name__ == '__main__':\n    pass\nelse:\n    open(__file__).read()\n", [4]),
+     ("if __name__ == '__main__':\n    pass\nelif True:\n    open(__file__).read()\n", [4]),
+     ("if __name__ != '__main__':\n    pass\nelse:\n    open(__file__).read()\n", []),
+     ("if '__main__' == __name__:\n    open(__file__).read()\n", []),
+     ("if '__main__' != __name__:\n    open(__file__).read()\n", [2]),
+     ("if '__main__' == __name__:\n    pass\nelse:\n    open(__file__).read()\n", [4]),
+     ("if '__main__' != __name__:\n    pass\nelse:\n    open(__file__).read()\n", [])],
+    ids=["body-of-eq", "body-of-ne", "else-of-eq", "elif-after-eq", "else-of-ne",
+         "reversed-body-of-eq", "reversed-body-of-ne", "reversed-else-of-eq",
+         "reversed-else-of-ne"],
+)  # fmt: skip
+def test_only_the_branch_that_runs_as_main_is_guarded(source: str, on_import: list[int]) -> None:
+    """An imported module runs the body of `!=` and the else or elif of `==`, the operands in
+    either order (entry.has_main_guard takes both as a main guard)."""
+    assert file_relative_reads(source.encode(), "m.py") == on_import
+
+
 SPAWNS = [
     "import os, subprocess, sys\nsubprocess.run([sys.executable, os.path.join(os.path.dirname("
     "__file__), 's.py')])\n",

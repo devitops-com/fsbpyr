@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import marshal
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -11,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from packaging.markers import Marker
 
 from fsbpyr.build import StrictError, check_strict
 from fsbpyr.classify import ClassifyError, Uncounted, _digested, classify
@@ -33,6 +35,7 @@ from fsbpyr.targets import EM_AARCH64, EM_X86_64, host_target
 
 from ...support.apps import library
 from ...support.elf import make_elf
+from ...support.markers import UNEVALUABLE
 
 PROJECT_DIR = Path("/work/hello")
 
@@ -120,6 +123,37 @@ def test_dependency_walk_honours_markers_and_extras(site: Path) -> None:
     assert plain.reachable == ("click", "hello-app")
     assert fancy.reachable == ("click", "hello-app", "pygments", "rich")
     assert plain.unreachable == ("pygments", "rich", "stray")
+
+
+@pytest.mark.parametrize("marker", UNEVALUABLE)
+def test_a_marker_that_cannot_be_evaluated_is_an_error_naming_the_dist(
+    site: Path, marker: str
+) -> None:
+    _dist(site, "odd", "1.0", {"odd.py": b""}, requires=(f"click; {marker}",))
+    index = SiteIndex.scan(site)
+
+    message = f"odd: Requires-Dist click: cannot evaluate the marker {marker!r}: "
+    with pytest.raises(ClosureError, match=re.escape(message)):
+        index.walk(index.dists["odd"], extras=(), python_version="3.14.8")
+
+
+def test_a_name_packaging_before_26_3_cannot_find_is_the_same_error(
+    site: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """packaging>=25 is allowed; before 26.3 a marker naming ``extras`` raises a bare KeyError,
+    which UndefinedEnvironmentName subclasses since."""
+
+    def evaluate(self: Marker, environment: object = None) -> bool:
+        raise KeyError("extras")
+
+    monkeypatch.setattr(Marker, "evaluate", evaluate)
+    marker = '"x" in extras'
+    _dist(site, "odd", "1.0", {"odd.py": b""}, requires=(f"click; {marker}",))
+    index = SiteIndex.scan(site)
+
+    message = f"odd: Requires-Dist click: cannot evaluate the marker {marker!r}: no value for "
+    with pytest.raises(ClosureError, match=re.escape(message)):
+        index.walk(index.dists["odd"], extras=(), python_version="3.14.8")
 
 
 def test_missing_dependency_is_an_error(site: Path) -> None:

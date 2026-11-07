@@ -12,6 +12,7 @@
 #include "due.h"
 #include "slots.h"
 
+#include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,7 +78,8 @@ static void check_versions(void) {
 static const unsigned char *startup_code(const struct fsb_blob *b) {
     unsigned char *code = malloc((size_t)b->size);
     if (code == NULL) fatal("out of memory");
-    if (!fsb_read_blob(&fsb_self, NULL, b, code)) fatal("corrupt startup module");
+    if (!fsb_read_blob(&fsb_self, NULL, b, code))
+        fatal(errno == ENOMEM ? "out of memory" : "corrupt startup module");
     return code;
 }
 

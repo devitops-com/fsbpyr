@@ -28,6 +28,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from .closure import marker_holds
 from .project import ProjectError
 
 VENV_NAMES = (".venv", "venv", "env")  # inside the directory, in this order
@@ -160,13 +161,15 @@ def _closure(
     found = {dist.name: dist for dist in wanted}
     pending = list(found.values())
     while pending:
-        for line in pending.pop().requires:
+        dist = pending.pop()
+        for line in dist.requires:
             try:
                 requirement = Requirement(line)
             except InvalidRequirement:
                 continue
-            if requirement.marker is not None and not requirement.marker.evaluate(
-                {**environment, "extra": ""}
+            if requirement.marker is not None and not marker_holds(
+                requirement.marker, environment, ("",), ProjectError,
+                f"{dist.name} {dist.version} in the venv: Requires-Dist {requirement.name}",
             ):
                 continue
             name = canonicalize_name(requirement.name)

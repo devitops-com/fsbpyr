@@ -482,9 +482,11 @@ class _Exited(Exception):
     """Stands in for the process ending: os._exit does not return."""
 
 
-def _refusing_sync(monkeypatch: pytest.MonkeyPatch, native: types.ModuleType, message: str) -> None:
+def _refusing_sync(
+    monkeypatch: pytest.MonkeyPatch, native: types.ModuleType, error: Exception
+) -> None:
     def sync(*_: object) -> int:
-        raise native.NativeCacheError(message)
+        raise error
 
     monkeypatch.setattr(native._fsbpyr, "sync", sync)
 
@@ -499,7 +501,8 @@ def test_a_refused_cache_directory_is_a_refused_start(
     boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str], why: str
 ) -> None:  # fmt: skip
-    _refusing_sync(monkeypatch, native, f"refusing cache directory /shared: {why}")
+    refused = native._fsbpyr.CacheRefused(f"refusing cache directory /shared: {why}")
+    _refusing_sync(monkeypatch, native, refused)
     spec = _speed_spec(boot)
 
     with pytest.raises(_Exited) as ended:
@@ -512,14 +515,20 @@ def test_a_refused_cache_directory_is_a_refused_start(
     )
 
 
+@pytest.mark.parametrize("message", [
+    "corrupt executable payload: file 3",
+    "refusing cache directory /shared: other users may write to it",  # words decide nothing
+])  # fmt: skip
 def test_any_other_extraction_failure_stays_an_error(
-    boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _refusing_sync(monkeypatch, native, "corrupt executable payload: file 3")
+    boot: types.ModuleType, native: types.ModuleType, monkeypatch: pytest.MonkeyPatch,
+    message: str
+) -> None:  # fmt: skip
+    _refusing_sync(monkeypatch, native, native.NativeCacheError(message))
     spec = _speed_spec(boot)
 
-    with pytest.raises(native.NativeCacheError, match="corrupt executable payload"):
+    with pytest.raises(native.NativeCacheError) as failed:
         _loader(native, spec).create_module(spec)
+    assert str(failed.value) == message
 
 
 def test_a_modules_own_oserror_is_not_an_extraction_failure(

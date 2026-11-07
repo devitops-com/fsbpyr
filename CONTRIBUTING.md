@@ -31,7 +31,8 @@ and the targets that build a runtime fetch, once and with `curl`, the LLVM relea
 the host's architecture that `tools/release/llvm23` pins (its version, then the SHA-256 of the
 x86-64 and of the aarch64 tarball), check its SHA-256, and unpack what linking needs, about
 600 MB, with `zstd` into `${XDG_CACHE_HOME:-~/.cache}/fsbpyr/toolchains`. With
-`FSBPYR_LLVM23=0` they use a clang and lld 23 or newer on `PATH` instead.
+`FSBPYR_LLVM23=0` they use a clang and lld 23 or newer on `PATH` instead, with `llvm-profdata`
+and `llvm-cov` beside that clang.
 
 **`make bootstrap`** (`tools/bootstrap.sh`) takes a checkout to an installed fsbpyr:
 
@@ -110,8 +111,8 @@ Nothing in the test suite skips: a test either runs or fails, naming the tool or
 it lacks. Install everything under "What the tests need" below before you run them, and run
 `make test-prereqs` to see what this machine still lacks, all at once. `make check` runs the static checks (ruff and mypy), `make test-ci` the core of the suite,
 `make test` all of it but the corpus, and `make test-corpus` the corpus. `make check-c` runs
-clang's static analyzer over the launcher's C sources; it is informational (full-suite.yml runs
-it with `continue-on-error`) and exits 1 when the analyzer has findings. Every target that
+clang's static analyzer over the launcher's C sources and exits 1 when the analyzer has
+findings, which fails full-suite.yml's run. Every target that
 checks or tests but `make test-vm` takes `PYTHON=3.X` (3.12 to 3.15, on the command line only)
 to run on that Python's variant. The end-to-end tests
 use a cached runtime or build one, which needs clang and lld 23 or newer: the `make` targets
@@ -125,10 +126,11 @@ The tiers, from fastest to most complete:
 - `make test-ci`: `tests/unit`, `tests/integration` and the core end-to-end tests
   (`test_build`, `test_runtime_app`, `test_imports`, `test_stub_hardening`, `test_multicall`,
   `test_scripts`, `test_loose_directory`, `test_single_script`, `test_install_links`,
-  `test_pid1`, `test_unbuffered`, `test_file_overlay` and `test_pipfile_lock`: real builds of
-  projects, several commands, projects without a build system, directories of scripts, single
-  scripts, install links, services as PID 1 with unbuffered output, the `__file__` overlay and
-  Pipfile.lock projects), in 8 processes (`JOBS=` to change it), with the coverage check.
+  `test_pid1`, `test_unbuffered`, `test_file_overlay`, `test_pipfile_lock`, `test_signing` and
+  `test_selfupdate`: real builds of projects, several commands, projects without a build
+  system, directories of scripts, single scripts, install links, services as PID 1 with
+  unbuffered output, the `__file__` overlay, Pipfile.lock projects, signatures and self
+  update), in 8 processes (`JOBS=` to change it), with the coverage check.
 - The full suite in CI (`.github/workflows/full-suite.yml`): every test and check there is, so
   that a release (`.github/workflows/release.yml`) only builds and publishes. The release build
   (`.github/workflows/build.yml`) with its smoke test and an independent rebuild compared byte
@@ -144,10 +146,12 @@ The tiers, from fastest to most complete:
   every tool and setting the tests need present (nothing skips), and `make release` and the
   draft job require a green run, aarch64 jobs included, for the commit a release is made
   from. The fuzzer runs for 600 s (`FSBPYR_FUZZ_SECONDS`) when `src/fsbpyr/launcher` or
-  `tests/fuzz` changed since the last tag and on the weekly run, else for 30 s; the corpus it finds
-  (`FSBPYR_FUZZ_CORPUS`) is kept in the Actions cache. The launcher programs the tests build
+  `tests/fuzz` changed since the last tag and on the weekly run, else for 30 s, and the readers
+  of keys for a quarter of that, 30 s at least; what each finds (`FSBPYR_FUZZ_CORPUS`, and the
+  `-sig` directory beside it) is kept in the Actions cache. The launcher programs the tests build
   are instrumented for llvm-cov (`FSBPYR_LLVM_COV_DIR`), and the run's summary shows the
-  report; it is informational. A run took 37 to 40 minutes in October 2026, while each suite
+  report, one row per launcher source, and the job's reports artifact holds its per-line data
+  (`launcher-coverage.lcov`); it is informational. A run took 37 to 40 minutes in October 2026, while each suite
   job ran its tests in one process; the job's limit is 60 minutes. Runners of one label differ
   in disk (most have 85 GB free, some 12 GB): the suite and corpus jobs first remove software of
   the runner image they never use and stop at once unless 20 GiB beyond a tenth of the disk are
@@ -262,8 +266,10 @@ util-linux coreutils podman uidmap passt` installs all of them but uv and LLVM 2
 - `uv` at the version `tools/release/uv.version` names (not packaged), with the Pythons 3.12 to
   3.15 it runs the tests on: `uv python install 3.12 3.13 3.14 3.15` (the tests never let uv
   download one);
-- clang and lld 23 (not packaged): the `make` targets put LLVM 23 first on PATH; run directly,
-  put fsbpyr's own (`bash tools/bootstrap.sh --llvm23`) there;
+- clang and lld 23 (not packaged), with LLVM's `llvm-profdata` and `llvm-cov` in the same
+  directory (`test_launcher_coverage.py` reads its profiles with them; fsbpyr's LLVM 23 has
+  both): the `make` targets put LLVM 23 first on PATH; run directly, put fsbpyr's own
+  (`bash tools/bootstrap.sh --llvm23`) there;
 - `cc` (gcc), `readelf` and `objdump` (binutils), `llvm-objdump` (llvm-22, or LLVM 23's own);
 - `strace` (strace) and `groff` (groff-base);
 - `zstd` (zstd), `tar` (tar), `xz` (xz-utils), `curl` (curl), `wget` (wget) and `jq` (jq);

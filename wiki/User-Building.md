@@ -34,7 +34,9 @@ of a project without a build system, of a directory and a single script are read
 script runs as `__main__`, and the smoke test only checks that it is there. (A
 `module:function` command that a project without a build system declares in
 `[project.scripts]` is imported like any console script.) Dependencies built from source
-distributions run their own build code in every case.
+distributions run their own build code in every case. That code runs with your rights, so build
+only projects you trust, or build an unknown one in an isolated, unprivileged environment such as
+a container or a throwaway account ([the project on the build host](Dev-Security.md#the-project-on-the-build-host)).
 
 ## What a project needs
 
@@ -294,6 +296,9 @@ $ echo $?
   script's old file name works.
 - Only the exact name counts as the first argument: `multi /path/to/multi-beta` is not a
   command.
+- A command named like the executable (a project whose main script has its name) gets no link:
+  the executable is that command, whatever its first argument, and the build says to start the
+  others through their links (`start multi as multi, the others through their links`).
 - A link replaces a symlink, and the executable an earlier build of the same project wrote there
   for that one command (an fsbpyr executable of that name whose build information names the
   project), so a project that goes from one command to several replaces its own earlier output.

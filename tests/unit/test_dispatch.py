@@ -317,6 +317,19 @@ def test_a_variant_that_will_not_start_is_an_error(
     assert "cannot run" in capsys.readouterr().err
 
 
+def test_an_unsupported_host_is_an_error_not_an_internal_error(
+    releases: FakeReleases, ran: Ran, project: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A released x86_64 fsbpyr under a 32-bit personality (`setarch i686`)."""
+    monkeypatch.setattr("platform.machine", lambda: "i686")
+
+    assert main(["build", str(project)]) == 1
+
+    assert capsys.readouterr().err == "fsbpyr: error: unsupported host linux/i686\n"
+    assert releases.requests == [] and ran.commands == []
+
+
 def test_a_project_no_supported_python_fits_stops_before_any_fetch(
     releases: FakeReleases, ran: Ran, project: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

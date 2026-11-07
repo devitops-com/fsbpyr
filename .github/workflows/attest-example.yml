@@ -28,15 +28,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # The runner user cannot write /usr/local/bin, so uv goes into a user directory on PATH.
-          curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$HOME/.local/bin" UV_NO_MODIFY_PATH=1 sh
+          # The uv that tools/release/uv.version pins, checked against its SHA-256 before it is
+          # unpacked, as build.yml installs it. The runner user cannot write /usr/local/bin, so uv
+          # goes into a user directory on PATH.
+          sh tools/release/install-uv.sh "$HOME/.local/bin" > /dev/null
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          # the latest release's fsbpyr on this runner's Python and target
-          gh release download --repo devitops-com/fsbpyr --pattern fsbpyr-3.14-x86_64-linux-gnu \
-            --output "$RUNNER_TEMP/fsbpyr"
+          # the latest release's fsbpyr on this runner's Python and target, checked against the
+          # tag it was built from: without the tag, any build release.yml ever made would pass
+          tag="$(gh release view --repo devitops-com/fsbpyr --json tagName --jq .tagName)"
+          gh release download "$tag" --repo devitops-com/fsbpyr \
+            --pattern fsbpyr-3.14-x86_64-linux-gnu --output "$RUNNER_TEMP/fsbpyr"
           chmod +x "$RUNNER_TEMP/fsbpyr"
           gh attestation verify "$RUNNER_TEMP/fsbpyr" --repo devitops-com/fsbpyr \
-            --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml
+            --signer-workflow devitops-com/fsbpyr/.github/workflows/release.yml \
+            --source-ref "refs/tags/$tag"
 
       - name: Build the app
         run: |
@@ -49,13 +54,16 @@ jobs:
         with:
           subject-path: ${{ runner.temp }}/hello
 
-      # What whoever downloads the app runs.
+      # What whoever downloads the app runs. --source-ref names the ref it must be built from,
+      # here the one this run built: this workflow runs on any branch, and without it a build
+      # of any of them would pass. Your users name your release's tag (refs/tags/v1.2.3).
       - name: Verify the attestation
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh attestation verify "$RUNNER_TEMP/hello" --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/attest-example.yml"
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/attest-example.yml" \
+            --source-ref "$GITHUB_REF"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

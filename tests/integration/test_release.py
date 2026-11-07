@@ -427,6 +427,8 @@ def test_release_refuses_a_head_without_a_full_suite_run_on_main(
 
     assert result.returncode == 1
     assert f"main at {head[:7]} has no full-suite.yml run" in result.stderr
+    # it counts push runs only: one started by hand never would
+    assert "a push to main starts it" in result.stderr and "workflow_dispatch" not in result.stderr
     assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
     check, recent = check_calls(tmp_path, "full-suite.yml")  # HEAD's run, then an ancestor's
     for option in ("--branch main", "--event push", f"--commit {head}"):
@@ -1096,6 +1098,35 @@ def test_make_passes_only_a_command_line_version_to_the_release_scripts(
     assert result.stdout.splitlines() == [f"bash tools/release/{script}{version}"]
 
 
+# What make runs for each target without and with a KEY that counts.
+KEY_COMMANDS = {
+    "release": ("bash tools/release/release.sh",
+                "FSBPYR_RELEASE_KEY_FILE='/k.key' bash tools/release/release.sh"),
+    "release-sign": ("bash tools/release/release-sign.sh ''",
+                     "bash tools/release/release-sign.sh '/k.key'"),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("target", KEY_COMMANDS)
+@pytest.mark.parametrize(
+    ("args", "env", "counts"),
+    [
+        ([], {}, False),
+        (["KEY=/k.key"], {}, True),
+        # An exported KEY (another tool's) is not the release key.
+        ([], {"KEY": "/k.key"}, False),
+    ],
+    ids=["plain", "command-line", "environment"],
+)
+def test_make_passes_only_a_command_line_key_to_the_release_scripts(
+    target: str, args: list[str], env: dict[str, str], counts: bool
+) -> None:
+    result = run_script(["make", "-n", target, *args], {"PATH": SYSTEM_PATH} | env, ROOT)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [KEY_COMMANDS[target][counts]]
+
+
 # --------------------------------------------------------------------------- release-notes.sh
 
 NOTES_CHANGELOG = """\
@@ -1446,9 +1477,14 @@ def test_the_workflows_build_every_supported_python_and_the_release_publishes_ea
     default = (ROOT / ".python-version").read_text(encoding="utf-8").strip().rpartition(".")[0]
     assert default in supported  # 3.14 stays the default while 3.15 is new (owner, 2026-10-23)
     listed = ", ".join(f'"{version}"' for version in supported)
-    for name in ("build.yml", "release.yml", "full-suite.yml"):
-        workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
-        assert f"python: [{listed}]" in workflow, name
+    # every matrix's list, each on one line: the corpus job's as much as the suite's
+    lists: dict[str, list[str]] = {}
+    for path in (ROOT / ".github/workflows").glob("*.yml"):
+        workflow = path.read_text(encoding="utf-8")
+        lists[path.name] = re.findall(r"python: \[([^\]\n]*)\]", workflow)
+        assert len(lists[path.name]) == workflow.count("python: ["), path.name
+        assert set(lists[path.name]) <= {listed}, path.name
+    assert all(lists[name] for name in ("build.yml", "release.yml", "full-suite.yml", "el8.yml"))
     suite = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
     # the other runtime: test_dispatch's OTHER, the newest supported Python but the entry's own
     assert f"other={supported[-1]}\n" in suite
@@ -1778,8 +1814,11 @@ MATRIX_JOBS = [
 
 
 def workflow_jobs(name: str) -> dict[str, str]:
+    """Each job's text by its name, as test_el8_workflow.py reads them: after `jobs:`, so that
+    `on:`'s keys are none, and hyphens included, so that vm-smoke is not in portability's."""
     workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
-    return dict(re.findall(r"^  ([a-z]+):\n(.*?)(?=^  [a-z]+:\n|\Z)", workflow, re.M | re.S))
+    return dict(re.findall(r"^  ([a-z][a-z0-9-]*):\n(.*?)(?=^  [a-z][a-z0-9-]*:\n|\Z)",
+                           workflow.partition("\njobs:\n")[2], re.M | re.S))  # fmt: skip
 
 
 @pytest.mark.parametrize(("name", "job"), MATRIX_JOBS)
@@ -1802,12 +1841,18 @@ def test_each_job_runs_every_target_and_python_on_a_runner_of_the_targets_archit
 
 
 def test_a_run_needs_every_job_to_pass_for_the_commit_to_be_released() -> None:
-    """No job tolerates a failure, draft needs every build and SBOM attestation (aarch64
-    too) and green-run.sh requires the run's conclusion, which is that of all its jobs."""
+    """No job tolerates a failure, nor a step but the launcher's coverage report, which is
+    informational (make check-c is not: it is clean and clang is pinned); draft needs every build
+    and SBOM attestation (aarch64 too) and green-run.sh requires the run's conclusion, which is
+    that of all its jobs."""
+    tolerated = []
     for name in ("build.yml", "release.yml", "full-suite.yml"):
         for job, text in workflow_jobs(name).items():
             header = text.split("    steps:", 1)[0]
             assert "continue-on-error" not in header, (name, job)
+            tolerated += [step.partition("\n")[0] for step in text.split("\n      - ")[1:]
+                          if "continue-on-error" in step]  # fmt: skip
+    assert tolerated == ["name: Launcher coverage (llvm-cov)"]
     assert "needs: [build, sbom]" in workflow_jobs("release.yml")["prepare"]
     assert "needs: prepare" in workflow_jobs("release.yml")["draft"]
     assert "needs: suite" in workflow_jobs("full-suite.yml")["portability"]
@@ -1956,10 +2001,28 @@ def test_install_uv_takes_one_directory(tmp_path: Path) -> None:
 
 
 def test_the_workflows_install_uv_with_the_script_and_not_the_x86_64_tarball() -> None:
-    for name in ("build.yml", "full-suite.yml"):
+    """The pinned uv, checked by its SHA-256; never uv's own installer, which is not pinned."""
+    for name in ("build.yml", "full-suite.yml", "attest-example.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
         assert "uv-x86_64-unknown-linux-gnu" not in workflow, name
         assert "sh tools/release/install-uv.sh" in workflow, name
+    for path in (ROOT / ".github/workflows").glob("*.yml"):
+        assert "astral.sh/uv/install.sh" not in path.read_text(encoding="utf-8"), path.name
+
+
+def test_the_attestation_example_names_the_ref_each_file_was_built_from() -> None:
+    """Without it, a check passes anything the workflow ever built, from any ref (wiki,
+    User-Security.md#by-attestation): fsbpyr is the latest release's, checked against its tag;
+    the app, against the ref the run built."""
+    workflow = (ROOT / ".github/workflows/attest-example.yml").read_text(encoding="utf-8")
+    checks = workflow.split("gh attestation verify ")[1:]
+    fsbpyr, app = [text.split("\n\n", 1)[0] for text in checks]
+    latest = 'tag="$(gh release view --repo devitops-com/fsbpyr --json tagName --jq .tagName)"'
+
+    assert latest in workflow
+    assert 'gh release download "$tag" --repo devitops-com/fsbpyr' in workflow
+    assert '--source-ref "refs/tags/$tag"' in fsbpyr
+    assert '--source-ref "$GITHUB_REF"' in app
 
 
 # ------------------------------------------------------------------------- check-release.sh

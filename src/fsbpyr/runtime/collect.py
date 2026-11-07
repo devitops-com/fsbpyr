@@ -1,10 +1,12 @@
-"""The tool's cache, collected (D38): runtimes, PBS distributions, sysroots and downloads that
-the running fsbpyr does not build with, and nobody used for 7 days (when the file system has less
-than 10% free: every one not in use), go, under the rules of the app caches' collector
-(_fsbpyr_rt.gc): an item in use (held: runtime/hold.py) stays, the others are renamed into a
-trash and removed. What a killed process left while it worked (an extraction or a runtime's
-staging directory, a partial download) goes after a day. Only a root with the marker is
-collected: hold() writes it into one that holds nothing but our names. ``fsbpyr cache gc`` runs
+"""The tool's cache, collected (D38): runtimes, PBS distributions, sysroots and downloads (PBS
+archives, sysroot packages) that the running fsbpyr does not build with, and nobody used for 7
+days (when the file system has less than 10% free: every one not in use), go, under the rules of
+the app caches' collector (_fsbpyr_rt.gc): an item in use (held: runtime/hold.py) stays, the
+others are renamed into a trash and removed. The glibc 2.28 stubs and fsbpyr variants kept in
+downloads/ (stubs.py, dispatch.py) stay: NAMES does not list theirs. What a killed process left
+while it worked (an extraction or a runtime's staging directory, a partial download, a stub or
+variant being unpacked) goes after a day. Only a root with the marker is collected: hold()
+writes it into one that holds nothing but our names. ``fsbpyr cache gc`` runs
 it, and every app cache it finds; ``fsbpyr build``, ``inspect``, ``runtime build`` and
 ``runtime list`` check it at their start, at most once a day (once an hour when the file system
 has less than 10% free)."""
@@ -38,7 +40,9 @@ NAMES = {
 }
 STAGING = re.compile(r"\.(extract-[a-z0-9_]+|cp[0-9]+-.+)")  # pbs and sysroot, runtime staging
 PARTIAL = ".part"  # a download being written
-LEFTOVER = gc.DAY  # staging and partial downloads this old are a killed process's
+# a stub (stubs.py) or variant (dispatch.py) being unpacked: mkstemp's ".<its name>." and 8 more
+UNPACKING = re.compile(r"\.fsbpyr-(stub-)?[0-9]+\.[0-9]+-[a-z0-9_.+-]+\.[a-z0-9_]{8}")
+LEFTOVER = gc.DAY  # staging, partial and unpacking downloads this old are a killed process's
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
 
 
@@ -113,8 +117,8 @@ def _downloads(collection: gc.Run, keep: frozenset[str]) -> None:
     parent, names = collection.listed(DOWNLOADS)
     try:
         for name in names:
-            named = NAMES[DOWNLOADS].fullmatch(name) and name not in keep
-            if named and gc.ours(parent, name, stat.S_ISREG):
+            named = NAMES[DOWNLOADS].fullmatch(name) or UNPACKING.fullmatch(name)
+            if named and name not in keep and gc.ours(parent, name, stat.S_ISREG):
                 download = functools.partial(_download, collection, parent, name)
                 collection.attempt(f"{DOWNLOADS}/{name}", download)
     finally:
@@ -123,10 +127,11 @@ def _downloads(collection: gc.Run, keep: frozenset[str]) -> None:
 
 
 def _download(collection: gc.Run, parent: int, name: str) -> None:
-    """A partial download a day old goes; another download, unused for 7 days or when the file
-    system is short (what the running fsbpyr builds with is kept by the caller)."""
+    """A partial or unpacking download a day old goes; another download, unused for 7 days or
+    when the file system is short (what the running fsbpyr builds with is kept by the caller)."""
     age = collection.now - os.stat(name, dir_fd=parent, follow_symlinks=False).st_mtime
-    if age >= LEFTOVER if name.endswith(PARTIAL) else collection.unused(collection.now - age):
+    left = name.endswith(PARTIAL) or UNPACKING.fullmatch(name) is not None
+    if age >= LEFTOVER if left else collection.unused(collection.now - age):
         os.unlink(name, dir_fd=parent)
         collection.report.removed.append(f"{DOWNLOADS}/{name}")
     else:

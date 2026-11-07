@@ -95,7 +95,7 @@ FILES = (
 def render(group: click.Group, name: str, examples: Sequence[tuple[str, str]] = ()) -> str:
     """The page for man(7): the group's own options, every command below it, then the
     examples, each a command line and what it does."""
-    ctx = click.Context(group, info_name=name)
+    ctx = click.Context(group, info_name=name, **group.context_settings)
     lines = [
         f'.TH {name.upper()} 1 "" "{name} {__version__}" "User Commands"',
         ".SH NAME",

@@ -115,7 +115,7 @@ sha256 <the file's SHA-256 in lowercase hex>
     AES-256-CBC with a 16-byte IV. The ML-DSA-65 key holds its seed and its expanded key, OpenSSL
     3.5's default.
   - The script writes a block with `openssl pkcs8 -topk8 -v2 aes-256-cbc -v2prf hmacWithSHA256
-    -iter 600000` (release-signing.sh:131-133). C writes it with `EVP_PKEY2PKCS8`, then
+    -iter 600000` (release-signing.sh:154-156). C writes it with `EVP_PKEY2PKCS8`, then
     `PKCS8_encrypt_ex(-1, AES-256-CBC, …, 600000, …)`, which takes hmacWithSHA256 for AES, then
     `PEM_write_bio_PKCS8`; not with `PEM_write_bio_PKCS8PrivateKey`, which writes 2048 iterations.
     Measured: both have the same structure and size, outside and inside the encryption (`openssl
@@ -124,14 +124,17 @@ sha256 <the file's SHA-256 in lowercase hex>
     in an LF, with nothing before or between them and only LFs after them. The last LF may be
     missing, as a key copied through a secret may lose it. A CR anywhere refuses the file. Other
     key types are refused with a message that says so, not "wrong passphrase?" [P17]. OpenSSL's
-    reader takes an unencrypted block and then ignores the passphrase (measured). The script does
-    not follow this rule yet (§11.4).
+    reader takes an unencrypted block and then ignores the passphrase (measured). The script
+    follows this rule: `check_key` (release-signing.sh:86-98) takes only such a file, and refuses
+    a NUL as well; `open_half` (:166-174) refuses a block that is not PBES2, and `check_public`
+    names a key of another type (§11.4).
   - The `openssl` command takes ML-DSA key formats from openssl.cnf (`ml-dsa.output_formats`,
     `ml-dsa.input_formats`): set to `seed-only`, the script wrote a 604-byte `.key`, and refused
-    C's key (measured). So the script is to run openssl with `OPENSSL_CONF=/dev/null`, which gave
-    6088 bytes; it does not yet (§11.4) [P17]. C's private context takes no provider or
-    key-format setting from the file (§4): under the same config it wrote 6088 bytes. Readers do
-    not check a `.key`'s size: C read the 604-byte one (measured).
+    C's key (measured). So the script runs openssl with `OPENSSL_CONF=/dev/null`
+    (release-signing.sh:30), which gives 6088 bytes under that config too (its test, §11.4)
+    [P17]. C's private context takes no provider or key-format setting from the file (§4): under
+    the same config it wrote 6088 bytes. Readers do not check a `.key`'s size: C read the
+    604-byte one (measured).
 - `NAME.pub`: the two public keys as PEM, in the same order, and nothing else (2839 bytes).
   - It is canonical: byte for byte what OpenSSL writes for its two keys. Readers refuse any other
     `.pub`: with anything else in it, bytes after a key inside a block, the keys in the other
@@ -153,7 +156,8 @@ sha256 <the file's SHA-256 in lowercase hex>
     bundled 3.5.9 (measured). `key new` refuses a longer one before it makes keys.
   - It is bytes. From the variable, fsbpyr takes `os.environb`'s: a key made by the script under a
     passphrase that is not UTF-8 opened in C with the same bytes, and `os.environ`'s text of it
-    does not encode as UTF-8 (measured). A typed one is encoded with `os.fsencode` [A].
+    does not encode as UTF-8 (measured). A typed one is the line's bytes as `/dev/tty` hands them
+    over, without its LF (`_tty_line` in signing.py): it is never text, so nothing encodes it.
   - Without a terminal and without the variable, `key new` and `sign` exit 2, and `build` warns
     and builds unsigned (§3.1).
 
@@ -997,7 +1001,6 @@ were read in docs or source, or are steps no run has tried yet; a run could stil
 - **Run artifacts**: whether `prepare`'s code can use the artifact token after `prepare` ended
   (§5.3, §8), and that anyone can download a public repository's run artifacts.
 - **Yama scope 1** does not guard /proc/PID/environ (§3.1): read in the kernel source.
-- **A typed passphrase is encoded with `os.fsencode`** (§2.3).
 - **A CPU with a broken RDRAND**, under the rdrand engine (§4): keys and ML-DSA signatures would
   draw on it alone.
 - **An ENGINE set as the default** for digests or signatures takes over a private context's

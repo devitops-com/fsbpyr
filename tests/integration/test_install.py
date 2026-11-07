@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import ssl
+import stat
 import subprocess
 import threading
 from collections.abc import Iterator
@@ -632,6 +633,49 @@ def test_the_man_page_and_completions_go_where_make_install_puts_them(
         ("share/fish/vendor_completions.d/fsbpyr.fish", "fish"),
     ):
         assert (prefix / path).read_text() == f"# completion for {shell_name}\n"
+
+
+def test_a_link_planted_under_the_installers_process_id_is_not_followed(
+    shell: list[str],
+    release: Release,
+    host: Host,
+    tmp_path: Path,
+) -> None:
+    """The installer writes only into files it made: a link that someone who can write the
+    install directory plants under a name of the installer's process id, as `.$$.tmp` names
+    were, is left alone. `exec` keeps the process id, so the links have the installer's. What it
+    writes has the modes it had before: the man page's from the umask, the executable 755."""
+    script = release.make()
+    victim = tmp_path / "victim"
+    victim.write_text("untouched\n")
+    man = host.home / ".local/share/man/man1"
+    man.mkdir(parents=True)
+    host.install_dir.mkdir(parents=True)
+    ln = shutil.which("ln")
+    assert ln is not None, "missing tool: ln"
+    plant = (
+        f'umask 027 && {ln} -s "$VICTIM" "$FSBPYR_INSTALL_DIR/.fsbpyr.$$.tmp" && '
+        f'{ln} -s "$VICTIM" "$MAN/fsbpyr.1.$$.tmp" && exec "$@"'
+    )
+
+    result = subprocess.run(
+        [*shell, "-c", plant, "plant", *shell, str(script), "--no-modify-path"],
+        env={**host.env, "VICTIM": str(victim), "MAN": str(man)},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=SCRIPT_TIMEOUT_S,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert victim.read_text() == "untouched\n"
+    assert not installed(host).is_symlink()
+    assert installed(host).read_bytes() == (release.assets / f"fsbpyr-{DEFAULT}-{GNU}").read_bytes()
+    assert stat.S_IMODE(installed(host).stat().st_mode) == 0o755
+    assert not (man / "fsbpyr.1").is_symlink()
+    assert (man / "fsbpyr.1").read_text() == ".TH FSBPYR 1\n"
+    assert stat.S_IMODE((man / "fsbpyr.1").stat().st_mode) == 0o640  # 0666 less umask 027
 
 
 def test_no_man_page_outside_a_bin_directory(

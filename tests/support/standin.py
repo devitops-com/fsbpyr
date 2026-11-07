@@ -47,6 +47,7 @@ class StandIn(types.ModuleType):
     NONE = NONE
     PayloadError = PayloadError
     CacheError = cache.CacheError
+    CacheRefused = cache.CacheRefused
 
     def __init__(self, executable: Path) -> None:
         super().__init__("_fsbpyr")

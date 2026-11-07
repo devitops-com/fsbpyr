@@ -1,20 +1,29 @@
 """Malformed specs are rejected at encode time; malformed bytes are rejected at read time."""
 
 import dataclasses
+import re
 import struct
+from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from fsbpyr.compat import zstd
+from fsbpyr.payload import writer
 from fsbpyr.payload.format import (
     BLOB,
     FILE,
     HEADER,
     HEADER_SIZE,
+    MAX_STARTUP_CODE,
+    MAX_STARTUP_MODULES,
     MODULE,
     TRAILER,
     TRAILER_SIZE,
+    ZSTD_PIECE,
+    Codec,
     FileFlag,
     FileKind,
     ModuleFlag,
@@ -23,7 +32,7 @@ from fsbpyr.payload.format import (
     Section,
 )
 from fsbpyr.payload.reader import Executable, Payload
-from fsbpyr.payload.spec import Blob, Dist, File, Module, PayloadSpec
+from fsbpyr.payload.spec import ZSTD_LEVEL, Blob, Dist, File, Module, PayloadSpec, zstd_options
 from fsbpyr.payload.writer import assemble, encode_payload
 
 from .conftest import SO, make_spec
@@ -161,6 +170,79 @@ def test_module_names_starting_with_a_digit_are_allowed() -> None:
     modules = (Module(name, f"{name}.py", ModuleKind.MODULE, code=Blob.code(b"c")),)
 
     assert Payload(encode_payload(make_spec(modules=modules, files=(), dists=()))).find_module(name)
+
+
+def _frame(size: int) -> Blob:
+    """One zstd frame of ``size`` zeros, however large (Blob.code makes pieces past ZSTD_PIECE)."""
+    return Blob(zstd.compress(bytes(size), options=zstd_options(ZSTD_LEVEL)), size, Codec.ZSTD)
+
+
+# Startup code main.c's startup_table refuses: it takes one zstd frame, or a member of a block,
+# of 1 byte to MAX_STARTUP_CODE, which it decompresses into memory at every start.
+REFUSED_STARTUP_CODE = {
+    "empty": lambda: Blob.code(b""),
+    "zstd frames in pieces": lambda: Blob.code(bytes(ZSTD_PIECE + 1)),
+    "one frame past the limit": lambda: _frame(MAX_STARTUP_CODE + 1),
+}
+
+
+def _startup_spec(code: Blob, *, blocks: bool = False) -> PayloadSpec:
+    startup = Module("_boot", "_boot.py", ModuleKind.MODULE, code=code, flags=ModuleFlag.STARTUP)
+    return make_spec(modules=(startup,), files=(), dists=(), blocks=blocks)
+
+
+@pytest.mark.parametrize("code", REFUSED_STARTUP_CODE.values(), ids=REFUSED_STARTUP_CODE)
+def test_encode_refuses_startup_code_the_launcher_refuses(code: Callable[[], Blob]) -> None:
+    with pytest.raises(PayloadError, match="startup module '_boot'"):
+        encode_payload(_startup_spec(code()))
+
+
+@pytest.mark.parametrize(
+    ("code", "blocks", "codec"),
+    [(lambda: _frame(MAX_STARTUP_CODE), False, Codec.ZSTD),
+     (lambda: Blob.code(b"c"), False, Codec.ZSTD),
+     (lambda: Blob.raw(b"c"), True, Codec.BLOCK)],
+    ids=["one frame at the limit", "one byte", "in a block"],
+)  # fmt: skip
+def test_startup_code_the_launcher_takes_is_written_and_read(
+    code: Callable[[], Blob], blocks: bool, codec: Codec
+) -> None:
+    blob = code()
+    payload = Payload(encode_payload(_startup_spec(blob, blocks=blocks)))
+
+    (module,) = payload.startup_modules()
+    assert (payload.blob(module.code).codec, payload.blob(module.code).size) == (codec, blob.size)
+
+
+def test_the_startup_code_limit_is_the_launchers() -> None:
+    source = (Path(__file__).parents[3] / "src/fsbpyr/launcher/main.c").read_text()
+    limit = re.search(r"#define MAX_STARTUP_CODE \((\d+)u << (\d+)\)", source)
+    assert limit and int(limit[1]) << int(limit[2]) == MAX_STARTUP_CODE
+
+
+def _startup_modules(count: int) -> PayloadSpec:
+    """``count`` STARTUP modules; main.c's startup_table takes at most MAX_STARTUP_MODULES."""
+    code = Blob.code(b"c")
+    modules = tuple(Module(f"m{i:04}", f"m{i:04}.py", ModuleKind.MODULE, code=code,
+                           flags=ModuleFlag.STARTUP) for i in range(count))  # fmt: skip
+    return make_spec(modules=modules, files=(), dists=())
+
+
+def test_encode_refuses_more_startup_modules_than_the_launcher_takes() -> None:
+    with pytest.raises(PayloadError, match=f"^{MAX_STARTUP_MODULES + 1} startup modules"):
+        encode_payload(_startup_modules(MAX_STARTUP_MODULES + 1))
+
+
+def test_as_many_startup_modules_as_the_launcher_takes_are_written_and_read() -> None:
+    payload = Payload(encode_payload(_startup_modules(MAX_STARTUP_MODULES)))
+
+    assert len(payload.startup_modules()) == MAX_STARTUP_MODULES
+
+
+def test_the_startup_module_limit_is_the_launchers() -> None:
+    source = (Path(__file__).parents[3] / "src/fsbpyr/launcher/main.c").read_text()
+    limit = re.search(r"#define MAX_STARTUP_MODULES (\d+)u\b", source)
+    assert limit and int(limit[1]) == MAX_STARTUP_MODULES
 
 
 # --- read-time validation -----------------------------------------------------------------
@@ -306,6 +388,29 @@ def test_lookup_index_errors_raise_payload_error(raw: bytes) -> None:
     for call in (payload.blob, payload.read_blob, payload.closure, payload.digest):
         with pytest.raises(PayloadError):
             call(10_000)
+
+
+@pytest.mark.parametrize("code", REFUSED_STARTUP_CODE.values(), ids=REFUSED_STARTUP_CODE)
+def test_reader_refuses_startup_code_the_launcher_refuses(
+    code: Callable[[], Blob], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # build what the reader must refuse
+    monkeypatch.setattr(writer, "_check_startup_code", lambda module, *, blocks: None)
+    raw = encode_payload(_startup_spec(code()))
+
+    with pytest.raises(PayloadError, match="startup module '_boot'"):
+        Payload(raw)
+
+
+def test_reader_refuses_more_startup_modules_than_the_launcher_takes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # build what the reader must refuse
+    monkeypatch.setattr(writer, "_check_startup_count", lambda modules: None)
+    raw = encode_payload(_startup_modules(MAX_STARTUP_MODULES + 1))
+
+    with pytest.raises(PayloadError, match=f"^{MAX_STARTUP_MODULES + 1} startup modules"):
+        Payload(raw)
 
 
 # --- executable-level validation -------------------------------------------------------------

@@ -98,8 +98,11 @@ static enum fsb_way follow(struct walk *w, const char *name, const struct stat *
     snprintf(w->walked + end, PATH_MAX + NAME_MAX + 2 - end, "/%s", name);
     if (!our_owner(w, st->st_uid)) return fail(w, FSB_WAY_FOREIGN, 0, w->walked); /* in /tmp */
     if (++w->links > SYMLINKS) return fail(w, FSB_WAY_SYSTEM, ELOOP, w->walked);
-    ssize_t n = readlinkat(w->fd, name, w->target, PATH_MAX - 1);
+    ssize_t n = readlinkat(w->fd, name, w->target, PATH_MAX);
     if (n <= 0) return fail(w, FSB_WAY_SYSTEM, n < 0 ? errno : ENOENT, w->walked);
+    /* a target that fills the buffer may be cut short: symlink() makes none of PATH_MAX bytes,
+     * but a FUSE or NFS server may give one */
+    if (n == PATH_MAX) return fail(w, FSB_WAY_SYSTEM, ENAMETOOLONG, w->walked);
     size_t rest = strlen(*at);
     if ((size_t)n + 2 + rest > w->capacity)
         return fail(w, FSB_WAY_SYSTEM, ENAMETOOLONG, w->walked);

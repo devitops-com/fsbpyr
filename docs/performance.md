@@ -2,7 +2,9 @@
 
 Where the time of a start goes, release by release, so that a regression can be traced to
 the part that grew. Add a row whenever a release changes the launcher, the payload format or
-the boot code, and keep the old rows.
+the boot code, and keep the old rows. The current figures, measured with 0.30.0 (very large
+files also with 0.31.0), are on [Performance](https://github.com/devitops-com/fsbpyr/wiki/Dev-Performance)
+in the wiki.
 
 ## How these were measured
 
@@ -735,10 +737,10 @@ removes it at exit: 35.0 MB in 2 files for `hello` (`libpython3.14.so.1.0` and
 
 ## Where to look when a start gets slower
 
-1. `FSBPYR_TRACE=1 app ...`: `integrity_ns` (the whole-file check), `decompressed_bytes` and
-   `stored_bytes` (payload reads), `extracted` (files written to the cache) and the modules
-   loaded per distribution. Under cProfile, `_fsbpyr.sync` is the cache check, and the extraction
-   on a first run.
+1. `FSBPYR_TRACE=1 app ...`: `integrity_ns` (the whole-file check), `reads`,
+   `decompressed_bytes`, `stored_bytes` and `hole_bytes` (payload reads), `extracted` (files
+   written to the cache) and the modules loaded per distribution. Under cProfile, `_fsbpyr.sync`
+   is the cache check, and the extraction on a first run.
 2. `FSBPYR_IMPORTTIME=1 app ...`: CPython's import-time table, per module.
 3. Compare with the tables above: the no-op app isolates the launcher (its instance slot
    apart: `FSBPYR_MAX_INSTANCES=0` turns it off; the boot's start checks of 0.26.0

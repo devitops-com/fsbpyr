@@ -5,6 +5,8 @@ import http.client
 import json
 import lzma
 import os
+import resource
+import signal
 import stat
 import sys
 import types
@@ -493,6 +495,106 @@ def test_a_failing_new_executable_stops_before_anything_is_replaced(
     assert man.read_text() == "old"
     assert sorted(p.name for p in installed.parent.iterdir()) == ["fsbpyr"]
     assert "it crashed" in capsys.readouterr().err
+
+
+def _extras(prefix: Path, *relatives: str) -> list[Path]:
+    paths = [prefix / relative for relative in relatives]
+    for path in paths:
+        path.parent.mkdir(parents=True)
+        path.write_text("old")
+    return paths
+
+
+def _dotfiles(prefix: Path) -> list[str]:
+    return sorted(str(p.relative_to(prefix)) for p in prefix.rglob(".*"))
+
+
+@pytest.mark.parametrize(("stop", "code"), [(selfupdate.UpdateError("it crashed"), 1),
+                                            (KeyboardInterrupt(), 130)],
+                         ids=["it fails", "Ctrl-C"])  # fmt: skip
+def test_a_later_extra_that_fails_leaves_none_of_the_temporaries_staged(
+    stop: BaseException, code: int, github: FakeGitHub, installed: Path, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The new executable renders the man page, then fails (or Ctrl-C) on the zsh completion:
+    the update is refused, and the man page's temporary goes with it."""
+    prefix = installed.parent.parent
+    man, zsh = _extras(prefix, "share/man/man1/fsbpyr.1", "share/zsh/site-functions/_fsbpyr")
+
+    def render(new: Path, command: tuple[str, ...]) -> bytes:
+        if command == ("completion", "zsh"):
+            raise stop
+        return b"new"
+
+    monkeypatch.setattr(selfupdate, "_render", render)
+    github.assets[f"{OWN}.xz"] = lzma.compress(_release_binary(tmp_path))
+
+    assert main(["self", "update"]) == code
+
+    assert installed.read_bytes() == b"old"
+    assert (man.read_text(), zsh.read_text()) == ("old", "old")
+    assert _dotfiles(prefix) == []
+
+
+def test_ctrl_c_between_the_renames_of_the_extras_leaves_no_temporary(
+    github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The new executable is in place and the first extra renamed when Ctrl-C comes: the update
+    stands, the extras not renamed yet stay old, and their temporaries go."""
+    prefix = installed.parent.parent
+    extras = _extras(prefix, "share/man/man1/fsbpyr.1", "share/zsh/site-functions/_fsbpyr",
+                     "share/bash-completion/completions/fsbpyr")  # fmt: skip
+    github.assets[f"{OWN}.xz"] = lzma.compress(binary := _release_binary(tmp_path))
+    renamed: list[Path] = []
+    rename = Path.rename
+
+    def interrupted(self: Path, target: Path) -> Path:
+        if self.parent != installed.parent:  # an extra's temporary
+            if renamed:
+                raise KeyboardInterrupt
+            renamed.append(self)
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", interrupted)
+
+    assert main(["self", "update"]) == 130
+
+    assert installed.read_bytes() == binary
+    assert sorted(path.read_text().partition(" ")[0] for path in extras) == ["new", "old", "old"]
+    assert _dotfiles(prefix) == []
+
+
+def test_an_extra_that_cannot_be_written_leaves_no_temporary(
+    github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A full disk or a quota: a file size limit, from the man page's rendering to the warning,
+    makes its write fail (EFBIG, as ENOSPC would). The update goes on, the old man page stays,
+    and its temporary goes."""
+    prefix = installed.parent.parent
+    (man,) = _extras(prefix, "share/man/man1/fsbpyr.1")
+    unlimited = resource.getrlimit(resource.RLIMIT_FSIZE)
+    warnings: list[str] = []
+
+    def render(new: Path, command: tuple[str, ...]) -> bytes:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (4096, unlimited[1]))
+        return bytes(1 << 20)
+
+    def warn(text: str) -> None:
+        resource.setrlimit(resource.RLIMIT_FSIZE, unlimited)
+        warnings.append(text)
+
+    monkeypatch.setattr(selfupdate, "_render", render)
+    github.assets[f"{OWN}.xz"] = lzma.compress(binary := _release_binary(tmp_path))
+    ignored = signal.signal(signal.SIGXFSZ, signal.SIG_IGN)  # a write then fails, no signal
+    try:
+        assert selfupdate.update(log=lambda text: None, warn=warn)
+    finally:
+        resource.setrlimit(resource.RLIMIT_FSIZE, unlimited)
+        signal.signal(signal.SIGXFSZ, ignored)
+
+    assert installed.read_bytes() == binary and man.read_text() == "old"
+    assert f"{man} was not updated: File too large; write it with `fsbpyr man`" in warnings
+    assert _dotfiles(prefix) == []
 
 
 def test_render_runs_the_new_executable_with_the_command(tmp_path: Path) -> None:
