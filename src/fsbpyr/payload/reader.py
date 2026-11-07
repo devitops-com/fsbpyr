@@ -29,6 +29,7 @@ from .format import (
     MAX_BLOCK_SIZE,
     MAX_MODE,
     MAX_STARTUP_CODE,
+    MAX_STARTUP_MODULES,
     MODULE,
     NATIVE_KINDS,
     NONE,
@@ -231,6 +232,9 @@ class Payload:
     def _parse_startup(self) -> tuple[int, ...]:
         """STARTUP lists exactly the modules flagged STARTUP, in ascending index order."""
         indices = tuple(self._parse_words(Section.STARTUP))
+        if len(indices) > MAX_STARTUP_MODULES:  # the launcher's limit (main.c, startup_table)
+            raise PayloadError(f"{len(indices)} startup modules: the launcher takes at most "
+                               f"{MAX_STARTUP_MODULES}")  # fmt: skip
         expected = tuple(m.index for m in self._modules if ModuleFlag.STARTUP in m.flags)
         if indices != expected:
             raise PayloadError("startup section does not match the STARTUP modules")

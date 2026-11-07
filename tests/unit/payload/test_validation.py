@@ -18,6 +18,7 @@ from fsbpyr.payload.format import (
     HEADER,
     HEADER_SIZE,
     MAX_STARTUP_CODE,
+    MAX_STARTUP_MODULES,
     MODULE,
     TRAILER,
     TRAILER_SIZE,
@@ -219,6 +220,31 @@ def test_the_startup_code_limit_is_the_launchers() -> None:
     assert limit and int(limit[1]) << int(limit[2]) == MAX_STARTUP_CODE
 
 
+def _startup_modules(count: int) -> PayloadSpec:
+    """``count`` STARTUP modules; main.c's startup_table takes at most MAX_STARTUP_MODULES."""
+    code = Blob.code(b"c")
+    modules = tuple(Module(f"m{i:04}", f"m{i:04}.py", ModuleKind.MODULE, code=code,
+                           flags=ModuleFlag.STARTUP) for i in range(count))  # fmt: skip
+    return make_spec(modules=modules, files=(), dists=())
+
+
+def test_encode_refuses_more_startup_modules_than_the_launcher_takes() -> None:
+    with pytest.raises(PayloadError, match=f"^{MAX_STARTUP_MODULES + 1} startup modules"):
+        encode_payload(_startup_modules(MAX_STARTUP_MODULES + 1))
+
+
+def test_as_many_startup_modules_as_the_launcher_takes_are_written_and_read() -> None:
+    payload = Payload(encode_payload(_startup_modules(MAX_STARTUP_MODULES)))
+
+    assert len(payload.startup_modules()) == MAX_STARTUP_MODULES
+
+
+def test_the_startup_module_limit_is_the_launchers() -> None:
+    source = (Path(__file__).parents[3] / "src/fsbpyr/launcher/main.c").read_text()
+    limit = re.search(r"#define MAX_STARTUP_MODULES (\d+)u\b", source)
+    assert limit and int(limit[1]) == MAX_STARTUP_MODULES
+
+
 # --- read-time validation -----------------------------------------------------------------
 
 
@@ -373,6 +399,17 @@ def test_reader_refuses_startup_code_the_launcher_refuses(
     raw = encode_payload(_startup_spec(code()))
 
     with pytest.raises(PayloadError, match="startup module '_boot'"):
+        Payload(raw)
+
+
+def test_reader_refuses_more_startup_modules_than_the_launcher_takes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # build what the reader must refuse
+    monkeypatch.setattr(writer, "_check_startup_count", lambda modules: None)
+    raw = encode_payload(_startup_modules(MAX_STARTUP_MODULES + 1))
+
+    with pytest.raises(PayloadError, match=f"^{MAX_STARTUP_MODULES + 1} startup modules"):
         Payload(raw)
 
 

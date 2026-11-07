@@ -30,6 +30,7 @@ ZSTD_PIECE = 8 << 20  # content larger than this is zstd in pieces of this much 
 MAX_MODE = 0o777
 MAX_BLOB_SIZE = 1 << 62  # far inside off_t; no limit of ours below what OSes hold (D38)
 MAX_STARTUP_CODE = 16 << 20  # main.c's: startup code is decompressed into memory at every start
+MAX_STARTUP_MODULES = 4096  # main.c's: the frozen-module table it builds at every start
 MAX_STRTAB_SIZE = 0xFFFFFFFF
 
 TRAILER_MAGIC = b"FSBPYR\x00T"

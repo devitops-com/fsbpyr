@@ -286,8 +286,9 @@ FS_REQUIRED). Resources extracted on demand (D27) may have none.
 
 ### STARTUP
 
-u32 MODULES indices, strictly ascending: exactly the modules flagged STARTUP. The launcher reads
-this short list to build CPython's frozen-module table, so it never scans the MODULES table.
+u32 MODULES indices, strictly ascending: exactly the modules flagged STARTUP, at most 4096
+(`MAX_STARTUP_MODULES`). The launcher reads this short list to build CPython's frozen-module
+table, so it never scans the MODULES table.
 
 ## Validation rules
 
@@ -324,10 +325,10 @@ rules it leaves to the integrity digest, which only the writer's output passes, 
   mypyc's `81d243bd2c585b0f4821__mypyc` through `importlib.import_module`.
   Dist names are canonical (launcher: digest, but for the paths of the files it extracts).
 - The module kind invariants (including checksummed code: a zstd frame, zstd frames in pieces, or inside a block), the
-  STARTUP rule (the STARTUP section lists exactly the flagged modules, and their code is one
-  zstd frame or inside a block, of 1 byte to 16 MiB) and the closure rules hold (launcher:
-  digest, but for the flag and code of the STARTUP modules and the count and order of each
-  closure's members).
+  STARTUP rule (the STARTUP section lists exactly the flagged modules, at most 4096, and their
+  code is one zstd frame or inside a block, of 1 byte to 16 MiB) and the closure rules hold
+  (launcher: digest, but for the number of STARTUP modules, their flag and code, and the count
+  and order of each closure's members).
 - Every zstd frame a reader decompresses must have the content-checksum flag set, declare its
   content size, equal to `size`, and end where its stored bytes end.
 - On decompression, the output must be exactly `size` bytes, with no trailing data, and must

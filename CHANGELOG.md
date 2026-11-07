@@ -50,9 +50,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   hangup) left a temporary of up to 256 MiB in `downloads/`, and nothing removed it. It now goes
   once it is a day old, as partial downloads do. The stubs and variants that are kept are still left
   alone.
-- **Startup code that the launcher would refuse is now refused when it is written and read.** The
-  writer and `inspect` accepted startup code that was in pieces, empty or over 16 MiB. The launcher
-  refuses such code at every start (exit 70). No build makes it today.
+- **Startup modules that the launcher would refuse are now refused when they are written and
+  read.** The writer and `inspect` accepted startup code that was in pieces, empty or over 16 MiB,
+  and more than 4096 startup modules. The launcher refuses both at every start (exit 70). No build
+  makes them today.
 - **A marker that cannot be evaluated is an error naming the entry.** Some markers parse but cannot
   be evaluated: `platform_machine ~= "x86_64"`, `python_version ~= "3"`, `"x" in extras`. One of
   these in a Poetry, PDM or Pipenv lock, a venv, or the Requires-Dist of an installed dependency or

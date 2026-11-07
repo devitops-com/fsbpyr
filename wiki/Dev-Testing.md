@@ -615,7 +615,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,680 in 148 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,684 in 148 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -632,11 +632,11 @@ run with the release launcher only, those two portability tests also on the two 
 | `tests/unit` (top level) | 26 | 912 |
 | `tests/unit/boot` | 23 | 361 |
 | `tests/unit/builder` | 19 | 785 |
-| `tests/unit/payload` | 11 | 437 |
+| `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 250 |
 | `tests/integration` | 17 | 831 |
 | `tests/e2e` | 43 | 1,104 |
-| All | 148 | 4,680 |
+| All | 148 | 4,684 |
 
 ### tests/unit (top level): 26 files, 912 tests
 
@@ -730,7 +730,7 @@ locks, fake `uv` scripts and the uv command lines a plan records.
 | [`test_tools.py`](../tests/unit/builder/test_tools.py) | 50 | The tool binary (`fsbpyr.tools`) on hand-built staged sites: when a directory is one, which named distributions are tools, their scripts as commands, meta-packages and families (cycles and a depth limit stop), libraries, missing distributions, name clashes. |
 | [`test_venvdeps.py`](../tests/unit/builder/test_venvdeps.py) | 24 | The venv rung (`fsbpyr.venvdeps`): the venv found, the distributions providing unresolved imports and their `Requires-Dist` closure at installed versions, nothing guessed from PyPI, editable installs refused, the venv's Python never started, `inferred` in the lock record, `--strict`. |
 
-### tests/unit/payload: 11 files, 437 tests
+### tests/unit/payload: 11 files, 441 tests
 
 Writer and reader on specs from `make_spec`; edge cases from `tests/support/edges.py`.
 
@@ -744,7 +744,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_roundtrip.py`](../tests/unit/payload/test_roundtrip.py) | 39 | Writer to reader: every table and field, lookups, deterministic encoding, deduplication, alignment, stub and trailer, an executable replaced only when committed. |
 | [`test_spill.py`](../tests/unit/payload/test_spill.py) | 24 | Compressed bytes in a spill file: the same blobs as in memory, sparse files, pieces on 1 and 8 threads, pieces inside holes compressed once into the bytes their zeros make. |
 | [`test_streaming_writer.py`](../tests/unit/payload/test_streaming_writer.py) | 7 | The streaming writer: the assembled image, zero runs as holes, a file changed since classification failing, the result verified. |
-| [`test_validation.py`](../tests/unit/payload/test_validation.py) | 90 | Malformed specs and bytes refused, and two Hypothesis properties, XOR masks (300 examples) and 64-bit overwrites (500), raising only `PayloadError`. |
+| [`test_validation.py`](../tests/unit/payload/test_validation.py) | 94 | Malformed specs and bytes refused, and two Hypothesis properties, XOR masks (300 examples) and 64-bit overwrites (500), raising only `PayloadError`. |
 | [`test_xz.py`](../tests/unit/payload/test_xz.py) | 25 | xz natives: standard streams, raw when incompressible, pieces, streams and pieces that do not match their records refused. |
 | [`test_zstd_pieces.py`](../tests/unit/payload/test_zstd_pieces.py) | 16 | zstd in pieces: a frame per piece, the same bytes on any thread count, round trips across boundaries, refusals. |
 
