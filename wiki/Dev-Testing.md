@@ -615,7 +615,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,684 in 148 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,695 in 148 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -629,16 +629,16 @@ run with the release launcher only, those two portability tests also on the two 
 
 | Layer | Files | Tests |
 |---|---|---|
-| `tests/unit` (top level) | 26 | 912 |
+| `tests/unit` (top level) | 26 | 919 |
 | `tests/unit/boot` | 23 | 361 |
-| `tests/unit/builder` | 19 | 785 |
+| `tests/unit/builder` | 19 | 789 |
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 250 |
 | `tests/integration` | 17 | 831 |
 | `tests/e2e` | 43 | 1,104 |
-| All | 148 | 4,684 |
+| All | 148 | 4,695 |
 
-### tests/unit (top level): 26 files, 912 tests
+### tests/unit (top level): 26 files, 919 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -654,13 +654,13 @@ run with the release launcher only, those two portability tests also on the two 
 | [`test_elf_mutation.py`](../tests/unit/test_elf_mutation.py) | 1 | Hypothesis (1,000 examples): mutated ELF bytes are read by `fsbpyr.elf` or raise `ElfError`, nothing else. |
 | [`test_inspect.py`](../tests/unit/test_inspect.py) | 54 | `fsbpyr inspect` on `FAKE_RUNTIME` executables: text and JSON, columns, `--verify`, licences, files, lock and settings lines, older formats, damaged records, a glibc 2.28 app's `baseline` and `glibc_baseline`, file text that cannot drive the terminal. |
 | [`test_no_skips.py`](../tests/unit/test_no_skips.py) | 2 | The `ast` scan of [A skip fails the run](#a-skip-fails-the-run), and that it finds each use. |
-| [`test_poetry1.py`](../tests/unit/test_poetry1.py) | 26 | `fsbpyr.poetry1`: a Poetry 1 `pyproject.toml` without `[project]` read as one: constraints as PEP 440, `\|\|` and git dependencies refused, optional dependencies as extras, markers, which projects are unpackaged. |
+| [`test_poetry1.py`](../tests/unit/test_poetry1.py) | 32 | `fsbpyr.poetry1`: a Poetry 1 `pyproject.toml` without `[project]` read as one: constraints as PEP 440, `\|\|` and git dependencies refused, optional dependencies as extras, markers, which projects are unpackaged. |
 | [`test_portability_images.py`](../tests/unit/test_portability_images.py) | 4 | `tests/support/images.py`: all twelve images on x86-64, in order; those with an arm64 variant on aarch64. |
 | [`test_pyversion.py`](../tests/unit/test_pyversion.py) | 57 | The version rule (`fsbpyr.pyversion`): the Python that `requires-python`, a `.python-version` pin and `--python` give, and the errors. Marked `version_rule`. |
 | [`test_requires.py`](../tests/unit/test_requires.py) | 16 | `tests/support/requires.py` and `tests/conftest.py`'s hooks, with pytester, as [A skip fails the run](#a-skip-fails-the-run) lists. |
 | [`test_sbom.py`](../tests/unit/test_sbom.py) | 18 | The CycloneDX SBOM generator `tools/release/sbom.py`: identical bytes for identical input, CPEs and purls, the executable's hash, incomplete or unverified input refused. |
 | [`test_signing.py`](../tests/unit/test_signing.py) | 212 | `fsbpyr.signing` from source with real keys, the openssl command in place of `sig.c`: the statement, names from a user and from a file, forged build info, the trust store, sums files, each command's output and exit status. |
-| [`test_selfupdate.py`](../tests/unit/test_selfupdate.py) | 96 | `fsbpyr self update` against `FakeGitHub`: in-place update keeping the mode, variants, symlinks; bad, oversized or too-new-glibc downloads never installed; unwritable directories; man page and completions rewritten; placed glibc 2.28 stubs left alone, named only when the new companion release does not list them; a cut download an update error, not a traceback. |
+| [`test_selfupdate.py`](../tests/unit/test_selfupdate.py) | 97 | `fsbpyr self update` against `FakeGitHub`: in-place update keeping the mode, variants, symlinks; bad, oversized or too-new-glibc downloads never installed; unwritable directories; man page and completions rewritten; placed glibc 2.28 stubs left alone, named only when the new companion release does not list them; a cut download an update error, not a traceback. |
 | [`test_targets.py`](../tests/unit/test_targets.py) | 48 | The target table (`fsbpyr.targets`) and host detection: each target's and Python's pins and sysroot, the EL8 sysroot (Rocky Linux 8.10's `glibc`, `glibc-devel`, `glibc-headers`, `kernel-headers`, `libgcc` and `gcc` RPMs), other baselines refused, runtime ids per baseline, the manylinux platform, each target's loader, filter and machine. |
 | [`test_test_modes.py`](../tests/unit/test_test_modes.py) | 6 | `FSBPYR_CORPUS_APPS` and the [EL8 test mode](#the-el8-test-mode): builds for the run's baseline unless a `--glibc` says otherwise, `baseline.as_tuple`, the EL8 images. `make test-el8-stub` runs it in the mode. |
 | [`test_text.py`](../tests/unit/test_text.py) | 8 | `fsbpyr.text`: `plural`, and `tail_lines`, which cuts output at a line start and notes the earlier lines left out. |
@@ -702,7 +702,7 @@ fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fix
 | [`test_warning_frames.py`](../tests/unit/boot/test_warning_frames.py) | 3 | Import-time warnings with `stacklevel >= 2` name the importing module and show the payload file's source line. |
 | [`test_way.py`](../tests/unit/boot/test_way.py) | 20 | A cache root's way from `/` (`gc.way_problem`): owners and write permissions, sticky directories, symlinks, `..`, user namespaces, mapped uids; the tool's cache and the collector refuse an untrusted way. |
 
-### tests/unit/builder: 19 files, 785 tests
+### tests/unit/builder: 19 files, 789 tests
 
 The build pipeline in-process, on trees made in `tmp_path`: fake site-packages, synthetic ELF
 objects from `tests/support/elf.py`, local distributions, the `foreign` fixture's hand-written
@@ -724,7 +724,7 @@ locks, fake `uv` scripts and the uv command lines a plan records.
 | [`test_natives.py`](../tests/unit/builder/test_natives.py) | 44 | `fsbpyr.natives` and `fsbpyr.elf` on synthetic ELF objects and two host binaries: dynamic sections, RPATH and RUNPATH as ld.so applies them, libraries by name, unresolved libraries, symbol versions, malformed input. |
 | [`test_pipenv.py`](../tests/unit/builder/test_pipenv.py) | 50 | `fsbpyr.pipenv` on `foreign/pipenv`: the `default` section, markers, hashes, unpinned versions refused, git, path and file entries, other indexes, the stale-lock check, `_meta.requires` (two tests marked `version_rule`), the lock's rank, a Python-less directory as a tool binary. |
 | [`test_project_and_staging.py`](../tests/unit/builder/test_project_and_staging.py) | 78 | `fsbpyr.project` (discovery, lock source priority, settings, `glibc` among them) and `fsbpyr.staging` (uv commands per lock source, wheels for the baseline's platform, workspaces, rebuilds, `SOURCE_DATE_EPOCH`, pinned requirement lines, the source tree left as found). |
-| [`test_scan.py`](../tests/unit/builder/test_scan.py) | 44 | `fsbpyr.scan` on snippets: reads relative to `__file__` (in a command's main guard when asked; not existence checks, nor a script starting a sibling through `sys.executable`, though a package doing so is), libraries opened by a literal name. |
+| [`test_scan.py`](../tests/unit/builder/test_scan.py) | 48 | `fsbpyr.scan` on snippets: reads relative to `__file__` (in a command's main guard when asked; not existence checks, nor a script starting a sibling through `sys.executable`, though a package doing so is), libraries opened by a literal name. |
 | [`test_single_script.py`](../tests/unit/builder/test_single_script.py) | 20 | One script as the project: `.py` or extensionless `uv run` scripts, the import closure, one PEP 723 block, the directory's other files ignored, a script lock locking the build, nothing written beside it. |
 | [`test_system_report.py`](../tests/unit/builder/test_system_report.py) | 21 | `fsbpyr.system`: what the target must provide beyond glibc, each target's manylinux_2_34 and manylinux_2_28 floors (libstdc++, CXXABI, GCC, zlib), and the warnings. |
 | [`test_tools.py`](../tests/unit/builder/test_tools.py) | 50 | The tool binary (`fsbpyr.tools`) on hand-built staged sites: when a directory is one, which named distributions are tools, their scripts as commands, meta-packages and families (cycles and a depth limit stop), libraries, missing distributions, name clashes. |
