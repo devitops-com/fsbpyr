@@ -125,6 +125,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - The `_fsbpyr` type stub declares `stats()`'s `hole_bytes` and the four signing functions, and mypy
   now checks the signing code against them. The launcher's developer page describes `sig.c` and
   `sig.h`.
+- The EL8 tests (`make test-el8-stub`, the full suite's `el8-tests` job) also run the launcher's
+  tests of symlink targets on the cache root's way and of blob reads out of memory
+  (`test_way_targets.py`, `test_read_failures.py`) with the glibc 2.28 stub.
 
 ## [0.31.0] - 2026-11-04
 

@@ -28,7 +28,7 @@ digraph testing_layers {
     unit [label="tests/unit\nboot, builder, payload,\nruntime, top level"];
     integration [label="tests/integration"];
     e2e [label="tests/e2e\n(but corpus, portability)"];
-    el8_files [label="tests/e2e: 16 files that\nrun the stub, and\ntests/unit/test_test_modes.py"];
+    el8_files [label="tests/e2e: 18 files that\nrun the stub, and\ntests/unit/test_test_modes.py"];
     el8_test [label="tests/e2e/test_el8.py"];
     probes [label="tests/probes, tests/fuzz\n(built by e2e tests)"];
     portability [label="tests/e2e/\ntest_portability.py\n(needs podman)"];
