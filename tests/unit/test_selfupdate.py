@@ -536,6 +536,34 @@ def test_a_later_extra_that_fails_leaves_none_of_the_temporaries_staged(
     assert _dotfiles(prefix) == []
 
 
+def test_ctrl_c_between_the_renames_of_the_extras_leaves_no_temporary(
+    github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The new executable is in place and the first extra renamed when Ctrl-C comes: the update
+    stands, the extras not renamed yet stay old, and their temporaries go."""
+    prefix = installed.parent.parent
+    extras = _extras(prefix, "share/man/man1/fsbpyr.1", "share/zsh/site-functions/_fsbpyr",
+                     "share/bash-completion/completions/fsbpyr")  # fmt: skip
+    github.assets[f"{OWN}.xz"] = lzma.compress(binary := _release_binary(tmp_path))
+    renamed: list[Path] = []
+    rename = Path.rename
+
+    def interrupted(self: Path, target: Path) -> Path:
+        if self.parent != installed.parent:  # an extra's temporary
+            if renamed:
+                raise KeyboardInterrupt
+            renamed.append(self)
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", interrupted)
+
+    assert main(["self", "update"]) == 130
+
+    assert installed.read_bytes() == binary
+    assert sorted(path.read_text().partition(" ")[0] for path in extras) == ["new", "old", "old"]
+    assert _dotfiles(prefix) == []
+
+
 def test_an_extra_that_cannot_be_written_leaves_no_temporary(
     github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -427,6 +427,24 @@ def _signed_digest(release: Release, asset: str, refused: UpdateError) -> str:
         raise refused from exc
 
 
+def _place_extras(staged: list[tuple[Path, Path]], warn: Callable[[str], None]) -> None:
+    """Rename the extras the new executable wrote (``_stage_extras``) into place, once it is in
+    place itself. One that cannot be renamed stays old, with a warning; on Ctrl-C the update
+    stands, the extras not renamed yet stay old, and their temporaries go."""
+    try:
+        for temporary, final in staged:
+            try:
+                temporary.rename(final)
+            except OSError as exc:
+                temporary.unlink(missing_ok=True)
+                warn(f"{final} was not updated: {exc.strerror or exc}")
+    except BaseException:
+        for temporary, _ in staged:
+            with contextlib.suppress(OSError):
+                temporary.unlink(missing_ok=True)
+        raise
+
+
 def update(
     log: Callable[[str], None] = print, warn: Callable[[str], None] = print
 ) -> bool:
@@ -475,12 +493,7 @@ def update(
             with contextlib.suppress(OSError):
                 temporary.unlink()
         raise
-    for temporary, final in staged:
-        try:
-            temporary.rename(final)
-        except OSError as exc:
-            temporary.unlink(missing_ok=True)
-            warn(f"{final} was not updated: {exc.strerror or exc}")
+    _place_extras(staged, warn)
     _warn_about_placed_stubs(executable, release.tag, warn)
     log(f"updated {executable} to fsbpyr {release.tag}")
     return True

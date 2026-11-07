@@ -1650,7 +1650,10 @@ Rules it enforces:
   files are removed.
 - The man page and completions (`share/man/man1/fsbpyr.1` and the bash, zsh and fish completion
   files) are rewritten only if they exist under the prefix and the executable is in a `bin`
-  directory; otherwise a warning says how to write them.
+  directory; otherwise a warning says how to write them. Each is written under a temporary
+  name and renamed into place after the executable; one that cannot be renamed stays old, with
+  a warning, and on Ctrl-C between the renames the update stands, the rest stay old and their
+  temporaries are removed.
 - After an update, a warning names the placed glibc 2.28 stubs the new release refuses
   (`runtime.stubs.refused_after_update`,
   [Runtime modules](Dev-Runtime-Modules.md#runtimes-for-glibc-228-el8)); the files stay.

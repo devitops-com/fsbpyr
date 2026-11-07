@@ -44,7 +44,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   argument. The build now says to start it as the executable and the others through their links.
 - **`fsbpyr self update` leaves no temporary man page or completion behind.** A failed write (a full
   disk, a quota), a failing new executable or Ctrl-C while the man page and completions were written
-  left dotfiles such as `share/man/man1/.fsbpyr.1.XXXXXXXX` under the prefix.
+  or renamed into place left dotfiles such as `share/man/man1/.fsbpyr.1.XXXXXXXX` under the
+  prefix.
 - **The cache collector removes the temporary a killed stub or variant download left.** A build
   killed while it unpacked a glibc 2.28 stub or another Python's fsbpyr (SIGKILL, the OOM killer, a
   hangup) left a temporary of up to 256 MiB in `downloads/`, and nothing removed it. It now goes
