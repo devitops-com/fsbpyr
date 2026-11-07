@@ -65,7 +65,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - **A read next to `__file__` in the `else` of a main guard is reported.** The build skipped the
   whole `if __name__ == "__main__":` statement, its `else` and `elif` included, and the body of `if
   __name__ != "__main__":`, though an imported module runs them. It now skips only what never runs
-  on import.
+  on import. A guard written `if '__main__' == __name__:`, which finds the entry as the usual
+  order does, is skipped too; the build warned about the reads in its body.
 - **Poetry 1 constraints take pre-releases, epochs and space-separated parts.** An unpackaged Poetry
   1 project with `^1.2.0a1`, `~1.2.0.post1` or `>=1.2 <2.0` was refused. These now read as
   poetry-core reads them. A local label (`^1.2+local`) is still refused.

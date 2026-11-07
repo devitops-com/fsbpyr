@@ -1200,12 +1200,12 @@ or load a library, and pathlib reads, whose argument or receiver mentions `__fil
 Rules: a module without the marker strings is not parsed, and one that does not parse gives
 nothing; calls in a top-level main guard are ignored unless `main`: the body of
 `if __name__ == "__main__":` (not its `else` or `elif`) and the `else` of
-`if __name__ != "__main__":`, which never run on import; with `script`, a
-`subprocess.run`, `Popen`, `call`, `check_call`, `check_output` or `os.exec*` call whose program
-is `sys.executable` (its first argument or `args=`, or the first element of a list or tuple
-there) is no read, since it runs a sibling from the payload; names assigned from a tainted
-expression are followed for at most 5 passes; jinja2's `PackageLoader` is flagged by the call
-alone.
+`if __name__ != "__main__":`, the operands in either order, which never run on import; with
+`script`, a `subprocess.run`, `Popen`, `call`, `check_call`, `check_output` or `os.exec*` call
+whose program is `sys.executable` (its first argument or `args=`, or the first element of a
+list or tuple there) is no read, since it runs a sibling from the payload; names assigned from
+a tainted expression are followed for at most 5 passes; jinja2's `PackageLoader` is flagged by
+the call alone.
 
 - Imports: nothing from fsbpyr.
 - Imported by: `compiler`.
