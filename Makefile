@@ -42,7 +42,7 @@ else
 WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-prereqs test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm perf check check-c release-prep release release-assets release-sign release-audit release-check mirror wiki-lint wiki-build wiki-publish clean
+.PHONY: help bootstrap build install uninstall test test-ci test-prereqs test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm perf mutate check check-c release-prep release release-assets release-sign release-audit release-check mirror wiki-lint wiki-build wiki-publish clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -250,6 +250,14 @@ NEW ?= dist/fsbpyr
 perf: ## Measure start, build and inspect against the previous release (OLD=PATH [NEW=PATH], PERF_ARGS=...)
 	$(if $(OLD),,$(error OLD=PATH: the previous release's fsbpyr-3.X-<target>))
 	$(SCRATCHENV) $(CONTAINED) $(UVRUN) python tools/perf.py '$(OLD)' '$(NEW)' $(PERF_ARGS)
+
+# Mutation testing of one launcher source (tools/mutate-c.py; owner, 2026-11-08): FILE is a file
+# of src/fsbpyr/launcher, TESTS the tests whose probes compile it. A campaign by hand, never in
+# CI: each mutant runs the tests again, in a copy of the checkout.
+mutate: ## Mutation testing of a launcher source (FILE=way.c TESTS="tests/e2e/test_way_targets.py ...")
+	$(if $(FILE),,$(error FILE=x.c: a file of src/fsbpyr/launcher))
+	$(if $(TESTS),,$(error TESTS="...": the tests whose probes compile $(FILE)))
+	$(TESTENV) $(CONTAINED) $(UVRUN) python tools/mutate-c.py '$(FILE)' $(TESTS) $(MUTATE_ARGS)
 
 check: ## Static checks: ruff + mypy
 	$(UVRUN) ruff check

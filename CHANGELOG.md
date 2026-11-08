@@ -11,6 +11,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Added
+- **`make mutate FILE=x.c TESTS=...`**, mutation testing of the launcher's C code
+  (`tools/mutate-c.py`, owner 2026-11-08): one operator at a time changed in that source, in a
+  copy of the checkout, and the tests whose probes compile it run after each change; the
+  mutants they let survive are listed. The tests' `launcher_build` builds no runtime any more, so
+  a run of probes alone takes seconds.
 - **`make perf OLD=PATH`** measures this tree's fsbpyr (or `NEW=PATH`) against the previous
   release's: the start of two apps and their peak RSS, the integrity check, a build and `inspect
   --verify`, interleaved round by round, as a table for `docs/performance.md`, which every release
