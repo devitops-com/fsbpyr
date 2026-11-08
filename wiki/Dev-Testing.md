@@ -616,7 +616,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,723 in 149 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,732 in 149 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -635,9 +635,9 @@ run with the release launcher only, those two portability tests also on the two 
 | `tests/unit/builder` | 19 | 789 |
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 257 |
-| `tests/integration` | 17 | 845 |
+| `tests/integration` | 17 | 854 |
 | `tests/e2e` | 44 | 1,110 |
-| All | 149 | 4,723 |
+| All | 149 | 4,732 |
 
 ### tests/unit (top level): 26 files, 919 tests
 
@@ -763,7 +763,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_sysroot.py`](../tests/unit/runtime/test_sysroot.py) | 21 | The glibc sysroots: `ar` members, symlinks kept inside, escaping entries refused, verified HTTPS downloads, RPMs extracted as debs are, `lib` and `lib64` linked into `usr` for EL8 only. |
 | [`test_toolchain_and_link.py`](../tests/unit/runtime/test_toolchain_and_link.py) | 35 | `ar` listing, clang discovery and the stub's link: static PIE, hardening flags, the sanitized variant, aarch64's outlined atomics and Cortex-A53 erratum 843419 fix, mapped paths, the frame limit, `-DFSBPYR_RUNTIME_ID`, a failed link's output. |
 
-### tests/integration: 17 files, 845 tests
+### tests/integration: 17 files, 854 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -779,7 +779,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_pbs_stdlib_versions.py`](../tests/integration/test_pbs_stdlib_versions.py) | 12 | The stdlib selection and startup modules for each pinned CPython version. |
 | [`test_release.py`](../tests/integration/test_release.py) | 166 | The release scripts against throwaway git repositories, a bare origin and a fake `gh`, the companion release and its tag included, and the gate's refusal of a run with a job that did not succeed; also the workflow files, `tools/bootstrap.sh` and the Makefile's `VERSION`, `KEY` and `PYTHON`. Nothing reaches GitHub. |
 | [`test_release_drafts.py`](../tests/integration/test_release_drafts.py) | 36 | No workflow can reach a release key, publish a release or read a variable, and `release.yml` and `el8.yml` stop at a draft; the draft job's file check runs for real against files and sums that the built code in `prepare` could choose. |
-| [`test_release_sign.py`](../tests/integration/test_release_sign.py) | 173 | `make release-sign` and `make release-audit` with the real scripts and keys and a bare `hub`, against [`FakeGitHub`](../tests/support/fakegithub.py), which can do all an account can but attest: moved commits and tags, foreign attestations, runners and builds, files swapped during signing, a second draft, a key in the checkout; each audit finding; no failed lookup ever a pass. |
+| [`test_release_sign.py`](../tests/integration/test_release_sign.py) | 182 | `make release-sign` and `make release-audit` with the real scripts and keys and a bare `hub`, against [`FakeGitHub`](../tests/support/fakegithub.py), which can do all an account can but attest: moved commits and tags, foreign attestations, runners and builds, files swapped during signing, a second draft, a key in the checkout; files other than the bytes the commit makes (an `.xz`, `install.sh`, the full suite's builds), which burn the version; each audit finding; no failed lookup ever a pass. |
 | [`test_release_signing.py`](../tests/integration/test_release_signing.py) | 113 | [`tools/release/release-signing.sh`](../tools/release/release-signing.sh), `previous-release.sh` and `check-signature.sh`, with fake programs on `PATH` and passphrases typed on a pty: bad key files and `.pub`s, nothing replaced, burned tags, companions, the previous-release lookup, each pin rule of the sign job. |
 | [`test_runner_disk.py`](../tests/integration/test_runner_disk.py) | 20 | [`tools/runner-disk.sh`](../tools/runner-disk.sh), which makes room on a runner's disk for [`full-suite.yml`](../.github/workflows/full-suite.yml)'s suite and corpus jobs, with a fake `df`: only the listed paths removed, the free-space check at its boundary, bad arguments refused first; the two jobs, read as text, making room early and reporting free space. |
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
@@ -857,7 +857,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`signatures.py`](../tests/support/signatures.py) | `run(fsb)`: `_fsbpyr`'s signature functions, called inside the demo app on both launchers, and what they must give. |
 | [`signing.py`](../tests/support/signing.py) | `script`, `new_key`, `sign`: the release script's keys and signatures, made per session so none is committed; `OpenSSL`, `named_key` and `use_openssl`: `_fsbpyr`'s four functions for tests from source, done by the openssl command on real keys through `fsbpyr.signing`'s two seams; `on_a_terminal`: a command on a pty. |
 | [`releases.py`](../tests/support/releases.py) | Servers on 127.0.0.1 that log the requests: `FakeReleases`, the release downloads (`/vX.Y.Z/ASSET`, `/el8-vX.Y.Z/ASSET` for the glibc 2.28 stubs and their sums), and `FakeGitHub`, a release document at `/api` with its assets below `/files`, for `self update`; given a signer, each serves signed sums. |
-| [`fakegithub.py`](../tests/support/fakegithub.py) | `FakeGitHub` for `release-sign.sh` and `audit.sh`: a fake `gh` and `curl` over files and a bare repository as the remote `hub`, able to do all an account can; only its `attest` makes an attestation. |
+| [`fakegithub.py`](../tests/support/fakegithub.py) | `FakeGitHub` for `release-sign.sh` and `audit.sh`: a fake `gh` and `curl` over files and a bare repository as the remote `hub`, able to do all an account can; only its `attest` makes an attestation, and only its `artifact` an artifact of the full suite's run of a commit. |
 | [`requires.py`](../tests/support/requires.py) | What the tests need from the machine: `TOOLS`, `tool()`, the `requires_tools` mark `tools()`, the environment conditions and `unmet()`; as a module, `make test-prereqs` ([When the machine lacks something](#when-the-machine-lacks-something)). |
 | [`rpms.py`](../tests/support/rpms.py) | Synthetic RPMs for the RPM reader's and sysroot's tests, with no network and no `rpm` tool: `rpm` (lead, signature, a header naming the payload's format and compressor, and an xz payload or given bytes), `cpio` (a newc archive), `header`, and the entries `file` (hard links by inode), `directory` and `symlink`. |
 | [`sbom.py`](../tests/support/sbom.py) | Loads `tools/release/sbom.py` as a module (`tools/` is no package). |

@@ -1548,7 +1548,12 @@ and their SBOMs and compares them byte for byte, as an untagged build of the com
 `green-run.sh`). Nothing else is rebuilt independently: not the tagged bytes the release ships
 (`el8-build` makes the default Python's from the commit tagged in its job, and compares them
 with nothing), the `.xz` files, the `THIRD_PARTY_LICENSES-*.txt` notices, `install.sh` or
-`SHA256SUMS`. A
+`SHA256SUMS`. (**Amended (2026-11-08), owner's decision on R-01:** `make release-sign` now
+compares, before it signs, the default Python's executables with `el8-build`'s and every EL8
+stub with `el8-stub`'s, unpacks every `.xz` against its listed file and makes `install.sh` again
+with the checkout's own fsbpyr; a file that differs burns the version. The 2026-10-27 decision
+stands: `release-check` rebuilds nothing. The other Pythons' tagged executables and the
+notices are still compared with nothing.) A
 version whose release workflow fails is burned. The rest of this section is the plan and its
 dated progress; where it names glibc 2.28, Debian 10, `release.yml`'s build, reproduce and
 compare jobs or the short asset names, later entries below and D42 apply.

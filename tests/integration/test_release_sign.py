@@ -19,13 +19,27 @@ from ..support.signing import PASSPHRASE, Key, new_key, on_a_terminal
 
 ROOT = Path(__file__).parents[2]
 TOOLS = ("release-sign.sh", "audit.sh", "passphrase.sh", "version-files.sh", "release-signing.sh",
-         "check-signature.sh", "previous-release.sh")  # fmt: skip
+         "check-signature.sh", "previous-release.sh", "make-install.sh",
+         "install.sh.in")  # fmt: skip
 TAG = "v1.2.0"
 EL8_TAG = "el8-v1.2.0"
 SUMS = "SHA256SUMS"
 EL8_SUMS = "SHA256SUMS-glibc2.28"
 EXECUTABLE = "fsbpyr-3.14-x86_64-linux-gnu"
 STUB = "fsbpyr-stub-3.14-x86_64-linux-gnu-glibc2.28"
+SUITE_EXECUTABLE = "el8-fsbpyr-3.14-x86_64-linux-gnu"  # the full suite's artifacts
+SUITE_STUB = "el8-stub-3.14-x86_64-linux-gnu"
+# What `fsbpyr inspect --json` says of an executable's glibc, for make-install.sh: the drafts'
+# executables are a few bytes, not executables this commit's fsbpyr could read.
+INSPECTOR = """#!/bin/sh
+echo "$*" >> "$INSPECTED"
+printf '{\n  "glibc": "2.34",\n}\n'
+"""
+
+
+def xz(content: bytes) -> bytes:
+    return subprocess.run([requires.tool("xz"), "--stdout", "-9e", "--threads=1"], input=content,
+                          capture_output=True, check=True).stdout  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -51,6 +65,7 @@ class World:
     def __init__(self, root: Path, keys: Keys) -> None:
         requires.tool("jq")
         requires.tool("git")
+        self.root = root
         self.keys = keys
         self.github = FakeGitHub(root / "github")
         self.tree = root / "tree"
@@ -66,7 +81,11 @@ class World:
                     "GIT_COMMITTER_EMAIL": "t@example.org",
                     "FSBPYR_RELEASE_PASSPHRASE_FILE": str(self.passphrase),
                     "FSBPYR_RELEASE_STATE": str(self.state),
-                    "FSBPYR_RELEASE_WIKI": str(self.wiki)}  # fmt: skip
+                    "FSBPYR_RELEASE_WIKI": str(self.wiki),
+                    "FSBPYR_RELEASE_INSPECTOR": str(root / "inspector"),
+                    "INSPECTED": str(root / "inspected")}  # fmt: skip
+        (root / "inspector").write_text(INSPECTOR)
+        (root / "inspector").chmod(0o755)
         self.env.pop("FSBPYR_RELEASE_REPO", None)
         self.env.pop("FSBPYR_SIGNING_PASSPHRASE", None)
         tools = self.tree / "tools" / "release"
@@ -77,6 +96,7 @@ class World:
         (self.tree / "pyproject.toml").write_text(
             '[project]\nname = "fsbpyr"\nversion = "1.2.0"\n')
         (self.tree / "uv.lock").write_text('[[package]]\nname = "fsbpyr"\nversion = "1.2.0"\n')
+        (self.tree / ".python-version").write_text("3.14.10\n")
         (self.tree / "src" / "fsbpyr").mkdir(parents=True)
         (self.tree / "src" / "fsbpyr" / "__init__.py").write_text('__version__ = "1.2.0"\n')
         pins = self.tree / "src" / "fsbpyr" / "release-keys"
@@ -114,22 +134,51 @@ class World:
     def tag(self, tag: str) -> None:
         self.git("tag", "-a", tag, "-m", tag)
 
+    def installer(self, tag: str, files: dict[str, bytes]) -> bytes:
+        """install.sh as release.yml's prepare job makes it of ``files``."""
+        directory = self.root / f"installer-{tag}"
+        shutil.rmtree(directory, ignore_errors=True)
+        directory.mkdir()
+        for name, content in files.items():
+            (directory / name).write_bytes(content)
+        command = ["bash", "tools/release/make-install.sh", tag.removeprefix("v"), str(directory),
+                   str(directory / "install.sh"), str(self.root / "inspector")]  # fmt: skip
+        done = subprocess.run(command, cwd=self.tree, env=self.env, capture_output=True,
+                              text=True, check=False)  # fmt: skip
+        assert done.returncode == 0, done.stderr
+        return (directory / "install.sh").read_bytes()
+
     def draft(self, tag: str = TAG, commit: str | None = None, extra: bytes = b""
               ) -> dict[str, bytes]:  # fmt: skip
-        """What release.yml leaves: the files, their sums, and GitHub's attestation of those."""
-        files = {EXECUTABLE: b"an executable\n" + extra, f"{EXECUTABLE}.xz": b"its xz\n" + extra,
-                 "install.sh": b"#!/bin/sh\n"}  # fmt: skip
-        sums = b"".join(digest_line(name, content) for name, content in sorted(files.items()))
-        self.github.draft(tag, {**files, SUMS: sums})
-        self.github.attest(sums, "release.yml", f"refs/tags/{tag}", commit or self.commit)
+        """What release.yml leaves: the files, their sums, and GitHub's attestation of those;
+        and what the full suite built of the same commit."""
+        executable = b"an executable\n" + extra
+        files = {EXECUTABLE: executable, f"{EXECUTABLE}.xz": xz(executable)}
+        files["install.sh"] = self.installer(tag, files)
+        self.reattest(tag, files, commit)
+        self.github.artifact(commit or self.commit, SUITE_EXECUTABLE, {EXECUTABLE: executable})
         return files
 
+    def reattest(self, tag: str, files: dict[str, bytes], commit: str | None = None) -> None:
+        """``files`` as a draft of ``tag``, with sums that list them and GitHub's attestation."""
+        sums = b"".join(digest_line(name, content) for name, content in sorted(files.items()))
+        if tag in self.github.state["releases"]:
+            shutil.rmtree(self.github.root / "assets" / tag)
+            self.github.load()
+            del self.github.state["releases"][tag]
+            self.github.save()
+        self.github.draft(tag, {**files, SUMS: sums})
+        self.github.attest(sums, "release.yml", f"refs/tags/{tag}", commit or self.commit)
+
     def el8_draft(self, tag: str = TAG, commit: str | None = None) -> None:
-        """What el8.yml leaves: only the .xz of a stub, and sums that list the stub too."""
-        xz = b"a stub's xz\n"
-        sums = digest_line(STUB, b"a stub\n") + digest_line(f"{STUB}.xz", xz)
-        self.github.draft(f"el8-{tag}", {f"{STUB}.xz": xz, EL8_SUMS: sums})
+        """What el8.yml leaves: only the .xz of a stub, and sums that list the stub too; and the
+        full suite's stub of the same commit."""
+        stub = b"a stub\n"
+        packed = xz(stub)
+        sums = digest_line(STUB, stub) + digest_line(f"{STUB}.xz", packed)
+        self.github.draft(f"el8-{tag}", {f"{STUB}.xz": packed, EL8_SUMS: sums})
         self.github.attest(sums, "el8.yml", f"refs/tags/{tag}", commit or self.commit)
+        self.github.artifact(commit or self.commit, SUITE_STUB, {STUB: stub})
 
     def sign(self, key: Path | None = None, *args: str) -> subprocess.CompletedProcess[str]:
         command = ["bash", "tools/release/release-sign.sh", str(key or self.keys.k.key), *args]
@@ -623,6 +672,110 @@ def test_a_file_removed_from_the_draft_stops_it(ready: World) -> None:
     ready.github.asset(TAG, "install.sh").unlink()
 
     refused(ready, ready.sign(), "lacks files its attested")
+
+
+# --- the bytes this commit makes (owner, 2026-11-08: a mismatch burns the version) ----------------
+
+
+def burned(world: World) -> list[str]:
+    """The releases the admin's machine has on record as burned."""
+    record = world.state / "burned"
+    return [line.split()[0] for line in record.read_text().splitlines()] if record.exists() else []
+
+
+def test_an_xz_that_unpacks_to_other_bytes_burns_the_version(ready: World) -> None:
+    """Attested, listed with its own digest, and still not the executable: xz-utils is not
+    pinned where the release is built."""
+    files = {name: ready.github.asset(TAG, name).read_bytes()
+             for name in (EXECUTABLE, "install.sh")}  # fmt: skip
+    ready.reattest(TAG, {**files, f"{EXECUTABLE}.xz": xz(b"other bytes\n")})
+
+    refused(ready, ready.sign(), f"{TAG}'s {EXECUTABLE}.xz unpacks to other bytes")
+    assert burned(ready) == [TAG, EL8_TAG]
+
+
+def test_an_installer_that_make_install_makes_otherwise_burns_the_version(ready: World) -> None:
+    files = {name: ready.github.asset(TAG, name).read_bytes()
+             for name in (EXECUTABLE, f"{EXECUTABLE}.xz")}  # fmt: skip
+    ready.reattest(TAG, {**files, "install.sh": ready.installer(TAG, files) + b"echo more\n"})
+
+    refused(ready, ready.sign(), f"{TAG}'s install.sh is not what make-install.sh makes")
+    assert burned(ready) == [TAG, EL8_TAG]
+
+
+def test_the_installer_is_made_with_the_inspector_given_on_the_drafts_executables(
+    ready: World,
+) -> None:
+    """Not with one of the draft's own executables, which only the attestation vouches for."""
+    assert ready.sign().returncode == 0
+
+    inspected = (ready.root / "inspected").read_text().splitlines()
+    assert any(line.startswith("inspect --json ") and line.endswith(f"/{TAG}/{EXECUTABLE}")
+               for line in inspected), inspected  # fmt: skip
+
+
+def test_an_executable_other_than_the_full_suites_build_burns_the_version(ready: World) -> None:
+    """release.yml and the full suite's el8-build job build the same commit from its tag."""
+    ready.github.artifact(ready.commit, SUITE_EXECUTABLE, {EXECUTABLE: b"another build\n"})
+
+    refused(ready, ready.sign(), f"{TAG}'s {EXECUTABLE} is not the full suite's build")
+    assert burned(ready) == [TAG, EL8_TAG]
+
+
+def test_a_stub_other_than_the_full_suites_burns_the_version_and_the_release(
+    ready: World,
+) -> None:
+    """Both are checked before either is published: the version goes as a whole."""
+    ready.el8_draft()
+    ready.github.artifact(ready.commit, SUITE_STUB, {STUB: b"another stub\n"})
+
+    refused(ready, ready.sign(), f"{EL8_TAG}'s {STUB} is not the full suite's stub")
+    assert sorted(burned(ready)) == sorted([EL8_TAG, TAG])
+    assert ready.github.state["releases"][EL8_TAG]["draft"] is True
+
+
+def test_a_companion_that_burns_after_the_release_was_published_burns_only_itself(
+    ready: World,
+) -> None:
+    assert ready.sign().returncode == 0
+    ready.el8_draft()
+    ready.github.artifact(ready.commit, SUITE_STUB, {STUB: b"another stub\n"})
+    writes = ready.github.writes()
+
+    done = ready.sign()
+
+    assert done.returncode == 1 and "is not the full suite's stub" in done.stderr
+    assert ready.github.writes() == writes
+    ready.github.load()
+    assert ready.github.state["releases"][EL8_TAG]["draft"] is True
+    assert burned(ready) == [EL8_TAG]
+
+
+def test_a_burned_version_is_never_signed_even_once_its_files_match(ready: World) -> None:
+    ready.github.artifact(ready.commit, SUITE_EXECUTABLE, {EXECUTABLE: b"another build\n"})
+    assert ready.sign().returncode == 1
+    built = ready.github.asset(TAG, EXECUTABLE).read_bytes()
+    ready.github.artifact(ready.commit, SUITE_EXECUTABLE, {EXECUTABLE: built})
+
+    refused(ready, ready.sign(), f"{TAG} is burned")
+
+
+def test_without_a_green_full_suite_run_it_stops_and_burns_nothing(ready: World) -> None:
+    ready.github.load()
+    ready.github.state["suite_runs"] = {}
+    ready.github.save()
+
+    refused(ready, ready.sign(), "full-suite.yml has no green run of")
+    assert burned(ready) == []
+
+
+def test_without_the_full_suites_artifact_it_stops_and_burns_nothing(ready: World) -> None:
+    """Artifacts expire after 90 days: then nothing can be compared, and nothing is burned."""
+    run = ready.github.state["suite_runs"][ready.commit]
+    shutil.rmtree(ready.github.root / "artifacts" / run / SUITE_EXECUTABLE)
+
+    refused(ready, ready.sign(), f"has no artifact {SUITE_EXECUTABLE}")
+    assert burned(ready) == []
 
 
 def test_a_signature_already_on_the_draft_stops_it(ready: World) -> None:
