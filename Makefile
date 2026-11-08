@@ -204,7 +204,7 @@ test-portability: ## Run the portability matrix on 12 distributions (podman, dis
 # run executables use the glibc 2.28 stub, built here from Rocky Linux 8.10's sysroot, and every
 # `fsbpyr build` of a test is a `--glibc 2.28` one. What differs between an EL8 build and a
 # default one is the stub, so these are the tests that run it: the launcher's (edges, due, slots,
-# gc, restore, find_object, way_targets, read_failures, cores), the _fsbpyr contract
+# gc, restore, find_object, way_targets, way, read_failures, cores), the _fsbpyr contract
 # (runtime_app, imports, stub_hardening, cache root, streaming) and the build of apps with
 # natives from manylinux_2_28 wheels (compat, natives). tests/e2e/test_el8.py compares an EL8
 # build with a default one, so it runs with both runtimes, not in the mode. full-suite.yml's
@@ -213,7 +213,8 @@ test-portability: ## Run the portability matrix on 12 distributions (podman, dis
 EL8_TESTS := tests/e2e/test_runtime_app.py tests/e2e/test_imports.py tests/e2e/test_stub_hardening.py \
 	tests/e2e/test_edges.py tests/e2e/test_cache_root.py tests/e2e/test_gc.py tests/e2e/test_slots.py \
 	tests/e2e/test_due.py tests/e2e/test_restore.py tests/e2e/test_find_object.py \
-	tests/e2e/test_way_targets.py tests/e2e/test_read_failures.py tests/e2e/test_cores.py \
+	tests/e2e/test_way_targets.py tests/e2e/test_way.py tests/e2e/test_read_failures.py \
+	tests/e2e/test_cores.py \
 	tests/e2e/test_streaming.py tests/e2e/test_stream_windows.py tests/e2e/test_unbuffered.py \
 	tests/e2e/test_digests.py tests/e2e/test_compat.py tests/e2e/test_natives.py \
 	tests/unit/test_test_modes.py

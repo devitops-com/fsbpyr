@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from .conftest import LauncherBuild
+from .test_way import PROBE_FLAGS
 
 pytestmark = pytest.mark.slow
 
@@ -22,9 +23,7 @@ PATH_MAX = 4096  # <linux/limits.h>: the size of the walk's buffer for a target
 @pytest.fixture(scope="module")
 def probe(launcher_build: LauncherBuild, tmp_path_factory: pytest.TempPathFactory) -> Path:
     out = tmp_path_factory.mktemp("probe") / "way"
-    flags = ("-Wl,--wrap=readlinkat", "-fsanitize=address,undefined",
-             "-fno-sanitize-recover=undefined")  # fmt: skip
-    return launcher_build.compile(out, [PROBE, "way.c"], *flags)
+    return launcher_build.compile(out, [PROBE, "way.c"], *PROBE_FLAGS)
 
 
 def _walk(probe: Path, root: str, length: str) -> str:
