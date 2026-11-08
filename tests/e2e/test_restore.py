@@ -10,6 +10,7 @@ it; and with too few descriptors for the helpers, the calling thread writes what
 
 import errno
 import hashlib
+import itertools
 import os
 import random
 import subprocess
@@ -21,6 +22,7 @@ from fsbpyr.assemble import App, build_executable
 from fsbpyr.payload.format import DIGEST_LEAF, XZ_PIECE, ZSTD_PIECE, FileKind
 from fsbpyr.payload.spec import Blob, File
 
+from ..support import cache
 from ..unit.boot.conftest import FAKE_RUNTIME
 from .conftest import LauncherBuild, app_content
 
@@ -272,3 +274,25 @@ def test_with_too_few_descriptors_for_the_helpers_the_caller_writes_the_rest(
 
     assert lines["failure"] == "0 - 0"
     assert _whole(tmp_path / "root", files) == []
+
+
+def test_a_path_is_safe_as_the_payload_reader_says(probe: Path, tmp_path: Path) -> None:
+    """fsb_cache_safe, which every path below the cache passes, against tests/support/cache.py's
+    rule (the payload reader's check_path): every path of up to four characters of ``a``, ``.``,
+    ``/``, a backslash and NUL, and names of 255 bytes and longer."""
+    alphabet = "a./\\\0"
+    paths = ["".join(chars) for size in range(5)
+             for chars in itertools.product(alphabet, repeat=size)]  # fmt: skip
+    paths += ["a" * 255, "a" * 256, "a/" + "b" * 4000, "a/" * 100 + "b", "../" * 3 + "a"]
+    listed = tmp_path / "paths"
+    listed.write_text("".join((path.encode().hex() or "-") + "\n" for path in paths))
+
+    done = subprocess.run([probe, "--safe", listed], capture_output=True, text=True, check=True,
+                          timeout=60)  # fmt: skip
+
+    taken = [line == "1" for line in done.stdout.split()]
+    assert taken == [cache.safe(path) for path in paths]
+    verdicts = dict(zip(paths, taken, strict=True))
+    assert all(verdicts[path] for path in ("a", "a/a", "...", ".a", "a.", "a" * 255))
+    assert not any(verdicts[path] for path in ("", "/a", "a/", "a//a", "./a", "a/..", "a\\a",
+                                               "a\0a"))  # fmt: skip
