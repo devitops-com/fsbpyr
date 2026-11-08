@@ -117,6 +117,18 @@ def test_a_set_uid_start_by_the_owner_is_not_privileged(build_app: BuildApp) -> 
 
 
 @pytest.mark.sanitized
+def test_hypot_goes_through_the_wrapper_that_keeps_the_glibc_baseline(build_app: BuildApp) -> None:
+    """The stub links hypot as glibc.c's __wrap_hypot, which finds the oldest version of it once
+    and calls that: abs() of a complex number calls hypot (math.hypot does not)."""
+    app = build_app({"norm.py": "def main():\n    print(abs(3 + 4j), abs(complex(5, 12)))\n"},
+                    "norm:main")  # fmt: skip
+
+    result = _run(app)
+
+    assert (result.returncode, result.stdout) == (0, "5.0 13.0\n"), result.stderr
+
+
+@pytest.mark.sanitized
 def test_uncaught_exception_shows_only_app_frames_with_source(build_app: BuildApp) -> None:
     app = build_app({"boom.py": "def main():\n    raise ValueError('bad input')\n"}, "boom:main")
 

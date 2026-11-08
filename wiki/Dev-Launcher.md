@@ -366,7 +366,7 @@ app that keeps starting itself, however it does so, stops at the limit.
 
 [`due.c`][due.c] decides before Python starts whether the app's cache is due for a collection
 (Python code, [Boot modules](Dev-Boot-Modules.md)) and starts one in the background.
-`fsb_collect_when_due(app, length, argv0)` ([line 196][due.c#L196]) does nothing under
+`fsb_collect_when_due(app, length, argv0)` ([line 211][due.c#L211]) does nothing under
 `AT_SECURE`, for process 1 (in a container no zombie of its child would be reaped), or with
 `FSBPYR_GC` set at all. Otherwise:
 
@@ -697,7 +697,7 @@ record accessors, lookups, path checks and blob decoding any bytes, and `sig_fuz
 [slots.c]: ../src/fsbpyr/launcher/slots.c
 [slots.c#L86]: ../src/fsbpyr/launcher/slots.c#L86
 [due.c]: ../src/fsbpyr/launcher/due.c
-[due.c#L196]: ../src/fsbpyr/launcher/due.c#L196
+[due.c#L211]: ../src/fsbpyr/launcher/due.c#L211
 [way.c]: ../src/fsbpyr/launcher/way.c
 [way.c#L174]: ../src/fsbpyr/launcher/way.c#L174
 [way.h]: ../src/fsbpyr/launcher/way.h

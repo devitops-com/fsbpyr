@@ -1937,8 +1937,8 @@ def test_each_job_runs_every_target_and_python_on_a_runner_of_the_targets_archit
 
 
 def test_a_run_needs_every_job_to_pass_for_the_commit_to_be_released() -> None:
-    """No job tolerates a failure, nor a step but the launcher's coverage report, which is
-    informational (make check-c is not: it is clean and clang is pinned); draft needs every build
+    """No job tolerates a failure, nor any step: the launcher's coverage is a gate since
+    2026-11-08 (make check-c is too: it is clean and clang is pinned); draft needs every build
     and SBOM attestation (aarch64 too) and green-run.sh requires the run's conclusion, which is
     that of all its jobs."""
     tolerated = []
@@ -1948,7 +1948,7 @@ def test_a_run_needs_every_job_to_pass_for_the_commit_to_be_released() -> None:
             assert "continue-on-error" not in header, (name, job)
             tolerated += [step.partition("\n")[0] for step in text.split("\n      - ")[1:]
                           if "continue-on-error" in step]  # fmt: skip
-    assert tolerated == ["name: Launcher coverage (llvm-cov)"]
+    assert tolerated == []
     assert "needs: [build, sbom]" in workflow_jobs("release.yml")["prepare"]
     assert "needs: prepare" in workflow_jobs("release.yml")["draft"]
     assert "needs: suite" in workflow_jobs("full-suite.yml")["portability"]

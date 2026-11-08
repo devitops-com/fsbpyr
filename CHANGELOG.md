@@ -134,6 +134,15 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   distributions' archives and the sysroots' packages among them are collected.
 
 ### Changed
+- **The launcher's line coverage is gated: 90% of fsbpyr's C code, and no file below 85%.** The
+  full suite's report was informational and saw only what the probes and fuzz harnesses built;
+  with `FSBPYR_LLVM_COV_DIR` set, the sanitized test launcher is now instrumented too, so
+  `main.c` and `module.c` count, and `tools/launcher-coverage.py` fails the job below either
+  limit (owner, 2026-11-08). CPython's headers and the vendored zstd do not count. Measured
+  locally: 93.9% of 3,033 lines. In an instrumented build only, `due.c`'s collector child writes
+  its profile before it executes the collection, so what it ran counts; tests now cover the
+  passwd home, a removed working directory, the fallbacks without `close_range` or `/proc`, and
+  the `hypot` wrapper.
 - **Every pull request gets the full suite before it is merged, in main's merge queue.**
   `full-suite.yml` runs on `merge_group`, on the commit main then becomes, documentation-only
   pull requests included, and no longer on pushes to main, which the queue already tested. Its

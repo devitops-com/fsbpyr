@@ -170,6 +170,16 @@ static bool detach_descriptors(void) {
     return true;
 }
 
+/* In the tests' llvm-cov build only (clang defines the macro for -fprofile-instr-generate): a
+ * child that ends in execv or _exit writes no profile of its own, and what it ran would count as
+ * never run. A release build compiles nothing here. */
+static void write_coverage(void) {
+#ifdef __LLVM_INSTR_PROFILE_GENERATE
+    extern int __llvm_profile_write_file(void);
+    __llvm_profile_write_file();
+#endif
+}
+
 /* Fork twice (the app reaps the first child at once; the second, detached, is init's), then
  * execute the app again at idle priority to collect the root, from "/" (no mount kept busy). The
  * run may outlive the build that started it, so it gets none of the signing variables, which the
@@ -181,15 +191,20 @@ static void start_collection(const char *argv0) {
         while (waitpid(child, NULL, 0) < 0 && errno == EINTR) {}
         return;
     }
-    if (setsid() < 0 || fork() != 0) _exit(0);
+    if (setsid() < 0 || fork() != 0) {
+        write_coverage();
+        _exit(0);
+    }
     setpriority(PRIO_PROCESS, 0, 19);
     syscall(SYS_ioprio_set, IOPRIO_WHO_PROCESS, 0, IOPRIO_CLASS_IDLE << IOPRIO_CLASS_SHIFT);
     if (detach_descriptors() && chdir("/") == 0 && setenv("FSBPYR_CACHE_DIR", root, 1) == 0 &&
         setenv("FSBPYR_GC", "background", 1) == 0 && unsetenv("FSBPYR_SIGNING_KEY") == 0 &&
         unsetenv("FSBPYR_SIGNING_PASSPHRASE") == 0) {
         char *const argv[] = {(char *)argv0, NULL};
+        write_coverage();
         execv("/proc/self/exe", argv);
     }
+    write_coverage();
     _exit(0);
 }
 

@@ -155,7 +155,7 @@ module's `executable` as `sys.modules["_fsbpyr"]`, `src/fsbpyr/boot` first on `s
 |---|---|---|
 | `FSBPYR_TEST_DOWNLOADS` | `tests/conftest.py`, `tests/e2e/conftest.py`, `tests/e2e/test_dispatch.py`, `tests/e2e/test_baseline.py`, `tests/support/downloads.py`, `tools/vm-smoke.py` | Keeps the runtime's pinned downloads and the runtimes built from them between sessions ([`downloads.py`](../tests/support/downloads.py)), and the [page-size smoke test](#the-page-size-smoke-test)'s kernels and root file systems. The `make` targets default it to `$(TESTTMP)/fsbpyr-test-downloads`. |
 | `FSBPYR_CORPUS_APPS` | `tests/support/corpus.py` | Comma-separated corpus apps for `test_corpus.py` (an unknown name is an error); unset or empty: all. |
-| `FSBPYR_LLVM_COV_DIR` | `tests/e2e/conftest.py` | `LauncherBuild.compile` instruments its programs for llvm-cov (`-fprofile-instr-generate -fcoverage-mapping`, and `-fcoverage-prefix-map` from the session's copy of the launcher sources to `src/fsbpyr/launcher`, so that each source is one file of the report) and copies them there; `LLVM_PROFILE_FILE` says where profiles go. |
+| `FSBPYR_LLVM_COV_DIR` | `tests/e2e/conftest.py` | `LauncherBuild.compile` instruments its programs for llvm-cov (`-fprofile-instr-generate -fcoverage-mapping`, and `-fcoverage-prefix-map` from the session's copy of the launcher sources to `src/fsbpyr/launcher`, so that each source is one file of the report) and copies them there; `LLVM_PROFILE_FILE` says where profiles go. The sanitized runtime's stub is then instrumented too (`stub.coverage_flags`), and the `runtime` fixture keeps it there, so that `main.c` and `module.c` count; `tools/launcher-coverage.py` gates the report (90% of the lines, 85% per file). |
 | `FSBPYR_FUZZ_SECONDS` | `tests/e2e/test_fuzz.py` | How long the payload harness's fuzzing run explores; 30 seconds when unset. The readers of keys explore for a quarter of it, 30 seconds at least (less only when it is less). |
 | `FSBPYR_FUZZ_CORPUS` | `tests/e2e/test_fuzz.py` | Keeps the inputs the payload harness's fuzzing run finds for later runs, and the directory beside it whose name ends in `-sig` those of the readers of keys; temporary directories when unset. |
 | `FSBPYR_LARGE_SIZE` | `tests/e2e/test_large.py` | Size of the large file; 5 GiB when unset (the docstring names `1099511627776`, 1 TB, for a run on demand). |
@@ -616,7 +616,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,753 in 150 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,769 in 151 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -630,16 +630,16 @@ run with the release launcher only, those two portability tests also on the two 
 
 | Layer | Files | Tests |
 |---|---|---|
-| `tests/unit` (top level) | 27 | 930 |
+| `tests/unit` (top level) | 28 | 937 |
 | `tests/unit/boot` | 23 | 362 |
 | `tests/unit/builder` | 19 | 789 |
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 261 |
 | `tests/integration` | 17 | 860 |
-| `tests/e2e` | 44 | 1,110 |
-| All | 150 | 4,753 |
+| `tests/e2e` | 44 | 1,119 |
+| All | 151 | 4,769 |
 
-### tests/unit (top level): 27 files, 930 tests
+### tests/unit (top level): 28 files, 937 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -654,6 +654,7 @@ run with the release launcher only, those two portability tests also on the two 
 | [`test_el8_stub_tool.py`](../tests/unit/test_el8_stub_tool.py) | 4 | `tools/release/el8-stub.py` on synthetic ELF stubs: one needing at most glibc 2.28 with the expected runtime id written under its asset name with its SHA-256; one needing `GLIBC_2.34` or carrying another runtime id exits 1; a missing runtime names `fsbpyr runtime build --python 3.14 --glibc 2.28`; a bad command line exits 2. |
 | [`test_elf_mutation.py`](../tests/unit/test_elf_mutation.py) | 1 | Hypothesis (1,000 examples): mutated ELF bytes are read by `fsbpyr.elf` or raise `ElfError`, nothing else. |
 | [`test_inspect.py`](../tests/unit/test_inspect.py) | 54 | `fsbpyr inspect` on `FAKE_RUNTIME` executables: text and JSON, columns, `--verify`, licences, files, lock and settings lines, older formats, damaged records, a glibc 2.28 app's `baseline` and `glibc_baseline`, file text that cannot drive the terminal. |
+| [`test_launcher_coverage_gate.py`](../tests/unit/test_launcher_coverage_gate.py) | 7 | `tools/launcher-coverage.py`, the gate on the launcher's line coverage: only fsbpyr's C code counts (not CPython's headers, the vendored zstd or the tests' sources), 90% in all and 85% per file, its output and bad input. |
 | [`test_no_skips.py`](../tests/unit/test_no_skips.py) | 2 | The `ast` scan of [A skip fails the run](#a-skip-fails-the-run), and that it finds each use. |
 | [`test_perf_tool.py`](../tests/unit/test_perf_tool.py) | 11 | `tools/perf.py` (`make perf`) without measuring: its percentages, percentiles and table, the trace line, the order of interleaved runs, GNU time's peak RSS, a failing run and a missing fsbpyr. |
 | [`test_poetry1.py`](../tests/unit/test_poetry1.py) | 32 | `fsbpyr.poetry1`: a Poetry 1 `pyproject.toml` without `[project]` read as one: constraints as PEP 440, `\|\|` and git dependencies refused, optional dependencies as extras, markers, which projects are unpackaged. |
@@ -786,7 +787,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
 | [`test_worker_venvs.py`](../tests/integration/test_worker_venvs.py) | 10 | [`worker_venvs.py`](../tests/support/worker_venvs.py) on real pytest runs with three workers: each in an environment of its own, subprocesses included, removed after the run, and a worker in anything else stopping the run. |
 
-### tests/e2e: 44 files, 1,110 tests
+### tests/e2e: 44 files, 1,119 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -802,7 +803,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_selfupdate.py`](../tests/e2e/test_selfupdate.py) | 9 | `self update` of a built fsbpyr with test keys pinned, from `FakeGitHub`, to a second build: unsigned, signed by an unpinned key, a `.xz` not matching its line, an older build served as new, three pins, a client that skipped a key change. |
 | [`test_digests.py`](../tests/e2e/test_digests.py) | 6 | The launcher's digest routines through `probes/digests.c` against the Python reader's `tree_digest`; holes not read and leaves of zeros not hashed (`pread` and `SHA256_Update` counted), no hole past a file's end. |
 | [`test_dispatch.py`](../tests/e2e/test_dispatch.py) | 6 | A project, and a single script, that exclude the running Python build through the variant: fsbpyr built from the checkout on another Python, served by `FakeReleases`. Needs that Python installed with uv. Marked `version_rule`. |
-| [`test_due.py`](../tests/e2e/test_due.py) | 22 | When a cache collection is due, through `probes/due.c` (`statvfs` wrapped): a detached idle-priority process, one start of many claiming the run, `FSBPYR_GC`, the root the boot code finds. |
+| [`test_due.py`](../tests/e2e/test_due.py) | 29 | When a cache collection is due, through `probes/due.c` (`statvfs`, `getpwuid_r`, `opendir` and `syscall` wrapped): a detached idle-priority process, one start of many claiming the run, `FSBPYR_GC`, the root the boot code finds (the passwd entry's home, none at all, a removed working directory), descriptors closed without `close_range` or `/proc` too. |
 | [`test_edges.py`](../tests/e2e/test_edges.py) | 156 | The launcher, release and sanitized, on every edge case that leaves an executable (63 of 66) and every path case: refusing to start (exit 70), refusing the record, or accepting, as the table says, never crashing. The app walks its records with `tests/support/walk.py`. |
 | [`test_el8.py`](../tests/e2e/test_el8.py) | 14 | `fsbpyr build --glibc 2.28` on real runtimes: each stub's runtime id, `glibc >= 2.28` and `baseline   glibc 2.28` in the summary and `inspect`, the recorded `glibc_baseline`, runtime and `rocky8-glibc2.28-` sysroot, a manylinux_2_28 cryptography wheel, apps run on the host, `cext` rebuilt. Then this checkout as release v1.2.0, with the stub from a `FakeReleases` companion `el8-v1.2.0` or placed beside it, builds what the cache's runtime builds; without it, exit 1 and the plain message, and a default stub under the EL8 name is refused. |
 | [`test_el8_use_cases.py`](../tests/e2e/test_el8_use_cases.py) | 4 | `--glibc 2.28` and the `glibc` setting with a directory of scripts, a single script whose PEP 723 block sets it, and the `multi` fixture, inspected and run. Needs `el8_runtime`; `make test` runs it. |
@@ -824,7 +825,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_portability.py`](../tests/e2e/test_portability.py) | 35 | `hello`, `heavy`, `heavy-pip` and `compat` in each image with `podman run --network=none`, with `FSBPYR_SELFTEST=natives` and the reported libraries and glibc against `llvm-objdump`; `test_el8_apps_run_on_el8` (two items) runs glibc 2.28 builds of `hello` and a cryptography app (prebuilt `hello-el8` and `native-el8`, else built) on `rockylinux:8` and `almalinux:8`. Marked `podman`. |
 | [`test_read_failures.py`](../tests/e2e/test_read_failures.py) | 7 | The launcher's blob reads out of memory through `probes/reads.c` (`ZSTD_createDCtx`, `ZSTD_decompress`, `ZSTD_decompressStream`, `lzma_stream_buffer_decode` and `madvise` wrapped): every compressed codec's read or stream that the wrapped function serves fails with `ENOMEM` or `FSB_STREAM_MEMORY`, pieces on helper threads too, and corrupt data stays corrupt when dropping the payload's pages fails; a stub linked with `probes/no_context.c` starts out of memory with `out of memory`, not `corrupt startup module`. |
 | [`test_restore.py`](../tests/e2e/test_restore.py) | 12 | The cache sync's writers through `probes/restore.c` (`renameat`, `linkat`, `pthread_create`, `pwrite` wrapped): whole files, helper threads, unnamed files linked or renamed into place, the thread limit, the first failure in path order, a full disk under a leaf of a pooled file and of one in pieces. |
-| [`test_runtime_app.py`](../tests/e2e/test_runtime_app.py) | 90 | Small apps from `build_app`, mostly marked `sanitized`: exit codes, tracebacks, signals, set-gid refusal, the whole-file check, damaged records, unsafe paths, resource limits (the file-size one also on zstd pieces), the block cache, an owner's set-uid start, the payload on a 64 KiB boundary, `stubs/_fsbpyr.pyi` against the module. |
+| [`test_runtime_app.py`](../tests/e2e/test_runtime_app.py) | 92 | Small apps from `build_app`, mostly marked `sanitized`: exit codes, tracebacks, signals, set-gid refusal, the whole-file check, damaged records, unsafe paths, resource limits (the file-size one also on zstd pieces), the block cache, an owner's set-uid start, the payload on a 64 KiB boundary, `stubs/_fsbpyr.pyi` against the module. |
 | [`test_scripts.py`](../tests/e2e/test_scripts.py) | 21 | The `scripts` fixture (`uv init --no-package`) runs as `uv run main.py` does: the tree untouched, reproducible builds, a module with `[project.scripts]`, no top-level code run by the build, several guarded modules, clashing names, missing imports, main-guard reads only for `--entry`'s module; and the `foreign` Poetry 2 and PDM projects. |
 | [`test_single_script.py`](../tests/e2e/test_single_script.py) | 12 | One script as an executable printing what `python3 <script>` prints: `dist/<stem>`, only its closure, `uv run` scripts, its block's dependencies, settings and `requires-python`, the freeze hint, a venv's pins and a script lock, nothing written beside it. |
 | [`test_slots.py`](../tests/e2e/test_slots.py) | 29 | The instance limit through `probes/slots.c` (`geteuid` wrapped): slots held and freed, forks and execs, files not ours alone, the override and its malformed values, the default. |

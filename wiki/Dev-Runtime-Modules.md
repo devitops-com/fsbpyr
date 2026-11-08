@@ -442,7 +442,10 @@ Public functions:
 - `compile_flags(sanitize=False)` and `link_flags(triple, sanitize=False)`: the fixed flags, with
   `AARCH64_LINK_FLAGS` for an `aarch64-` triple; the sanitized variant drops `-O2`, LTO,
   `_FORTIFY_SOURCE` and stripping, and adds `-O1`, ASan, UBSan (every undefined behaviour fatal),
-  frame pointers and `-g`.
+  frame pointers and `-g`, and with `FSBPYR_LLVM_COV_DIR` set (the full suite's launcher
+  coverage) `coverage_flags()`: llvm-cov's instrumentation, the profiles going where
+  `LLVM_PROFILE_FILE` says at build time and the sources named by the package's launcher
+  directory, as the probes' are. The release build never has them.
 - `outlined_atomics(toolchain, triple)`: the compiler-rt builtins library on aarch64 (a
   `StubBuildError` naming `libclang-rt-<N>-dev` when clang has none), `None` on x86-64.
 - `launcher_digest(triple, sanitize=False)`: SHA-256 over every launcher file and the flags for

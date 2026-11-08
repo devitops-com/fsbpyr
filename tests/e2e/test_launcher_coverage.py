@@ -44,7 +44,7 @@ def test_the_report_has_one_row_per_launcher_source_and_none_of_the_tests(
     profile = tmp_path / "all.profdata"
     subprocess.run([llvm / "llvm-profdata", "merge", "-sparse", *tmp_path.glob("*.profraw"),
                     "-o", profile], check=True)  # fmt: skip
-    (ignored,) = set(re.findall(r' "-ignore-filename-regex=([^"]+)"', WORKFLOW.read_text()))
+    (ignored,) = set(re.findall(r'ignored="-ignore-filename-regex=([^"]+)"', WORKFLOW.read_text()))
 
     export = subprocess.run([llvm / "llvm-cov", "export", "-summary-only", programs[0],
                              "-object", programs[1], f"-instr-profile={profile}",

@@ -77,10 +77,30 @@ SANITIZE_FLAGS = (
 _NOT_SANITIZED = ("-O2", "-flto=full", "-D_FORTIFY_SOURCE=2", "-s")
 
 
+# The full suite's launcher coverage (tests/e2e/conftest.py) names a directory here; then the
+# sanitized test variant is instrumented for llvm-cov too, so that the files only a real
+# executable runs (main.c, module.c) count in the report (owner, 2026-11-08: every file of code).
+COVERAGE_VARIABLE = "FSBPYR_LLVM_COV_DIR"
+
+
+def coverage_flags() -> tuple[str, ...]:
+    """llvm-cov's instrumentation, when COVERAGE_VARIABLE is set: profiles go where
+    LLVM_PROFILE_FILE says at build time (an app's environment may lack it), and the sources are
+    named by the package's launcher directory, as the probes' are. Never the release build."""
+    directory = os.environ.get(COVERAGE_VARIABLE)
+    if not directory:
+        return ()
+    profile = os.environ.get("LLVM_PROFILE_FILE") or f"{directory}/%p-%m.profraw"
+    launcher = str(importlib.resources.files("fsbpyr.launcher"))  # a directory: run from source
+    return (f"-fprofile-instr-generate={profile}", "-fcoverage-mapping",
+            f"-fcoverage-compilation-dir={launcher}")  # fmt: skip
+
+
 def compile_flags(*, sanitize: bool = False) -> tuple[str, ...]:
     if not sanitize:
         return COMPILE_FLAGS
-    return (*(f for f in COMPILE_FLAGS if f not in _NOT_SANITIZED), "-O1", *SANITIZE_FLAGS)
+    return (*(f for f in COMPILE_FLAGS if f not in _NOT_SANITIZED), "-O1", *SANITIZE_FLAGS,
+            *coverage_flags())  # fmt: skip
 
 
 def link_flags(triple: str, *, sanitize: bool = False) -> tuple[str, ...]:
