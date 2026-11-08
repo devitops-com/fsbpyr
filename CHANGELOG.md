@@ -15,6 +15,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   the completions under names known in advance (`.fsbpyr.<process id>.tmp`), so a link planted
   under such a name by someone who could write the directory was written through. `mktemp` makes
   them now; the files keep the modes they had.
+- **The installer sources only an env script that puts its directory on `PATH`.** A file named
+  `env` or `env.fish` already in the install directory, whatever it was, was sourced from
+  `~/.profile` and the other shell files, so every new shell ran it. One that puts the directory
+  on `PATH`, as uv's does, is still used; any other is left alone, and so are the shell files,
+  and the installer says that the directory is not on your `PATH`.
 - **The builder and `inspect` read a file whose file system has no `SEEK_DATA`.** Any error of
   `SEEK_DATA` but "no data after this offset" stopped them; now that range is read, as the
   launcher always read it.

@@ -757,16 +757,57 @@ def test_a_directory_outside_home_is_written_as_it_is(
     assert (host.home / ".profile").read_text() == f'. "{tmp_path}/apps/env"\n'
 
 
-def test_an_existing_env_is_reused(shell: list[str], release: Release, host: Host) -> None:
+# What uv's installer (cargo-dist's) writes for ~/.local/bin.
+UV_ENV = """#!/bin/sh
+# add binaries to PATH if they aren't added yet
+# affix colons on either side of $PATH to simplify matching
+case ":${PATH}:" in
+    *:"$HOME/.local/bin":*)
+        ;;
+    *)
+        # Prepending path in case a system-installed binary needs to be overridden
+        export PATH="$HOME/.local/bin:$PATH"
+        ;;
+esac
+"""
+UV_ENV_FISH = """if not contains "$HOME/.local/bin" $PATH
+    # Prepending path in case a system-installed binary needs to be overridden
+    set -x PATH "$HOME/.local/bin" $PATH
+end
+"""
+
+
+def test_uvs_env_scripts_are_reused(shell: list[str], release: Release, host: Host) -> None:
     script = release.make()
     host.install_dir.mkdir(parents=True)
-    (host.install_dir / "env").write_text("# uv's\n")
+    (host.install_dir / "env").write_text(UV_ENV)
+    (host.install_dir / "env.fish").write_text(UV_ENV_FISH)
 
     result = install(shell, script, host)
 
     assert result.returncode == 0, result.stderr
-    assert (host.install_dir / "env").read_text() == "# uv's\n"
+    assert (host.install_dir / "env").read_text() == UV_ENV
+    assert (host.install_dir / "env.fish").read_text() == UV_ENV_FISH
     assert (host.home / ".profile").read_text() == '. "$HOME/.local/bin/env"\n'
+
+
+@pytest.mark.parametrize("name", ["env", "env.fish"])
+def test_a_file_of_that_name_that_is_no_env_script_is_never_sourced(
+    shell: list[str], release: Release, host: Host, name: str
+) -> None:
+    """A program or script of someone's own named env: every new shell would run it."""
+    script = release.make()
+    host.install_dir.mkdir(parents=True)
+    (host.install_dir / name).write_text("#!/bin/sh\necho hello\n")
+
+    result = install(shell, script, host)
+
+    assert result.returncode == 0, result.stderr
+    assert (host.install_dir / name).read_text() == "#!/bin/sh\necho hello\n"
+    assert not (host.home / ".profile").exists()
+    assert f"{host.install_dir}/{name} is not an env script" in result.stdout
+    assert f"{host.install_dir} is not on your PATH" in result.stdout
+    assert (host.install_dir / "fsbpyr").exists()
 
 
 def test_a_directory_on_path_is_left_alone(shell: list[str], release: Release, host: Host) -> None:

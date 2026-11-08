@@ -66,7 +66,9 @@ a download is checked before it is used. It:
 - when that directory is not on `PATH`, writes `env` and `env.fish` scripts next to the
   executable and sources them from `~/.profile`, from `~/.bashrc` and `~/.zshrc` when they
   exist, and from fish's `conf.d` when fish is installed or configured (in GitHub Actions it adds
-  the directory to `$GITHUB_PATH` instead).
+  the directory to `$GITHUB_PATH` instead). Scripts there already that put the directory on
+  `PATH`, as uv's do, are used as they are; any other file named `env` or `env.fish` there is
+  left alone and not sourced, and the installer says the directory is not on your `PATH`.
 
 | Option or variable | Effect |
 |---|---|

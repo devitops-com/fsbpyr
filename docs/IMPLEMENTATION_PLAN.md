@@ -1993,7 +1993,10 @@ compare jobs or the short asset names, later entries below and D42 apply.
     - when the directory is not on `PATH`, writes an `env` script next to the executable
       (`env.fish` for fish) and sources it from `.profile`, `.bashrc`, `.zshrc` and fish's
       `conf.d`, the scheme uv shares with rustup (an `env` already there, uv's included, is
-      reused); `--no-modify-path` or `FSBPYR_NO_MODIFY_PATH=1` leaves the shell files alone;
+      reused; **corrected (2026-11-08, #117):** only one that puts the directory on `PATH`, as
+      uv's does; another file of that name is left alone and so are the shell files, since
+      every new shell would run it); `--no-modify-path` or `FSBPYR_NO_MODIFY_PATH=1` leaves the
+      shell files alone;
       in GitHub Actions it appends the directory to `$GITHUB_PATH`;
     - options as uv's: `-h/--help`, `-q/--quiet`, `-v/--verbose`, `--no-modify-path`
       (passed as `curl ... | sh -s -- --no-modify-path`); messages as uv's (`downloading

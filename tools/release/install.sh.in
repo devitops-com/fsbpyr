@@ -302,6 +302,17 @@ add_line() { # file, line
     say_verbose "added to $1"
 }
 
+# Whether an env script there already puts the directory on PATH, as ours and uv's do (both
+# have this line): a file of that name that does not is someone else's, and sourcing it from the
+# shell files would run it in every new shell.
+env_script() { # name, the line that puts the directory on PATH
+    [ ! -e "$INSTALL_DIR/$1" ] && return 0
+    grep -qF -- "$2" "$INSTALL_DIR/$1" 2>/dev/null && return 0
+    say "$INSTALL_DIR/$1 is not an env script that puts $INSTALL_DIR on PATH:" \
+        "your shell files are left alone"
+    return 1
+}
+
 write_env_files() {
     expr="$(dir_expression)"
     if [ -e "$INSTALL_DIR/env" ]; then
@@ -336,8 +347,10 @@ modify_path() {
 "*) err "cannot write shell files for $INSTALL_DIR, which has a quote, \$, backtick or backslash in it; install elsewhere or use --no-modify-path" ;;
     esac
     [ -n "${HOME:-}" ] || err "HOME is not set; use --no-modify-path"
-    write_env_files || err "cannot write the env scripts in $INSTALL_DIR"
     expr="$(dir_expression)"
+    env_script env "export PATH=\"$expr:\$PATH\"" || return 1
+    env_script env.fish "set -x PATH \"$expr\" \$PATH" || return 1
+    write_env_files || err "cannot write the env scripts in $INSTALL_DIR"
     line=". \"$expr/env\""
     add_line "$HOME/.profile" "$line"
     [ ! -f "$HOME/.bashrc" ] || add_line "$HOME/.bashrc" "$line"
@@ -363,7 +376,10 @@ add_to_path() {
         say_verbose "added $INSTALL_DIR to \$GITHUB_PATH"
         return 0
     fi
-    modify_path
+    if ! modify_path; then
+        say "$INSTALL_DIR is not on your PATH"
+        return 0
+    fi
     say ""
     say "To add $INSTALL_DIR to your PATH, either restart your shell or run:"
     say ""
