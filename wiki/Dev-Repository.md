@@ -79,10 +79,17 @@ Two variables, set once:
 
 A program, an executable file that starts with `#!` or is an ELF file, or one you may run but
 not read, is run with nothing on its standard input, and what it writes on its standard error is
-dropped, since the report keeps what each step prints. Any other file is read, x bits or not: on exFAT or NTFS, or a vfat mounted
-by hand, every file has them. The passphrase is one line. The file must be yours or root's, and
-neither your group nor others may write it, nor read it if it holds the passphrase; like the key,
-it stays outside the checkout. Beside the key, it does not stop someone with your account.
+dropped, since the report keeps what each step prints. Any other file is read, x bits or not: on
+exFAT or NTFS, or a vfat mounted by hand, every file has them. The passphrase is one line. The
+file must be yours or root's, and neither your group nor others may write it, nor read it if it
+holds the passphrase; like the key, it stays outside the checkout. Beside the key, it does not
+stop someone with your account.
+
+The file is opened once, and the checks and its use are of that open file, so a file put in its
+place afterwards, through a directory on the way that someone else may write, is never run or
+read. A program you may run but not read cannot be opened, so it runs by its name: then every
+directory on its way must be yours or root's, and writable by nobody else (a group of yours alone
+counts as yours) unless it is sticky, as `/tmp` is.
 
 `make release` checks that the key opens with the passphrase and is pinned by this tree, runs the
 audit, tags and pushes, waits for both workflows, signs and publishes both releases (neither

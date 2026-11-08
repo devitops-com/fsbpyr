@@ -312,6 +312,36 @@ def test_a_program_the_admin_may_run_but_not_read_is_run(tree: Tree) -> None:
     assert seen.read_text() == "the secret passphrase\n"
 
 
+@pytest.mark.parametrize(("mode", "refused"), [
+    (0o777, True), (0o757, True), (0o1777, False), (0o755, False), (0o700, False),
+])  # fmt: skip
+def test_a_program_run_by_its_name_needs_a_way_only_the_admin_can_change(
+    tmp_path: Path, mode: int, refused: bool
+) -> None:
+    """A program that cannot be read cannot be opened, so it runs by its name (safe_way): a
+    directory on the way that someone else may write would let them put another program there.
+    A sticky one (/tmp) lets nobody else rename what is the admin's. The directories above this
+    one are root's, 0755, as `stat` says (in a user namespace the real ones are nobody's)."""
+    way = tmp_path / "way"
+    way.mkdir()
+    way.chmod(mode)
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    (shim / "stat").write_text(f'#!/bin/sh\ncase "$*" in *" {way}") exec {shutil.which("stat")} '
+                               '"$@" ;; esac\necho "0 0 755"\n')  # fmt: skip
+    (shim / "stat").chmod(0o755)
+    script = 'die() { echo "$*" >&2; exit 1; }; source "$1"; safe_way "$2" "$2"'
+    passphrase_sh = ROOT / "tools" / "release" / "passphrase.sh"
+    command: list[str | Path] = [requires.tool("bash"), "-c", script, "_", passphrase_sh,
+                                  f"{way}/helper"]
+
+    done = subprocess.run(command, capture_output=True, text=True, check=False,
+                          env={**os.environ, "PATH": f"{shim}:{os.environ['PATH']}"})  # fmt: skip
+
+    assert (done.returncode, done.stderr) == (
+        (1, f"others can write {way}, on the way to {way}/helper\n") if refused else (0, ""))
+
+
 @pytest.mark.parametrize("status", [0, 3])
 def test_what_a_passphrase_program_prints_on_its_errors_is_in_no_report(
     tree: Tree, status: int

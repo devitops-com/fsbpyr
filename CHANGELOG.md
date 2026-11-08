@@ -86,6 +86,12 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   plain passphrase file ran as a shell script, and its first word showed on the terminal and in the
   release report. Now only a file that starts with `#!` or is an ELF file, or one you may run but
   not read, is run, and what it writes on its standard error is dropped.
+- **The passphrase file that is checked is the one that is used.** `make release` and `make
+  release-sign` checked the owner and mode of `FSBPYR_RELEASE_PASSPHRASE_FILE`, then ran or read
+  it by its name, so a file put in its place meanwhile, through a directory on the way that
+  someone else could write, ran next to the release key. The checks and the use are now of one
+  open file. A program you may run but not read cannot be opened: every directory on its way must
+  be yours or root's, and writable by nobody else unless it is sticky.
 - **`make release-sign` ignores an exported `KEY`.** Only a `KEY` given on make's command line
   counts, as the Makefile says and as for `make release`.
 - **`green-run.sh` says that a push to main starts the run a release needs.** When main had no
