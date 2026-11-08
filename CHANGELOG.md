@@ -134,6 +134,15 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   distributions' archives and the sysroots' packages among them are collected.
 
 ### Changed
+- **Every pull request gets the full suite before it is merged, in main's merge queue.**
+  `full-suite.yml` runs on `merge_group`, on the commit main then becomes, documentation-only
+  pull requests included, and no longer on pushes to main, which the queue already tested. Its
+  last job, `full suite passed`, is the queue's required check and passes only when every other
+  job did; on a pull request as it is opened it reports at once, with every other job skipped.
+  The fuzz corpora are saved by the runs on main only. `green-run.sh` takes the queue's run of a
+  commit, or a push run from before the queue, and never one started by hand (owner, 2026-11-08,
+  which supersedes "main (a)" of 2026-10-19). `CONTRIBUTING.md` asks for `make test-container`
+  before merging.
 - **The cache keeps the variants and EL8 stubs of the last two releases only.** Every release's
   fsbpyr for another Python (about 30 MB) and glibc 2.28 stubs stayed in `downloads/` for good.
   Now only the last two releases' stay, whatever their age: the variants of the two newest

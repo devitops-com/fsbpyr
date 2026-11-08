@@ -39,7 +39,7 @@ about 2,100 commits, release 2.104.1 (2026-10-21).
 **Most interesting for a self-contained Linux executable: fsbpyr.** Its differentiators: it
 bundles CPython itself, so the target needs no Python; a glibc 2.34 baseline, tested on 12
 distributions in CI; a check of the whole file's SHA-256 at every start; a self-hosting build
-whose reproducibility an independent rebuild checks on every push to main; and attested
+whose reproducibility an independent rebuild checks before every merge into main; and attested
 releases with an SBOM per executable. [devitops-com/fsbpyr](https://github.com/devitops-com/fsbpyr):
 333 commits, 0 stars, repository created 2026-10-10.
 
@@ -64,7 +64,7 @@ application has been tested.
 | Dependency locking / reproducible inputs | uv.lock, pylock.toml, poetry.lock, pdm.lock, Pipfile.lock or a hash-pinned requirements file (a script's `uv lock --script` lock too); the lock's and every distribution's hash recorded in the executable | Build/specification driven | Strong locking support | pip-based packaging | Configuration-driven |
 | Native extensions | Supported; what the target must provide is reported, `FSBPYR_SELFTEST=natives` checks a target | Broad compatibility and hooks | Supported environments | Architecture-dependent | Supported, with integration work |
 | Built-in executable integrity verification | Yes, SHA-256 of the whole file at every start | Not an equivalent core feature | Not an equivalent core feature | Not an equivalent core feature | Not an equivalent core feature |
-| Self-hosting byte-reproducibility workflow | Yes: an independent rebuild compared byte for byte on every push to main | Not its defining feature | Reproducible-build tests exist | Not its defining feature | Not its defining feature |
+| Self-hosting byte-reproducibility workflow | Yes: an independent rebuild compared byte for byte before every merge into main | Not its defining feature | Reproducible-build tests exist | Not its defining feature | Not its defining feature |
 
 Sources: [fsbpyr](https://github.com/devitops-com/fsbpyr),
 [PyInstaller](https://github.com/pyinstaller/pyinstaller), [PEX](https://github.com/pex-tool/pex),
@@ -103,7 +103,7 @@ The distinction that matters is between having tests and having evidence of reli
    whose successive stages match. Now:
    - about 2,280 tests per Python (all 2,280 passed on 3.14 for 0.25.0), unit, integration and
      end to end, most of the latter on real executables;
-   - GitHub Actions runs all of them on every push to main, weekly and on request, for four
+   - GitHub Actions runs all of them before every merge into main, weekly and on request, for four
      Pythons on two architectures, and a release is built only from a commit whose run passed;
    - the executable against the original application: a corpus of real applications (65 in
      0.25.0, across AI research, applied mathematics, physics and services, listed in
@@ -293,10 +293,10 @@ documents reproducible-build considerations, so fsbpyr competes on completeness 
   attestations); the README shows how to attest an app. A signature with an outside key is
   planned after the MVP (D31).
 - **Reproducibility across clean CI workers.** Done: an independent rebuild compared byte for
-  byte on every push to main.
+  byte before every merge into main.
 
 Success criterion: independent clean builds of the same pinned inputs yield identical artifacts.
-Now: met for fsbpyr's own releases, on every push to main and for every Python and target.
+Now: met for fsbpyr's own releases, before every merge into main and for every Python and target.
 
 ### 1.3 Startup time, size and runtime efficiency (P0)
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# green-run.sh — prints the URL of the successful run of a workflow for a commit's push to
-# main, or fails.
+# green-run.sh — prints the URL of the successful run of a workflow for a commit of main (the
+# merge queue's run of it, or a push's from before the queue), or fails.
 #
 #     bash tools/release/green-run.sh WORKFLOW COMMIT
 #
@@ -9,8 +9,9 @@
 # suite) of the commit it is made from. release-assets.sh checks HEAD before it tags it; the draft
 # job checks the tagged commit. A run still in
 # progress is followed with follow-run.sh, as release-assets.sh follows the tag's run.
-# A commit that changes only documentation has no run (full-suite.yml leaves such pushes out):
-# the newest earlier commit of main that has one stands for it when nothing but documentation
+# A commit that changes only documentation and was merged before the queue has no run
+# (full-suite.yml left such pushes out): the newest earlier commit of main that has one stands for
+# it when nothing but documentation
 # (*.md files, docs/, wiki/) changed since (CONTRIBUTING.md, "Documentation-only changes"); its
 # run's URL is printed. Needs the history (git).
 # Exit 1: no run for that commit, a failed one, one that fails while watched, or one with a job
@@ -23,18 +24,24 @@ workflow="$1" commit="$2"
 BRANCH="main"
 short="${commit:0:7}"
 
-# The newest run of the push of commit $1, as "ID STATUS/CONCLUSION URL".
+# The runs that test a commit of main: the merge queue's (merge_group, on a branch of its own, of
+# the very commit main then becomes; owner, 2026-11-08) and, from before the queue, a push's to
+# main. Never a run started by hand, which may run anything on any branch.
+OF_MAIN='select(.event == "merge_group" or (.event == "push" and .headBranch == "main"))'
+
+# The newest run of commit $1 that tests it as main's, as "ID STATUS/CONCLUSION URL".
 latest() {
-    gh run list --workflow "$workflow" --branch "$BRANCH" --event push --commit "$1" \
-        --limit 1 --json databaseId,status,conclusion,url \
-        --jq '.[0] // empty | "\(.databaseId) \(.status)/\(.conclusion) \(.url)"' || true
+    gh run list --workflow "$workflow" --commit "$1" --limit 20 \
+        --json databaseId,status,conclusion,url,event,headBranch \
+        --jq "[.[] | $OF_MAIN][0] // empty"' | "\(.databaseId) \(.status)/\(.conclusion) \(.url)"' \
+        || true
 }
 
 # The newest commit of the recent runs that $commit descends from; none: status 1.
 tested_ancestor() {
     local shas sha
-    shas="$(gh run list --workflow "$workflow" --branch "$BRANCH" --event push --limit 50 \
-        --json headSha --jq '.[].headSha')" || return 1
+    shas="$(gh run list --workflow "$workflow" --limit 50 --json headSha,event,headBranch \
+        --jq ".[] | $OF_MAIN | .headSha")" || return 1
     for sha in $shas; do
         if git merge-base --is-ancestor "$sha" "$commit" 2>/dev/null; then
             echo "$sha"
@@ -73,7 +80,8 @@ if [ -z "${id:-}" ]; then
     cat >&2 <<MSG
 ERROR: $BRANCH at $short has no $workflow run: only a commit CI passed is released.
        Not started yet: wait a minute (gh run list --workflow $workflow), then run this again
-       Never started:   a push to $BRANCH starts it; a run started by hand does not count
+       Never started:   a merge through $BRANCH's merge queue starts it; a run started by hand
+                        does not count
 MSG
     exit 1
 fi
