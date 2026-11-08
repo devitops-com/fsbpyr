@@ -150,12 +150,16 @@ def test_each_harness_keeps_what_it_finds_apart(
 def test_the_full_suite_caches_what_both_harnesses_find(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Each directory a cache of its own, restored from the last run's of the same entry."""
+    """Each directory a cache of its own, restored from the last run's of the same entry and
+    saved under the key it was restored for (by runs on main: test_release.py)."""
     workflow = (Path(__file__).parents[2] / ".github/workflows/full-suite.yml").read_text()
     monkeypatch.setenv("FSBPYR_FUZZ_CORPUS", re.findall(r"FSBPYR_FUZZ_CORPUS=(\S+)", workflow)[0])
-    caches = re.findall(r"uses: actions/cache@.*\n +with:\n +path: (\S+)\n +key: (.+)\n"
+    caches = re.findall(r"uses: actions/cache/restore@.*\n +with:\n +path: (\S+)\n +key: (.+)\n"
                         r" +restore-keys: (.+)\n", workflow)  # fmt: skip
+    saves = re.findall(r"uses: actions/cache/save@.*\n +with:\n +path: (\S+)\n +key: (.+)\n",
+                       workflow)  # fmt: skip
 
     assert {path for path, _, _ in caches} == {str(found(tmp_path)), str(found(tmp_path, "-sig"))}
     assert len({key.rpartition("-")[0] for _, key, _ in caches}) == len(caches) == 2
     assert all(key.startswith(restore) for _, key, restore in caches)
+    assert sorted(saves) == sorted((path, key) for path, key, _ in caches)
