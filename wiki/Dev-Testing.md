@@ -616,7 +616,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,695 in 148 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,714 in 149 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -631,13 +631,13 @@ run with the release launcher only, those two portability tests also on the two 
 | Layer | Files | Tests |
 |---|---|---|
 | `tests/unit` (top level) | 26 | 919 |
-| `tests/unit/boot` | 23 | 361 |
+| `tests/unit/boot` | 23 | 362 |
 | `tests/unit/builder` | 19 | 789 |
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 250 |
-| `tests/integration` | 17 | 831 |
-| `tests/e2e` | 43 | 1,104 |
-| All | 148 | 4,695 |
+| `tests/integration` | 17 | 843 |
+| `tests/e2e` | 44 | 1,110 |
+| All | 149 | 4,714 |
 
 ### tests/unit (top level): 26 files, 919 tests
 
@@ -670,7 +670,7 @@ run with the release launcher only, those two portability tests also on the two 
 | [`test_vm_smoke.py`](../tests/unit/test_vm_smoke.py) | 29 | `tools/vm-smoke.py` without a VM ([The page-size smoke test](#the-page-size-smoke-test)): the pins file, the cpio writer and initramfs, the RPM reader, failing or mismatching downloads, console parsing and checks, the QEMU and kernel command lines, `/init`'s log level, a QEMU that exits at once. |
 | [`test_wiki.py`](../tests/unit/test_wiki.py) | 54 | The wiki's pages and `tools/wiki/`: every link of `wiki/*.md` has its target, the published form of a page, the import graphs the build draws, how publishing treats the wikis' history, and the messages, refusal and pinned keys that [User-Security](User-Security.md) shows against the code. The PDFs need pandoc and LuaLaTeX and are not built here (`make wiki-build`). |
 
-### tests/unit/boot: 23 files, 361 tests
+### tests/unit/boot: 23 files, 362 tests
 
 Most build an app with `FAKE_RUNTIME` and run the boot code in-process through the `boot`
 fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fixups.py`,
@@ -763,7 +763,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_sysroot.py`](../tests/unit/runtime/test_sysroot.py) | 21 | The glibc sysroots: `ar` members, symlinks kept inside, escaping entries refused, verified HTTPS downloads, RPMs extracted as debs are, `lib` and `lib64` linked into `usr` for EL8 only. |
 | [`test_toolchain_and_link.py`](../tests/unit/runtime/test_toolchain_and_link.py) | 35 | `ar` listing, clang discovery and the stub's link: static PIE, hardening flags, the sanitized variant, aarch64's outlined atomics and Cortex-A53 erratum 843419 fix, mapped paths, the frame limit, `-DFSBPYR_RUNTIME_ID`, a failed link's output. |
 
-### tests/integration: 17 files, 831 tests
+### tests/integration: 17 files, 843 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -785,7 +785,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
 | [`test_worker_venvs.py`](../tests/integration/test_worker_venvs.py) | 10 | [`worker_venvs.py`](../tests/support/worker_venvs.py) on real pytest runs with three workers: each in an environment of its own, subprocesses included, removed after the run, and a worker in anything else stopping the run. |
 
-### tests/e2e: 43 files, 1,104 tests
+### tests/e2e: 44 files, 1,110 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|

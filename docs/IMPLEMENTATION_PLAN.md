@@ -1188,7 +1188,10 @@ does the same with 5 GiB (past every 32-bit size).
   app's start is not slowed. `FSBPYR_GC=1 app` collects in the foreground and exits;
   `fsbpyr cache gc` collects the tool's cache and every app cache it finds by its marker.
 - The tool's cache: runtimes, Python distributions, sysroots and downloads that the running
-  fsbpyr does not use and nothing used for 7 days, under the same rules; checked when
+  fsbpyr does not use and nothing used for 7 days, under the same rules (**Corrected
+  (2026-11-08, #117):** the downloads that go are the Python distributions' archives and the
+  sysroots' packages; the glibc 2.28 stubs and fsbpyr variants that `downloads/` keeps are never
+  collected, only the temporary a killed process left unpacking one); checked when
   `fsbpyr build`, `inspect`, `runtime build` or `runtime list` starts, at most once a day
   (once an hour under 10% free; corrected 0.28.0, 2026-10-27, #69).
 - **Design** (before the code):
@@ -1221,7 +1224,9 @@ does the same with 5 GiB (past every 32-bit size).
     `${XDG_CACHE_HOME:-~/.cache}` and `$FSBPYR_CACHE_DIR`. The tool's cache: runtimes, PBS
     distributions, sysroots and downloads each get a `.lock` held LOCK_SH while a command uses
     them (mtime: last use); what the running fsbpyr's pins name is kept; the rest goes by the
-    same rules. `fsbpyr build`, `inspect`, `runtime build` and `runtime list` check it at
+    same rules. (**Corrected (2026-11-08, #117):** a download has no `.lock`: its own mtime is
+    its last use. The stubs and variants in `downloads/` are never collected, as above.)
+    `fsbpyr build`, `inspect`, `runtime build` and `runtime list` check it at
     their start (`_collect_when_due`; `.gc` there too): once a day, or once an hour when the
     file system has less than 10% free (`runtime/collect.py`; corrected 0.28.0, 2026-10-27,
     #69).

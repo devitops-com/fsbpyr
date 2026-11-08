@@ -123,7 +123,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   points to the wiki for current figures. The build modules page says that `fetch_checked` limits
   what it unpacks only when given a limit. The plan's status names 0.31.0 and signed releases.
   Its D20 row says which cache directories are forced to 0700, and its notes on the collector
-  name the temporaries of a stub or variant download and say that kept stubs and variants stay.
+  name the temporaries of a stub or variant download and say that kept stubs and variants stay;
+  its design notes on the tool cache say that downloads have no `.lock` and that only the Python
+  distributions' archives and the sysroots' packages among them are collected.
 
 ### Changed
 - **The installer can be checked before it runs.** The installing page shows how, with fsbpyr or
