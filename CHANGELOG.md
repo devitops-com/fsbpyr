@@ -27,6 +27,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   corrupt. A start that ran out of memory before its first module was read said `corrupt startup
   module`. These cases now raise `MemoryError` and say `out of memory`. A corrupt blob read in an
   app that locked its memory could raise `OSError`; it now raises `PayloadError`.
+- **Large files are decoded and hashed on several threads on hosts of more than 1024 CPUs too.**
+  The kernel there refuses the CPU mask the launcher asked with, and the launcher then used one
+  thread. It asks again with a larger mask.
 - **The cache's way check refuses a symlink target it may have read only in part.** It read at most
   4095 bytes of a symlink's target, so a longer one, which a FUSE or NFS server can give, was cut
   short and a different path was checked. A target that fills the 4096-byte buffer is now refused
@@ -132,8 +135,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   now checks the signing code against them. The launcher's developer page describes `sig.c` and
   `sig.h`.
 - The EL8 tests (`make test-el8-stub`, the full suite's `el8-tests` job) also run the launcher's
-  tests of symlink targets on the cache root's way and of blob reads out of memory
-  (`test_way_targets.py`, `test_read_failures.py`) with the glibc 2.28 stub.
+  tests of symlink targets on the cache root's way, of blob reads out of memory and of the
+  threads of parallel work (`test_way_targets.py`, `test_read_failures.py`, `test_cores.py`) with
+  the glibc 2.28 stub.
 
 ## [0.31.0] - 2026-11-04
 

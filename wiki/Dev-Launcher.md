@@ -330,12 +330,14 @@ read `openssl.cnf` (`$OPENSSL_CONF`) before the check is done.
 `fsb_parallel(count, per_thread, work, context)` calls `work(context, item, worker)` for every
 item in `[0, count)` and returns when all are done. The caller, worker 0, starts up to 7 helpers
 (`FSB_PARALLEL_MAX_THREADS` is 8), no more threads than the cores the process may run on
-(`sched_getaffinity`) or than one per `per_thread` items; threads take items from an atomic
-counter, and the running ones do the work of a helper that cannot start. A call from inside
-such work runs on its own thread alone (a thread-local flag), so nesting never makes more than 8
-threads. After its share the caller spins on non-blocking joins for up to 2 ms, yielding now and
-then, before it sleeps in `pthread_join`: on a hybrid CPU a thread woken from a join may land on
-an efficiency core. `fsb_monotonic_ns` reads `CLOCK_MONOTONIC`.
+(`sched_getaffinity`; on a kernel of more than 1024 CPUs, which refuses a `cpu_set_t`'s mask,
+asked again with a mask twice as large until one is) or than one per `per_thread` items;
+threads take items from an atomic counter, and the running ones do the work of a helper that
+cannot start. A call from inside such work runs on its own thread alone (a thread-local flag), so
+nesting never makes more than 8 threads. After its share the caller spins on non-blocking joins
+for up to 2 ms, yielding now and then, before it sleeps in `pthread_join`: on a hybrid CPU a
+thread woken from a join may land on an efficiency core. `fsb_monotonic_ns` reads
+`CLOCK_MONOTONIC`.
 
 ### slots.c and slots.h
 

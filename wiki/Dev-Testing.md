@@ -27,7 +27,7 @@ fsbpyr's test suite is in [`tests/`](../tests). The modules it tests have their 
 (`from ..support import corpus`). [`tests/conftest.py`](../tests/conftest.py) keeps pytest out of
 the corpus apps' own tests (`collect_ignore_glob = ["corpus/*"]`).
 
-![The test layers and the make targets that run them: make test-ci runs tests/unit, tests/integration and fifteen end-to-end files; make test and make test-container run unit, integration, e2e, probes and fuzzer, make test also the portability tests; make test-corpus the corpus; make test-portability the portability tests; make test-el8-stub eighteen end-to-end files and test_test_modes.py in the EL8 test mode, then test_el8.py; make test-el8-portability the portability tests in that mode; make test-vm tools/vm-smoke.py, aarch64 apps in a QEMU VM with 64 KiB pages. Unit tests run in-process, the boot code against the _fsbpyr stand-in; e2e tests run executables with the release, ASan/UBSan and glibc 2.28 launchers; the corpus compares real apps with their venv.](images/testing-layers.svg)
+![The test layers and the make targets that run them: make test-ci runs tests/unit, tests/integration and fifteen end-to-end files; make test and make test-container run unit, integration, e2e, probes and fuzzer, make test also the portability tests; make test-corpus the corpus; make test-portability the portability tests; make test-el8-stub nineteen end-to-end files and test_test_modes.py in the EL8 test mode, then test_el8.py; make test-el8-portability the portability tests in that mode; make test-vm tools/vm-smoke.py, aarch64 apps in a QEMU VM with 64 KiB pages. Unit tests run in-process, the boot code against the _fsbpyr stand-in; e2e tests run executables with the release, ASan/UBSan and glibc 2.28 launchers; the corpus compares real apps with their venv.](images/testing-layers.svg)
 
 ## How the layers work
 
@@ -335,15 +335,16 @@ build and a default one. In the mode:
 `make test-el8-stub` runs in the mode, in `JOBS` processes with `-m "not podman"`,
 `test_runtime_app.py`, `test_imports.py`, `test_stub_hardening.py`, `test_edges.py`,
 `test_cache_root.py`, `test_gc.py`, `test_slots.py`, `test_due.py`, `test_restore.py`,
-`test_find_object.py`, `test_way_targets.py`, `test_read_failures.py`, `test_streaming.py`,
-`test_stream_windows.py`, `test_unbuffered.py`, `test_digests.py`, `test_compat.py` and
-`test_natives.py` of `tests/e2e` (the launcher, the `_fsbpyr` contract, and apps with natives
-from manylinux_2_28 wheels) and `tests/unit/test_test_modes.py`, then `tests/e2e/test_el8.py`
-outside the mode, as it compares an EL8 build with a default one. `make test-el8-portability`
-runs `test_portability.py` in the mode; `make test-el8` runs both. `test_el8_use_cases.py` is in
-neither; `make test` runs it. [`full-suite.yml`](../.github/workflows/full-suite.yml)'s
-`el8-tests`, `el8-portability` and `el8-corpus` jobs run the mode, the last with a few corpus
-apps (`FSBPYR_CORPUS_APPS`); [`el8.yml`](../.github/workflows/el8.yml) tests nothing.
+`test_find_object.py`, `test_way_targets.py`, `test_read_failures.py`, `test_cores.py`,
+`test_streaming.py`, `test_stream_windows.py`, `test_unbuffered.py`, `test_digests.py`,
+`test_compat.py` and `test_natives.py` of `tests/e2e` (the launcher, the `_fsbpyr` contract, and
+apps with natives from manylinux_2_28 wheels) and `tests/unit/test_test_modes.py`, then
+`tests/e2e/test_el8.py` outside the mode, as it compares an EL8 build with a default one.
+`make test-el8-portability` runs `test_portability.py` in the mode; `make test-el8` runs both.
+`test_el8_use_cases.py` is in neither; `make test` runs it.
+[`full-suite.yml`](../.github/workflows/full-suite.yml)'s `el8-tests`, `el8-portability` and
+`el8-corpus` jobs run the mode, the last with a few corpus apps (`FSBPYR_CORPUS_APPS`);
+[`el8.yml`](../.github/workflows/el8.yml) tests nothing.
 
 ## The corpus
 
@@ -552,7 +553,7 @@ the probes and the fuzz harness, when `FSBPYR_LLVM_COV_DIR` is set.
 | `make test-container` | Everything but `test_portability.py` and the corpus, with `-m "not podman"`, in the Containerfile's `test` stage (Debian trixie, user `tester`, `--privileged`, Pythons 3.12 to 3.15, a `/var/tmp` tmpfs that allows set-id bits); needs podman. |
 | `make test-corpus` | `tests/e2e/test_corpus.py` in `JOBS` processes (`--dist load`); needs the network for wheels. |
 | `make test-portability` | Builds the four portability apps with `dist/fsbpyr` (`tools/portability-apps.sh`) and runs `tests/e2e/test_portability.py` on 12 distributions; needs podman, llvm-objdump and a `make build` first. |
-| `make test-el8-stub` | In the [EL8 test mode](#the-el8-test-mode), the eighteen end-to-end files that run the stub and `tests/unit/test_test_modes.py` (`--dist loadfile`, `-m "not podman"`); then `tests/e2e/test_el8.py` outside the mode. |
+| `make test-el8-stub` | In the [EL8 test mode](#the-el8-test-mode), the nineteen end-to-end files that run the stub and `tests/unit/test_test_modes.py` (`--dist loadfile`, `-m "not podman"`); then `tests/e2e/test_el8.py` outside the mode. |
 | `make test-el8-portability` | `test_portability.py` in the EL8 test mode, on the 12 distributions and `rockylinux:8`, `almalinux:8`; needs podman. |
 | `make test-el8` | Its prerequisites `test-el8-stub` and `test-el8-portability`. |
 | `make test-vm` | `tools/vm-smoke.py $(VM_ARGS)` ([The page-size smoke test](#the-page-size-smoke-test)); needs `qemu-system-aarch64`. No pytest run. |
@@ -792,6 +793,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_build.py`](../tests/e2e/test_build.py) | 55 | `fsbpyr build` on the fixtures: `hello` with `inspect --json --verify` and its SBOM, `clicky` from each lock source, the README quickstart, determinism and self-hosting, `cext` rebuilt against the sysroot, workspaces, dependency groups, editable requirements, the smoke test, `--strict`, `pylock.toml` hashes, Poetry 1, projects without scripts, legacy `scripts=`, compile warnings, a failed build cleaned up. |
 | [`test_cache_root.py`](../tests/e2e/test_cache_root.py) | 30 | The launcher's cache root checks (marked `sanitized`): roots below directories others may write to, symlinks and loops, `..`, relative roots, user namespaces, another user's symlink; a refused cache directory stopping an app at its extension's import with `fsbpyr: cannot start <executable>: refusing cache directory <path>: ...` and exit 70. |
 | [`test_compat.py`](../tests/e2e/test_compat.py) | 41 | The `compat` fixture's matrix against the venv, the `mp` fixture's start methods, helper interpreters and the instance limit, forged multiprocessing children, scripts through `sys.executable`, `sys.argv[0]`, the restart idiom, the `datafiles` checks, the build information tracing every dist to the lock. |
+| [`test_cores.py`](../tests/e2e/test_cores.py) | 6 | How many threads the launcher's parallel work runs on, through `probes/cores.c` on a pretend kernel: the CPUs the process may use, at most 8, also past the 1024 CPUs a `cpu_set_t` holds. |
 | [`test_corpus.py`](../tests/e2e/test_corpus.py) | 66 | One test per corpus app with wheels for the Python and machine (64 apps on 3.14), the `expect` check, and the `plugins` fixture ([The corpus](#the-corpus)). |
 | [`test_signatures.py`](../tests/e2e/test_signatures.py) | 153 | `launcher/sig.c` through `probes/sig.c`, and `_fsbpyr`'s functions on both launchers: RFC 8032, ACVP and all of Wycheproof's Ed25519 and ML-DSA-65 cases, malleated signatures, bad key files, the openssl.cnf matrix, the error queue, sig.c's declarations against OpenSSL's headers. |
 | [`test_signing.py`](../tests/e2e/test_signing.py) | 36 | `key`, `sign`, `verify` and signing in `build` on a built fsbpyr with test keys pinned, against the release script: the passphrase on a pty, what the build's processes get, where a `.sig` goes, planted modules, this tree's own pins refusing test keys. |
@@ -874,6 +876,7 @@ controls. Each probe's header comment lists its commands and switches.
 
 | Program | Launcher sources | Build flags | Test |
 |---|---|---|---|
+| [`probes/cores.c`](../tests/probes/cores.c) | `parallel.c` | `--wrap=sched_getaffinity,--wrap=pthread_create`, ASan, UBSan | `test_cores.py` |
 | [`probes/digests.c`](../tests/probes/digests.c) | `integrity.c`, `parallel.c` | `-DFSB_PASS_LEAVES=3u`, `--wrap=pread,--wrap=SHA256_Update`, ASan, UBSan | `test_digests.py` |
 | [`probes/due.c`](../tests/probes/due.c) | `due.c`, `way.c` | `--wrap=statvfs`, UBSan | `test_due.py` |
 | [`probes/find_object.c`](../tests/probes/find_object.c) | `glibc.c` | `--wrap=_dl_find_object`, `--wrap=dlvsym` | `test_find_object.py`, `test_launcher_coverage.py` |
