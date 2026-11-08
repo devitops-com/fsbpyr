@@ -8,16 +8,21 @@ whose probes compile it (tests/e2e/test_way_targets.py, ...). The checkout is co
 temporary directory (without .git, .venv and dist); then, for each mutant (one operator changed
 at one place outside comments, strings, character constants and preprocessor lines), SOURCE is
 rewritten there and the tests run: `uv run --locked pytest -x -q -p no:cacheprovider --no-cov
-TEST...`, or CMD in a shell. Tests that fail kill the mutant, and so does a run longer than the
-timeout (default: four times the run without a mutant, which must pass); tests that pass let it
-survive. Each survivor is printed with its line and its change: a test is missing there, or the
+TEST...`, or CMD in a shell. Tests that fail kill the mutant; tests that pass let it survive.
+A run longer than the timeout (default: four times the run without a mutant, which must pass)
+kills it too, with every process it started (its session's), but is printed as "timeout" and
+counted apart: when each mutant rebuilds what the run without one found built (a runtime, for a
+test that builds an app), the default is too short, and --timeout must say how long a rebuild
+takes. Each survivor is printed with its line and its change: a test is missing there, or the
 mutant does what the code did (an equivalent one). Exit 0 when none survived, 1 when one did, 2
 on bad usage or when the tests fail without a mutant.
 """
 
 import argparse
+import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -104,16 +109,20 @@ def mutants(text: str, lines: range | None = None) -> list[Mutant]:
     return sorted(found, key=lambda m: (m.offset, m.replacement))
 
 
-def run(command: list[str] | str, cwd: Path, timeout: float) -> tuple[bool, float]:
-    """(whether it passed, seconds); a run past ``timeout`` did not pass."""
+def run(command: list[str] | str, cwd: Path, timeout: float) -> tuple[str, float]:
+    """("passed", "failed" or "timeout", seconds). A run past ``timeout`` is killed with its
+    session: the processes it started (pytest's, a build's) do not run on into the next."""
     start = time.monotonic()
-    try:
-        done = subprocess.run(command, cwd=cwd, shell=isinstance(command, str),  # noqa: S603
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                              timeout=timeout, check=False)  # fmt: skip
-    except subprocess.TimeoutExpired:
-        return False, timeout
-    return done.returncode == 0, time.monotonic() - start
+    with subprocess.Popen(command, cwd=cwd, shell=isinstance(command, str),  # noqa: S603
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                          start_new_session=True) as process:  # fmt: skip
+        try:
+            status = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+            return "timeout", timeout
+    return ("passed" if status == 0 else "failed"), time.monotonic() - start
 
 
 def span(text: str) -> range:
@@ -145,25 +154,27 @@ def main(argv: list[str]) -> int:
         tree = Path(scratch) / "tree"
         shutil.copytree(args.root, tree, ignore=shutil.ignore_patterns(*LEFT_OUT), symlinks=True)
         target = tree / LAUNCHER / args.source
-        passed, seconds = run(command, tree, args.timeout or 3600)
-        if not passed:
+        verdict, seconds = run(command, tree, args.timeout or 3600)
+        if verdict != "passed":
             print("mutate-c: the tests fail without a mutant: fix them first", file=sys.stderr)
             return 2
         timeout = args.timeout or max(4 * seconds, 30)
         print(f"{len(found)} mutants of {args.source}; the tests took {seconds:.0f} s")
-        survived = []
+        survived, timeouts = [], 0
         for mutant in found:
             target.write_text(mutant.apply(original))
-            passed, _ = run(command, tree, timeout)
-            verdict = "SURVIVED" if passed else "killed"
-            print(f"{verdict:<8} {args.source}:{mutant.line}  `{mutant.original}` -> "
+            verdict, _ = run(command, tree, timeout)
+            label = {"passed": "SURVIVED", "failed": "killed", "timeout": "timeout"}[verdict]
+            print(f"{label:<8} {args.source}:{mutant.line}  `{mutant.original}` -> "
                   f"`{mutant.replacement}`", flush=True)  # fmt: skip
-            if passed:
+            if verdict == "passed":
                 survived.append(mutant)
+            timeouts += verdict == "timeout"
         target.write_text(original)
     killed = len(found) - len(survived)
-    print(f"{killed} of {len(found)} killed" + (
-        f", {len(survived)} survived:" if survived else ""))  # fmt: skip
+    print(f"{killed} of {len(found)} killed"
+          + (f" ({timeouts} by the timeout of {timeout:.0f} s)" if timeouts else "")
+          + (f", {len(survived)} survived:" if survived else ""))  # fmt: skip
     lines = original.splitlines()
     for mutant in survived:
         print(f"  {args.source}:{mutant.line}: `{mutant.original}` -> `{mutant.replacement}`  "

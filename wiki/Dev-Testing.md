@@ -560,7 +560,7 @@ the probes and the fuzz harness, when `FSBPYR_LLVM_COV_DIR` is set.
 | `make test-el8-portability` | `test_portability.py` in the EL8 test mode, on the 12 distributions and `rockylinux:8`, `almalinux:8`; needs podman. |
 | `make test-el8` | Its prerequisites `test-el8-stub` and `test-el8-portability`. |
 | `make test-vm` | `tools/vm-smoke.py $(VM_ARGS)` ([The page-size smoke test](#the-page-size-smoke-test)); needs `qemu-system-aarch64`. No pytest run. |
-| `make mutate` | `tools/mutate-c.py FILE TESTS`: one mutant at a time of the launcher source `FILE` (a comparison, `&&` and `||`, a returned constant, `+ 1` and `- 1`; never in comments, strings or preprocessor lines), in a copy of the checkout, against `TESTS`; lists the survivors. A campaign by hand, never in CI. |
+| `make mutate` | `tools/mutate-c.py FILE TESTS`: one mutant at a time of the launcher source `FILE` (a comparison, `&&` and `||`, a returned constant, `+ 1` and `- 1`; never in comments, strings or preprocessor lines), in a copy of the checkout, against `TESTS`; lists the survivors, and the runs the timeout killed apart (`MUTATE_ARGS="--timeout S"` when each mutant rebuilds a runtime). A campaign by hand, never in CI. |
 
 Every test target but `test-container` runs in a fresh temporary directory under `TESTTMP`,
 removed at the end, and all but `test-vm` with LLVM 23 first on `PATH`; those that
@@ -620,7 +620,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,810 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,811 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -634,16 +634,16 @@ run with the release launcher only, those two portability tests also on the two 
 
 | Layer | Files | Tests |
 |---|---|---|
-| `tests/unit` (top level) | 29 | 941 |
+| `tests/unit` (top level) | 29 | 942 |
 | `tests/unit/boot` | 23 | 362 |
 | `tests/unit/builder` | 19 | 789 |
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 261 |
 | `tests/integration` | 17 | 860 |
 | `tests/e2e` | 45 | 1,156 |
-| All | 153 | 4,810 |
+| All | 153 | 4,811 |
 
-### tests/unit (top level): 29 files, 941 tests
+### tests/unit (top level): 29 files, 942 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -659,7 +659,7 @@ run with the release launcher only, those two portability tests also on the two 
 | [`test_elf_mutation.py`](../tests/unit/test_elf_mutation.py) | 1 | Hypothesis (1,000 examples): mutated ELF bytes are read by `fsbpyr.elf` or raise `ElfError`, nothing else. |
 | [`test_inspect.py`](../tests/unit/test_inspect.py) | 54 | `fsbpyr inspect` on `FAKE_RUNTIME` executables: text and JSON, columns, `--verify`, licences, files, lock and settings lines, older formats, damaged records, a glibc 2.28 app's `baseline` and `glibc_baseline`, file text that cannot drive the terminal. |
 | [`test_launcher_coverage_gate.py`](../tests/unit/test_launcher_coverage_gate.py) | 7 | `tools/launcher-coverage.py`, the gate on the launcher's line coverage: only fsbpyr's C code counts (not CPython's headers, the vendored zstd or the tests' sources), 90% in all and 85% per file, its output and bad input. |
-| [`test_mutate_tool.py`](../tests/unit/test_mutate_tool.py) | 4 | `tools/mutate-c.py` (`make mutate`) on a small tree with a shell command for its tests: which mutants a source has (code only), a mutant's change, killed and surviving ones, and what stops it. |
+| [`test_mutate_tool.py`](../tests/unit/test_mutate_tool.py) | 5 | `tools/mutate-c.py` (`make mutate`) on a small tree with a shell command for its tests: which mutants a source has (code only), a mutant's change, killed and surviving ones, a run past the timeout killed with what it started and said to be one, and what stops it. |
 | [`test_no_skips.py`](../tests/unit/test_no_skips.py) | 2 | The `ast` scan of [A skip fails the run](#a-skip-fails-the-run), and that it finds each use. |
 | [`test_perf_tool.py`](../tests/unit/test_perf_tool.py) | 11 | `tools/perf.py` (`make perf`) without measuring: its percentages, percentiles and table, the trace line, the order of interleaved runs, GNU time's peak RSS, a failing run and a missing fsbpyr. |
 | [`test_poetry1.py`](../tests/unit/test_poetry1.py) | 32 | `fsbpyr.poetry1`: a Poetry 1 `pyproject.toml` without `[project]` read as one: constraints as PEP 440, `\|\|` and git dependencies refused, optional dependencies as extras, markers, which projects are unpackaged. |

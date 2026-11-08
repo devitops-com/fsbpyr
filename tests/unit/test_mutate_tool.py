@@ -4,6 +4,7 @@ small tree with a shell command in place of pytest."""
 
 import importlib.util
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 
@@ -80,3 +81,26 @@ def test_tests_that_fail_without_a_mutant_stop_it(tmp_path: Path) -> None:
 
     assert mutate.main(["x.c", "t", "--root", str(tmp_path), "--command", "false"]) == 2
     assert mutate.main(["missing.c", "t", "--root", str(tmp_path), "--command", "true"]) == 2
+
+
+def test_a_run_past_the_timeout_kills_and_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only the `<` mutant makes "the tests" sleep, and they are killed after a second, with the
+    sleep they started: counted as killed, printed as a timeout."""
+    launcher = tmp_path / "src" / "fsbpyr" / "launcher"
+    launcher.mkdir(parents=True)
+    (launcher / "x.c").write_text(SOURCE)
+    marker = tmp_path / "slept"
+    check = (f"grep -qF 'if (a < b' src/fsbpyr/launcher/x.c || "
+             f"{{ sh -c 'sleep 3; touch {marker}' & wait; }}")  # fmt: skip
+
+    status = mutate.main(["x.c", "unused", "--root", str(tmp_path), "--command", check,
+                          "--timeout", "1"])  # fmt: skip
+
+    out = capsys.readouterr().out
+    assert status == 1
+    assert "timeout  x.c:7  `<` -> `<=`" in out
+    assert "1 of 6 killed (1 by the timeout of 1 s), 5 survived:" in out
+    time.sleep(3)
+    assert not marker.exists()  # the sleep was killed with the run

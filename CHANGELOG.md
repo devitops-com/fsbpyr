@@ -15,9 +15,10 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   (`tools/mutate-c.py`, owner 2026-11-08): one operator at a time changed in that source, in a
   copy of the checkout, and the tests whose probes compile it run after each change; the
   mutants they let survive are listed. The tests' `launcher_build` builds no runtime any more, so
-  a run of probes alone takes seconds. `way.c`: the probe tests killed 27 of its 69 mutants;
-  `tests/e2e/test_way.py` (37 tests, `probes/way.c` now also wrapping `fopen`, `fstat`,
-  `fstatat` and `malloc`) kills the other 42.
+  a run of probes alone takes seconds. A run past the timeout is killed with every process it
+  started and printed as a timeout, apart from the mutants the tests killed. `way.c`: the probe
+  tests killed 27 of its 69 mutants; `tests/e2e/test_way.py` (37 tests, `probes/way.c` now also
+  wrapping `fopen`, `fstat`, `fstatat` and `malloc`) kills the other 42.
 - **`make perf OLD=PATH`** measures this tree's fsbpyr (or `NEW=PATH`) against the previous
   release's: the start of two apps and their peak RSS, the integrity check, a build and `inspect
   --verify`, interleaved round by round, as a table for `docs/performance.md`, which every release

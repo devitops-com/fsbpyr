@@ -216,7 +216,9 @@ The tiers, from fastest to most complete:
   `||`, a returned constant, `+ 1` and `- 1`), in a copy of the checkout, and runs the tests
   whose probes compile it after each change; it lists the mutants they let survive, each a test
   missing or a change that does what the code did. A probe-only run builds no runtime, so a
-  mutant of `way.c` takes about half a minute. A campaign by hand (`sig.c`, `way.c`,
+  mutant of `way.c` takes about half a minute. A run past the timeout (four times the first run
+  by default) is killed with what it started and printed as `timeout`: a test that builds an app
+  rebuilds the runtime for each mutant, and needs `MUTATE_ARGS="--timeout 1800"`. A campaign by hand (`sig.c`, `way.c`,
   `cache.c` above all), never in CI.
 - EL8 (glibc 2.28): `make test-el8` runs the stub-dependent tests with
   the EL8 stub (`make test-el8-stub`: the launcher, the `_fsbpyr` contract and native wheels at
