@@ -128,6 +128,15 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   distributions' archives and the sysroots' packages among them are collected.
 
 ### Changed
+- **The 64 KiB-page smoke test counts only when it ran.** A pinned kernel or root file system
+  that could not be fetched made `tools/vm-smoke.py` exit 3, which both VM jobs reported as a
+  warning and a green job, so a release could pass without the test. Such a download now fails
+  the job, and a release waits for the mirror or a new pin (owner, 2026-11-08). Downloads of
+  pinned files are tried again when the server answers 429, 500, 502, 503 or 504, as they were
+  after a network failure, so one busy answer from GitHub no longer fails a run.
+- **The release gate requires every job of the full suite to have succeeded.** `green-run.sh`
+  read only the run's conclusion; a job skipped, or failed under `continue-on-error`, now stops
+  `make release` and the draft job too, naming the job.
 - **The installer can be checked before it runs.** The installing page shows how, with fsbpyr or
   with system tools, from the release's signed `SHA256SUMS`.
 - The building page says to build only projects you trust, since their build code runs with your

@@ -14,9 +14,10 @@ Each --app (an executable built for aarch64) is copied to /apps, first on PATH. 
 a shell command line run there as root in /tmp with FSBPYR_CACHE_DIR=/tmp/cache and a limit of
 --timeout seconds; it must exit 0, and with ``COMMAND => TEXT`` its output must contain TEXT.
 Without --run only the boot and the page size are checked. Exit status: 0 all passed, 1 a
-check failed, 2 the command line, a pin or a missing tool (nothing is installed for you), 3 a
-pinned download is gone or unreachable. The files fetched are pinned by SHA-256 and checked on
-every use.
+check failed, 2 the command line, a pin, a pinned download that failed (after pbs.download's
+retries) or a missing tool (nothing is installed for you). A smoke test that could not fetch
+its inputs did not run, and fails like one that did not pass (owner, 2026-11-08). The files
+fetched are pinned by SHA-256 and checked on every use.
 """
 
 import argparse
@@ -84,11 +85,6 @@ class VmSmokeError(Exception):
     """A pinned input is wrong or missing, or the command line is."""
 
 
-class PinUnavailableError(VmSmokeError):
-    """A pinned download failed: the mirror dropped the file or is down. The pin needs a
-    re-pin (CONTRIBUTING.md); main() exits 3, which CI reports as a warning, not a failure."""
-
-
 @dataclass(frozen=True)
 class Result:
     """What one boot printed: the page size and, per command, its exit code and output."""
@@ -100,9 +96,6 @@ class Result:
 
 
 # --- Pinned inputs ---
-
-
-PIN_UNAVAILABLE = 3  # exit status: a pinned download failed (see PinUnavailableError)
 
 
 def load_pins() -> dict[str, dict[str, dict[str, object]]]:
@@ -126,9 +119,10 @@ def fetch(url: str, sha256: str, name: str) -> Path:
             pbs.download(url, sha256, target)
         except pbs.PbsError as exc:  # a hash mismatch or a refused URL: a failure, not a gone pin
             raise VmSmokeError(f"the pinned {name} is not what the pin says: {exc}") from exc
-        except OSError as exc:  # gone or unreachable
-            raise PinUnavailableError(
-                f"cannot fetch the pinned {name} ({exc}); re-pin it in tools/vm-pins.toml"
+        except OSError as exc:  # gone from the mirror, or unreachable after the retries
+            raise VmSmokeError(
+                f"cannot fetch the pinned {name} ({exc}); if its mirror dropped it, re-pin it "
+                "in tools/vm-pins.toml (CONTRIBUTING.md)"
             ) from exc
     return target
 
@@ -399,9 +393,6 @@ def main(argv: list[str]) -> int:
     try:
         with tempfile.TemporaryDirectory(prefix="fsbpyr-vm-smoke.") as tmp:
             passed = [smoke(kernel, args, Path(tmp)) for kernel in args.kernel]
-    except PinUnavailableError as exc:
-        print(f"vm-smoke: {exc}", file=sys.stderr)
-        return PIN_UNAVAILABLE
     except (VmSmokeError, pbs.PbsError, OSError) as exc:
         print(f"vm-smoke: {exc}", file=sys.stderr)
         return 2

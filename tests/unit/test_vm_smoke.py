@@ -209,9 +209,11 @@ def test_a_download_that_does_not_match_its_pin_is_not_used(
     assert fetched == ["https://example.test/k.bin"]
 
 
-def test_a_pinned_download_that_fails_exits_with_the_pin_status(
+def test_a_pinned_download_that_fails_fails_the_smoke_test(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """A smoke test that did not run must not count as one that passed (owner, 2026-11-08):
+    the release waits for the mirror, or for a new pin."""
     monkeypatch.setenv("FSBPYR_TEST_DOWNLOADS", str(tmp_path))
     monkeypatch.setattr(vm.shutil, "which", lambda _name: "/usr/bin/qemu")
 
@@ -220,7 +222,7 @@ def test_a_pinned_download_that_fails_exits_with_the_pin_status(
 
     monkeypatch.setattr(vm.pbs, "download", gone)
 
-    assert vm.main(["--kernel", "64k"]) == vm.PIN_UNAVAILABLE
+    assert vm.main(["--kernel", "64k"]) == 2
     assert "re-pin it in tools/vm-pins.toml" in capsys.readouterr().err
 
 

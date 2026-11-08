@@ -373,13 +373,14 @@ def test_stubs_are_linked_in_the_stub_jobs_and_the_others_use_that_artifact() ->
     assert "pattern: el8-stub-*" in JOBS["prepare"] and "pattern: el8-stub-*" in JOBS["draft"]
 
 
-def test_a_vanished_vm_pin_warns_in_the_el8_vm_job_as_in_the_vm_job() -> None:
-    """In the gate, a pinned kernel or root file system gone from its mirror (exit 3 of
-    tools/vm-smoke.py) must not block a release: a warning, until the pin is renewed."""
+def test_the_vm_jobs_fail_whenever_the_smoke_test_does() -> None:
+    """No exit status of tools/vm-smoke.py turns into a warning and a green job: a smoke test
+    whose pinned kernel or root file system could not be fetched did not run, and the release
+    waits for the mirror or a new pin (owner, 2026-11-08)."""
     for name in ("vm-smoke", "el8-vm-smoke"):
         job = FULL_JOBS[name]
-        assert 'if [ "$status" -eq 3 ]; then' in job and "::warning::" in job, name
-        assert 'exit "$status"' in job, name
+        assert "::warning::" not in job and "status" not in job, name
+        assert "uv run --locked python tools/vm-smoke.py --kernel 64k" in job, name
     assert "--kernel 64k --userland el8" in FULL_JOBS["el8-vm-smoke"]
 
 

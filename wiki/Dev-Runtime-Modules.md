@@ -271,9 +271,10 @@ Public functions:
 - `extension_suffixes(interpreter)`: the interpreter's `importlib.machinery.EXTENSION_SUFFIXES`,
   in order; the docstring says why not `PYTHON.json`'s list.
 - `sha256_of(path)`: a file's SHA-256, read 1 MiB at a time.
-- `download(url, sha256, target)`: retries after a network failure (four attempts, pausing 2, 5
-  and 10 seconds), never after an HTTP error; writes a `.part` file and renames it only once its
-  SHA-256 matches. `sysroot` downloads with it too.
+- `download(url, sha256, target)`: retries after a network failure or a busy server's answer
+  (429, 500, 502, 503 or 504; four attempts, pausing 2, 5 and 10 seconds), never after another
+  HTTP error (a 404 stays a 404); writes a `.part` file and renames it only once its SHA-256
+  matches. `sysroot` downloads with it too, and so does `tools/vm-smoke.py`.
 - `fetch(pin, cache)`: download the archive once into `downloads/` (a cached one is checked
   against its pin again), extract it (zstd-compressed tar, through `fsbpyr.compat`) into a staging
   directory renamed to `pbs/<name>`, require `python/PYTHON.json`, and hold it.

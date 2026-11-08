@@ -79,7 +79,8 @@ REPO_URL = "https://github.com/devitops-com/fsbpyr"
 # other `run list` answers
 # $FAKE_GH_RUN_ID from its (FAKE_GH_RUN_AFTER + 1)th call on. `run view` of the full suite's
 # run (4000 too) shows it completed with FAKE_GH_CHECK_CONCLUSION, any other run with
-# FAKE_GH_TAG_CONCLUSION (both "success" by default), as follow-run.sh's --jq prints it.
+# FAKE_GH_TAG_CONCLUSION (both "success" by default), as follow-run.sh's --jq prints it;
+# `run view --json jobs`, as green-run.sh asks it, lists $FAKE_GH_UNSUCCESSFUL_JOBS.
 # Anything else (such as `release create`) is not expected from release-assets.sh and fails.
 FAKE_AUDIT = """\
 exit "${FAKE_AUDIT_EXIT:-0}"
@@ -109,6 +110,7 @@ case "$1 $2" in
     echo $((calls + 1)) > "$FAKE_GH_LOG.runs"
     if [ "$calls" -ge "${FAKE_GH_RUN_AFTER:-0}" ]; then echo "$FAKE_GH_RUN_ID"; fi ;;
   "run view")
+    case "$*" in *"--json jobs "*) printf '%s' "${FAKE_GH_UNSUCCESSFUL_JOBS:-}"; exit ;; esac
     case "$3" in
       4000|4343) conclusion="${FAKE_GH_CHECK_CONCLUSION:-success}" ;;
       *) conclusion="${FAKE_GH_TAG_CONCLUSION:-success}" ;;
@@ -268,7 +270,8 @@ def tag_run_calls(tmp_path: Path, prefix: str = "run ") -> list[str]:
 
 def followed(tmp_path: Path) -> list[str]:
     """The runs follow-run.sh looked at, as "run view ID"."""
-    return [" ".join(c.split()[:3]) for c in gh_calls(tmp_path) if c.startswith("run view ")]
+    return [" ".join(c.split()[:3]) for c in gh_calls(tmp_path)
+            if c.startswith("run view ") and "--json jobs " not in c]  # fmt: skip
 
 
 def assert_nothing_built_or_published(tmp_path: Path) -> None:
@@ -561,6 +564,29 @@ def test_release_refuses_a_head_whose_full_suite_run_did_not_succeed(
     assert "full-suite.yml's run for main" in result.stderr
     assert f"did not succeed ({state}): {RUN_URL}/4000" in result.stderr
     assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
+
+
+@pytest.mark.parametrize("jobs", [
+    "vm-smoke (aarch64-linux-gnu): skipped\n",
+    "el8 vm-smoke (aarch64-linux-gnu): failure\nportability (x86_64): cancelled\n",
+])  # fmt: skip
+def test_release_refuses_a_green_run_with_a_job_that_did_not_succeed(
+    jobs: str, tmp_path: Path, release_env: dict[str, str]
+) -> None:
+    """A job that was skipped, or failed under continue-on-error, did not test what it tests,
+    however the run concluded (owner, 2026-11-08: make the VM smoke test count)."""
+    repo = make_release_repo(tmp_path, release_env)
+
+    result = run_release(repo, release_env | {"FAKE_GH_UNSUCCESSFUL_JOBS": jobs})
+
+    assert result.returncode == 1
+    said = f"full-suite.yml's run for main has jobs that did not succeed: {RUN_URL}/{FULL_RUN_ID}"
+    assert said in result.stderr
+    for line in jobs.splitlines():
+        assert f"       {line}" in result.stderr
+    assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
+    (check,) = [c for c in gh_calls(tmp_path) if "--json jobs " in c]
+    assert check.startswith(f"run view {FULL_RUN_ID} ")
 
 
 def test_release_waits_for_a_full_suite_run_in_progress_and_goes_on_when_it_passes(

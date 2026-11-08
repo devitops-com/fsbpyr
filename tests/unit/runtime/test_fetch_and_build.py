@@ -137,11 +137,29 @@ def test_download_gives_up_after_its_attempts(
     assert list(target.parent.iterdir()) == []
 
 
-def test_download_does_not_retry_an_http_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("code", [429, 500, 502, 503, 504])
+def test_download_retries_a_server_that_answers_busy(
+    code: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A 404 stays a 404: only the network is retried."""
-    error = urllib.error.HTTPError("https://example.invalid/x", 404, "Not Found", Message(), None)
+    """GitHub answers 502 and 503 now and then: the next try usually gets the file."""
+    error = urllib.error.HTTPError("https://example.invalid/x", code, "Busy", Message(), None)
+    urlopen = _flaky([error, error])
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    target = tmp_path / "downloads" / "x.tar.zst"
+
+    pbs.download("https://example.invalid/x", hashlib.sha256(GOOD).hexdigest(), target)
+
+    assert target.read_bytes() == GOOD
+    assert len(urlopen.calls) == 3  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("code", [403, 404, 410])
+def test_download_does_not_retry_an_http_error(
+    code: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 404 stays a 404: only the network and a busy server are retried."""
+    error = urllib.error.HTTPError("https://example.invalid/x", code, "No", Message(), None)
     urlopen = _flaky([error])
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
     monkeypatch.setattr(time, "sleep", lambda _: None)

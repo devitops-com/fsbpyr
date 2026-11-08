@@ -145,7 +145,8 @@ The tiers, from fastest to most complete:
   once per target (x86-64 on `ubuntu-24.04`, aarch64 on `ubuntu-24.04-arm`) and Python, with
   every tool and setting the tests need present (nothing skips), and `make release` and the
   draft job require a green run, aarch64 jobs included, for the commit a release is made
-  from. The fuzzer runs for 600 s (`FSBPYR_FUZZ_SECONDS`) when `src/fsbpyr/launcher` or
+  from, in which every job succeeded (`tools/release/green-run.sh`: none skipped, none failed
+  under `continue-on-error`). The fuzzer runs for 600 s (`FSBPYR_FUZZ_SECONDS`) when `src/fsbpyr/launcher` or
   `tests/fuzz` changed since the last tag and on the weekly run, else for 30 s, and the readers
   of keys for a quarter of that, 30 s at least; what each finds (`FSBPYR_FUZZ_CORPUS`, and the
   `-sig` directory beside it) is kept in the Actions cache. The launcher programs the tests build
@@ -193,9 +194,11 @@ The tiers, from fastest to most complete:
   serial console, and fails on the wrong page size, a non-zero exit code or output without
   the text after `=>`. The kernels and root file systems are pinned by URL and SHA-256 in
   `tools/vm-pins.toml` (`FSBPYR_TEST_DOWNLOADS` keeps the downloads, about 150 MB) and
-  checked on every use. A mirror may drop a pinned file (Rocky's `pub/` replaces old kernel
-  builds): the script then exits 3 naming the file, CI reports a warning, and the pin is
-  renewed with the new URL and SHA-256 (from `Packages.gz` or the repository's `primary.xml`).
+  checked on every use. A busy server (429, 5xx) or a network failure is tried again, up to
+  four times. A mirror may drop a pinned file: the script then fails (exit 2) naming the file,
+  and so does the CI job, which a release waits for (owner, 2026-11-08: a smoke test that did
+  not run has not passed) until the pin is renewed with the new URL and SHA-256 (from
+  `Packages.gz` or the repository's `primary.xml`).
   A boot takes under a minute. CI runs it in the `vm-smoke` job after the
   suite job, with the aarch64 executable and two fixtures it builds (`hello`, and `native` with
   two native extensions). It is not part of `make test`: the VM is no pytest test, and
@@ -210,8 +213,8 @@ The tiers, from fastest to most complete:
   target, on the default Python only (every Python's stub is still linked and checked, below),
   with a native-heavy corpus subset (`FSBPYR_CORPUS_APPS`, the mode's `pandas-csv`, `lxml`,
   `pillow` and `scipy`) and, on aarch64, the 64 KiB-page VM smoke test with the EL8 userland
-  (`tools/vm-smoke.py --kernel 64k --userland el8`; a pinned file gone from its mirror is a
-  warning, as in the `vm-smoke` job: renew the pin). They gate the release like every other job
+  (`tools/vm-smoke.py --kernel 64k --userland el8`; a pinned file gone from its mirror fails
+  it, as it fails the `vm-smoke` job: renew the pin). They gate the release like every other job
   of the full suite (owner, 2026-11-03). Only what differs from a default build is tested: the
   stub. (`tests/e2e/test_el8_use_cases.py`, EL8 builds of a directory of scripts, a single
   script and a project of several commands run on the host, builds the EL8 runtime itself and is
