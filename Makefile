@@ -42,7 +42,7 @@ else
 WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-prereqs test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm check check-c release-prep release release-assets release-sign release-audit release-check mirror wiki-lint wiki-build wiki-publish clean
+.PHONY: help bootstrap build install uninstall test test-ci test-prereqs test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm perf check check-c release-prep release release-assets release-sign release-audit release-check mirror wiki-lint wiki-build wiki-publish clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -242,6 +242,14 @@ test-el8: test-el8-stub test-el8-portability ## Run the EL8 (glibc 2.28) test mo
 # not tested (owner decision 2026-10-27).
 test-vm: ## Run aarch64 apps in a QEMU VM with a 64K-page kernel (qemu-system-aarch64; VM_ARGS=...)
 	$(SCRATCHENV) $(CONTAINED) $(UVRUN) python tools/vm-smoke.py $(VM_ARGS)
+
+# Every release's start, build and inspect against the previous release's (tools/perf.py; owner,
+# 2026-11-08), recorded in docs/performance.md before release-prep. OLD is the previous release's
+# fsbpyr-3.X-<target>; NEW is dist/fsbpyr (make build) unless given. Apps run in the scope below.
+NEW ?= dist/fsbpyr
+perf: ## Measure start, build and inspect against the previous release (OLD=PATH [NEW=PATH], PERF_ARGS=...)
+	$(if $(OLD),,$(error OLD=PATH: the previous release's fsbpyr-3.X-<target>))
+	$(SCRATCHENV) $(CONTAINED) $(UVRUN) python tools/perf.py '$(OLD)' '$(NEW)' $(PERF_ARGS)
 
 check: ## Static checks: ruff + mypy
 	$(UVRUN) ruff check
