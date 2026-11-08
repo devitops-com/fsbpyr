@@ -168,7 +168,9 @@ fsbpyr: built .../pandas-csv/dist/corpus-pandas-csv (64.3 MB, entry corpus_panda
 
 The variant is checked as `fsbpyr self update` checks a download before anything runs it, and
 kept under `${XDG_CACHE_HOME:-~/.cache}/fsbpyr/downloads/` (`$FSBPYR_CACHE_DIR/downloads/`
-when that is set), so a later build uses it without a download, offline too. With `--offline`, a build that needs a
+when that is set), so a later build uses it without a download, offline too. The cache keeps the
+variants and stubs of the last two releases (and of the fsbpyr that runs); older ones are removed
+when the cache is next collected. With `--offline`, a build that needs a
 variant not yet in the cache stops instead of fetching it: `this project builds with Python
 3.12, which needs fsbpyr-3.12-x86_64-linux-gnu of release v0.30.0; it is not in the cache and
 --offline fetches nothing: run the build once without --offline`. `fsbpyr cache gc` leaves the

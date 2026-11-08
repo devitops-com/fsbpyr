@@ -16,7 +16,7 @@ import pytest
 
 from fsbpyr import cli
 from fsbpyr.boot._fsbpyr_rt import gc
-from fsbpyr.runtime import collect, hold, pbs, registry, sysroot
+from fsbpyr.runtime import collect, hold, pbs, pins, registry, sysroot
 from fsbpyr.vcs import release_asset, release_stub_asset
 
 NOW = time.time()
@@ -152,6 +152,57 @@ def test_what_a_killed_stub_or_variant_download_left_goes_after_a_day(root: Path
 
     assert sorted(report.removed) == sorted(f"downloads/{name}" for name in old)
     assert _left(root) == sorted(f"downloads/{name}" for name in (*kept, new))
+
+
+def _variant(version: str, python: str = "3.13") -> str:
+    return f"{release_asset(python, 'aarch64-linux-gnu')}-v{version}"
+
+
+@pytest.mark.parametrize(("running", "kept"), [
+    ((0, 31, 0), ["0.30.0", "0.31.0"]),
+    ((0, 28, 0), ["0.28.0", "0.30.0", "0.31.0"]),  # an older fsbpyr still runs here
+    (None, ["0.30.0", "0.31.0"]),  # a developer build
+])  # fmt: skip
+def test_variants_of_the_two_newest_releases_and_the_running_one_stay(
+    root: Path, monkeypatch: pytest.MonkeyPatch, running: tuple[int, int, int] | None,
+    kept: list[str],
+) -> None:
+    """Owner, 2026-11-08: the assets of the last two versions only, however recent the others
+    and whatever space is left."""
+    monkeypatch.setattr(collect, "own_release", lambda: running)
+    for version in ("0.9.9", "0.28.0", "0.29.0", "0.30.0", "0.31.0"):
+        _download(root, _variant(version), days=0)
+    _download(root, _variant("0.29.0", "3.12"), days=0)
+
+    report = collect.collect_tool(root, now=NOW, pressure=False)
+
+    assert _left(root) == sorted(f"downloads/{_variant(v)}" for v in kept)
+    assert f"downloads/{_variant('0.29.0', '3.12')}" in report.removed
+
+
+def test_stubs_of_the_running_release_and_the_newest_other_stay(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stub is named by the runtime id it carries, which releases built from the same inputs
+    share: per stub, the running fsbpyr's and the one fetched last before it stand for the last
+    two versions."""
+    monkeypatch.setattr(collect, "own_release", lambda: (0, 31, 0))
+    pin = pins.pin_for("3.14", "x86_64-unknown-linux-gnu")  # whatever the host: every pin's
+    running = registry.runtime_id(pin, baseline="2.28")  # the stub's id: never sanitized
+    assert running in collect.needed()["runtimes"]
+    stub = release_stub_asset("3.14", "x86_64-linux-gnu", "2.28")
+    other = release_stub_asset("3.13", "x86_64-linux-gnu", "2.28")
+    ids = [f"cp314-x86_64-unknown-linux-gnu-{n:012x}" for n in range(1, 4)]
+    _download(root, f"{stub}-{running}", days=90)
+    for age, identity in zip((1, 2, 3), ids, strict=True):
+        _download(root, f"{stub}-{identity}", days=age)
+    _download(root, f"{other}-{ids[2]}", days=50)  # another stub's: its only one
+
+    report = collect.collect_tool(root, now=NOW, pressure=False)
+
+    assert _left(root) == sorted(f"downloads/{name}" for name in (
+        f"{stub}-{running}", f"{stub}-{ids[0]}", f"{other}-{ids[2]}"))  # fmt: skip
+    assert sorted(report.removed) == sorted(f"downloads/{stub}-{i}" for i in ids[1:])
 
 
 def test_a_directory_of_the_users_is_left_alone(tmp_path: Path) -> None:

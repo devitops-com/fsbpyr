@@ -2,8 +2,11 @@
 archives, sysroot packages) that the running fsbpyr does not build with, and nobody used for 7
 days (when the file system has less than 10% free: every one not in use), go, under the rules of
 the app caches' collector (_fsbpyr_rt.gc): an item in use (held: runtime/hold.py) stays, the
-others are renamed into a trash and removed. The glibc 2.28 stubs and fsbpyr variants kept in
-downloads/ (stubs.py, dispatch.py) stay: NAMES does not list theirs. What a killed process left
+others are renamed into a trash and removed. Of the fsbpyr variants (dispatch.py) and glibc 2.28
+stubs (stubs.py) kept in downloads/, only the last two releases' stay (owner, 2026-11-08), however
+recent the others: the variants of the two newest releases there and of the running one, and per
+stub, the running fsbpyr's and the newest other one (a stub is named by the runtime id it carries,
+which releases built from the same inputs share). What a killed process left
 while it worked (an extraction or a runtime's staging directory, a partial download, a stub or
 variant being unpacked) goes after a day. Only a root with the marker is collected: hold()
 writes it into one that holds nothing but our names. ``fsbpyr cache gc`` runs
@@ -20,6 +23,7 @@ from pathlib import Path
 
 from .. import targets
 from ..boot._fsbpyr_rt import gc
+from ..vcs import own_version
 from . import pins, registry
 
 STAMP, TRASH = ".gc-tool", ".trash-tool"  # the app collector's are .gc and .trash: same root
@@ -43,6 +47,10 @@ PARTIAL = ".part"  # a download being written
 # a stub (stubs.py) or variant (dispatch.py) being unpacked: mkstemp's ".<its name>." and 8 more
 UNPACKING = re.compile(r"\.fsbpyr-(stub-)?[0-9]+\.[0-9]+-[a-z0-9_.+-]+\.[a-z0-9_]{8}")
 LEFTOVER = gc.DAY  # staging, partial and unpacking downloads this old are a killed process's
+RELEASES_KEPT = 2  # the variants and stubs of the last two releases (owner, 2026-11-08)
+VARIANT = re.compile(r"fsbpyr-3\.[0-9]+-[a-z0-9_]+-[a-z]+-[a-z]+-v([0-9]+)\.([0-9]+)\.([0-9]+)")
+STUB = re.compile(r"(fsbpyr-stub-3\.[0-9]+-[a-z0-9_]+-[a-z]+-[a-z]+-glibc[0-9.]+)-"
+                  r"(cp[0-9]+-[a-z0-9_.-]+-[0-9a-f]{12})")  # fmt: skip
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
 
 
@@ -61,6 +69,12 @@ def needed() -> dict[str, frozenset[str]]:
     return {kind: frozenset(names) for kind, names in found.items()}
 
 
+def own_release() -> tuple[int, int, int] | None:
+    """The running fsbpyr's release (0, 31, 0); None for a developer build."""
+    match = re.fullmatch(r"([0-9]+)\.([0-9]+)\.([0-9]+)", own_version().partition("-")[0])
+    return None if match is None else (int(match[1]), int(match[2]), int(match[3]))
+
+
 def collect_tool(
     root: Path, *, now: float | None = None, pressure: bool | None = None
 ) -> gc.Report:
@@ -73,6 +87,7 @@ def collect_tool(
         for kind in ITEMS:
             _items(collection, kind, keep[kind])
         _downloads(collection, keep[DOWNLOADS])
+        _releases(collection, keep["runtimes"])
 
     return gc.run(str(root), STAMP, TRASH, items, now=now, pressure=pressure)
 
@@ -124,6 +139,48 @@ def _downloads(collection: gc.Run, keep: frozenset[str]) -> None:
     finally:
         if parent >= 0:
             os.close(parent)
+
+
+def _releases(collection: gc.Run, running_ids: frozenset[str]) -> None:
+    """The variants and stubs of releases older than the last two go, whatever their age."""
+    if not gc.ours(collection.root, DOWNLOADS, stat.S_ISDIR):
+        return
+    parent, names = collection.listed(DOWNLOADS)
+    try:
+        for name in _older_releases(parent, names, running_ids):
+            if gc.ours(parent, name, stat.S_ISREG):
+                unlink = functools.partial(_unlink, collection, parent, name)
+                collection.attempt(f"{DOWNLOADS}/{name}", unlink)
+    finally:
+        if parent >= 0:
+            os.close(parent)
+
+
+def _older_releases(parent: int, names: list[str], running_ids: frozenset[str]) -> list[str]:
+    """The variants not of the two newest releases among them nor of the running one, and per
+    stub, all but the running fsbpyr's and the newest others, two in all."""
+    variants = {name: tuple(map(int, m.groups())) for name in names
+                if (m := VARIANT.fullmatch(name))}  # fmt: skip
+    kept = set(sorted(set(variants.values()), reverse=True)[:RELEASES_KEPT])
+    running = own_release()
+    kept |= {running} if running is not None else set()
+    older = [name for name, release in variants.items() if release not in kept]
+    stubs: dict[str, list[tuple[bool, float, str]]] = {}
+    for name in names:
+        if (m := STUB.fullmatch(name)) is not None:
+            try:
+                mtime = os.stat(name, dir_fd=parent, follow_symlinks=False).st_mtime
+            except FileNotFoundError:
+                continue  # replaced or removed by a build meanwhile
+            stubs.setdefault(m[1], []).append((m[2] in running_ids, mtime, name))
+    for found in stubs.values():
+        older += [name for _, _, name in sorted(found, reverse=True)[RELEASES_KEPT:]]
+    return sorted(older)
+
+
+def _unlink(collection: gc.Run, parent: int, name: str) -> None:
+    os.unlink(name, dir_fd=parent)
+    collection.report.removed.append(f"{DOWNLOADS}/{name}")
 
 
 def _download(collection: gc.Run, parent: int, name: str) -> None:

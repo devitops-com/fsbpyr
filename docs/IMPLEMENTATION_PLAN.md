@@ -1191,7 +1191,11 @@ does the same with 5 GiB (past every 32-bit size).
   fsbpyr does not use and nothing used for 7 days, under the same rules (**Corrected
   (2026-11-08, #117):** the downloads that go are the Python distributions' archives and the
   sysroots' packages; the glibc 2.28 stubs and fsbpyr variants that `downloads/` keeps are never
-  collected, only the temporary a killed process left unpacking one); checked when
+  collected, only the temporary a killed process left unpacking one. **Amended (2026-11-08,
+  owner's decision):** only the stubs and variants of the last two releases stay, whatever their
+  age: the variants of the two newest releases there and of the running one, and per stub the
+  running fsbpyr's and the newest other one, since a stub is named by its runtime id, which
+  releases built from the same inputs share); checked when
   `fsbpyr build`, `inspect`, `runtime build` or `runtime list` starts, at most once a day
   (once an hour under 10% free; corrected 0.28.0, 2026-10-27, #69).
 - **Design** (before the code):
@@ -1225,7 +1229,8 @@ does the same with 5 GiB (past every 32-bit size).
     distributions, sysroots and downloads each get a `.lock` held LOCK_SH while a command uses
     them (mtime: last use); what the running fsbpyr's pins name is kept; the rest goes by the
     same rules. (**Corrected (2026-11-08, #117):** a download has no `.lock`: its own mtime is
-    its last use. The stubs and variants in `downloads/` are never collected, as above.)
+    its last use. The stubs and variants in `downloads/` go by the last-two-releases rule
+    above.)
     `fsbpyr build`, `inspect`, `runtime build` and `runtime list` check it at
     their start (`_collect_when_due`; `.gc` there too): once a day, or once an hour when the
     file system has less than 10% free (`runtime/collect.py`; corrected 0.28.0, 2026-10-27,
@@ -1273,7 +1278,8 @@ does the same with 5 GiB (past every 32-bit size).
     (`.gc-tool`, `.trash-tool`); staging directories, partial downloads and the temporary that
     a glibc 2.28 stub or an fsbpyr variant is unpacked into (`stubs.py`, `dispatch.py`; added
     2026-11-07, #117) go after a day, never sooner (a build or a fetch may be writing them,
-    pressure or not); the stubs and variants that `downloads/` keeps are never collected; what
+    pressure or not); of the stubs and variants that `downloads/` keeps, those of the last two
+    releases stay (amended 2026-11-08, above); what
     the running fsbpyr's pins name stays; `XDG_CACHE_HOME` that is not absolute is ignored, as
     for apps
   - every test runs with `FSBPYR_GC=0` (tests/conftest.py) unless it asks for a collection;
