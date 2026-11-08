@@ -562,8 +562,10 @@ missing one), elsewhere in a Debian trixie podman container (`Containerfile`). S
 PYTHON=3.X` or `bootstrap.sh --python 3.X` does a variant's three stages, 3.12 to 3.15, in
 `dist/stage1..3-3.X`); the stages land in `dist/stage1..3/`, each must pass `inspect --verify`,
 stages 2 and 3 must be identical, and stage 3 becomes `dist/fsbpyr`. CI runs it for every Python
-and both targets in `build.yml`, which `full-suite.yml` calls on every push to main, weekly and on
-request, and `release.yml` calls for a pushed `v*` tag. No CI runs on pull requests.
+and both targets in `build.yml`, which `full-suite.yml` calls for every pull request in main's
+merge queue (since 2026-11-08; until then on every push to main), weekly and on request, and
+`release.yml` calls for a pushed `v*` tag. A pull request as it is opened runs only the queue's
+required check, which passes at once.
 
 ```bash
 # Stage 0: plain Python in a standard venv (R3)
@@ -1788,7 +1790,8 @@ compare jobs or the short asset names, later entries below and D42 apply.
     wait and releases carry Linux x86-64 and aarch64 with glibc (step 5 for those two came
     with step 2's CI); `main` goes to GitHub through a pull request only, a feature fully
     tested first, so the full suite runs on a push to main, weekly and on request, with no
-    nightly run (it would test the same commit night after night).
+    nightly run (it would test the same commit night after night); since 2026-11-08 it runs in
+    main's merge queue instead of on the push (owner's decision on Q-01).
   - the 64 KiB alignment stays untested on 16K- and 64K-page kernels (no such kernel at hand;
     a `qemu-system-aarch64` VM with a 64K kernel would show it): the docs say it was tested on
     4K-page kernels only. Smoke-tested since 2026-10-25 (owner decision: "just smoketest with
@@ -2288,10 +2291,12 @@ a secret deny list (packaging Python files only replaces it).
 
 Status (v0.25.0): markers are `slow`, `sanitized` and `version_rule` (no `network` marker); only
 `clicky` commits all three lock sources, the other fixtures `uv.lock`; C probes are in
-`tests/probes/`, the fuzzer in `tests/fuzz/` (8a). No CI runs on a pull request: a branch is
-tested locally first (`make test`; `make test-ci` is the quicker core, which also measures branch
-coverage and fails below `fail_under` in `pyproject.toml`). `.github/workflows/full-suite.yml`
-runs on every push to main (a merge), weekly (Sunday 03:43 UTC) and on request: the release
+`tests/probes/`, the fuzzer in `tests/fuzz/` (8a). A branch is tested locally first (`make test`,
+`make test-container`; `make test-ci` is the quicker core, which also measures branch coverage
+and fails below `fail_under` in `pyproject.toml`). `.github/workflows/full-suite.yml` runs on
+every pull request in main's merge queue (since 2026-11-08, on the commit main then becomes; a
+pull request as it is opened runs only its required check, which passes at once), weekly
+(Sunday 03:43 UTC) and on request: the release
 build with its checks (`build.yml`), then, for every Python (3.12 to 3.15) and both targets, every
 test but the portability ones as an unprivileged user in a Debian trixie container (also
 `make check`, the coverage gates, 90% for `payload/` plus `elf.py`), and the portability tests
