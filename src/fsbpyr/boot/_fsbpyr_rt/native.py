@@ -89,6 +89,7 @@ class NativeCache:
         self.tree = "/".join(chain[:-1])  # "runtime/<generation>": held from the first sync on
         files = _fsbpyr.info()["files"]
         self._checked = bytearray((files + 7) // 8)  # a bit per FILES index: checked here
+        self.packages: set[str] = set()  # FS_REQUIRED packages extracted here (directories)
 
     def sync(self, files: "Sequence[int]", *, resources: bool = False) -> int:
         """Extract the files (FILES indices, a range from files_below or a closure) that are
@@ -222,8 +223,11 @@ def materialize_package(directory: str) -> str:
     which would extract their closures; and the other shared libraries its distribution ships,
     which nothing links: plugins it opens from a directory (openmm's, in
     ``OpenMM.libs/lib/plugins``). Returns the prefix (with "/") that the package's modules live
-    under."""
+    under. Once a process: a find_spec before the import (``importlib.util.find_spec("torch")``)
+    has extracted it already."""
     cache = native_cache()
+    if directory in cache.packages:
+        return cache.site + "/"
     try:
         files = _fsbpyr.files_below(directory)
         records = [_fsbpyr.file_at(i) for i in files]
@@ -239,6 +243,7 @@ def materialize_package(directory: str) -> str:
             "set FSBPYR_CACHE_DIR to a writable directory",
             name=directory.replace("/", "."),
         ) from exc
+    cache.packages.add(directory)
     return cache.site + "/"
 
 

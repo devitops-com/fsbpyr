@@ -30,6 +30,8 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 - **Large files are decoded and hashed on several threads on hosts of more than 1024 CPUs too.**
   The kernel there refuses the CPU mask the launcher asked with, and the launcher then used one
   thread. It asks again with a larger mask.
+- **A package that is extracted at run time is walked once a process.** An
+  `importlib.util.find_spec("torch")` before `import torch` walked and checked torch's files twice.
 - **The cache's way check refuses a symlink target it may have read only in part.** It read at most
   4095 bytes of a symlink's target, so a longer one, which a FUSE or NFS server can give, was cut
   short and a different path was checked. A target that fills the 4096-byte buffer is now refused

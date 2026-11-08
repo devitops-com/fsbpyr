@@ -374,7 +374,8 @@ Public functions:
   `build_info`.
 - `materialize_package(directory)`: extract an FS_REQUIRED package with the closures of its
   extensions (`torchvision.libs`) and every shared library its distributions ship (openmm's
-  plugins); returns the prefix its modules live under.
+  plugins); returns the prefix its modules live under. Once a process: a `find_spec` before the
+  import (`importlib.util.find_spec("torch")`) has extracted it already.
 - `materialize(path)`: extract a payload file or directory for `importlib.resources`; returns
   where it is on disk.
 - `bundled_library(name, caller=None)`: the one bundled shared object of that file name, extracted
