@@ -170,9 +170,12 @@ The tests set `FSBPYR_CACHE_DIR` (a private cache for almost every executable th
 `PYTHONUNBUFFERED`, `JOURNAL_STREAM` and others for the code they run, and
 `FSBPYR_RELEASE_DOWNLOADS` to point downloads of release assets at a `FakeReleases` server.
 `contain.run` tags its processes with `FSBPYR_TEST_CONTAINED=<token>`. The C probes read
-`PROBE_*` switches (`PROBE_FREE`, `PROBE_RELEASE`, `PROBE_OUT`, `PROBE_SESSION`,
-`PROBE_OLD_GLIBC`, `PROBE_NO_LINK`, `PROBE_DECOY`, `PROBE_EUID`, `PROBE_VERIFY_RESULT`,
-`PROBE_NO_SPACE`, `PROBE_LONGER`),
+`PROBE_*` switches (`PROBE_BIO_LENGTH`, `PROBE_CLOSE_STDIN`, `PROBE_DECOY`, `PROBE_EUID`,
+`PROBE_FAIL_LIBCTX`, `PROBE_FAIL_MALLOC`, `PROBE_FDS`, `PROBE_FREE`, `PROBE_LENGTH`, `PROBE_LINK`,
+`PROBE_LINK_ERRNO`, `PROBE_LONGER`, `PROBE_NO_CLOSE_RANGE`, `PROBE_NO_CONTEXT`, `PROBE_NO_LINK`,
+`PROBE_NO_MEMORY`, `PROBE_NO_PROC`, `PROBE_NO_SPACE`, `PROBE_OLD_GLIBC`, `PROBE_OUT`,
+`PROBE_OVERFLOWUID`, `PROBE_OWNED`, `PROBE_OWNER`, `PROBE_PASSWD_HOME`, `PROBE_RELEASE`,
+`PROBE_SESSION`, `PROBE_UID_MAP`, `PROBE_VERIFY_RESULT`),
 described in each probe's header comment.
 
 `make` variables ([`Makefile`](../Makefile)): `JOBS` (pytest-xdist processes, default 8),
@@ -620,7 +623,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,811 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,821 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -640,8 +643,8 @@ run with the release launcher only, those two portability tests also on the two 
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 261 |
 | `tests/integration` | 17 | 860 |
-| `tests/e2e` | 45 | 1,156 |
-| All | 153 | 4,811 |
+| `tests/e2e` | 45 | 1,166 |
+| All | 153 | 4,821 |
 
 ### tests/unit (top level): 29 files, 942 tests
 
@@ -792,7 +795,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
 | [`test_worker_venvs.py`](../tests/integration/test_worker_venvs.py) | 10 | [`worker_venvs.py`](../tests/support/worker_venvs.py) on real pytest runs with three workers: each in an environment of its own, subprocesses included, removed after the run, and a worker in anything else stopping the run. |
 
-### tests/e2e: 45 files, 1,156 tests
+### tests/e2e: 45 files, 1,166 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -802,7 +805,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_compat.py`](../tests/e2e/test_compat.py) | 41 | The `compat` fixture's matrix against the venv, the `mp` fixture's start methods, helper interpreters and the instance limit, forged multiprocessing children, scripts through `sys.executable`, `sys.argv[0]`, the restart idiom, the `datafiles` checks, the build information tracing every dist to the lock. |
 | [`test_cores.py`](../tests/e2e/test_cores.py) | 6 | How many threads the launcher's parallel work runs on, through `probes/cores.c` on a pretend kernel: the CPUs the process may use, at most 8, also past the 1024 CPUs a `cpu_set_t` holds. |
 | [`test_corpus.py`](../tests/e2e/test_corpus.py) | 66 | One test per corpus app with wheels for the Python and machine (64 apps on 3.14), the `expect` check, and the `plugins` fixture ([The corpus](#the-corpus)). |
-| [`test_signatures.py`](../tests/e2e/test_signatures.py) | 153 | `launcher/sig.c` through `probes/sig.c`, and `_fsbpyr`'s functions on both launchers: RFC 8032, ACVP and all of Wycheproof's Ed25519 and ML-DSA-65 cases, malleated signatures, bad key files, the openssl.cnf matrix, the error queue, sig.c's declarations against OpenSSL's headers. |
+| [`test_signatures.py`](../tests/e2e/test_signatures.py) | 163 | `launcher/sig.c` through `probes/sig.c`, and `_fsbpyr`'s functions on both launchers: RFC 8032, ACVP and all of Wycheproof's Ed25519 and ML-DSA-65 cases, malleated signatures, bad key files and their size limit, halves past the second, buffers OpenSSL fills to their bound, no library context, the openssl.cnf matrix, the error queue, sig.c's declarations against OpenSSL's headers. |
 | [`test_signing.py`](../tests/e2e/test_signing.py) | 36 | `key`, `sign`, `verify` and signing in `build` on a built fsbpyr with test keys pinned, against the release script: the passphrase on a pty, what the build's processes get, where a `.sig` goes, planted modules, this tree's own pins refusing test keys. |
 | [`test_verify.py`](../tests/e2e/test_verify.py) | 66 | `verify` on a built fsbpyr with test keys pinned: files named by option and variable, no fallback; a file of fsbpyr against its release on a local server, with a replayed signature, another key or project, a forged tag, a bad file beside it, no network; the warning; the Security chapter's quick start as printed. |
 | [`test_selfupdate.py`](../tests/e2e/test_selfupdate.py) | 9 | `self update` of a built fsbpyr with test keys pinned, from `FakeGitHub`, to a second build: unsigned, signed by an unpinned key, a `.xz` not matching its line, an older build served as new, three pins, a client that skipped a key change. |
@@ -891,7 +894,7 @@ controls. Each probe's header comment lists its commands and switches.
 | [`probes/no_context.c`](../tests/probes/no_context.c) | the whole stub (`build_stub`) | `--wrap=ZSTD_createDCtx` | `test_read_failures.py` |
 | [`probes/reads.c`](../tests/probes/reads.c) | `payload.c`, `integrity.c`, `parallel.c` | `--wrap=ZSTD_createDCtx,--wrap=ZSTD_decompress,--wrap=ZSTD_decompressStream,--wrap=lzma_stream_buffer_decode,--wrap=madvise`, ASan, UBSan | `test_read_failures.py` |
 | [`probes/restore.c`](../tests/probes/restore.c) | `cache.c`, `way.c`, `payload.c`, `integrity.c`, `parallel.c` | `--wrap=renameat,--wrap=linkat,--wrap=pthread_create,--wrap=pwrite`, ASan, UBSan | `test_restore.py` |
-| [`probes/sig.c`](../tests/probes/sig.c) | `sig.c`, `integrity.c`, `parallel.c` | `-DFSB_SIG_NO_PYTHON`, `--wrap=EVP_DigestVerify`, ASan, UBSan, LeakSanitizer | `test_signatures.py` |
+| [`probes/sig.c`](../tests/probes/sig.c) | `sig.c`, `integrity.c`, `parallel.c` | `-DFSB_SIG_NO_PYTHON`, `--wrap=EVP_DigestVerify,--wrap=BIO_ctrl,--wrap=OSSL_LIB_CTX_new`, ASan, UBSan, LeakSanitizer | `test_signatures.py` |
 | [`probes/slots.c`](../tests/probes/slots.c) | `slots.c` | `--wrap=geteuid`, UBSan | `test_slots.py` |
 | [`probes/streams.c`](../tests/probes/streams.c) | `payload.c`, `integrity.c`, `parallel.c` | `-DFSB_STREAM_WINDOW` of 2 MiB, ASan, UBSan | `test_stream_windows.py` |
 | [`probes/way.c`](../tests/probes/way.c) | `way.c` | `--wrap=readlinkat,--wrap=fopen,--wrap=fstat,--wrap=fstatat,--wrap=malloc`, ASan, UBSan | `test_way_targets.py`, `test_way.py` |

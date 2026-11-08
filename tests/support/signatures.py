@@ -141,6 +141,14 @@ def run(fsb: Any) -> dict[str, Any]:
         file.flush()
         out["sha256 of a file"] = (
             fsb._sha256(file.fileno()).hex() == hashlib.sha256(b"abc" * 100000).hexdigest())
+        stdin = os.dup(0)  # descriptor 0 is a file like any other
+        os.dup2(file.fileno(), 0)
+        try:
+            out["sha256 of descriptor 0"] = (
+                fsb._sha256(0).hex() == hashlib.sha256(b"abc" * 100000).hexdigest())
+        finally:
+            os.dup2(stdin, 0)
+            os.close(stdin)
     read, write = os.pipe()
     try:
         fsb._sha256(read)
@@ -164,7 +172,8 @@ EXPECTED = {
     "fixed": True, "a flipped Ed25519 half": False, "a flipped ML-DSA half": False,
     "another statement": False, "too short": False, "empty": False,
     "no pub": "not a public key file", "a pub with a line more": "not a public key file",
-    "sha256 of bytes": True, "sha256 of a file": True, "sha256 of a pipe": 29,  # ESPIPE
+    "sha256 of bytes": True, "sha256 of a file": True, "sha256 of descriptor 0": True,
+    "sha256 of a pipe": 29,  # ESPIPE
     "sizes": [6088, 2839], "signed": [3373, True, True, False],
     "wrong passphrase": "wrong passphrase?", "no passphrase": "wrong passphrase?",
     "not a key": "not a key file", "a passphrase too long": "wrong passphrase?",
