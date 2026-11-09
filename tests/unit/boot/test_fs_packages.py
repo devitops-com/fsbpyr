@@ -6,8 +6,10 @@ import importlib.util
 import inspect
 import json
 import os
+import posix
 import stat
 import sys
+import types
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
@@ -23,7 +25,9 @@ from fsbpyr.payload.spec import Blob, File, Module
 from .conftest import BOOT_DIR, FAKE_RUNTIME
 
 INIT = "import os\nDATA = open(os.path.join(os.path.dirname(__file__), 'data', 'a.txt')).read()\n"
-SOURCES = {"tpl/__init__.py": INIT, "tpl/sub.py": "X = 1\n", "plain/__init__.py": ""}
+SUB = "X = 1\nif __name__ == '__main__':\n    import sys\n    print('sub ran', sys.argv[1:])\n"
+SOURCES = {"tpl/__init__.py": INIT, "tpl/sub.py": SUB, "plain/__init__.py": "",
+           "app.py": ""}  # the entry, outside the FS package  # fmt: skip
 NATIVE = "tpl/lib/libx.so"  # native files below an FS package come along
 DATA = {"tpl/data/a.txt": (b"A", 0o644), "tpl/data/deep/b.txt": (b"B", 0o644),
         "tpl/run.sh": (b"#!/bin/sh\n", 0o755)}  # fmt: skip
@@ -63,7 +67,7 @@ def executable(tmp_path_factory: pytest.TempPathFactory) -> Path:
          File(NATIVE, FileKind.NATIVE_LIB, Blob.zstd(b"\x7fELF", digest=True),
               mode=0o755)]  # fmt: skip
     out = tmp_path_factory.mktemp("fs") / "fs-demo"
-    build_executable(FAKE_RUNTIME, App("fs-demo", "tpl", tuple(modules), tuple(files)), out)
+    build_executable(FAKE_RUNTIME, App("fs-demo", "app", tuple(modules), tuple(files)), out)
     return out
 
 
@@ -122,7 +126,7 @@ def test_submodules_keep_loading_from_the_payload(site: Path, boot: ModuleType) 
 
     assert sub.X == 1 and sub.__file__ == f"{site}/tpl/sub.py"
     assert isinstance(sub.__loader__, boot.PayloadLoader)
-    assert inspect.getsource(sub) == "X = 1\n"
+    assert inspect.getsource(sub) == SUB
     assert sub.__loader__.get_data(f"{site}/tpl/data/a.txt") == b"A"
 
 
@@ -271,3 +275,74 @@ def test_the_site_directory_is_a_path_entry_of_the_importer_cache(
 
     assert isinstance(finder, boot.PayloadPathFinder) and finder.location == f"{site}/"
     assert sys.path[:2] == [str(BOOT_DIR), boot.ROOT]  # sys.path itself is left alone
+
+
+def test_the_boot_module_knows_the_end_of_the_sites_path_without_importing_native(
+    boot: ModuleType, site: Path
+) -> None:
+    native = importlib.import_module("_fsbpyr_rt.native")
+
+    assert native.native_cache().site == str(site)
+    assert f"{site}/".endswith(boot._FS_SITE_TAIL)
+
+
+@pytest.mark.usefixtures("isolated_sys")
+@pytest.mark.parametrize(("setting", "out"), [
+    (True, "sub ran ['c']\n"),  # run from the payload as __main__ (D23)
+    (False, "fsbpyr selftest ok: fs-demo\n"),  # the app, with these arguments
+], ids=["interpreter-reexec", "false"])  # fmt: skip
+def test_a_child_started_with_an_fs_package_modules_file_is_a_helper_interpreter(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    tmp_path: Path, setting: bool, out: str,
+) -> None:  # fmt: skip
+    """``[sys.executable, tpl.sub.__file__, "c"]``, the file below the native cache's site that a
+    module of an fs-package says it lives at (torch's compile workers start so, #118)."""
+    _as_a_child(boot, monkeypatch, tmp_path, setting)
+
+    boot.run()
+
+    assert capsys.readouterr().out == out
+
+
+@pytest.mark.usefixtures("isolated_sys")
+def test_without_the_setting_an_fs_package_modules_file_is_refused_naming_it(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:  # fmt: skip
+    _as_a_child(boot, monkeypatch, tmp_path, None)
+
+    with pytest.raises(SystemExit) as refused:
+        boot.run()
+
+    assert refused.value.code == 70
+    assert "fsbpyr: refusing to run `tpl/sub.py` as Python" in capsys.readouterr().err
+
+
+def _as_a_child(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, setting: bool | None
+) -> None:  # fmt: skip
+    """This process as a child the app started with ``tpl/sub.py`` of the native cache's site,
+    built with ``interpreter_reexec`` ``setting``; the app runs its self-test."""
+    reexec = importlib.import_module("_fsbpyr_rt.reexec")
+    monkeypatch.setattr(reexec, "_parent_runs_this_executable", lambda: True)
+    monkeypatch.setitem(boot.INFO, "build_info", json.dumps({"interpreter_reexec": setting}))
+    monkeypatch.setitem(posix.environ, b"FSBPYR_SELFTEST", b"1")
+    monkeypatch.setitem(sys.modules, "__main__", types.ModuleType("__main__"))
+    site = tmp_path / "cache" / "runtime" / boot.INFO["generation_id"].hex()[:32] / "site"
+    monkeypatch.setattr(sys, "argv", [boot.ROOT, f"{site}/tpl/sub.py", "c"])
+
+
+def test_a_site_path_where_no_cache_can_be_found_is_the_apps_argument(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """As before #118: the child's environment names no cache (no usable $HOME, say), so the
+    path cannot be told to be one of the payload's, and the app runs with it."""
+    native = importlib.import_module("_fsbpyr_rt.native")
+    _as_a_child(boot, monkeypatch, tmp_path, None)
+
+    def nowhere() -> None:
+        raise native.NativeCacheError("cannot locate a cache directory; set FSBPYR_CACHE_DIR")
+
+    monkeypatch.setattr(native, "native_cache", nowhere)
+
+    assert boot._interpreter_child() is False

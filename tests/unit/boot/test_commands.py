@@ -19,7 +19,6 @@ from fsbpyr.assemble import build_executable
 
 from ...support.apps import demo_app
 from .conftest import FAKE_RUNTIME
-from .test_boot import isolated_sys  # noqa: F401  # the fixture, used through usefixtures
 
 TABLE = "alpha=pkg.cli:main\nbeta=pkg.cli\nsolo.tool=pkg"
 EXE = "/opt/app/bin/tool"
@@ -177,7 +176,7 @@ def helper(boot: ModuleType, monkeypatch: pytest.MonkeyPatch) -> list[list[str]]
     reexec = importlib.import_module("_fsbpyr_rt.reexec")
     asked: list[list[str]] = []
 
-    def run_child(argv: list[str], *rest: object) -> bool:
+    def run_child(argv: list[str], *rest: object, **named: object) -> bool:
         asked.append(argv[:])
         return False
 

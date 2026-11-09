@@ -624,7 +624,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,840 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,854 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -639,13 +639,13 @@ run with the release launcher only, those two portability tests also on the two 
 | Layer | Files | Tests |
 |---|---|---|
 | `tests/unit` (top level) | 29 | 942 |
-| `tests/unit/boot` | 23 | 369 |
+| `tests/unit/boot` | 23 | 380 |
 | `tests/unit/builder` | 19 | 794 |
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 261 |
 | `tests/integration` | 17 | 860 |
-| `tests/e2e` | 45 | 1,173 |
-| All | 153 | 4,840 |
+| `tests/e2e` | 45 | 1,176 |
+| All | 153 | 4,854 |
 
 ### tests/unit (top level): 29 files, 942 tests
 
@@ -681,7 +681,7 @@ run with the release launcher only, those two portability tests also on the two 
 | [`test_vm_smoke.py`](../tests/unit/test_vm_smoke.py) | 29 | `tools/vm-smoke.py` without a VM ([The page-size smoke test](#the-page-size-smoke-test)): the pins file, the cpio writer and initramfs, the RPM reader, failing or mismatching downloads, console parsing and checks, the QEMU and kernel command lines, `/init`'s log level, a QEMU that exits at once. |
 | [`test_wiki.py`](../tests/unit/test_wiki.py) | 54 | The wiki's pages and `tools/wiki/`: every link of `wiki/*.md` has its target, the published form of a page, the import graphs the build draws, how publishing treats the wikis' history, and the messages, refusal and pinned keys that [User-Security](User-Security.md) shows against the code. The PDFs need pandoc and LuaLaTeX and are not built here (`make wiki-build`). |
 
-### tests/unit/boot: 23 files, 369 tests
+### tests/unit/boot: 23 files, 380 tests
 
 Most build an app with `FAKE_RUNTIME` and run the boot code in-process through the `boot`
 fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fixups.py`,
@@ -696,7 +696,7 @@ fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fix
 | [`test_execve_argv0.py`](../tests/unit/boot/test_execve_argv0.py) | 8 | `sys.argv[0]`: the path `execve` got (`execfn` in `_fsbpyr.info()`), made absolute without collapsing `..`; left alone without a path, after a renamed start or a re-exec, or without a working directory. |
 | [`test_fixups.py`](../tests/unit/boot/test_fixups.py) | 18 | `_fsbpyr_rt.fixups`, with fake SSL contexts, `ctypes.CDLL` and parso `FileIO`: the CA bundle fallback, bundled libraries by name, multiprocessing's executable, OpenCV's loader path, file times, argparse's `prog`. |
 | [`test_frozen_sources.py`](../tests/unit/boot/test_frozen_sources.py) | 1 | `inspect.getsource` of CPython-frozen stdlib modules falls back to the payload. |
-| [`test_fs_packages.py`](../tests/unit/boot/test_fs_packages.py) | 13 | fs-packages: files on disk before their code runs, code from the payload, resources as directories, extracted once per process (a `find_spec` before the import included), rechecked on import. |
+| [`test_fs_packages.py`](../tests/unit/boot/test_fs_packages.py) | 18 | fs-packages: files on disk before their code runs, code from the payload, resources as directories, extracted once per process (a `find_spec` before the import included), rechecked on import; a child started with a module's file in the native cache's site is a helper interpreter, for each setting (`boot.run()`), and the app's argument where no cache can be found. |
 | [`test_gc.py`](../tests/unit/boot/test_gc.py) | 25 | The app cache's collector (`_fsbpyr_rt.gc`): what it removes and never touches, one run at a time, the marker, a tree taken during collection (`tests/support/cache.py`'s `take`). |
 | [`test_init_module.py`](../tests/unit/boot/test_init_module.py) | 3 | `pkg.__init__` imports as a module of its own (`from .__init__ import x`), as in a venv. |
 | [`test_links_names.py`](../tests/unit/boot/test_links_names.py) | 4 | `_fsbpyr_rt.links`: a command name with a directory part (`../../evil`, `a/b`, `..`, `.`) makes no link. |
@@ -704,7 +704,7 @@ fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fix
 | [`test_native.py`](../tests/unit/boot/test_native.py) | 36 | `_fsbpyr_rt.native`, with `dlopen` faked: cache directory precedence, extension specs, a closure extracted once, damaged or symlinked cached files, unwritable caches, unsafe app names, bundled libraries by file name; a refused cache directory (`CacheRefused`) ending the start with exit 70 while other extraction failures stay errors, whatever their message; the `--fs-package` note. |
 | [`test_native_xz.py`](../tests/unit/boot/test_native_xz.py) | 1 | xz natives and their pieces extract without a thread of the runtime. |
 | [`test_pth_roots.py`](../tests/unit/boot/test_pth_roots.py) | 1 | Modules under a `.pth` directory import by their names relative to it. |
-| [`test_reexec.py`](../tests/unit/boot/test_reexec.py) | 45 | `_fsbpyr_rt.reexec`: `-m`, `-c` and payload scripts from the app's children run with interpreter-reexec, are refused without it, run the app with `false`; other callers get the app; `exe COMMAND -m word` runs that command. Without the setting, the app's own command scripts run as `python script` would, for its children only. |
+| [`test_reexec.py`](../tests/unit/boot/test_reexec.py) | 51 | `_fsbpyr_rt.reexec`: `-m`, `-c` and payload scripts from the app's children run with interpreter-reexec, are refused without it, run the app with `false`; other callers get the app; `exe COMMAND -m word` runs that command. Without the setting, the app's own command scripts run as `python script` would, for its children only. A script below the native cache's site (an fs-package's) counts only where a module says it lives, ahead of an overlay that holds the site, and is refused naming the path below it. |
 | [`test_resource_tree.py`](../tests/unit/boot/test_resource_tree.py) | 4 | Resources without a digest are rechecked by every process; a corrupt resources id is reported. |
 | [`test_restart.py`](../tests/unit/boot/test_restart.py) | 19 | `_fsbpyr_rt.restart`: in gunicorn's and Django's `[sys.executable] + sys.argv` restart, the executable's path after interpreter flags is dropped with them, as a venv script would see it; nothing else counts as a restart, and a common start loads nothing. |
 | [`test_scripts_overlay.py`](../tests/unit/boot/test_scripts_overlay.py) | 9 | The scripts root beside the executable: `__file__` there while code is the payload's, the path hook's claim, the script's directory first on `sys.path`, `get_data` from the payload, notes for a missing file. |
@@ -796,14 +796,14 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
 | [`test_worker_venvs.py`](../tests/integration/test_worker_venvs.py) | 10 | [`worker_venvs.py`](../tests/support/worker_venvs.py) on real pytest runs with three workers: each in an environment of its own, subprocesses included, removed after the run, and a worker in anything else stopping the run. |
 
-### tests/e2e: 45 files, 1,173 tests
+### tests/e2e: 45 files, 1,176 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
 | [`test_baseline.py`](../tests/e2e/test_baseline.py) | 4 | Each glibc baseline's stub and sysroot: the default stub needs no glibc symbol above 2.34, one linked against Rocky Linux 8.10's sysroot none above 2.28; `launcher/glibc.c` compiles against both header sets; each sysroot's `build_flags` build a C program. |
 | [`test_build.py`](../tests/e2e/test_build.py) | 55 | `fsbpyr build` on the fixtures: `hello` with `inspect --json --verify` and its SBOM, `clicky` from each lock source, the README quickstart, determinism and self-hosting, `cext` rebuilt against the sysroot, workspaces, dependency groups, editable requirements, the smoke test, `--strict`, `pylock.toml` hashes, Poetry 1, projects without scripts, legacy `scripts=`, compile warnings, a failed build cleaned up. |
 | [`test_cache_root.py`](../tests/e2e/test_cache_root.py) | 30 | The launcher's cache root checks (marked `sanitized`): roots below directories others may write to, symlinks and loops, `..`, relative roots, user namespaces, another user's symlink; a refused cache directory stopping an app at its extension's import with `fsbpyr: cannot start <executable>: refusing cache directory <path>: ...` and exit 70. |
-| [`test_compat.py`](../tests/e2e/test_compat.py) | 41 | The `compat` fixture's matrix against the venv, the `mp` fixture's start methods, helper interpreters and the instance limit, forged multiprocessing children, scripts through `sys.executable`, `sys.argv[0]`, the restart idiom, the `datafiles` checks, the build information tracing every dist to the lock. |
+| [`test_compat.py`](../tests/e2e/test_compat.py) | 44 | The `compat` fixture's matrix against the venv, the `mp` fixture's start methods, helper interpreters (also with `mp` an fs-package) and the instance limit, forged multiprocessing children, scripts through `sys.executable`, `sys.argv[0]`, the restart idiom, the `datafiles` checks, the build information tracing every dist to the lock. |
 | [`test_cores.py`](../tests/e2e/test_cores.py) | 6 | How many threads the launcher's parallel work runs on, through `probes/cores.c` on a pretend kernel: the CPUs the process may use, at most 8, also past the 1024 CPUs a `cpu_set_t` holds. |
 | [`test_corpus.py`](../tests/e2e/test_corpus.py) | 66 | One test per corpus app with wheels for the Python and machine (64 apps on 3.14), the `expect` check, and the `plugins` fixture ([The corpus](#the-corpus)). |
 | [`test_signatures.py`](../tests/e2e/test_signatures.py) | 163 | `launcher/sig.c` through `probes/sig.c`, and `_fsbpyr`'s functions on both launchers: RFC 8032, ACVP and all of Wycheproof's Ed25519 and ML-DSA-65 cases, malleated signatures, bad key files and their size limit, halves past the second, buffers OpenSSL fills to their bound, no library context, the openssl.cnf matrix, the error queue, sig.c's declarations against OpenSSL's headers. |

@@ -268,7 +268,10 @@ In an executable, `sys.executable` is the app. Two kinds of children start it ag
   of the command its parent runs, read from `/proc/<ppid>/cmdline`), as a venv's forkserver
   imports the console script.
 - **helper interpreters** (`_fsbpyr_rt.reexec`): `<exe> [flags] -m MODULE`, `-c CODE`, or a `.py`
-  file below `<exe>/` (in an app with scripts, also below the executable's directory). Only a
+  file below `<exe>/` (in an app with scripts, also below the executable's directory), or below
+  the native cache's site, where a module of an fs-package says it lives (torch's compile
+  workers: `<cache>/runtime/<generation>/site/torch/_inductor/compile_worker/__main__.py`; the
+  boot module looks for the end of that path, `_FS_SITE_TAIL`, before it imports anything). Only a
   child whose parent runs this executable counts; a shell, a script or a sudo rule gets the app.
   `interpreter_reexec` in `build_info` decides: `true` runs it as CPython would (interpreter flags
   accepted and ignored); `false` runs the app; not set refuses, with exit 70 and a message naming

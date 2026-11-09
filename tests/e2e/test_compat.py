@@ -182,12 +182,20 @@ def test_argv_is_never_run_as_python_code(mp_tmp: Path, tmp_path: Path) -> None:
     assert "cannot find context for '-I'" in result.stderr  # the app ran, with these args
 
 
+RAN = ["0 helper ['a']", "0 helper ['c']", "0 code ['-c', 'b']", "4"]
+FS = ("--fs-package", "mp")  # mp.helper's file is then below the native cache's site (#118)
+
+
 @pytest.mark.parametrize(
     ("options", "expected"),
-    [(("--interpreter-reexec",), ["0 helper ['a']", "0 helper ['c']", "0 code ['-c', 'b']", "4"]),
+    [(("--interpreter-reexec",), RAN),
      ((), ["70", "70", "70", "70"]),  # refused: running the app would start it again (D44)
-     (("--no-interpreter-reexec",), ["1", "1", "1", "1"])],  # the app, with those arguments
-    ids=["interpreter-reexec", "default", "false"],
+     (("--no-interpreter-reexec",), ["1", "1", "1", "1"]),  # the app, with those arguments
+     (("--interpreter-reexec", *FS), RAN),
+     (FS, ["70", "70", "70", "70"]),
+     (("--no-interpreter-reexec", *FS), ["1", "1", "1", "1"])],
+    ids=["interpreter-reexec", "default", "false", "interpreter-reexec fs-package",
+         "default fs-package", "false fs-package"],
 )  # fmt: skip
 def test_the_app_starts_helper_interpreters_only_when_built_so(
     mp_tmp: Path, tmp_path: Path, options: tuple[str, ...], expected: list[str]

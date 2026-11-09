@@ -61,6 +61,9 @@ if sys.version_info >= (3, 14) and _SCRIPT_APP:
 # The native cache's site directory (with "/"), once an FS_REQUIRED package was extracted
 # there: modules of such packages live below it, and the path hook claims it too.
 _FS_PREFIXES: list[str] = []
+# The end of that directory's path, which a child started with the file of such a module holds
+# (`_interpreter_child`; 32 is native.py's GENERATION_DIGITS): known without importing native.
+_FS_SITE_TAIL = "/runtime/" + INFO["generation_id"].hex()[:32] + "/site/"
 _FS_ROOTS: list[str] = []  # payload directories of the packages extracted there
 
 # (index, kind, flags, code, source, file, dist, path) as returned by _fsbpyr.find_module
@@ -813,8 +816,9 @@ def _interpreter_child(commands: "dict[str, str] | None" = None) -> bool:
     argv = sys.argv
     flagged = "-m" in argv[1:-1] or "-c" in argv[1:-1]
     roots = (_PREFIX, _BIN) if _SCRIPT_APP else _PREFIX  # a script is named by its __file__
-    if not flagged and not any(arg.startswith(roots) for arg in argv[1:]):
-        return False  # the common case costs three scans of argv
+    in_site = any(_FS_SITE_TAIL in arg for arg in argv[1:])  # an fs-package's module's file
+    if not flagged and not in_site and not any(arg.startswith(roots) for arg in argv[1:]):
+        return False  # the common case costs four scans of argv
     if commands is not None:
         from _fsbpyr_rt.commands import is_sibling  # type: ignore[import-not-found]  # noqa: PLC0415
 
@@ -824,7 +828,16 @@ def _interpreter_child(commands: "dict[str, str] | None" = None) -> bool:
 
     targets = commands.values() if commands is not None else (INFO["entrypoint"],)
     overlay = _BIN if _SCRIPT_APP else None
-    handled: bool = run_child(argv, INFO["build_info"], _PREFIX, tuple(targets), overlay)
+    site = None
+    if in_site:
+        from _fsbpyr_rt.native import NativeCacheError, native_cache  # noqa: PLC0415
+
+        try:
+            site = native_cache().site + "/"
+        except NativeCacheError:  # no cache to be found here: the path is the app's argument
+            site = None
+    handled: bool = run_child(argv, INFO["build_info"], _PREFIX, tuple(targets), overlay,
+                              site=site)
     return handled
 
 
