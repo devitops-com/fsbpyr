@@ -95,7 +95,7 @@ jobs:
     # system" checks what the tests need of it first. The runner's whole file system is at
     # /runner-host, where the step "Room on the runner's disk" removes what it does not need.
     container:
-      image: docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
+      image: docker.io/library/debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
       options: --privileged --pids-limit 8192 --memory 14g --memory-swap 14g
       volumes:
         - /mnt/fsbpyr-tmp:/var/tmp
@@ -436,7 +436,7 @@ jobs:
           - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
           - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
     container:
-      image: docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
+      image: docker.io/library/debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
       options: --pids-limit 8192 --memory 14g --memory-swap 14g  # as the suite job's
       volumes:
         - /:/runner-host
@@ -728,7 +728,7 @@ jobs:
         include:
           - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
           - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
-    container: docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
+    container: docker.io/library/debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
     timeout-minutes: 30
     env:
       TARGET: ${{ matrix.target }}
@@ -837,7 +837,7 @@ jobs:
         include:
           - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
           - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
-    container: docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
+    container: docker.io/library/debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
     timeout-minutes: 75
     env:
       ASSET: fsbpyr-${{ matrix.python }}-${{ matrix.target }}
@@ -920,7 +920,7 @@ jobs:
           - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
           - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
     container:
-      image: docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
+      image: docker.io/library/debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
       options: --privileged --pids-limit 8192 --memory 14g --memory-swap 14g  # as the suite job's
     timeout-minutes: 40
     steps:
@@ -1078,7 +1078,7 @@ jobs:
           - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
           - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
     container:
-      image: docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
+      image: docker.io/library/debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
       options: --pids-limit 8192 --memory 14g --memory-swap 14g  # as the suite job's
     timeout-minutes: 40
     env:

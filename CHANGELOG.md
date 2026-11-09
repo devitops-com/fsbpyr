@@ -174,6 +174,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   distributions' archives and the sysroots' packages among them are collected.
 
 ### Changed
+- **The release is built with uv 0.13.7 (was 0.13.6) on the current Debian trixie image**
+  (`debian:trixie@sha256:9c6e3814…`). `tools/release/uv.version` and the Containerfile name uv
+  0.13.7 with the SHA-256 of its release tarball for x86-64 and aarch64, as uv publishes them and
+  GitHub records them. Of the image's packages only `apt` and `libapt-pkg7.0` (3.0.3 to 3.0.4)
+  and `tzdata` (2026e to 2026f) differ from the last one, on amd64 and arm64. (#108)
 - **The launcher's line coverage is gated: 90% of fsbpyr's C code, and no file below 85%.** The
   full suite's report was informational and saw only what the probes and fuzz harnesses built;
   with `FSBPYR_LLVM_COV_DIR` set, the sanitized test launcher is now instrumented too, so
