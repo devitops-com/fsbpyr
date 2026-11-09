@@ -220,6 +220,7 @@ directly needs a clang 23 there. The tools, as `TOOLS` in `requires.py` lists th
 | `zstd`, `tar` | zstd, tar | unpack the LLVM tarball `bootstrap.sh` fetches; pack the one its tests make |
 | `xz`, `curl`, `wget`, `openssl` | xz-utils, curl, wget, openssl | `install.sh` and its tests: the release asset, downloads, the TLS certificate; `release-signing.sh`'s tests: ML-DSA-65 (OpenSSL 3.5 or newer) |
 | `jq` | jq | `previous-release.sh` reads GitHub's release list |
+| `time` | time | `make perf` (`tools/perf.py`) reads a run's peak resident set with GNU time |
 | `dash`, `bash`, `busybox` | dash, bash, busybox | the shells `install.sh`'s tests use; completion and release-script tests run `bash` or `dash` too |
 | `ls` | coreutils | a host binary whose glibc requirement a test reads |
 

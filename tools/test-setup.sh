@@ -8,8 +8,8 @@
 #     LLVM 23's own, tools/release/llvm23);
 #   - libc6-dev and libstdc++-14-dev: the headers and libraries the tests' C programs build
 #     against, with gcc or LLVM 23's clang (libFuzzer is C++);
-#   - gcc, strace, groff-base, zstd, xz-utils, wget, busybox, jq and openssl (3.5 or newer):
-#     tests that fail without them;
+#   - gcc, strace, groff-base, zstd, xz-utils, wget, busybox, jq, time (GNU time) and openssl
+#     (3.5 or newer): tests that fail without them;
 #   - libssl-dev (3.5 or newer): the headers that sig.c's hand-written declarations are compiled
 #     against, so a declaration that does not match fails the suite;
 #   - a user `tester` (uid 1000) in one supplementary group (testers), the user the suite runs
@@ -23,7 +23,7 @@ set -euo pipefail
 apt-get update -q
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
     llvm-22 libc6-dev libstdc++-14-dev gcc strace groff-base zstd xz-utils wget busybox openssl \
-    libssl-dev jq
+    libssl-dev jq time
 rm -rf /var/lib/apt/lists/*
 
 groupadd --gid 2000 testers
