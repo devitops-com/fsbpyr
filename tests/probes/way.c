@@ -14,7 +14,8 @@
  * With --wrap=fopen too: $PROBE_OVERFLOWUID and $PROBE_UID_MAP name the files read instead of
  * /proc/sys/kernel/overflowuid and /proc/self/uid_map ("-": it cannot be opened).
  * With --wrap=fstat,--wrap=fstatat: $PROBE_OWNED (a real path) is owned by $PROBE_OWNER (a uid),
- * one no test could make. With --wrap=malloc: $PROBE_FAIL_MALLOC=N fails the walk's Nth malloc.
+ * one no test could make, and with $PROBE_OWNED_MODE (octal) has those permission bits ("/" a
+ * sticky directory, say). With --wrap=malloc: $PROBE_FAIL_MALLOC=N fails the walk's Nth malloc.
  */
 #include "way.h"
 
@@ -65,11 +66,14 @@ FILE *__wrap_fopen(const char *path, const char *mode) {
     return __real_fopen(instead != NULL ? instead : path, mode);
 }
 
-/* The owner $PROBE_OWNER for $PROBE_OWNED: ``path`` is where ``st`` was taken. */
+/* The owner $PROBE_OWNER and the bits $PROBE_OWNED_MODE for $PROBE_OWNED: ``path`` is where
+ * ``st`` was taken. */
 static void owned(const char *path, struct stat *st) {
     const char *which = getenv("PROBE_OWNED"), *owner = getenv("PROBE_OWNER");
-    if (which != NULL && owner != NULL && strcmp(path, which) == 0)
-        st->st_uid = (uid_t)strtoul(owner, NULL, 10);
+    const char *mode = getenv("PROBE_OWNED_MODE");
+    if (which == NULL || owner == NULL || strcmp(path, which) != 0) return;
+    st->st_uid = (uid_t)strtoul(owner, NULL, 10);
+    if (mode != NULL) st->st_mode = (st->st_mode & S_IFMT) | (mode_t)strtoul(mode, NULL, 8);
 }
 
 /* The path of the directory ``fd`` (O_PATH too) into ``path``; "" if it cannot be told. */

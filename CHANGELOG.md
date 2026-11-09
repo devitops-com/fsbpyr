@@ -32,6 +32,14 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   now records (owner, 2026-11-08). It gates nothing. The first table, 0.31.0 against 0.30.0, is in.
 
 ### Fixed
+- **In a user namespace, a way to the cache root that leaves a sticky directory is no longer
+  refused.** Once the way had passed a directory others may add to (`/tmp`), the launcher and the
+  collector (`way.c`, `gc.way_problem`) took everything after it as below it, so where `/` shows
+  as nobody's (`unshare -r`, a rootless sandbox), a symlink in `/tmp` with an absolute target was
+  refused at `/`, and a `..` back to `/tmp` or above it at `/tmp` or above, as "owned by another
+  user". Now the walk is below that directory only while it is in it: back at it or above it, an
+  owner outside the namespace counts as root's again, as when the walk first came there. Below
+  it, nothing changes.
 - **The installer writes only into files it made.** It staged the executable, the man page and
   the completions under names known in advance (`.fsbpyr.<process id>.tmp`), so a link planted
   under such a name by someone who could write the directory was written through. `mktemp` makes

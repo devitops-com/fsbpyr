@@ -106,6 +106,64 @@ def test_a_symlink_of_another_user_is_refused(
                                                                   reason=FOREIGN)  # fmt: skip
 
 
+def _shown_outside(monkeypatch: pytest.MonkeyPatch, shown: str, mode: int | None = None) -> None:
+    """``shown`` owned by 4242, an owner outside the namespace (as nobody in one), and with
+    ``mode`` its permission bits."""
+    lstat, outside_owner = os.lstat, gc._outside_owner
+
+    def outside(path: str | os.PathLike[str]) -> os.stat_result:
+        info = lstat(path)
+        if os.fspath(path) != shown:
+            return info
+        bits = info.st_mode if mode is None else info.st_mode & ~0o7777 | mode
+        return os.stat_result((bits, info.st_ino, info.st_dev, info.st_nlink, 4242, info.st_gid,
+                               info.st_size, 0, 0, 0))  # fmt: skip
+
+    monkeypatch.setattr(os, "lstat", outside)
+    monkeypatch.setattr(gc, "_outside_owner", lambda uid: uid == 4242 or outside_owner(uid))
+
+
+def test_an_outside_owner_counts_above_any_sticky_directory_not_at_slash_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first directory below "/" on the way (/tmp or /home, say) shown as nobody's, not
+    sticky."""
+    base = Path(os.path.realpath(tmp_path))
+    _shown_outside(monkeypatch, f"/{base.parts[1]}", 0o755)
+
+    assert gc.way_problem(str(base)) is None
+
+
+@pytest.mark.parametrize(("way", "owned", "mode", "refused"), [
+    ("s/link", "/", None, False),  # the link's absolute target: from "/" again
+    ("s/sub/..", "/", None, False),  # on up to "/"
+    ("/..", "/", 0o1777, False),  # "/" itself the sticky one: back at it, as at the start
+    ("s/sub/../inside", "s/inside", None, True),  # a ".." that stays below it
+    ("s/link/../s/inside", "s/inside", None, True),  # the target's way below it again
+], ids=["absolute target", "dot dot above", "dot dot to it", "dot dot below",
+        "below again"])  # fmt: skip
+def test_a_walk_that_leaves_a_sticky_directory_is_no_longer_below_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, way: str, owned: str, mode: int | None,
+    refused: bool,
+) -> None:
+    """way.c's rule: an owner outside the namespace counts again once a symlink's absolute target
+    starts from "/" or a ".." goes back to the sticky directory or above it, not below it."""
+    base = Path(os.path.realpath(tmp_path))
+    sticky = base / "s"
+    sticky.mkdir()
+    sticky.chmod(0o1777)
+    for directory in (sticky / "sub", sticky / "inside", base / "target"):
+        directory.mkdir()
+    (sticky / "link").symlink_to(base / "target")
+    shown = "/" if owned == "/" else str(base / owned)
+    _shown_outside(monkeypatch, shown, mode)
+    root = way if way.startswith("/") else f"{base}/{way}"
+    if way == "s/sub/..":  # on up to "/": a ".." for each part of the base
+        root += "/.." * len(base.parts)
+
+    assert gc.way_problem(root) == (Problem(shown, reason=FOREIGN) if refused else None)
+
+
 def test_a_symlink_is_followed_and_its_targets_way_checked(tmp_path: Path, exposed: Path) -> None:
     (tmp_path / "trusted" / "cache").mkdir(parents=True)
     (exposed / "cache").mkdir()
@@ -188,6 +246,25 @@ def test_below_a_shared_directory_an_owner_outside_the_namespace_is_refused() ->
     out = _in_a_namespace([requires.tool("unshare"), "-r"], shown / "cache")
 
     assert out == repr(Problem(str(shown), reason=FOREIGN))
+
+
+@requires.tools("unshare")
+def test_in_a_user_namespace_a_walk_that_leaves_a_sticky_directory_is_no_longer_below_it(
+    tmp_path: Path,
+) -> None:
+    """There "/" shows as nobody's: a symlink's absolute target in a sticky directory, and a ".."
+    above one, are walked as from "/"."""
+    base = Path(os.path.realpath(tmp_path))
+    sticky = base / "s"
+    sticky.mkdir()
+    sticky.chmod(0o1777)
+    (sticky / "sub").mkdir()
+    (base / "target").mkdir()
+    (sticky / "link").symlink_to(base / "target")
+    unshare = [requires.tool("unshare"), "-r"]
+
+    assert _in_a_namespace(unshare, sticky / "link" / "cache") == "None"
+    assert _in_a_namespace(unshare, f"{sticky}/sub" + "/.." * len(base.parts)) == "None"
 
 
 @requires.tools("podman")
