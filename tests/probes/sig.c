@@ -13,8 +13,11 @@
  * first, as CPython's _hashlib and _ssl may have done before a check runs: none, crypto
  * (OPENSSL_init_crypto), ssl (SSL_CTX_new) or digests (EVP_MD_do_all_provided on the default
  * context). A failed setup exits 3, a bad queue 4; nothing here frees less than it allocates, so
- * LeakSanitizer sees sig.c's leaks only. Built with -Wl,--wrap=EVP_DigestVerify: with
- * $PROBE_VERIFY_RESULT set, each verify returns that, which no input can make OpenSSL do.
+ * LeakSanitizer sees sig.c's leaks only. A file is read into a buffer of its size, so ASan sees a
+ * read past its end. Built with -Wl,--wrap=EVP_DigestVerify: with $PROBE_VERIFY_RESULT set, each
+ * verify returns that, which no input can make OpenSSL do. With --wrap=BIO_ctrl too:
+ * $PROBE_BIO_LENGTH=N makes what a memory BIO holds N bytes (of 'A'), as if OpenSSL had written
+ * them; with --wrap=OSSL_LIB_CTX_new: $PROBE_FAIL_LIBCTX fails every new library context.
  */
 #include "integrity.h"
 #include "sig.h"
@@ -40,8 +43,13 @@ unsigned long ERR_get_error(void);
 unsigned long ERR_peek_error(void);
 #define ERR_LIB_USER 128
 #define OWN_REASON 7
+#define MAX_FILE (4u << 20)
+#define SETUP_FAILED 3
+#define BAD_QUEUE 4
 
 int __real_EVP_DigestVerify(void *, const unsigned char *, size_t, const unsigned char *, size_t);
+long __real_BIO_ctrl(void *, int, long, void *);
+void *__real_OSSL_LIB_CTX_new(void);
 
 int __wrap_EVP_DigestVerify(void *context, const unsigned char *signature, size_t signature_size,
                             const unsigned char *message, size_t message_size) {
@@ -50,9 +58,23 @@ int __wrap_EVP_DigestVerify(void *context, const unsigned char *signature, size_
     return forced != NULL ? atoi(forced) : result;
 }
 
-#define MAX_FILE (4u << 20)
-#define SETUP_FAILED 3
-#define BAD_QUEUE 4
+#define BIO_CTRL_INFO 3 /* BIO_get_mem_data, as sig.c reads a memory BIO */
+
+long __wrap_BIO_ctrl(void *bio, int command, long number, void *pointer) {
+    static char written[FSB_SIG_PEM_MAX + 1];
+    const char *length = getenv("PROBE_BIO_LENGTH");
+    if (command != BIO_CTRL_INFO || length == NULL)
+        return __real_BIO_ctrl(bio, command, number, pointer);
+    long n = atol(length);
+    if (n < 0 || (size_t)n > sizeof written) exit(SETUP_FAILED);
+    memset(written, 'A', (size_t)n);
+    *(char **)pointer = written;
+    return n;
+}
+
+void *__wrap_OSSL_LIB_CTX_new(void) {
+    return getenv("PROBE_FAIL_LIBCTX") != NULL ? NULL : __real_OSSL_LIB_CTX_new();
+}
 
 struct bytes {
     uint8_t *data;
@@ -66,6 +88,9 @@ static struct bytes slurp(const char *path) {
     for (ssize_t got; (got = read(fd, read_in.data + read_in.size, MAX_FILE - read_in.size)) > 0;)
         read_in.size += (size_t)got;
     close(fd);
+    uint8_t *exact = realloc(read_in.data, read_in.size > 0 ? read_in.size : 1);
+    if (exact == NULL) exit(SETUP_FAILED);
+    read_in.data = exact;
     return read_in;
 }
 

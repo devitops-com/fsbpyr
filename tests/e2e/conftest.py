@@ -15,7 +15,7 @@ from fsbpyr.build import TARGET_PYTHON
 from fsbpyr.cli import main
 from fsbpyr.payload.format import FileKind, ModuleKind
 from fsbpyr.payload.spec import Blob, File, Module
-from fsbpyr.runtime import pbs, pins, registry, stub
+from fsbpyr.runtime import registry, stub
 from fsbpyr.runtime.toolchain import ToolchainError, find_toolchain
 
 from ..support import baseline, corpus, downloads, requires
@@ -196,11 +196,11 @@ class LauncherBuild:
 
 
 @pytest.fixture(scope="session")
-def launcher_build(
-    runtime: registry.Runtime, tmp_path_factory: pytest.TempPathFactory
-) -> LauncherBuild:
-    pin = pins.pin_for(runtime.python_version.rpartition(".")[0], registry.host_triple())
-    dist = pbs.fetch(pin, registry.cache_root())
+def launcher_build(tmp_path_factory: pytest.TempPathFactory) -> LauncherBuild:
+    """The tests' Python's pinned distribution (kept in FSBPYR_TEST_DOWNLOADS when it is set) and
+    clang: no runtime is built for it, so a run of probes alone (tools/mutate-c.py's, for one)
+    compiles the launcher sources and nothing else."""
+    dist = downloads.pbs_distribution(TARGET_PYTHON)
     sources = tmp_path_factory.mktemp("launcher-sources")
     stub._copy_launcher(sources)
     libs = tuple(dist.root / "build" / "lib" / name

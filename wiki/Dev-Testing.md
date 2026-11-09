@@ -27,7 +27,7 @@ fsbpyr's test suite is in [`tests/`](../tests). The modules it tests have their 
 (`from ..support import corpus`). [`tests/conftest.py`](../tests/conftest.py) keeps pytest out of
 the corpus apps' own tests (`collect_ignore_glob = ["corpus/*"]`).
 
-![The test layers and the make targets that run them: make test-ci runs tests/unit, tests/integration and fifteen end-to-end files; make test and make test-container run unit, integration, e2e, probes and fuzzer, make test also the portability tests; make test-corpus the corpus; make test-portability the portability tests; make test-el8-stub nineteen end-to-end files and test_test_modes.py in the EL8 test mode, then test_el8.py; make test-el8-portability the portability tests in that mode; make test-vm tools/vm-smoke.py, aarch64 apps in a QEMU VM with 64 KiB pages. Unit tests run in-process, the boot code against the _fsbpyr stand-in; e2e tests run executables with the release, ASan/UBSan and glibc 2.28 launchers; the corpus compares real apps with their venv.](images/testing-layers.svg)
+![The test layers and the make targets that run them: make test-ci runs tests/unit, tests/integration and fifteen end-to-end files; make test and make test-container run unit, integration, e2e, probes and fuzzer, make test also the portability tests; make test-corpus the corpus; make test-portability the portability tests; make test-el8-stub twenty end-to-end files and test_test_modes.py in the EL8 test mode, then test_el8.py; make test-el8-portability the portability tests in that mode; make test-vm tools/vm-smoke.py, aarch64 apps in a QEMU VM with 64 KiB pages. Unit tests run in-process, the boot code against the _fsbpyr stand-in; e2e tests run executables with the release, ASan/UBSan and glibc 2.28 launchers; the corpus compares real apps with their venv.](images/testing-layers.svg)
 
 ## How the layers work
 
@@ -66,8 +66,10 @@ Python's runtime linked for glibc 2.28 in the same way (release launcher only), 
 one `fsbpyr build --glibc 2.28` puts into apps; in the EL8 test mode `runtime` is that runtime
 too.
 
-`launcher_build` gives the runtime build's clang, the launcher's sources and the runtime's
-`libzstd.a`, `liblzma.a` and `libcrypto.a`; `LauncherBuild.compile` links a probe from
+`launcher_build` gives the runtime build's clang, the launcher's sources and the pinned CPython
+distribution's `libzstd.a`, `liblzma.a` and `libcrypto.a` (from the kept downloads; it builds no
+runtime, so a run of probes alone compiles the launcher sources and nothing else);
+`LauncherBuild.compile` links a probe from
 [`tests/probes`](../tests/probes) or the fuzz harness with the launcher sources it names, as
 `clang -std=c11 -D_GNU_SOURCE -g -O1` plus the test's flags. `app_content` turns
 `{path: source}` pure-Python files into an app, which `build_app` builds. Most files that build
@@ -168,9 +170,12 @@ The tests set `FSBPYR_CACHE_DIR` (a private cache for almost every executable th
 `PYTHONUNBUFFERED`, `JOURNAL_STREAM` and others for the code they run, and
 `FSBPYR_RELEASE_DOWNLOADS` to point downloads of release assets at a `FakeReleases` server.
 `contain.run` tags its processes with `FSBPYR_TEST_CONTAINED=<token>`. The C probes read
-`PROBE_*` switches (`PROBE_FREE`, `PROBE_RELEASE`, `PROBE_OUT`, `PROBE_SESSION`,
-`PROBE_OLD_GLIBC`, `PROBE_NO_LINK`, `PROBE_DECOY`, `PROBE_EUID`, `PROBE_VERIFY_RESULT`,
-`PROBE_NO_SPACE`, `PROBE_LONGER`),
+`PROBE_*` switches (`PROBE_BIO_LENGTH`, `PROBE_CLOSE_STDIN`, `PROBE_DECOY`, `PROBE_EUID`,
+`PROBE_FAIL_LIBCTX`, `PROBE_FAIL_MALLOC`, `PROBE_FDS`, `PROBE_FREE`, `PROBE_LENGTH`, `PROBE_LINK`,
+`PROBE_LINK_ERRNO`, `PROBE_LONGER`, `PROBE_NO_CLOSE_RANGE`, `PROBE_NO_CONTEXT`, `PROBE_NO_LINK`,
+`PROBE_NO_MEMORY`, `PROBE_NO_PROC`, `PROBE_NO_SPACE`, `PROBE_OLD_GLIBC`, `PROBE_OUT`,
+`PROBE_OVERFLOWUID`, `PROBE_OWNED`, `PROBE_OWNER`, `PROBE_PASSWD_HOME`, `PROBE_RELEASE`,
+`PROBE_SESSION`, `PROBE_UID_MAP`, `PROBE_VERIFY_RESULT`),
 described in each probe's header comment.
 
 `make` variables ([`Makefile`](../Makefile)): `JOBS` (pytest-xdist processes, default 8),
@@ -335,10 +340,11 @@ build and a default one. In the mode:
 `make test-el8-stub` runs in the mode, in `JOBS` processes with `-m "not podman"`,
 `test_runtime_app.py`, `test_imports.py`, `test_stub_hardening.py`, `test_edges.py`,
 `test_cache_root.py`, `test_gc.py`, `test_slots.py`, `test_due.py`, `test_restore.py`,
-`test_find_object.py`, `test_way_targets.py`, `test_read_failures.py`, `test_cores.py`,
-`test_streaming.py`, `test_stream_windows.py`, `test_unbuffered.py`, `test_digests.py`,
-`test_compat.py` and `test_natives.py` of `tests/e2e` (the launcher, the `_fsbpyr` contract, and
-apps with natives from manylinux_2_28 wheels) and `tests/unit/test_test_modes.py`, then
+`test_find_object.py`, `test_way_targets.py`, `test_way.py`, `test_read_failures.py`,
+`test_cores.py`, `test_streaming.py`, `test_stream_windows.py`, `test_unbuffered.py`,
+`test_digests.py`, `test_compat.py` and `test_natives.py` of `tests/e2e` (the launcher, the
+`_fsbpyr` contract, and apps with natives from manylinux_2_28 wheels) and
+`tests/unit/test_test_modes.py`, then
 `tests/e2e/test_el8.py` outside the mode, as it compares an EL8 build with a default one.
 `make test-el8-portability` runs `test_portability.py` in the mode; `make test-el8` runs both.
 `test_el8_use_cases.py` is in neither; `make test` runs it.
@@ -553,10 +559,11 @@ the probes and the fuzz harness, when `FSBPYR_LLVM_COV_DIR` is set.
 | `make test-container` | Everything but `test_portability.py` and the corpus, with `-m "not podman"`, in the Containerfile's `test` stage (Debian trixie, user `tester`, `--privileged`, Pythons 3.12 to 3.15, a `/var/tmp` tmpfs that allows set-id bits); needs podman. |
 | `make test-corpus` | `tests/e2e/test_corpus.py` in `JOBS` processes (`--dist load`); needs the network for wheels. |
 | `make test-portability` | Builds the four portability apps with `dist/fsbpyr` (`tools/portability-apps.sh`) and runs `tests/e2e/test_portability.py` on 12 distributions; needs podman, llvm-objdump and a `make build` first. |
-| `make test-el8-stub` | In the [EL8 test mode](#the-el8-test-mode), the nineteen end-to-end files that run the stub and `tests/unit/test_test_modes.py` (`--dist loadfile`, `-m "not podman"`); then `tests/e2e/test_el8.py` outside the mode. |
+| `make test-el8-stub` | In the [EL8 test mode](#the-el8-test-mode), the twenty end-to-end files that run the stub and `tests/unit/test_test_modes.py` (`--dist loadfile`, `-m "not podman"`); then `tests/e2e/test_el8.py` outside the mode. |
 | `make test-el8-portability` | `test_portability.py` in the EL8 test mode, on the 12 distributions and `rockylinux:8`, `almalinux:8`; needs podman. |
 | `make test-el8` | Its prerequisites `test-el8-stub` and `test-el8-portability`. |
 | `make test-vm` | `tools/vm-smoke.py $(VM_ARGS)` ([The page-size smoke test](#the-page-size-smoke-test)); needs `qemu-system-aarch64`. No pytest run. |
+| `make mutate` | `tools/mutate-c.py FILE TESTS`: one mutant at a time of the launcher source `FILE` (a comparison, `&&` and `||`, a returned constant, `+ 1` and `- 1`; never in comments, strings or preprocessor lines), in a copy of the checkout, against `TESTS`; lists the survivors, and the runs the timeout killed apart (`MUTATE_ARGS="--timeout S"` when each mutant rebuilds a runtime). A campaign by hand, never in CI. |
 
 Every test target but `test-container` runs in a fresh temporary directory under `TESTTMP`,
 removed at the end, and all but `test-vm` with LLVM 23 first on `PATH`; those that
@@ -616,7 +623,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,769 in 151 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,822 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -630,16 +637,16 @@ run with the release launcher only, those two portability tests also on the two 
 
 | Layer | Files | Tests |
 |---|---|---|
-| `tests/unit` (top level) | 28 | 937 |
+| `tests/unit` (top level) | 29 | 942 |
 | `tests/unit/boot` | 23 | 362 |
 | `tests/unit/builder` | 19 | 789 |
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 261 |
 | `tests/integration` | 17 | 860 |
-| `tests/e2e` | 44 | 1,119 |
-| All | 151 | 4,769 |
+| `tests/e2e` | 45 | 1,167 |
+| All | 153 | 4,822 |
 
-### tests/unit (top level): 28 files, 937 tests
+### tests/unit (top level): 29 files, 942 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -655,6 +662,7 @@ run with the release launcher only, those two portability tests also on the two 
 | [`test_elf_mutation.py`](../tests/unit/test_elf_mutation.py) | 1 | Hypothesis (1,000 examples): mutated ELF bytes are read by `fsbpyr.elf` or raise `ElfError`, nothing else. |
 | [`test_inspect.py`](../tests/unit/test_inspect.py) | 54 | `fsbpyr inspect` on `FAKE_RUNTIME` executables: text and JSON, columns, `--verify`, licences, files, lock and settings lines, older formats, damaged records, a glibc 2.28 app's `baseline` and `glibc_baseline`, file text that cannot drive the terminal. |
 | [`test_launcher_coverage_gate.py`](../tests/unit/test_launcher_coverage_gate.py) | 7 | `tools/launcher-coverage.py`, the gate on the launcher's line coverage: only fsbpyr's C code counts (not CPython's headers, the vendored zstd or the tests' sources), 90% in all and 85% per file, its output and bad input. |
+| [`test_mutate_tool.py`](../tests/unit/test_mutate_tool.py) | 5 | `tools/mutate-c.py` (`make mutate`) on a small tree with a shell command for its tests: which mutants a source has (code only), a mutant's change, killed and surviving ones, a run past the timeout killed with what it started and said to be one, and what stops it. |
 | [`test_no_skips.py`](../tests/unit/test_no_skips.py) | 2 | The `ast` scan of [A skip fails the run](#a-skip-fails-the-run), and that it finds each use. |
 | [`test_perf_tool.py`](../tests/unit/test_perf_tool.py) | 11 | `tools/perf.py` (`make perf`) without measuring: its percentages, percentiles and table, the trace line, the order of interleaved runs, GNU time's peak RSS, a failing run and a missing fsbpyr. |
 | [`test_poetry1.py`](../tests/unit/test_poetry1.py) | 32 | `fsbpyr.poetry1`: a Poetry 1 `pyproject.toml` without `[project]` read as one: constraints as PEP 440, `\|\|` and git dependencies refused, optional dependencies as extras, markers, which projects are unpackaged. |
@@ -787,7 +795,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
 | [`test_worker_venvs.py`](../tests/integration/test_worker_venvs.py) | 10 | [`worker_venvs.py`](../tests/support/worker_venvs.py) on real pytest runs with three workers: each in an environment of its own, subprocesses included, removed after the run, and a worker in anything else stopping the run. |
 
-### tests/e2e: 44 files, 1,119 tests
+### tests/e2e: 45 files, 1,167 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -797,7 +805,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_compat.py`](../tests/e2e/test_compat.py) | 41 | The `compat` fixture's matrix against the venv, the `mp` fixture's start methods, helper interpreters and the instance limit, forged multiprocessing children, scripts through `sys.executable`, `sys.argv[0]`, the restart idiom, the `datafiles` checks, the build information tracing every dist to the lock. |
 | [`test_cores.py`](../tests/e2e/test_cores.py) | 6 | How many threads the launcher's parallel work runs on, through `probes/cores.c` on a pretend kernel: the CPUs the process may use, at most 8, also past the 1024 CPUs a `cpu_set_t` holds. |
 | [`test_corpus.py`](../tests/e2e/test_corpus.py) | 66 | One test per corpus app with wheels for the Python and machine (64 apps on 3.14), the `expect` check, and the `plugins` fixture ([The corpus](#the-corpus)). |
-| [`test_signatures.py`](../tests/e2e/test_signatures.py) | 153 | `launcher/sig.c` through `probes/sig.c`, and `_fsbpyr`'s functions on both launchers: RFC 8032, ACVP and all of Wycheproof's Ed25519 and ML-DSA-65 cases, malleated signatures, bad key files, the openssl.cnf matrix, the error queue, sig.c's declarations against OpenSSL's headers. |
+| [`test_signatures.py`](../tests/e2e/test_signatures.py) | 163 | `launcher/sig.c` through `probes/sig.c`, and `_fsbpyr`'s functions on both launchers: RFC 8032, ACVP and all of Wycheproof's Ed25519 and ML-DSA-65 cases, malleated signatures, bad key files and their size limit, halves past the second, buffers OpenSSL fills to their bound, no library context, the openssl.cnf matrix, the error queue, sig.c's declarations against OpenSSL's headers. |
 | [`test_signing.py`](../tests/e2e/test_signing.py) | 36 | `key`, `sign`, `verify` and signing in `build` on a built fsbpyr with test keys pinned, against the release script: the passphrase on a pty, what the build's processes get, where a `.sig` goes, planted modules, this tree's own pins refusing test keys. |
 | [`test_verify.py`](../tests/e2e/test_verify.py) | 66 | `verify` on a built fsbpyr with test keys pinned: files named by option and variable, no fallback; a file of fsbpyr against its release on a local server, with a replayed signature, another key or project, a forged tag, a bad file beside it, no network; the warning; the Security chapter's quick start as printed. |
 | [`test_selfupdate.py`](../tests/e2e/test_selfupdate.py) | 9 | `self update` of a built fsbpyr with test keys pinned, from `FakeGitHub`, to a second build: unsigned, signed by an unpinned key, a `.xz` not matching its line, an older build served as new, three pins, a client that skipped a key change. |
@@ -824,7 +832,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_pipfile_lock.py`](../tests/e2e/test_pipfile_lock.py) | 5 | `foreign/pipenv`: builds from the lock's `default` section, a stale lock warns (an error with `--strict`), a changed hash fails, a Python-less directory builds the tool. |
 | [`test_portability.py`](../tests/e2e/test_portability.py) | 35 | `hello`, `heavy`, `heavy-pip` and `compat` in each image with `podman run --network=none`, with `FSBPYR_SELFTEST=natives` and the reported libraries and glibc against `llvm-objdump`; `test_el8_apps_run_on_el8` (two items) runs glibc 2.28 builds of `hello` and a cryptography app (prebuilt `hello-el8` and `native-el8`, else built) on `rockylinux:8` and `almalinux:8`. Marked `podman`. |
 | [`test_read_failures.py`](../tests/e2e/test_read_failures.py) | 7 | The launcher's blob reads out of memory through `probes/reads.c` (`ZSTD_createDCtx`, `ZSTD_decompress`, `ZSTD_decompressStream`, `lzma_stream_buffer_decode` and `madvise` wrapped): every compressed codec's read or stream that the wrapped function serves fails with `ENOMEM` or `FSB_STREAM_MEMORY`, pieces on helper threads too, and corrupt data stays corrupt when dropping the payload's pages fails; a stub linked with `probes/no_context.c` starts out of memory with `out of memory`, not `corrupt startup module`. |
-| [`test_restore.py`](../tests/e2e/test_restore.py) | 12 | The cache sync's writers through `probes/restore.c` (`renameat`, `linkat`, `pthread_create`, `pwrite` wrapped): whole files, helper threads, unnamed files linked or renamed into place, the thread limit, the first failure in path order, a full disk under a leaf of a pooled file and of one in pieces. |
+| [`test_restore.py`](../tests/e2e/test_restore.py) | 13 | The cache sync's writers through `probes/restore.c` (`renameat`, `linkat`, `pthread_create`, `pwrite` wrapped): whole files, helper threads, unnamed files linked or renamed into place, the thread limit, the first failure in path order, a full disk under a leaf of a pooled file and of one in pieces; `fsb_cache_safe` (`restore --safe`) against the payload reader's rule on every path of up to four characters of `a`, `.`, `/`, a backslash and NUL. |
 | [`test_runtime_app.py`](../tests/e2e/test_runtime_app.py) | 92 | Small apps from `build_app`, mostly marked `sanitized`: exit codes, tracebacks, signals, set-gid refusal, the whole-file check, damaged records, unsafe paths, resource limits (the file-size one also on zstd pieces), the block cache, an owner's set-uid start, the payload on a 64 KiB boundary, `stubs/_fsbpyr.pyi` against the module. |
 | [`test_scripts.py`](../tests/e2e/test_scripts.py) | 21 | The `scripts` fixture (`uv init --no-package`) runs as `uv run main.py` does: the tree untouched, reproducible builds, a module with `[project.scripts]`, no top-level code run by the build, several guarded modules, clashing names, missing imports, main-guard reads only for `--entry`'s module; and the `foreign` Poetry 2 and PDM projects. |
 | [`test_single_script.py`](../tests/e2e/test_single_script.py) | 12 | One script as an executable printing what `python3 <script>` prints: `dist/<stem>`, only its closure, `uv run` scripts, its block's dependencies, settings and `requires-python`, the freeze hint, a venv's pins and a script lock, nothing written beside it. |
@@ -834,6 +842,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_stub_hardening.py`](../tests/e2e/test_stub_hardening.py) | 6 | The stub read with `readelf` and `objdump`: position independent, glibc libraries only, bound at load time, RELRO, non-executable stack, stack protector. |
 | [`test_tool_binary.py`](../tests/e2e/test_tool_binary.py) | 17 | A Python-less directory with a requirements file as one executable of the tools' console scripts (real pyflakes, pycodestyle and flake8, local distributions): links printing what the tools print under uv, no script payload, licences, freezes, `pylock.toml`, `--requirements`, `--entry`, gui scripts, meta-packages, the errors, a venv never read. |
 | [`test_unbuffered.py`](../tests/e2e/test_unbuffered.py) | 8 | `PYTHONUNBUFFERED` set and non-empty: a line printed to a pipe arrives at once and survives SIGTERM; `JOURNAL_STREAM` naming the stdout pipe makes it line-buffered; otherwise block-buffered. |
+| [`test_way.py`](../tests/e2e/test_way.py) | 37 | The cache root's way case by case through `probes/way.c`: the overflow uid outside the user namespace (faked `/proc` files, for `/`) and not below a sticky directory, 40 symlinks and the 41st, empty and failed link reads, the buffers at their bounds, `.` and `..`, names of `NAME_MAX` bytes and longer, relative roots, a removed working directory, failed allocations, descriptor 0. What `make mutate FILE=way.c` found untested. |
 | [`test_way_targets.py`](../tests/e2e/test_way_targets.py) | 2 | The cache root's way through `probes/way.c` (`readlinkat` wrapped) on symlink targets no local file system makes: one of `PATH_MAX` bytes, which may have been cut short, refused; one a byte shorter followed to its end. |
 
 ## Support modules
@@ -885,10 +894,10 @@ controls. Each probe's header comment lists its commands and switches.
 | [`probes/no_context.c`](../tests/probes/no_context.c) | the whole stub (`build_stub`) | `--wrap=ZSTD_createDCtx` | `test_read_failures.py` |
 | [`probes/reads.c`](../tests/probes/reads.c) | `payload.c`, `integrity.c`, `parallel.c` | `--wrap=ZSTD_createDCtx,--wrap=ZSTD_decompress,--wrap=ZSTD_decompressStream,--wrap=lzma_stream_buffer_decode,--wrap=madvise`, ASan, UBSan | `test_read_failures.py` |
 | [`probes/restore.c`](../tests/probes/restore.c) | `cache.c`, `way.c`, `payload.c`, `integrity.c`, `parallel.c` | `--wrap=renameat,--wrap=linkat,--wrap=pthread_create,--wrap=pwrite`, ASan, UBSan | `test_restore.py` |
-| [`probes/sig.c`](../tests/probes/sig.c) | `sig.c`, `integrity.c`, `parallel.c` | `-DFSB_SIG_NO_PYTHON`, `--wrap=EVP_DigestVerify`, ASan, UBSan, LeakSanitizer | `test_signatures.py` |
+| [`probes/sig.c`](../tests/probes/sig.c) | `sig.c`, `integrity.c`, `parallel.c` | `-DFSB_SIG_NO_PYTHON`, `--wrap=EVP_DigestVerify,--wrap=BIO_ctrl,--wrap=OSSL_LIB_CTX_new`, ASan, UBSan, LeakSanitizer | `test_signatures.py` |
 | [`probes/slots.c`](../tests/probes/slots.c) | `slots.c` | `--wrap=geteuid`, UBSan | `test_slots.py` |
 | [`probes/streams.c`](../tests/probes/streams.c) | `payload.c`, `integrity.c`, `parallel.c` | `-DFSB_STREAM_WINDOW` of 2 MiB, ASan, UBSan | `test_stream_windows.py` |
-| [`probes/way.c`](../tests/probes/way.c) | `way.c` | `--wrap=readlinkat`, ASan, UBSan | `test_way_targets.py` |
+| [`probes/way.c`](../tests/probes/way.c) | `way.c` | `--wrap=readlinkat,--wrap=fopen,--wrap=fstat,--wrap=fstatat,--wrap=malloc`, ASan, UBSan | `test_way_targets.py`, `test_way.py` |
 | [`fuzz/sig_fuzz.c`](../tests/fuzz/sig_fuzz.c) | `sig.c`, `integrity.c`, `parallel.c` | `-DFSB_SIG_NO_PYTHON`, libFuzzer, ASan, UBSan | `test_fuzz.py` |
 | [`fuzz/payload_fuzz.c`](../tests/fuzz/payload_fuzz.c) | `payload.c`, `integrity.c`, `parallel.c`, `cache.c`, `way.c` | `-fsanitize=fuzzer,address,undefined`, `-DFSB_STREAM_WINDOW` of one digest leaf | `test_fuzz.py` |
 

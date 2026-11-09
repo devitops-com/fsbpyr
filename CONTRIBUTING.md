@@ -210,6 +210,16 @@ The tiers, from fastest to most complete:
   suite job, with the aarch64 executable and two fixtures it builds (`hello`, and `native` with
   two native extensions). It is not part of `make test`: the VM is no pytest test, and
   `tests/unit/test_vm_smoke.py` covers the pin table and the script's own code.
+- Mutation testing of the launcher's C code (owner, 2026-11-08): `make mutate FILE=way.c
+  TESTS="tests/e2e/test_way_targets.py tests/e2e/test_due.py tests/e2e/test_restore.py"`
+  (`tools/mutate-c.py`) changes one operator at a time in that source (a comparison, `&&` and
+  `||`, a returned constant, `+ 1` and `- 1`), in a copy of the checkout, and runs the tests
+  whose probes compile it after each change; it lists the mutants they let survive, each a test
+  missing or a change that does what the code did. A probe-only run builds no runtime, so a
+  mutant of `way.c` takes about half a minute. A run past the timeout (four times the first run
+  by default) is killed with what it started and printed as `timeout`: a test that builds an app
+  rebuilds the runtime for each mutant, and needs `MUTATE_ARGS="--timeout 1800"`. A campaign by hand (`sig.c`, `way.c`,
+  `cache.c` above all), never in CI.
 - EL8 (glibc 2.28): `make test-el8` runs the stub-dependent tests with
   the EL8 stub (`make test-el8-stub`: the launcher, the `_fsbpyr` contract and native wheels at
   manylinux_2_28, in the EL8 test mode `FSBPYR_TEST_GLIBC=2.28`, in which every `fsbpyr build`

@@ -7,6 +7,8 @@
  *                        then
  *                        "threads N" (the most threads running at once, this one included),
  *                        "written N" and "failure F PATH ERRNO" (the job's; PATH "-" if none)
+ *   restore --safe FILE  fsb_cache_safe of each line of FILE, a path in hexadecimal ("-" for the
+ *                        empty one): 1 or 0 per line
  *
  * With $PROBE_FREE set, the descriptor limit leaves that many descriptors to open; with
  * $PROBE_NO_LINK set, no link can be made (as on a kernel before 6.10 without /proc), and a line
@@ -107,8 +109,32 @@ static void leave_free(int free) {
     }
 }
 
+static int safe(const char *path) {
+    FILE *lines = fopen(path, "r");
+    if (lines == NULL) return 3;
+    char hex[8192];
+    while (fgets(hex, sizeof hex, lines) != NULL) {
+        size_t digits = strcspn(hex, "\n");
+        char name[sizeof hex / 2];
+        size_t length = 0;
+        for (size_t i = 0; strcmp(hex, "-\n") != 0 && i + 1 < digits; i += 2) {
+            unsigned byte;
+            if (sscanf(hex + i, "%2x", &byte) != 1) return 3;
+            name[length++] = (char)byte;
+        }
+        char *exact = malloc(length > 0 ? length : 1); /* ASan sees a read past the length */
+        if (exact == NULL) return 3;
+        memcpy(exact, name, length);
+        printf("%d\n", fsb_cache_safe(exact, length));
+        free(exact);
+    }
+    fclose(lines);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) return 2;
+    if (strcmp(argv[1], "--safe") == 0) return safe(argv[2]);
     FILE *file = fopen(argv[1], "rb");
     if (file == NULL || fseek(file, 0, SEEK_END) != 0) return 3;
     long size = ftell(file);

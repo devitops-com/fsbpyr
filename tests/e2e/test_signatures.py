@@ -54,14 +54,16 @@ BEGIN, END = "-----BEGIN ENCRYPTED PRIVATE KEY-----\n", "-----END ENCRYPTED PRIV
 PBKDF2_ITERATIONS = 600000
 ED25519_ORDER = 2**252 + 27742317777372353535851937790883648493
 FLIPS = 400  # bits of the ML-DSA half: the sweep over all of them takes a minute under ASan
+PEM_MAX = 16 << 10  # sig.h's FSB_SIG_PEM_MAX: the most a .key or .pub may have, and each buffer
 
 
 @pytest.fixture(scope="module")
 def probe(launcher_build: LauncherBuild, tmp_path_factory: pytest.TempPathFactory) -> Path:
     out = tmp_path_factory.mktemp("probe") / "sig"
     ssl = launcher_build.libs[-1].with_name("libssl.a")
-    flags = ("-DFSB_SIG_NO_PYTHON", "-Wl,--wrap=EVP_DigestVerify", "-fsanitize=address,undefined",
-             "-fno-sanitize-recover=undefined")  # fmt: skip
+    flags = ("-DFSB_SIG_NO_PYTHON",
+             "-Wl,--wrap=EVP_DigestVerify,--wrap=BIO_ctrl,--wrap=OSSL_LIB_CTX_new",
+             "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined")  # fmt: skip
     return launcher_build.compile(out, [PROBE, "sig.c", "integrity.c", "parallel.c", ssl], *flags)
 
 
@@ -145,6 +147,40 @@ def test_a_new_signature_that_does_not_verify_is_not_returned(
 
     assert done == [str(FAILED)]
     assert not new.exists()
+
+
+@pytest.mark.parametrize(("length", "status"), [
+    (0, OK), (PEM_MAX // 2, OK), (PEM_MAX // 2 + 1, FAILED)])  # fmt: skip
+def test_a_new_pair_takes_what_openssl_wrote_up_to_its_buffers(
+    probe: Path, tmp_path: Path, length: int, status: int
+) -> None:
+    """Each of the four PEM blocks of a new pair, as OpenSSL wrote it, is appended to a buffer of
+    PEM_MAX bytes, two to each: blocks of PEM_MAX / 2 bytes fill both buffers to their last byte,
+    one more byte refuses the pair. OpenSSL writes 6088 and 2839 bytes, so the probe makes it
+    write more."""
+    env = {**os.environ, "PROBE_BIO_LENGTH": str(length)}
+    key, pub = tmp_path / "k.key", tmp_path / "k.pub"
+
+    assert run(probe, "keynew", PASSPHRASE, key, pub, env=env) == [str(status)]
+    if status == OK:
+        assert key.read_bytes() == pub.read_bytes() == b"A" * 2 * length
+
+
+def test_no_library_context_is_no_result(probe: Path, pair: Pair, tmp_path: Path) -> None:
+    """Without a context of their own (OSSL_LIB_CTX_new failing), the functions use none, nor
+    OpenSSL's default one: a pin's verdict never depends on what the process configured."""
+    env = {**os.environ, "PROBE_FAIL_LIBCTX": "1"}
+    new, pub = tmp_path / "new.sig", tmp_path / "new.pub"
+    rows = [(0, _ed25519_pem(pair), pair.message.read_bytes(),
+             pair.signature.read_bytes()[:ED25519_SIZE])]  # fmt: skip
+
+    assert run(probe, "verify", pair.pub, pair.message, pair.signature, env=env) == ["-1"]
+    assert _vectors(probe, rows, tmp_path, env) == [-1]
+    assert _vectors(probe, rows, tmp_path) == [1]
+    assert run(probe, "sign", pair.key, PASSPHRASE, pair.message, new, pub, env=env) == [
+        str(FAILED)]
+    assert not new.exists()
+    assert run(probe, "keynew", PASSPHRASE, tmp_path / "k.key", pub, env=env) == [str(FAILED)]
 
 
 def test_a_signature_of_the_script_verifies(probe: Path, pair: Pair, tmp_path: Path) -> None:
@@ -236,13 +272,14 @@ def test_a_signature_binds_its_whole_statement(
     assert verify(probe, pair.pub, changed, pair.signature.read_bytes(), tmp_path) == 0
 
 
-def _vectors(probe: Path, rows: list[tuple[int, bytes, bytes, bytes]], tmp_path: Path) -> list[int]:
+def _vectors(probe: Path, rows: list[tuple[int, bytes, bytes, bytes]], tmp_path: Path,
+             env: dict[str, str] | None = None) -> list[int]:  # fmt: skip
     """fsb_sig_half for each (half, key file, message, signature)."""
     path = tmp_path / "vectors"
     with path.open("w") as out:
         for half, pem, message, signature in rows:
             print(half, *(part.hex() or "-" for part in (pem, message, signature)), file=out)
-    return [int(line) for line in run(probe, "half", path)]
+    return [int(line) for line in run(probe, "half", path, env=env)]
 
 
 def _pem(der: bytes, width: int = 64) -> bytes:
@@ -250,6 +287,11 @@ def _pem(der: bytes, width: int = 64) -> bytes:
     lines = [text[at:at + width] for at in range(0, len(text), width)]
     return "\n".join(("-----BEGIN PUBLIC KEY-----", *lines, "-----END PUBLIC KEY-----", "")
                      ).encode()  # fmt: skip
+
+
+def _ed25519_pem(pair: Pair) -> bytes:
+    """The Ed25519 key of ``pair``'s .pub alone, as fsb_sig_half takes it."""
+    return _pem(base64.b64decode("".join(pair.pub.read_text().splitlines()[1:2])))
 
 
 ED25519_SPKI = bytes.fromhex("302a300506032b6570032100")
@@ -328,6 +370,14 @@ def test_ed25519_refuses_a_malleated_signature(probe: Path, pair: Pair, tmp_path
              (0, pem, message, r + bytes(32)), (0, pem, message, bytes(32) + signature[32:])]
 
     assert _vectors(probe, rows, tmp_path) == [1, *[0] * (len(rows) - 1)]
+
+
+def test_a_half_past_the_second_is_no_half(probe: Path, pair: Pair, tmp_path: Path) -> None:
+    signature = pair.signature.read_bytes()[:ED25519_SIZE]
+    pem, message = _ed25519_pem(pair), pair.message.read_bytes()
+    rows = [(half, pem, message, signature) for half in (0, 2, 3, 2**31 - 1)]
+
+    assert _vectors(probe, rows, tmp_path) == [1, -1, -1, -1]
 
 
 def test_no_flipped_bit_of_a_signature_verifies(probe: Path, pair: Pair, tmp_path: Path) -> None:
@@ -468,6 +518,9 @@ def _in_the_body(block: str, text: str, at: int = 20) -> str:
 BAD_KEY_FILES: dict[str, Callable[[str, str], str]] = {
     "empty": lambda _, __: "",
     "one block": lambda ed, _: ed,
+    "one block without its last LF": lambda ed, _: ed[:-1],
+    "no END line": lambda ed, _: ed.removesuffix(END),
+    "no END line in the second block": lambda ed, ml: ed + ml.removesuffix(END),
     "three blocks": lambda ed, ml: ed + ml + ed,
     "text before": lambda ed, ml: "hello\n" + ed + ml,
     "a line between": lambda ed, ml: ed + "hello\n" + ml,
@@ -516,6 +569,18 @@ def test_a_key_may_lose_its_last_lf_or_gain_some(
     copied.write_text(ed25519 + ml_dsa[:-1] + ending)
 
     assert _signing(probe, copied, pair.message, tmp_path) == OK
+
+
+@pytest.mark.parametrize(("size", "status"), [(PEM_MAX, OK), (PEM_MAX + 1, BAD_KEY_FILE)])
+def test_a_key_file_has_at_most_16_kib(
+    probe: Path, pair: Pair, tmp_path: Path, size: int, status: int
+) -> None:
+    """LFs after the keys count: a file of more than PEM_MAX bytes is no key file."""
+    text = pair.key.read_bytes()
+    padded = tmp_path / "padded.key"
+    padded.write_bytes(text + b"\n" * (size - len(text)))
+
+    assert _signing(probe, padded, pair.message, tmp_path) == status
 
 
 def test_keys_of_other_types_say_so(probe: Path, pair: Pair, tmp_path: Path) -> None:

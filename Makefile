@@ -42,7 +42,7 @@ else
 WITH_LLVM23 := clang23="$$(bash tools/bootstrap.sh --llvm23)" && export PATH="$${clang23%/*}:$$PATH" &&
 endif
 
-.PHONY: help bootstrap build install uninstall test test-ci test-prereqs test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm perf check check-c release-prep release release-assets release-sign release-audit release-check mirror wiki-lint wiki-build wiki-publish clean
+.PHONY: help bootstrap build install uninstall test test-ci test-prereqs test-container test-corpus test-portability test-el8 test-el8-stub test-el8-portability test-vm perf mutate check check-c release-prep release release-assets release-sign release-audit release-check mirror wiki-lint wiki-build wiki-publish clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -204,7 +204,7 @@ test-portability: ## Run the portability matrix on 12 distributions (podman, dis
 # run executables use the glibc 2.28 stub, built here from Rocky Linux 8.10's sysroot, and every
 # `fsbpyr build` of a test is a `--glibc 2.28` one. What differs between an EL8 build and a
 # default one is the stub, so these are the tests that run it: the launcher's (edges, due, slots,
-# gc, restore, find_object, way_targets, read_failures, cores), the _fsbpyr contract
+# gc, restore, find_object, way_targets, way, read_failures, cores), the _fsbpyr contract
 # (runtime_app, imports, stub_hardening, cache root, streaming) and the build of apps with
 # natives from manylinux_2_28 wheels (compat, natives). tests/e2e/test_el8.py compares an EL8
 # build with a default one, so it runs with both runtimes, not in the mode. full-suite.yml's
@@ -213,7 +213,8 @@ test-portability: ## Run the portability matrix on 12 distributions (podman, dis
 EL8_TESTS := tests/e2e/test_runtime_app.py tests/e2e/test_imports.py tests/e2e/test_stub_hardening.py \
 	tests/e2e/test_edges.py tests/e2e/test_cache_root.py tests/e2e/test_gc.py tests/e2e/test_slots.py \
 	tests/e2e/test_due.py tests/e2e/test_restore.py tests/e2e/test_find_object.py \
-	tests/e2e/test_way_targets.py tests/e2e/test_read_failures.py tests/e2e/test_cores.py \
+	tests/e2e/test_way_targets.py tests/e2e/test_way.py tests/e2e/test_read_failures.py \
+	tests/e2e/test_cores.py \
 	tests/e2e/test_streaming.py tests/e2e/test_stream_windows.py tests/e2e/test_unbuffered.py \
 	tests/e2e/test_digests.py tests/e2e/test_compat.py tests/e2e/test_natives.py \
 	tests/unit/test_test_modes.py
@@ -250,6 +251,14 @@ NEW ?= dist/fsbpyr
 perf: ## Measure start, build and inspect against the previous release (OLD=PATH [NEW=PATH], PERF_ARGS=...)
 	$(if $(OLD),,$(error OLD=PATH: the previous release's fsbpyr-3.X-<target>))
 	$(SCRATCHENV) $(CONTAINED) $(UVRUN) python tools/perf.py '$(OLD)' '$(NEW)' $(PERF_ARGS)
+
+# Mutation testing of one launcher source (tools/mutate-c.py; owner, 2026-11-08): FILE is a file
+# of src/fsbpyr/launcher, TESTS the tests whose probes compile it. A campaign by hand, never in
+# CI: each mutant runs the tests again, in a copy of the checkout.
+mutate: ## Mutation testing of a launcher source (FILE=way.c TESTS="tests/e2e/test_way_targets.py ...")
+	$(if $(FILE),,$(error FILE=x.c: a file of src/fsbpyr/launcher))
+	$(if $(TESTS),,$(error TESTS="...": the tests whose probes compile $(FILE)))
+	$(TESTENV) $(CONTAINED) $(UVRUN) python tools/mutate-c.py '$(FILE)' $(TESTS) $(MUTATE_ARGS)
 
 check: ## Static checks: ruff + mypy
 	$(UVRUN) ruff check

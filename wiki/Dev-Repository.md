@@ -177,6 +177,7 @@ account.
 | `make test-ci`, `make test`, `make test-corpus`, `make test-container`, `make test-portability` | the test tiers ([Testing](Dev-Testing.md#make-targets)) |
 | `make test-prereqs` | [what the full suite needs](Dev-Testing.md#when-the-machine-lacks-something) that this machine lacks |
 | `make test-vm` | [aarch64 apps in a QEMU VM](Dev-Testing.md#the-page-size-smoke-test) with EL8's 64K-page kernel |
+| `make mutate FILE=x.c TESTS=...` | [mutation testing](Dev-Testing.md#make-targets) of a launcher source against the tests whose probes compile it |
 | `make perf OLD=PATH` | start, build and inspect against the previous release's fsbpyr, a table for [`docs/performance.md`](../docs/performance.md) (every release, before `make release-prep`) |
 | `make test-el8`, `make test-el8-stub`, `make test-el8-portability` | [the EL8 test mode](Dev-Testing.md#the-el8-test-mode) |
 | `make release-prep`, `make release` | end a branch with the release commit (after `make perf`); then [everything else](#release-keys) |

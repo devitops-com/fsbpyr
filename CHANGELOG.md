@@ -11,6 +11,21 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 ## [Unreleased]
 
 ### Added
+- **`make mutate FILE=x.c TESTS=...`**, mutation testing of the launcher's C code
+  (`tools/mutate-c.py`, owner 2026-11-08): one operator at a time changed in that source, in a
+  copy of the checkout, and the tests whose probes compile it run after each change; the
+  mutants they let survive are listed. The tests' `launcher_build` builds no runtime any more, so
+  a run of probes alone takes seconds. A run past the timeout is killed with every process it
+  started and printed as a timeout, apart from the mutants the tests killed. `way.c`: the probe
+  tests killed 27 of its 69 mutants; `tests/e2e/test_way.py` (37 tests, `probes/way.c` now also
+  wrapping `fopen`, `fstat`, `fstatat` and `malloc`) kills the other 42. `sig.c`:
+  `test_signatures.py` killed 102 of the 121 mutants of its C functions; new cases kill 11 more
+  (the key file's size limit, blocks without an END line or a last LF, halves past the second,
+  the buffers a new pair is copied into, no library context; `probes/sig.c` reads each file into
+  a buffer of its size, so ASan sees a read past it). The 8 left, and 1 of the 10 in its Python
+  functions, do what the code did or need an allocation of a running app to fail. `cache.c`:
+  `test_restore.py` kills 197 of its 464, `fsb_cache_safe`'s 13 among them (`restore --safe`
+  checks every short path against the payload reader's rule); what the other 267 need is #129.
 - **`make perf OLD=PATH`** measures this tree's fsbpyr (or `NEW=PATH`) against the previous
   release's: the start of two apps and their peak RSS, the integrity check, a build and `inspect
   --verify`, interleaved round by round, as a table for `docs/performance.md`, which every release
