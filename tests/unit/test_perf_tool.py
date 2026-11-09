@@ -9,6 +9,8 @@ from types import ModuleType
 
 import pytest
 
+from ..support import requires
+
 TOOL = Path(__file__).parents[2] / "tools" / "perf.py"
 
 
@@ -73,6 +75,7 @@ def test_a_run_that_fails_stops_it_naming_the_command() -> None:
         perf.interleaved({"x": perf.Command(["/bin/false"])}, rounds=1, warmup=0)
 
 
+@requires.tools("time")
 def test_the_peak_rss_is_gnu_times() -> None:
     """wait4 never reports less than the spawning Python's own resident set."""
     assert 100 < perf.peak_rss_kib(perf.Command(["/bin/true"])) < 10_000
