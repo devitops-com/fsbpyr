@@ -196,7 +196,9 @@ requirements file for uv (nothing is written into the project), and installs:
 - with markers evaluated for the app's Python and platform, every hash the lock lists for a
   package, and `--require-hashes` when every package has one;
 - `--extra NAME` adds a Poetry `[extras]` entry or a PDM group of that name (an extra the lock
-  lacks is an error); a `Pipfile.lock` is complete, so `--extra` adds nothing to it.
+  lacks is an error); a `Pipfile.lock` is complete, so `--extra` adds nothing to it. From a
+  `poetry.lock`, the extra's packages are those Poetry marks with it (`extra == "NAME"`), with
+  each marker evaluated for the target and the extras asked for.
 
 A path dependency installs as a regular package, a VCS entry keeps its commit and a URL entry its
 hash. The build refuses, naming the entry: a package from another package index in a Poetry

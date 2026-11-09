@@ -23,6 +23,7 @@ FIXTURES = Path(__file__).parents[2] / "fixtures" / "projects" / "foreign"
 LINUX = marker_environment("3.14.1")
 WINDOWS = {**LINUX, "sys_platform": "win32", "platform_system": "Windows", "os_name": "nt"}
 MAIN = ["click", "markdown-it-py", "mdurl", "pygments", "rich"]
+FANCY = ["click", "markdown-it-py", "mdurl", "packaging", "pygments", "rich"]
 POETRY, PDM = LockSource.POETRY_LOCK, LockSource.PDM_LOCK
 CLICK_WHEEL = "255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360"
 CLICK_SDIST = "ba0d2089de75ea0310e2dde03160e6ca10009947fb95a182f9b54021bb272e34"
@@ -114,6 +115,36 @@ def test_an_extra_the_lock_does_not_have_is_an_error(
 ) -> None:
     with pytest.raises(ForeignLockError, match=message):
         export(source, _copy(name, tmp_path), environment=LINUX, extras=("nope",))
+
+
+# --- a lock Poetry 2.5.1 wrote, with extras (#120) -------------------------------------------
+
+
+@pytest.mark.parametrize(("extras", "linux", "windows"), [
+    ((), ["click"], ["click"]),
+    (("fancy",), FANCY, FANCY),
+    (("plain",), ["click", "packaging"], ["click", "colorama", "packaging"]),
+    (("fancy", "plain"), FANCY, sorted([*FANCY, "colorama"])),
+], ids=["none", "fancy", "plain", "fancy and plain"])  # fmt: skip
+def test_a_poetry_2_lock_exports_the_packages_its_markers_give_the_extras(
+    tmp_path: Path, extras: tuple[str, ...], linux: list[str], windows: list[str]
+) -> None:
+    """Poetry 2 marks what only an extra needs ``extra == "fancy"``, the project's extra, also
+    behind a package of it (markdown-it-py and mdurl behind rich) and with the target's own
+    marker (colorama, Windows only); iniconfig is in the dev group only, never exported."""
+    for where, environment, expected in (("linux", LINUX, linux), ("windows", WINDOWS, windows)):
+        pins = _pins("poetry2-extras", POETRY, tmp_path / where, environment, extras)
+
+        assert sorted(pin.split("==")[0] for pin in pins) == expected, where
+
+
+def test_a_poetry_2_lock_names_its_extras_and_is_current(tmp_path: Path) -> None:
+    project = _copy("poetry2-extras", tmp_path)
+
+    with pytest.raises(ForeignLockError,
+                       match=re.escape("poetry.lock has no extra 'nope' (it has: fancy, plain)")):
+        export(POETRY, project, environment=LINUX, extras=("nope",))
+    assert stale(POETRY, project) is None
 
 
 def test_a_lock_that_does_not_say_the_groups_is_walked_from_the_projects_dependencies(
