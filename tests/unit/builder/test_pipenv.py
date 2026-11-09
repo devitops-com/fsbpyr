@@ -18,7 +18,7 @@ from fsbpyr.manifest import LockError, lock_record, read_lock
 from fsbpyr.pipenv import export, other_indexes, python_of, stale, tool_names
 from fsbpyr.project import LockSource, Project, ProjectError
 from fsbpyr.pyversion import resolve
-from fsbpyr.staging import StagingOptions, staging_plan
+from fsbpyr.staging import StagingOptions, StagingPlan, staging_plan
 from fsbpyr.tools import listed_distributions
 
 from ...support.markers import UNEVALUABLE
@@ -237,6 +237,69 @@ def test_a_local_file_entry_is_installed_from_the_file(tmp_path: Path) -> None:
     assert exported.text.splitlines()[1:] == [f"lib @ {wheel.as_uri()}"]
 
 
+def _with_local_file(tmp_path: Path, **spec: Any) -> tuple[Path, Path]:
+    """A Pipfile.lock with a hashed registry entry and a ``file:`` entry naming a wheel beside
+    it, and that wheel."""
+    wheel = tmp_path / "p" / "lib-1.0-py3-none-any.whl"
+    directory = _lock(tmp_path, {"six": _requirement("1.16.0"),
+                                 "lib": {"file": wheel.as_uri(), **spec}})  # fmt: skip
+    wheel.write_bytes(b"")
+    return directory, wheel
+
+
+def test_a_local_file_entry_keeps_its_hash_and_the_file_demands_it(tmp_path: Path) -> None:
+    other = "cd" * 32
+    directory, wheel = _with_local_file(tmp_path, hashes=[f"sha256:{other}"] * 2)
+
+    exported = export(directory, environment=LINUX)
+
+    assert exported.text.splitlines()[1:] == [
+        f"lib @ {wheel.as_uri()}#sha256={other}", "six==1.16.0 \\", f"    --hash=sha256:{DIGEST}"]
+    assert exported.hashed
+
+
+@pytest.mark.parametrize("local", [False, True])
+def test_a_file_entry_with_two_different_hashes_is_refused_naming_it(
+    tmp_path: Path, local: bool
+) -> None:
+    hashes = [f"sha256:{DIGEST}", f"sha256:{'cd' * 32}"]
+    if local:
+        directory, _ = _with_local_file(tmp_path, hashes=hashes)
+    else:
+        url = "https://example.org/dist/lib-1.0-py3-none-any.whl"
+        directory = _lock(tmp_path, {"lib": {"file": url, "hashes": hashes}})
+
+    with pytest.raises(ForeignLockError, match=r"Pipfile.lock: lib is the file .*/lib-1.0-py3-"
+                                               r"none-any.whl, with 2 different sha256 hashes"):
+        export(directory, environment=LINUX)
+
+
+def _plan_of(directory: Path, tmp_path: Path) -> StagingPlan:
+    (directory / "pyproject.toml").write_text("[project]\nname = 'p'\nversion = '1'\n")
+    work = tmp_path / "work"
+    work.mkdir()
+    return staging_plan(Project.load(directory), PIPFILE_LOCK, Path("/u/uv"), work,
+                        StagingOptions("3.14", environment=LINUX))  # fmt: skip
+
+
+def test_a_hashed_file_entry_keeps_require_hashes_for_the_whole_install(tmp_path: Path) -> None:
+    directory, _ = _with_local_file(tmp_path, hashes=[f"sha256:{'cd' * 32}"])
+
+    plan = _plan_of(directory, tmp_path)
+
+    assert "--require-hashes" in plan.install[1]
+    assert plan.require_hashes
+
+
+def test_a_file_entry_without_a_hash_leaves_hashes_unrequired(tmp_path: Path) -> None:
+    directory, _ = _with_local_file(tmp_path)
+
+    plan = _plan_of(directory, tmp_path)
+
+    assert "--require-hashes" not in plan.install[1]
+    assert not plan.require_hashes
+
+
 def test_packages_of_another_index_are_a_note_and_install_from_the_configured_ones(
     tmp_path: Path,
 ) -> None:
@@ -390,7 +453,8 @@ def test_a_directory_of_scripts_is_locked_by_its_pipfile_lock_and_poetry_pdm_are
 def test_the_lock_record_and_its_packages(tmp_path: Path) -> None:
     project = _copy(tmp_path)
 
-    record, packages = lock_record(project, PIPFILE_LOCK, project / "Pipfile.lock")
+    record, packages = lock_record(project, PIPFILE_LOCK, project / "Pipfile.lock",
+                                   require_hashes=True)  # fmt: skip
 
     assert (record["kind"], record["path"], record["hashed"]) == ("Pipfile.lock",
                                                                  "Pipfile.lock", True)  # fmt: skip

@@ -29,7 +29,7 @@ from fsbpyr.runtime.registry import Runtime, cache_home, cache_root
 from fsbpyr.staging import StagingPlan
 from fsbpyr.vcs import git_state, own_version, version_string
 
-from ..support import contain, requires
+from ..support import contain, localwheel, requires
 from ..support.readme import quickstart
 from ..support.sbom import load as load_sbom
 
@@ -739,6 +739,27 @@ def test_a_changed_hash_in_pylock_toml_fails_the_build(
     assert digest in text
     lock.write_text(text.replace(digest, "0" * 64))
     out = tmp_path / "bin" / "clicky"
+
+    assert main(["build", str(project), "-o", str(out)]) == 1
+
+    assert "Hash mismatch" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_a_changed_hash_of_a_poetry_file_dependency_fails_the_build(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A ``type = "file"`` package's line carries the lock's hash, which uv checks (#119)."""
+    project = tmp_path / "poetry2"
+    shutil.copytree(FIXTURES / "foreign" / "poetry2", project)
+    localwheel.write(project / "wheels", "locallib", "1.0")
+    lock = project / "poetry.lock"
+    lock.write_text(lock.read_text().replace("\n[extras]", (
+        '\n[[package]]\nname = "locallib"\nversion = "1.0"\noptional = false\n'
+        'groups = ["main"]\nfiles = [\n    {file = "locallib-1.0-py3-none-any.whl", '
+        f'hash = "sha256:{"0" * 64}"}},\n]\n\n[package.source]\ntype = "file"\n'
+        'url = "wheels/locallib-1.0-py3-none-any.whl"\n\n[extras]')))
+    out = tmp_path / "bin" / "app"
 
     assert main(["build", str(project), "-o", str(out)]) == 1
 

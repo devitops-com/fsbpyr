@@ -17,7 +17,7 @@ import pytest
 from fsbpyr.cli import main
 from fsbpyr.runtime.registry import Runtime
 
-from ..support import contain
+from ..support import contain, localwheel
 
 pytestmark = pytest.mark.slow
 
@@ -106,6 +106,56 @@ def test_a_changed_hash_in_the_lock_fails_the_build(
     lock.write_text(lock.read_text().replace(WHEEL_HASHES["click"], "0" * 64))
     lock.write_text(lock.read_text().replace("ba0d2089de75ea0310e2dde03160e6ca10009947fb95a182f9b54"
                                              "021bb272e34", "1" * 64))  # fmt: skip
+
+    assert _build(project) == 1
+
+    assert "Hash mismatch" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
+
+
+def _with_local_wheel(tmp_path: Path) -> tuple[Path, Path, str]:
+    """The fixture with a wheel of its own in ``wheels/``, the wheel, and its SHA-256."""
+    project = tmp_path / "pipenv"
+    shutil.copytree(FIXTURE, project)
+    wheel, digest = localwheel.write(project / "wheels", "locallib", "1.0")
+    return project, wheel, digest
+
+
+def _lock_file_entry(project: Path, wheel: Path, *digests: str) -> None:
+    """Adds a ``file:`` entry for ``wheel`` with ``digests`` to the lock's default section."""
+    lock = project / "Pipfile.lock"
+    data = json.loads(lock.read_text())
+    data["default"]["locallib"] = {"file": wheel.as_uri(),
+                                   "hashes": [f"sha256:{d}" for d in digests]}  # fmt: skip
+    lock.write_text(json.dumps(data, indent=4))
+
+
+@pytest.mark.parametrize("hashed", [True, False])
+def test_a_local_file_entry_is_checked_by_its_hash_and_the_record_says_whether_it_was(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str], hashed: bool
+) -> None:
+    """A file entry's line carries the lock's hash, and uv demands one of every line; a file
+    entry without a hash leaves that off, and build_info says the lock was not hashed (#119)."""
+    project, wheel, digest = _with_local_wheel(tmp_path)
+    _lock_file_entry(project, wheel, *[digest] * hashed)
+
+    code = _build(project)
+
+    assert code == 0, capsys.readouterr().err
+    capsys.readouterr()  # the build's output
+    assert main(["inspect", "--json", str(tmp_path / "out" / "app")]) == 0
+    info = json.loads(capsys.readouterr().out)["build_info"]
+    assert info["lock"]["hashed"] is hashed
+    assert next(d for d in info["dists"] if d["name"] == "locallib") == {
+        "name": "locallib", "version": "1.0", "source": "path",
+        **({"artifact_sha256": digest} if hashed else {})}  # fmt: skip
+
+
+def test_a_changed_hash_of_a_file_entry_fails_the_build(
+    tmp_path: Path, runtime: Runtime, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project, wheel, _ = _with_local_wheel(tmp_path)
+    _lock_file_entry(project, wheel, "0" * 64)
 
     assert _build(project) == 1
 

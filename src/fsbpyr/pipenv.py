@@ -121,8 +121,12 @@ def _entry(name: str, spec: Mapping[str, Any], sources: Mapping[str, str]) -> En
         return Entry(canonical, "", LOCAL, str(spec["path"]), marker=marker)
     if "file" in spec:
         where = str(spec["file"])
-        digests = _digests(name, spec)
-        files = {_file_name(where): digests[0]} if len(digests) == 1 else {}
+        digests = set(_digests(name, spec))
+        if len(digests) > 1:
+            raise ForeignLockError(
+                f"{LOCK}: {name} is the file {where}, with {len(digests)} different sha256 "
+                "hashes: uv takes one for a file, and the lock does not say which is the file's")
+        files = {_file_name(where): digests.pop()} if digests else {}
         return Entry(canonical, "", PATH if where.startswith("file:") else URL, where,
                      files=files, marker=marker)  # fmt: skip
     url = sources.get(str(spec.get("index", "")), "")
