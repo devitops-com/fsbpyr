@@ -1,5 +1,6 @@
 """Phase 2 exit criteria, exercised on real executables built from the cached runtime."""
 
+import ast
 import grp
 import hashlib
 import json
@@ -38,6 +39,8 @@ from ..support.apps import library
 from .conftest import BuildApp, app_content
 
 pytestmark = pytest.mark.slow
+
+STUB = Path(__file__).parents[2] / "stubs" / "_fsbpyr.pyi"
 
 HELLO = {
     "hello.py": """\
@@ -820,6 +823,34 @@ def test_unencodable_module_name_is_not_found(build_app: BuildApp) -> None:
     result = _run(app)
 
     assert (result.returncode, result.stdout.strip()) == (0, "not found"), result.stderr
+
+
+def test_the_stub_declares_what_the_module_has(build_app: BuildApp) -> None:
+    """stubs/_fsbpyr.pyi, against which mypy checks the code that uses _fsbpyr, names its
+    functions, classes and constants, and the keys of info() and stats()."""
+    source = (
+        "import json, _fsbpyr\n"
+        "def main():\n"
+        "    names = [name for name in dir(_fsbpyr) if not name.startswith('__')]\n"
+        "    print(json.dumps([names, list(_fsbpyr.info()), list(_fsbpyr.stats())]))\n"
+    )
+    app = build_app({"x.py": source}, "x:main")
+    declared = ast.parse(STUB.read_text())
+    keys = {node.name: [item.target.id for item in node.body
+                        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)]
+            for node in declared.body
+            if isinstance(node, ast.ClassDef)
+            and [ast.unparse(base) for base in node.bases] == ["TypedDict"]}  # fmt: skip
+    names = [node.name for node in declared.body
+             if isinstance(node, ast.FunctionDef | ast.ClassDef) and node.name not in keys]
+    names += [node.target.id for node in declared.body
+              if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)]  # fmt: skip
+
+    result = _run(app)
+
+    assert result.returncode == 0, result.stderr
+    found = [sorted(part) for part in json.loads(result.stdout)]
+    assert found == [sorted(names), sorted(keys["Info"]), sorted(keys["Stats"])]
 
 
 @pytest.mark.sanitized

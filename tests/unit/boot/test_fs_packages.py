@@ -2,6 +2,7 @@
 
 import importlib
 import importlib.resources
+import importlib.util
 import inspect
 import json
 import os
@@ -222,6 +223,28 @@ def test_extraction_happens_once(
 
     assert extracted == sorted([*DATA, NATIVE, "tpl/__init__.py", "tpl/sub.py"])
     assert sorted(native.EXTRACTED) == extracted
+    assert os.path.isfile(site / "tpl/sub.py")
+
+
+def test_a_find_spec_before_the_import_makes_one_extraction_pass(
+    site: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """importlib.util.find_spec("torch") before ``import torch``: the package's files are walked
+    and checked once in a process, not again for the import."""
+    assert importlib.util.find_spec("tpl") is not None
+    native = sys.modules["_fsbpyr_rt.native"]
+    passes = []
+    sync = native.NativeCache.sync
+
+    def counted(self: object, files: object, **kw: object) -> object:
+        passes.append(files)
+        return sync(self, files, **kw)
+
+    monkeypatch.setattr(native.NativeCache, "sync", counted)
+
+    importlib.import_module("tpl")
+
+    assert passes == []
     assert os.path.isfile(site / "tpl/sub.py")
 
 

@@ -571,6 +571,38 @@ def test_the_missing_module_is_found_in_the_chain_and_stdlib_modules_are_not(
     assert boot._missing_module(ValueError("bad")) is None
 
 
+class _AppError(Exception):
+    pass
+
+
+@pytest.mark.parametrize("hint", ["missing module", "inside the executable"])
+def test_the_hints_skip_an_error_the_app_raised_from_none(boot: ModuleType, hint: str) -> None:
+    """``raise ... from None`` hides the caught error from the traceback, as traceback walks the
+    chain: its hint would name what the app chose to hide (an optional module, a file)."""
+    if hint == "missing module":
+        caught: OSError | ImportError = ModuleNotFoundError("No module named 'yaml'", name="yaml")
+        note = boot._missing_module
+    else:
+        caught = FileNotFoundError(2, "No such file", f"{boot.ROOT}/pkg/defaults.conf")
+        note = boot._inside_executable_note
+    try:
+        try:
+            raise caught
+        except (ModuleNotFoundError, FileNotFoundError):
+            raise _AppError("optional part missing") from None
+    except _AppError as exc:
+        hidden = exc
+
+    assert note(hidden) is None
+
+
+def test_the_hints_walk_an_implicit_context(boot: ModuleType) -> None:
+    shown = _AppError("optional part missing")
+    shown.__context__ = ModuleNotFoundError("No module named 'yaml'", name="yaml")
+
+    assert boot._missing_module(shown) == "yaml"
+
+
 def _note(boot: ModuleType, monkeypatch: pytest.MonkeyPatch, path: str, **kinds: int) -> str:
     """The note for an OSError on ``path``, with ``kinds`` (module name -> kind) as the payload."""
     monkeypatch.setattr(boot._fsbpyr, "find_module",

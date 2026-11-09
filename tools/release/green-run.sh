@@ -72,7 +72,7 @@ if [ -z "${id:-}" ]; then
     cat >&2 <<MSG
 ERROR: $BRANCH at $short has no $workflow run: only a commit CI passed is released.
        Not started yet: wait a minute (gh run list --workflow $workflow), then run this again
-       Never started:   push $BRANCH, or start the workflow (workflow_dispatch) on it
+       Never started:   a push to $BRANCH starts it; a run started by hand does not count
 MSG
     exit 1
 fi

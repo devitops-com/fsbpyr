@@ -31,7 +31,6 @@ NATIVE_LIB = 4
 GENERATION_DIGITS = 32
 _SYSTEM_LIBRARY_ERRORS = ("version `GLIBC", "GLIBCXX_", "CXXABI_", "cannot open shared object file")
 REFUSED = 70  # the launcher's "refused to start" (D41)
-_REFUSED = "refusing cache directory "  # how module.c's CacheError for a foreign/exposed one starts
 EXTRACTED: list[str] = []  # site-relative paths this process wrote, kept for FSBPYR_TRACE
 # ImportError: the native cache cannot be used, or the payload's data for it is corrupt.
 NativeCacheError = _fsbpyr.CacheError
@@ -90,6 +89,7 @@ class NativeCache:
         self.tree = "/".join(chain[:-1])  # "runtime/<generation>": held from the first sync on
         files = _fsbpyr.info()["files"]
         self._checked = bytearray((files + 7) // 8)  # a bit per FILES index: checked here
+        self.packages: set[str] = set()  # FS_REQUIRED packages extracted here (directories)
 
     def sync(self, files: "Sequence[int]", *, resources: bool = False) -> int:
         """Extract the files (FILES indices, a range from files_below or a closure) that are
@@ -103,14 +103,12 @@ class NativeCache:
 
     def extract(self, files: "Sequence[int]", *, resources: bool = False) -> int:
         """``sync`` for the import machinery, the resources API and the native check: a refused
-        cache directory (module.c's words) is a refused start, not an error the app could run
-        into."""
+        cache directory (module.c's CacheRefused) is a refused start, not an error the app could
+        run into."""
         try:
             return self.sync(files, resources=resources)
-        except NativeCacheError as exc:
-            if str(exc).startswith(_REFUSED):
-                refuse(exc)
-            raise
+        except _fsbpyr.CacheRefused as exc:
+            refuse(exc)
 
 
 _CACHE: list[NativeCache] = []
@@ -225,8 +223,11 @@ def materialize_package(directory: str) -> str:
     which would extract their closures; and the other shared libraries its distribution ships,
     which nothing links: plugins it opens from a directory (openmm's, in
     ``OpenMM.libs/lib/plugins``). Returns the prefix (with "/") that the package's modules live
-    under."""
+    under. Once a process: a find_spec before the import (``importlib.util.find_spec("torch")``)
+    has extracted it already."""
     cache = native_cache()
+    if directory in cache.packages:
+        return cache.site + "/"
     try:
         files = _fsbpyr.files_below(directory)
         records = [_fsbpyr.file_at(i) for i in files]
@@ -242,6 +243,7 @@ def materialize_package(directory: str) -> str:
             "set FSBPYR_CACHE_DIR to a writable directory",
             name=directory.replace("/", "."),
         ) from exc
+    cache.packages.add(directory)
     return cache.site + "/"
 
 

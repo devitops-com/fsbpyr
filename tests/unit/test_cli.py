@@ -12,6 +12,7 @@ import click
 import pytest
 
 import fsbpyr
+from fsbpyr import manpage
 from fsbpyr.build import BuildResult
 from fsbpyr.cli import cli, main
 from fsbpyr.project import Project
@@ -258,6 +259,17 @@ def test_help_has_a_short_option(capsys: pytest.CaptureFixture[str]) -> None:
     assert "--source / --no-source" in capsys.readouterr().out
 
 
+def test_the_man_page_leaves_every_command_its_short_help_option(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """click keeps a command's help option from the first context that asks for it, so the
+    man page's contexts carry the group's -h too."""
+    manpage.render(cli, "fsbpyr")
+
+    assert main(["build", "-h"]) == 0
+    assert "--source / --no-source" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     ("argv", "collections"),
     [
@@ -393,6 +405,27 @@ def test_a_build_of_one_command_says_one_command(
 
     assert main(["build", str(tmp_path)]) == 0
     assert ", 1 command)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("commands", "hint"),
+    [(("app-db", "app-web"), "start one through its link, or as app COMMAND"),
+     (("app", "app-db"), "start app as app, the others through their links")],
+    ids=["no command named like the executable", "one named like it"],
+)  # fmt: skip
+def test_the_commands_hint_offers_exe_command_only_where_it_starts_that_command(
+    commands: tuple[str, ...], hint: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The executable's own name starts the command of that name, whatever follows (argv[0]
+    first, commands.find): `app app-db` runs app."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\nversion = "1"\n')
+    result = BuildResult(output=tmp_path / "app", app_name="app", entrypoint="a=a\nb=b", size=0,
+                         warnings=(), commands=commands)  # fmt: skip
+    monkeypatch.setattr("fsbpyr.build.build", lambda *args, **kwargs: result)
+
+    assert main(["build", str(tmp_path)]) == 0
+    assert f"fsbpyr: commands: {', '.join(commands)}; {hint}\n" in capsys.readouterr().out
 
 
 def test_the_output_is_handed_on_as_given_not_through_its_link(

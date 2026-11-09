@@ -28,6 +28,8 @@ from .format import (
     MAX_BLOB_SIZE,
     MAX_BLOCK_SIZE,
     MAX_MODE,
+    MAX_STARTUP_CODE,
+    MAX_STARTUP_MODULES,
     MODULE,
     NATIVE_KINDS,
     NONE,
@@ -230,6 +232,9 @@ class Payload:
     def _parse_startup(self) -> tuple[int, ...]:
         """STARTUP lists exactly the modules flagged STARTUP, in ascending index order."""
         indices = tuple(self._parse_words(Section.STARTUP))
+        if len(indices) > MAX_STARTUP_MODULES:  # the launcher's limit (main.c, startup_table)
+            raise PayloadError(f"{len(indices)} startup modules: the launcher takes at most "
+                               f"{MAX_STARTUP_MODULES}")  # fmt: skip
         expected = tuple(m.index for m in self._modules if ModuleFlag.STARTUP in m.flags)
         if indices != expected:
             raise PayloadError("startup section does not match the STARTUP modules")
@@ -370,6 +375,13 @@ class Payload:
             raise PayloadError(f"module {m.name!r} violates the {m.kind.name} kind invariants")
         if ModuleFlag.FS_REQUIRED_ROOT in m.flags and m.kind is not ModuleKind.PACKAGE:
             raise PayloadError(f"FS_REQUIRED_ROOT on {m.name!r}, which is not a regular package")
+        code = self._blobs[m.code] if m.code != NONE else None
+        if ModuleFlag.STARTUP in m.flags and (  # the launcher's rule (main.c, startup_table)
+            code is None or code.codec not in (Codec.ZSTD, Codec.BLOCK)
+            or not 0 < code.size <= MAX_STARTUP_CODE
+        ):  # fmt: skip
+            raise PayloadError(f"startup module {m.name!r}: its code is not one zstd frame or in "
+                               f"a block, of 1 byte to {MAX_STARTUP_CODE >> 20} MiB")  # fmt: skip
 
     def _closure_members(self, start: int) -> tuple[int, ...]:
         if start >= len(self._words):

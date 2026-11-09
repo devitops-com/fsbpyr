@@ -1,6 +1,7 @@
 /* Parallel work (see parallel.h). */
 #include "parallel.h"
 
+#include <errno.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdbool.h>
@@ -8,6 +9,7 @@
 #include <time.h>
 
 #define MAX_THREADS FSB_PARALLEL_MAX_THREADS
+#define MOST_CPUS (1u << 20)
 #define SPINS_PER_YIELD 1024u
 #define SPIN_NS 2000000ull /* then sleep in pthread_join: a helper that cannot run (stopped by a
                             * debugger, stuck in a page fault) must not make the caller burn a core */
@@ -41,10 +43,26 @@ unsigned long long fsb_monotonic_ns(void) {
     return (unsigned long long)now.tv_sec * 1000000000ull + (unsigned long long)now.tv_nsec;
 }
 
+/* The CPUs this process may run on, asked with a mask of ``cpus`` bits; -1 (errno) if refused. */
+static int cores_in(size_t cpus) {
+    cpu_set_t *mask = CPU_ALLOC(cpus);
+    if (mask == NULL) return -1;
+    size_t size = CPU_ALLOC_SIZE(cpus);
+    int count = sched_getaffinity(0, size, mask) == 0 ? CPU_COUNT_S(size, mask) : -1;
+    int error = errno;
+    CPU_FREE(mask);
+    errno = error;
+    return count;
+}
+
+/* A kernel with more CPUs than a cpu_set_t holds (1024) refuses its mask (EINVAL): then ask
+ * again with one twice as large, up to MOST_CPUS, a bound far above any kernel's. */
 static unsigned usable_cores(void) {
     cpu_set_t set;
-    if (sched_getaffinity(0, sizeof set, &set) != 0) return 1;
-    int count = CPU_COUNT(&set);
+    int count = sched_getaffinity(0, sizeof set, &set) == 0 ? CPU_COUNT(&set) : -1;
+    for (size_t cpus = 2 * CPU_SETSIZE; count < 0 && errno == EINVAL && cpus <= MOST_CPUS;
+         cpus *= 2)
+        count = cores_in(cpus);
     return count > 0 ? (unsigned)count : 1;
 }
 

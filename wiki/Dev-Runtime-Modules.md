@@ -97,9 +97,10 @@ The tool's cache follows the rules of the app caches' collector,
   pin's runtime ids for each baseline, sanitized ones included, the PBS names, both baselines'
   sysroot identities and their downloads). Any other item with a name fsbpyr gives is trashed,
   under an exclusive lock, when nobody holds it and it was unused for 7 days or the file system
-  has less than 10% free; another download is deleted by the same rule, and staging directories
-  and partial downloads go once a day old. The downloaded glibc 2.28 stubs and fetched variants
-  have names `collect.NAMES` does not list, so they stay (a test checks this for the stubs).
+  has less than 10% free; another download is deleted by the same rule, and staging directories,
+  partial downloads and the temporaries a stub or variant is unpacked into (`collect.UNPACKING`)
+  go once a day old. The downloaded glibc 2.28 stubs and fetched variants have names
+  `collect.NAMES` does not list, so they stay (tests check this).
 - **When.** `fsbpyr build`, `fsbpyr inspect`, `fsbpyr runtime build` and `fsbpyr runtime list` call
   `collect.collect_when_due` at their start: a day after the last run (an hour with less than 10%
   free, at once when the last stamp is in the future), never with `FSBPYR_GC` set. Its failure never
@@ -646,8 +647,10 @@ Imported by: `fsbpyr.runtime.pbs`, `fsbpyr.runtime.registry`, `fsbpyr.runtime.sy
 
 [Held and collected](#held-and-collected). `NAMES` holds, per subtree, a pattern of the names
 fsbpyr gives (runtime ids, PBS names, sysroot identities, and in `downloads/` the PBS archives,
-`.deb` and `.rpm` packages and partial downloads); nothing else is ever removed, since a directory
-of the user's that holds only names like fsbpyr's may be marked.
+`.deb` and `.rpm` packages and partial downloads), and `STAGING` and `UNPACKING` those of what a
+killed process leaves (staging directories; the `mkstemp` temporaries `stubs.py` and `dispatch.py`
+unpack a download into); nothing else is ever removed, since a directory of the user's that holds
+only names like fsbpyr's may be marked.
 
 Public functions:
 

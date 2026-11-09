@@ -11,7 +11,7 @@ from email.parser import HeaderParser
 from pathlib import Path
 from typing import Any
 
-from packaging.markers import default_environment
+from packaging.markers import Marker, UndefinedComparison, default_environment
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
@@ -136,9 +136,9 @@ class SiteIndex:
             seen.setdefault(dist.name, set()).update(active)
             for line in dist.requires:
                 requirement = requirement_of(line, dist)
-                if requirement.marker is not None and not any(
-                    requirement.marker.evaluate({**environment, "extra": extra})
-                    for extra in (active or {""})
+                if requirement.marker is not None and not marker_holds(
+                    requirement.marker, environment, active or {""}, ClosureError,
+                    f"{dist.name}: Requires-Dist {requirement.name}",
                 ):
                     continue
                 dependency = self.dists.get(canonicalize_name(requirement.name))
@@ -163,6 +163,20 @@ def marker_environment(python_version: str) -> dict[str, str]:
     environment["python_full_version"] = python_version
     environment["python_version"] = ".".join(python_version.split(".")[:2])
     return environment
+
+
+def marker_holds(
+    marker: Marker, environment: Mapping[str, str], extras: Iterable[str],
+    error: type[Exception], where: str,
+) -> bool:  # fmt: skip
+    """Whether ``marker`` holds with one of ``extras`` as the extra. One that packaging parses but
+    cannot evaluate (``~=`` on a string, ``extras``, which only a lock file defines) is ``error``,
+    the caller's, naming ``where``."""
+    try:
+        return any(marker.evaluate({**environment, "extra": extra}) for extra in extras)
+    except (UndefinedComparison, KeyError) as exc:  # UndefinedEnvironmentName from 26.3 on
+        reason = f"no value for {exc}" if isinstance(exc, KeyError) else str(exc).rstrip(".")
+        raise error(f"{where}: cannot evaluate the marker {str(marker)!r}: {reason}") from exc
 
 
 def requirement_of(line: str, dist: InstalledDist) -> Requirement:

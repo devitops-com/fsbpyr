@@ -47,7 +47,9 @@ bounds-checked access to the payload; the functions the boot code uses (document
 | `sync(root, chain, files, checked, resources[, written])` | extracts files into the cache, or checks them there |
 
 `_fsbpyr.CacheError` (an `ImportError`) is raised when the cache cannot be used or the payload's
-data for it is corrupt; `_fsbpyr.NONE` is the format's "no reference" value.
+data for it is corrupt, and its subclass `_fsbpyr.CacheRefused` when the cache's directory is
+refused (another user's, or other users may write to it); `_fsbpyr.NONE` is the format's "no
+reference" value.
 
 ## From `run()` to the app
 
@@ -178,8 +180,9 @@ rule of `loose._module_stem`).
 ## Uncaught exceptions
 
 The boot module's `sys.excepthook` hides the launcher's and its own frames at the top of the
-traceback. For an `OSError` in the exception's chain on a path below the executable it adds a
-note (D24; [Compatibility](Dev-Compatibility.md)):
+traceback. For an `OSError` in the exception's chain, as the traceback prints it (`raise ...
+from None` ends it), on a path below the executable it adds a note (D24;
+[Compatibility](Dev-Compatibility.md)):
 
 - below a regular package, naming the outermost one on the path: `fsbpyr: <path> is inside the
   executable; <package> reads files next to its __file__: rebuild with --fs-package <package>`;
@@ -197,11 +200,12 @@ directory the scripts root shows next to the executable gets `fsbpyr: <path> is 
 files a script reads next to its __file__ are read next to the executable, from <directory>/:
 deploy it there`.
 
-On Python 3.15 and later, for a `ModuleNotFoundError` of a module outside the standard library,
-the hook drops CPython's hint "did you forget to enable your virtual environment?" (it prints the
-traceback with `sys.flags.no_site` reading 0) and adds `fsbpyr: <name> is not in the executable:
-add it to the project's dependencies and rebuild`. None of this costs anything until an exception
-goes uncaught, nor happens when the app catches it or has replaced `sys.excepthook`.
+On Python 3.15 and later, for a `ModuleNotFoundError` in that chain of a module outside the
+standard library, the hook drops CPython's hint "did you forget to enable your virtual
+environment?" (it prints the traceback with `sys.flags.no_site` reading 0) and adds `fsbpyr:
+<name> is not in the executable: add it to the project's dependencies and rebuild`. None of
+this costs anything until an exception goes uncaught, nor happens when the app catches it or has
+replaced `sys.excepthook`.
 
 ## Native code and the cache
 
@@ -228,12 +232,13 @@ glibc the build required and the one the system has. An error the extension's ow
 raises is passed on as it is.
 
 A refused cache directory, one that belongs to another user or on whose way other users may
-write, is a refused start (D41): `NativeCache.extract` writes `fsbpyr: cannot start
-<executable>: refusing cache directory <path>: other users may write to it` (or `owned by
-another user`) to stderr, flushes stdout and stderr, and leaves with exit 70 through `os._exit`,
-since the refusal may arise in a thread or under code that catches `SystemExit`. Any other failure
-to extract is an error the app sees, saying to set `FSBPYR_CACHE_DIR`: `_fsbpyr.CacheError` for
-an extension or an FS_REQUIRED package, an `OSError` for a resource.
+write, is a refused start (D41): `NativeCache.extract` catches its `_fsbpyr.CacheRefused` and
+writes `fsbpyr: cannot start <executable>: refusing cache directory <path>: other users may
+write to it` (or `owned by another user`) to stderr, flushes stdout and stderr, and leaves with
+exit 70 through `os._exit`, since the refusal may arise in a thread or under code that catches
+`SystemExit`. Any other failure to extract is an error the app sees, saying to set
+`FSBPYR_CACHE_DIR`: `_fsbpyr.CacheError` for an extension or an FS_REQUIRED package, an
+`OSError` for a resource.
 
 ## Resources and metadata
 
@@ -369,7 +374,8 @@ Public functions:
   `build_info`.
 - `materialize_package(directory)`: extract an FS_REQUIRED package with the closures of its
   extensions (`torchvision.libs`) and every shared library its distributions ship (openmm's
-  plugins); returns the prefix its modules live under.
+  plugins); returns the prefix its modules live under. Once a process: a `find_spec` before the
+  import (`importlib.util.find_spec("torch")`) has extracted it already.
 - `materialize(path)`: extract a payload file or directory for `importlib.resources`; returns
   where it is on disk.
 - `bundled_library(name, caller=None)`: the one bundled shared object of that file name, extracted

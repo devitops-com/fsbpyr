@@ -100,19 +100,32 @@ def _runs_own_interpreter(call: ast.Call) -> bool:
     return first is not None and _dotted(first) == "sys.executable"
 
 
+def _main_test(test: ast.expr) -> ast.cmpop | None:
+    """The operator of ``__name__ == "__main__"`` or ``!=``, the operands in either order (as
+    entry.has_main_guard takes them); None for any other test."""
+    if not (isinstance(test, ast.Compare) and len(test.ops) == 1):
+        return None
+    operands = (test.left, test.comparators[0])
+    names = [o.id for o in operands if isinstance(o, ast.Name)]
+    values = [o.value for o in operands if isinstance(o, ast.Constant)]
+    return test.ops[0] if names == ["__name__"] and values == ["__main__"] else None
+
+
 def _main_guarded(tree: ast.Module) -> list[range]:
-    """Lines of top-level ``if __name__ == "__main__":`` blocks, which never run on import."""
-    return [
-        range(node.lineno, (node.end_lineno or node.lineno) + 1)
-        for node in tree.body
-        if isinstance(node, ast.If)
-        and isinstance(node.test, ast.Compare)
-        and isinstance(node.test.left, ast.Name)
-        and node.test.left.id == "__name__"
-        and any(
-            isinstance(c, ast.Constant) and c.value == "__main__" for c in node.test.comparators
-        )
-    ]
+    """Lines that never run on import: the body of a top-level ``if __name__ == "__main__":``
+    (not its ``else`` or ``elif``) and the ``else`` of ``if __name__ != "__main__":``, the
+    operands in either order."""
+    blocks = []
+    for node in tree.body:
+        operator = _main_test(node.test) if isinstance(node, ast.If) else None
+        if isinstance(node, ast.If) and isinstance(operator, ast.Eq):
+            first, last = node.lineno, node.body[-1]
+        elif isinstance(node, ast.If) and isinstance(operator, ast.NotEq) and node.orelse:
+            first, last = node.orelse[0].lineno, node.orelse[-1]
+        else:
+            continue
+        blocks.append(range(first, (last.end_lineno or last.lineno) + 1))
+    return blocks
 
 
 def file_relative_reads(

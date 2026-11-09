@@ -59,7 +59,7 @@ def _commands(ctx: click.Context) -> Iterator[click.Context]:
 
 
 def _option_rows(command: click.Command) -> list[str]:
-    ctx = click.Context(command, info_name=command.name)
+    ctx = click.Context(command, info_name=command.name, **cli.context_settings)
     help_option = command.get_help_option(ctx)
     records = [param.get_help_record(ctx) for param in command.get_params(ctx)
                if param is not help_option]  # fmt: skip
@@ -180,7 +180,7 @@ def test_man_page_documents_every_command_and_option(capsys: pytest.CaptureFixtu
     page = capsys.readouterr().out
 
     assert page.startswith('.TH FSBPYR 1 "" "fsbpyr ')
-    for ctx in _commands(click.Context(cli, info_name="fsbpyr")):
+    for ctx in _commands(click.Context(cli, info_name="fsbpyr", **cli.context_settings)):
         assert f'.SS "{ctx.command_path}' in page
         for param in ctx.command.get_params(ctx):
             if isinstance(param, click.Option) and param.name != "help":
@@ -212,7 +212,7 @@ def test_example_command_lines_are_never_hyphenated(capsys: pytest.CaptureFixtur
 
 def test_every_example_is_a_command_line_fsbpyr_accepts(monkeypatch: pytest.MonkeyPatch) -> None:
     """Parsed and checked by the commands themselves, which then do nothing."""
-    for ctx in _commands(click.Context(cli, info_name="fsbpyr")):
+    for ctx in _commands(click.Context(cli, info_name="fsbpyr", **cli.context_settings)):
         monkeypatch.setattr(ctx.command, "callback", lambda **_: 0)
 
     for command, _ in EXAMPLES:
@@ -304,7 +304,7 @@ def test_readme_quickstart_runs_command_lines_fsbpyr_accepts(
 ) -> None:
     """Parsed and checked by the commands themselves, which then do nothing; tests/e2e runs
     the whole quickstart."""
-    for ctx in _commands(click.Context(cli, info_name="fsbpyr")):
+    for ctx in _commands(click.Context(cli, info_name="fsbpyr", **cli.context_settings)):
         monkeypatch.setattr(ctx.command, "callback", lambda **_: 0)
     lines = [shlex.split(line, comments=True) for line in quickstart().splitlines()]
     commands = [argv[1:] for argv in lines if argv and Path(argv[0]).name == "fsbpyr"]

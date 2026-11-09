@@ -145,7 +145,7 @@ def test_a_refused_cache_directory_ends_the_check_as_it_ends_a_run(
 ) -> None:
     native = importlib.import_module("_fsbpyr_rt.native")
     refused = "refusing cache directory /shared: other users may write to it"
-    _refusing_sync(monkeypatch, native, refused)
+    _refusing_sync(monkeypatch, native, native._fsbpyr.CacheRefused(refused))
     loader = _loader(monkeypatch, {EXT: FOUND, OTHER: FOUND})
 
     with pytest.raises(_Exited) as ended:

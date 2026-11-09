@@ -28,6 +28,8 @@ from .format import (
     HEADER_MAGIC,
     HEADER_SIZE,
     MAX_MODE,
+    MAX_STARTUP_CODE,
+    MAX_STARTUP_MODULES,
     MAX_STRTAB_SIZE,
     MODULE,
     NATIVE_KINDS,
@@ -439,6 +441,28 @@ def _check_module(module: Module, files: dict[str, File], dists: set[str], *, bl
         raise PayloadError(f"source of {module.name!r}: only native files may be xz-compressed")
 
 
+def _check_startup_code(module: Module, *, blocks: bool) -> None:
+    """The launcher's rule (main.c, startup_table): a STARTUP module's code is one zstd frame or
+    a member of a block, of 1 byte to MAX_STARTUP_CODE, decompressed into memory at every start."""
+    if ModuleFlag.STARTUP not in module.flags:
+        return
+    code = module.code
+    if code is None or not 0 < code.size <= MAX_STARTUP_CODE or not (
+        code.codec is Codec.ZSTD or (blocks and _packable(_Placement.STARTUP, code.size))
+    ):
+        raise PayloadError(f"startup module {module.name!r}: its code must be one zstd frame or "
+                           f"in a block, of 1 byte to {MAX_STARTUP_CODE >> 20} MiB, as the "
+                           "launcher takes it")  # fmt: skip
+
+
+def _check_startup_count(modules: Iterable[Module]) -> None:
+    """The launcher's rule (main.c, startup_table): at most MAX_STARTUP_MODULES STARTUP modules."""
+    count = sum(ModuleFlag.STARTUP in m.flags for m in modules)
+    if count > MAX_STARTUP_MODULES:
+        raise PayloadError(f"{count} startup modules: the launcher takes at most "
+                           f"{MAX_STARTUP_MODULES}")  # fmt: skip
+
+
 def _validate(spec: PayloadSpec) -> None:
     _check_header(spec)
     _check_dists(spec.dists)
@@ -448,6 +472,8 @@ def _validate(spec: PayloadSpec) -> None:
     files = {f.path: f for f in spec.files}
     for module in spec.modules:
         _check_module(module, files, dists, blocks=spec.blocks)
+        _check_startup_code(module, blocks=spec.blocks)
+    _check_startup_count(spec.modules)
 
 
 def _by_key[T](items: Iterable[T], key: str) -> list[T]:

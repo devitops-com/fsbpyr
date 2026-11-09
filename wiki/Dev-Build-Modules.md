@@ -74,7 +74,7 @@ A step marked with some of the letters runs, or takes that branch, only for thos
 **Command line** ([`cli.py`](../src/fsbpyr/cli.py))
 
 1. The console script `fsbpyr.cli:main`, also reached by `python -m fsbpyr`, is
-   [`main`](../src/fsbpyr/cli.py#L748): it runs the click group with the command line as the
+   [`main`](../src/fsbpyr/cli.py#L757): it runs the click group with the command line as the
    context's object.
    [`build_command`](../src/fsbpyr/cli.py#L164)
    takes both signing variables out of its environment (`signing.take_build_variables`), checks
@@ -123,8 +123,8 @@ A step marked with some of the letters runs, or takes that branch, only for thos
    dependency, [`infer_dependencies`](../src/fsbpyr/build.py#L553)
    follows the commands' imports ([`importcheck.check_command`](../src/fsbpyr/importcheck.py#L198));
    when the runtime lacks some and a venv is found
-   ([`venvdeps.find_venv`](../src/fsbpyr/venvdeps.py#L58)),
-   [`venvdeps.infer`](../src/fsbpyr/venvdeps.py#L179)
+   ([`venvdeps.find_venv`](../src/fsbpyr/venvdeps.py#L59)),
+   [`venvdeps.infer`](../src/fsbpyr/venvdeps.py#L182)
    pins the distributions that provide them; the lock source is then `inferred`, and a warning
    names the venv (`--strict` fails here).
    [`lock_warnings`](../src/fsbpyr/build.py#L361)
@@ -140,8 +140,8 @@ A step marked with some of the letters runs, or takes that branch, only for thos
     [`Package.write_wheel`](../src/fsbpyr/loose.py#L192)
     for B to E, then installed with the locked distributions for the glibc baseline
     ([`staging`](#staging)). A Poetry, PDM or Pipenv lock is first converted
-    ([`foreign.export`](../src/fsbpyr/foreign.py#L472),
-    [`pipenv.export`](../src/fsbpyr/pipenv.py#L157)).
+    ([`foreign.export`](../src/fsbpyr/foreign.py#L476),
+    [`pipenv.export`](../src/fsbpyr/pipenv.py#L159)).
 11. [`SiteIndex.scan`](../src/fsbpyr/closure.py#L99)
     reads the staged site's `*.dist-info`, and
     [`check_no_editable`](../src/fsbpyr/closure.py#L107)
@@ -159,7 +159,7 @@ A step marked with some of the letters runs, or takes that branch, only for thos
     [`legacy.attach`](../src/fsbpyr/legacy.py#L39)
     makes the wheel's `#!python` legacy scripts commands (A only). For E,
     [`tool_binary`](../src/fsbpyr/build.py#L614)
-    has [`tools.tool_scripts`](../src/fsbpyr/tools.py#L312)
+    has [`tools.tool_scripts`](../src/fsbpyr/tools.py#L319)
     choose the tools and their scripts, and `tools.with_commands` makes them the project's own.
 14. [`SiteIndex.walk`](../src/fsbpyr/closure.py#L126)
     follows `Requires-Dist` under the runtime's markers. For B, C and D,
@@ -167,7 +167,7 @@ A step marked with some of the letters runs, or takes that branch, only for thos
     skips, with a warning naming `file:line`, a command that imports what neither the project,
     the staged site nor the runtime holds; `--strict` fails on that, as does a build with no
     command left.
-    [`resolve_entry`](../src/fsbpyr/closure.py#L232)
+    [`resolve_entry`](../src/fsbpyr/closure.py#L246)
     gives the app's name and entry point. `_output_path` gives the output (`-o`, or
     `dist/<app name>`), `_commands_to_link` checks a table's link paths (`links.check_links`,
     [`links`](#links)) and refuses a command named `<output>.sig`, and the output's directory is
@@ -200,7 +200,7 @@ A step marked with some of the letters runs, or takes that branch, only for thos
 
 19. [`assemble.build_temporary`](../src/fsbpyr/assemble.py#L124)
     adds the boot modules and the runtime's build_info keys, and
-    [`payload.writer.write_temporary`](../src/fsbpyr/payload/writer.py#L589)
+    [`payload.writer.write_temporary`](../src/fsbpyr/payload/writer.py#L605)
     streams the executable into a new `.<name>.XXXX.tmp` beside the output. When `_build`
     returns, the spill is closed and the staging directory removed.
 20. Unless `--no-smoke`,
@@ -209,7 +209,7 @@ A step marked with some of the letters runs, or takes that branch, only for thos
     `--smoke-args`,
     [`smoke_run`](../src/fsbpyr/build.py#L661)
     also runs it as the app with those arguments.
-21. [`payload.writer.commit`](../src/fsbpyr/payload/writer.py#L617)
+21. [`payload.writer.commit`](../src/fsbpyr/payload/writer.py#L633)
     renames the new file over the output, once `build` has removed an `<output>.sig`, and syncs
     the directory; for a table
     [`links.make_links`](../src/fsbpyr/links.py#L67)
@@ -317,6 +317,9 @@ Rules it enforces:
   relative, and no absolute home in the passwd entry) makes `build`, `runtime build`,
   `runtime list` and `cache gc` exit 1 with `fsbpyr: error: cannot find the home directory; set
   HOME, XDG_CACHE_HOME or FSBPYR_CACHE_DIR` (a `RuntimeCacheError`).
+- A host that is none of the targets (a released fsbpyr under `setarch i686`, say) makes `build`
+  exit 1 with `fsbpyr: error: unsupported host linux/i686` (`targets.UnsupportedHost`), not an
+  internal error.
 - `main` makes SIGTERM raise `KeyboardInterrupt`, so a terminated build unwinds like an
   interrupted one. It reports click usage errors with click's exit status, an interrupt as
   `fsbpyr: interrupted` with exit 130, and any other exception as an internal error with its
@@ -326,9 +329,9 @@ Rules it enforces:
 
 - Imports, all lazy: `assemble`, `build`, `bytecode`, `classify`, `closure`, `config`,
   `dispatch`, `inspection`, `licensing`, `links`, `manpage`, `project`, `pyversion`,
-  `selfupdate`, `signing`, `staging`, `text`, `vcs`, `boot._fsbpyr_rt.gc`, `payload.format`,
-  `runtime.collect`, `runtime.pbs`, `runtime.registry`, `runtime.stdlib`, `runtime.stub`,
-  `runtime.sysroot`, `runtime.toolchain`.
+  `selfupdate`, `signing`, `staging`, `targets`, `text`, `vcs`, `boot._fsbpyr_rt.gc`,
+  `payload.format`, `runtime.collect`, `runtime.pbs`, `runtime.registry`, `runtime.stdlib`,
+  `runtime.stub`, `runtime.sysroot`, `runtime.toolchain`.
 - Imported by: `__main__`.
 
 ### `dispatch`
@@ -585,10 +588,16 @@ them into the `[project]` table of B. The lock still decides what is installed
 Rules it enforces:
 
 - Poetry's constraints become PEP 440 specifiers: `^1.2` is `>=1.2,<2`, `~1.2` is `>=1.2,<1.3`,
-  a bare version is `==`, `*` is any version. An `||` alternative raises `ProjectError`.
+  a bare version is `==`, `*` is any version. A caret raises the first of the major, minor and
+  patch numbers that is not 0, else the last of them, as poetry-core does (`^0.0.0.5` is
+  `>=0.0.0.5,<0.0.1`). A caret or tilde takes a pre-, post- or dev-release or an epoch too, its
+  bounds from the release numbers (`^1.2.0a1` is `>=1.2.0a1,<2`); a local label (`^1.2+local`)
+  is refused, as a `>=` specifier cannot hold one. AND constraints are split on a comma or a
+  space, as poetry-core splits them (`>=1.2 <2.0`). An `||` alternative raises `ProjectError`.
 - A dependency's `extras`, `markers` and `python` constraint go into its requirement line, the
   `markers` parenthesised next to a `python` constraint so an `or` in it keeps apart.
-- An `optional` dependency belongs to the extras of `[tool.poetry.extras]` that list it.
+- An `optional` dependency, with every alternative of one written as a list of tables, belongs
+  to the extras of `[tool.poetry.extras]` that list it.
 - A `git`, `path`, `url`, `develop` or `source` dependency, and an invalid requirement, raise
   `ProjectError` (add a `[project]` table, or lock the build with `--requirements`).
 
@@ -778,7 +787,9 @@ Rules it enforces:
   else the build asks for `name @ URL`. A `pylock.toml` names its `[[packages]]`; a
   `Pipfile.lock` the Pipfile's `[packages]`, or its `default` entries (`pipenv.tool_names`).
 - A listed distribution whose marker is false is no tool; one not installed and without a marker
-  is a `ClosureError`. The extras listed items ask for count as active in markers.
+  is a `ClosureError`. The extras listed items ask for count as active in markers. A listed
+  item's marker that cannot be evaluated counts as true; a `Requires-Dist` marker that cannot
+  be evaluated is a `ClosureError` naming the distribution.
 - A file that lists every installed distribution (but the project, and `pip`, `setuptools`,
   `wheel` and `distribute`, which `pip freeze` leaves out) is a freeze: the tools are the listed
   distributions no other listed one requires under the runtime's markers. Otherwise every listed
@@ -841,13 +852,14 @@ Rules it enforces:
   in) as a regular `name @ file:...` that must exist, a VCS entry by its commit
   (`name @ git+URL@commit`, with its subdirectory), a URL with `#sha256=` when the lock has it.
 - Refused, naming the entry: a package from another index (its credentials are not in the lock),
-  a VCS entry without a commit, a missing path, a name, version or source with white space, and
-  a package locked at two versions that both apply to the target.
+  a VCS entry without a commit, a missing path, a name, version or source with white space, a
+  marker that cannot be evaluated (of a package, a dependency or a dependency of the project),
+  and a package locked at two versions that both apply to the target.
 - `stale` compares Poetry's `content-hash` with what `_poetry_hash` computes from the parts of
   `pyproject.toml` Poetry hashes, and PDM's `content_hash` with both formulas PDM has used (with
   and without `dependency-groups`).
 
-- Imports: `project`.
+- Imports: `closure`, `project`.
 - Imported by: `build`, `manifest`, `pipenv`, `staging`, `tools`.
 
 ### `pipenv`
@@ -874,8 +886,10 @@ Rules it enforces:
   64 hex digits); `hg`, `svn` and `bzr` are refused; a `path` entry installs as a regular package,
   except the project itself (`pipenv install -e .`); a `file` entry keeps its hash when the lock
   gives exactly one.
-- Extras that entries ask of their dependencies count as active in markers (Pipenv marks what an
-  extra needs `extra == 'x'`).
+- Extras that the entries the target installs ask of their dependencies count as active in
+  markers (Pipenv marks what an extra needs `extra == 'x'`), until they bring in no other entry;
+  an entry whose own marker is false asks for none. A marker that cannot be evaluated is
+  refused naming the entry.
 - A package from an index other than PyPI is installed from the indexes uv is configured with;
   the lock's URL is never passed on (it may name credentials by variable), and the lock's hashes
   decide whether uv found the same files. The note is `Uncounted`.
@@ -885,7 +899,7 @@ Rules it enforces:
   [README](../tests/fixtures/projects/foreign/README.md)
   notes that the formula has not been checked against a lock that Pipenv wrote.
 
-- Imports: `foreign`, `project`.
+- Imports: `closure`, `foreign`, `project`.
 - Imported by: `build`, `manifest`, `project` (lazy), `staging`, `tools`.
 
 ### `venvdeps`
@@ -914,11 +928,12 @@ Rules it enforces:
 - A distribution provides an import when `top_level.txt` or the first part of a `RECORD` path
   names it; when several do (a namespace), those whose `RECORD` holds the module itself win.
 - The closure follows `Requires-Dist` lines whose marker holds for the target, not extras; a
-  requirement the venv lacks is left to uv.
+  requirement the venv lacks is left to uv, and a marker that cannot be evaluated raises
+  `ProjectError` naming the distribution.
 - A distribution with an invalid name or version, or a name not its directory's, is skipped; a
   needed editable or path install raises `ProjectError`: it is the user's own tree.
 
-- Imports: `project`.
+- Imports: `closure`, `project`.
 - Imported by: `build`, `manifest`.
 
 ## Static import check
@@ -1081,6 +1096,7 @@ not satisfy its requirement, and lists the distributions nothing requires.
 | Function | What it does |
 |---|---|
 | `marker_environment(python_version)` | This host's marker environment with the runtime's Python. |
+| `marker_holds(marker, environment, extras, error, where)` | Whether a marker holds with one of the extras; one that `packaging` parses but cannot evaluate (`~=` on a string, `extras`) raises the caller's `error`, naming `where`. |
 | `requirement_of(line, dist)` | A `Requires-Dist` line parsed; `ClosureError` when invalid. |
 | `several_scripts_error(name, scripts, candidates)` | The error for no `--entry` and no entry to take, listing the console scripts and inferred candidates. |
 | `check_command_names(names)` | `ClosureError` for a name that is not a `links.COMMAND_NAME`, of one command as of several. |
@@ -1091,15 +1107,16 @@ not satisfy its requirement, and lists the distributions nothing requires.
 
 Rules it enforces:
 
-- An editable install, a required distribution missing from the site and an invalid
-  `Requires-Dist` raise `ClosureError`.
+- An editable install, a required distribution missing from the site, an invalid
+  `Requires-Dist` and one whose marker cannot be evaluated raise `ClosureError`.
 - `--entry` must be a command name, or `module[:attribute]` made of identifiers, whose last part
   names the app.
 - Several inferred candidates, or a package and a module, raise the "choose one with --entry"
   error, which lists them.
 
 - Imports: `entry`, `links`, `loose`.
-- Imported by: `build`, `classify`, `cli` (lazy), `legacy`, `manifest`, `staging`, `tools`.
+- Imported by: `build`, `classify`, `cli` (lazy), `foreign`, `legacy`, `manifest`, `pipenv`,
+  `staging`, `tools`, `venvdeps`.
 
 ### `classify`
 
@@ -1182,12 +1199,14 @@ or load a library, and pathlib reads, whose argument or receiver mentions `__fil
 | `loaded_libraries(source, filename)` | Library names opened by a literal with ctypes or cffi: `CDLL("libmagic.so.1")` gives the name, `find_library("magic")` gives `libmagic`; a path is left out. |
 
 Rules: a module without the marker strings is not parsed, and one that does not parse gives
-nothing; calls in a top-level main guard are ignored unless `main`; with `script`, a
-`subprocess.run`, `Popen`, `call`, `check_call`, `check_output` or `os.exec*` call whose program
-is `sys.executable` (its first argument or `args=`, or the first element of a list or tuple
-there) is no read, since it runs a sibling from the payload; names assigned from a tainted
-expression are followed for at most 5 passes; jinja2's `PackageLoader` is flagged by the call
-alone.
+nothing; calls in a top-level main guard are ignored unless `main`: the body of
+`if __name__ == "__main__":` (not its `else` or `elif`) and the `else` of
+`if __name__ != "__main__":`, the operands in either order, which never run on import; with
+`script`, a `subprocess.run`, `Popen`, `call`, `check_call`, `check_output` or `os.exec*` call
+whose program is `sys.executable` (its first argument or `args=`, or the first element of a
+list or tuple there) is no read, since it runs a sibling from the payload; names assigned from
+a tainted expression are followed for at most 5 passes; jinja2's `PackageLoader` is flagged by
+the call alone.
 
 - Imports: nothing from fsbpyr.
 - Imported by: `compiler`.
@@ -1613,7 +1632,7 @@ completions. `dispatch` and
 | `signed_sums(url, signature_url, tag)` | A sums file, once a pinned key's signature of it passes; `UnsignedRelease` otherwise. |
 | `release_files(missing, log)` | For `verify` of a file of fsbpyr with nothing beside it: the sums file and signature of the `vX.Y.Z` release it records, unchecked. |
 | `listed_digest(sums, name, tag)` | The SHA-256 a checked sums file lists for `name`. |
-| `fetch_checked(url, digest, target, limit)` | Downloads an `.xz` (256 MiB at most), checks its SHA-256 against `digest`, then unpacks it into `target` (at most `limit` bytes). |
+| `fetch_checked(url, digest, target, limit)` | Downloads an `.xz` (256 MiB at most), checks its SHA-256 against `digest`, then unpacks it into `target`, at most `limit` bytes when a limit is given: `runtime.stubs` gives 256 MiB, self update and `dispatch` none (each `.xz` has matched the digest of a signed sums file by then). |
 | `check_release_identity(info, asset)` | A new executable's release numbers, once its build_info's `release_asset` is `asset`. |
 | `check_glibc(baseline, host)` | Refuses an executable whose recorded `glibc` is newer than the host's (`os.confstr("CS_GNU_LIBC_VERSION")`, major and minor); a non-glibc host and a build that records none pass. |
 | `update(log, warn)` | The update; False when already up to date. |
@@ -1631,7 +1650,10 @@ Rules it enforces:
   files are removed.
 - The man page and completions (`share/man/man1/fsbpyr.1` and the bash, zsh and fish completion
   files) are rewritten only if they exist under the prefix and the executable is in a `bin`
-  directory; otherwise a warning says how to write them.
+  directory; otherwise a warning says how to write them. Each is written under a temporary
+  name and renamed into place after the executable; one that cannot be renamed stays old, with
+  a warning, and on Ctrl-C between the renames the update stands, the rest stay old and their
+  temporaries are removed.
 - After an update, a warning names the placed glibc 2.28 stubs the new release refuses
   (`runtime.stubs.refused_after_update`,
   [Runtime modules](Dev-Runtime-Modules.md#runtimes-for-glibc-228-el8)); the files stay.
@@ -1686,7 +1708,7 @@ nor check. The design is on [Security](Dev-Security.md#signatures) and in
 
 | Function | What it does |
 |---|---|
-| `crypto()` | The launcher's functions; `SigningError` from source. |
+| `crypto()` | The launcher's functions, which mypy checks against `Crypto` through `stubs/_fsbpyr.pyi`; `SigningError` from source. |
 | `available()` | Whether they exist. |
 | `pinned_keys()` | The `.pub` files of `src/fsbpyr/release-keys/`. |
 | `fingerprint(pub)` | `SHA256:<hex>` of a public key file. |
@@ -1752,8 +1774,8 @@ lists `x86_64-linux-gnu`, `aarch64-linux-gnu`, `x86_64-linux-musl`, `aarch64-lin
 | `host_target()` | `detect` for this process. |
 
 - Imports: nothing from fsbpyr.
-- Imported by: `build`, `dispatch`, `elf`, `natives`, `selfupdate`, `payload.spec`,
-  `runtime.collect`, `runtime.registry`, `runtime.stubs`, `runtime.sysroot`.
+- Imported by: `build`, `cli` (lazy), `dispatch`, `elf`, `natives`, `selfupdate`,
+  `payload.spec`, `runtime.collect`, `runtime.registry`, `runtime.stubs`, `runtime.sysroot`.
 
 ### `compat`
 

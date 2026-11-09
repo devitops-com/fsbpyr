@@ -204,14 +204,16 @@ test-portability: ## Run the portability matrix on 12 distributions (podman, dis
 # run executables use the glibc 2.28 stub, built here from Rocky Linux 8.10's sysroot, and every
 # `fsbpyr build` of a test is a `--glibc 2.28` one. What differs between an EL8 build and a
 # default one is the stub, so these are the tests that run it: the launcher's (edges, due, slots,
-# gc, restore, find_object), the _fsbpyr contract (runtime_app, imports, stub_hardening, cache
-# root, streaming) and the build of apps with natives from manylinux_2_28 wheels (compat,
-# natives). tests/e2e/test_el8.py compares an EL8 build with a default one, so it runs with
-# both runtimes, not in the mode. full-suite.yml's el8-tests job runs it; el8.yml, which publishes
-# the EL8 stubs in the companion release el8-vX.Y.Z, tests nothing.
+# gc, restore, find_object, way_targets, read_failures, cores), the _fsbpyr contract
+# (runtime_app, imports, stub_hardening, cache root, streaming) and the build of apps with
+# natives from manylinux_2_28 wheels (compat, natives). tests/e2e/test_el8.py compares an EL8
+# build with a default one, so it runs with both runtimes, not in the mode. full-suite.yml's
+# el8-tests job runs it; el8.yml, which publishes the EL8 stubs in the companion release
+# el8-vX.Y.Z, tests nothing.
 EL8_TESTS := tests/e2e/test_runtime_app.py tests/e2e/test_imports.py tests/e2e/test_stub_hardening.py \
 	tests/e2e/test_edges.py tests/e2e/test_cache_root.py tests/e2e/test_gc.py tests/e2e/test_slots.py \
 	tests/e2e/test_due.py tests/e2e/test_restore.py tests/e2e/test_find_object.py \
+	tests/e2e/test_way_targets.py tests/e2e/test_read_failures.py tests/e2e/test_cores.py \
 	tests/e2e/test_streaming.py tests/e2e/test_stream_windows.py tests/e2e/test_unbuffered.py \
 	tests/e2e/test_digests.py tests/e2e/test_compat.py tests/e2e/test_natives.py \
 	tests/unit/test_test_modes.py
@@ -246,9 +248,9 @@ check: ## Static checks: ruff + mypy
 	$(UVRUN) mypy
 
 # clang's static analyzer over the launcher, compiled with its flags against the cached PBS
-# headers (a runtime that is not cached is fetched). Informational: full-suite.yml runs it
-# with continue-on-error; it exits 1 when the analyzer has findings.
-check-c: ## Static analysis of the launcher's C sources (clang --analyze; informational)
+# headers (a runtime that is not cached is fetched). It exits 1 when the analyzer has findings,
+# which fails full-suite.yml's run.
+check-c: ## Static analysis of the launcher's C sources (clang --analyze)
 	$(WITH_LLVM23) $(UVRUN) python tools/check-c.py
 
 # --- Release ---
@@ -272,7 +274,7 @@ release-assets: ## Only tag main's tested HEAD; CI builds and attests it and lea
 
 # Only the signature goes to GitHub, never KEY.
 release-sign: ## Only check the draft against your commit, sign it with KEY=PATH and publish it
-	@bash tools/release/release-sign.sh '$(KEY)'$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
+	@bash tools/release/release-sign.sh '$(if $(filter command line,$(origin KEY)),$(KEY))'$(if $(filter command line,$(origin VERSION)), '$(VERSION)')
 
 release-audit: ## Compare GitHub with what this machine recorded: tags, releases, settings
 	@bash tools/release/audit.sh

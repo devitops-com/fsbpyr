@@ -60,8 +60,9 @@ it is one. Without it, every app, fsbpyr included, collects its cache by itself 
 background, and fsbpyr collects the rest of its own cache when `build`, `inspect` or `runtime`
 starts, a day after the last time (an hour, when the file system has less than 10% free). The
 variants of other Pythons that a build downloaded
-(`${XDG_CACHE_HOME:-~/.cache}/fsbpyr/downloads/fsbpyr-3.X-...`) are left alone; delete them by
-hand to reclaim the space.
+(`${XDG_CACHE_HOME:-~/.cache}/fsbpyr/downloads/fsbpyr-3.X-...`) and the glibc 2.28 stubs of
+`--glibc 2.28` (`.../downloads/fsbpyr-stub-...`) are left alone; delete them by hand to reclaim
+the space.
 
 ## `fsbpyr runtime list` and `fsbpyr runtime build`
 

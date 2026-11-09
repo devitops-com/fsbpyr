@@ -77,10 +77,19 @@ Two variables, set once:
 | `FSBPYR_RELEASE_KEY_FILE` | The release key's file; `KEY=PATH` overrides it. |
 | `FSBPYR_RELEASE_PASSPHRASE_FILE` | The absolute path of a file holding its passphrase, or of a program that prints it. |
 
-An executable file is run with nothing on its standard input; any other is read. The passphrase
-is one line. The file must be yours or root's, writable by nobody else, mode 600 or tighter if it
-holds the passphrase, and, like the key, outside the checkout. Beside the key, it does not stop
-someone with your account.
+A program, an executable file that starts with `#!` or is an ELF file, or one you may run but
+not read, is run with nothing on its standard input, and what it writes on its standard error is
+dropped, since the report keeps what each step prints. Any other file is read, x bits or not: on
+exFAT or NTFS, or a vfat mounted by hand, every file has them. The passphrase is one line. The
+file must be yours or root's, and neither your group nor others may write it, nor read it if it
+holds the passphrase; like the key, it stays outside the checkout. Beside the key, it does not
+stop someone with your account.
+
+The file is opened once, and the checks and its use are of that open file, so a file put in its
+place afterwards, through a directory on the way that someone else may write, is never run or
+read. A program you may run but not read cannot be opened, so it runs by its name: then every
+directory on its way must be yours or root's, and writable by nobody else (a group of yours alone
+counts as yours) unless it is sticky, as `/tmp` is.
 
 `make release` checks that the key opens with the passphrase and is pinned by this tree, runs the
 audit, tags and pushes, waits for both workflows, signs and publishes both releases (neither
@@ -158,7 +167,7 @@ account.
 | `make build` | build `dist/fsbpyr` with the installed fsbpyr (`PYTHON=3.X`: a variant from source) |
 | `make install`, `make uninstall` | install or remove `dist/fsbpyr`, its man page and completions |
 | `make check` | ruff and mypy |
-| `make check-c` | clang's static analyser over the launcher (informational) |
+| `make check-c` | clang's static analyser over the launcher; a finding fails the full suite's run |
 | `make test-ci`, `make test`, `make test-corpus`, `make test-container`, `make test-portability` | the test tiers ([Testing](Dev-Testing.md#make-targets)) |
 | `make test-prereqs` | [what the full suite needs](Dev-Testing.md#when-the-machine-lacks-something) that this machine lacks |
 | `make test-vm` | [aarch64 apps in a QEMU VM](Dev-Testing.md#the-page-size-smoke-test) with EL8's 64K-page kernel |

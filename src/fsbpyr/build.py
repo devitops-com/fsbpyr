@@ -53,7 +53,7 @@ from .project import (
 )
 from .runtime import pins
 from .runtime.pbs import PbsError
-from .runtime.registry import Runtime, cache_root, select_runtime
+from .runtime.registry import Runtime, cache_root, secure_directory, select_runtime
 from .runtime.sysroot import SysrootError, build_flags, fetch_sysroot
 from .staging import (
     StagingError,
@@ -232,7 +232,7 @@ def rebuild_on_baseline(  # noqa: PLR0913  the staging, what to rebuild, and off
     listed, glibc = ", ".join(names), baseline.glibc
     if offline:
         return [f"{listed}: not rebuilt against the glibc {glibc} sysroot: the build is offline"]
-    cache = cache_root()
+    cache = secure_directory(cache_root())  # D20, as every other way into the cache
     try:
         root = fetch_sysroot(baseline, cache)
     except (SysrootError, PbsError) as exc:

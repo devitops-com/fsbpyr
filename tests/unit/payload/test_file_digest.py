@@ -3,6 +3,7 @@ hash files of any size a leaf at a time, on threads, and a leaf inside a hole is
 digest is that of zeros): a sparse terabyte hashes in seconds. ``inspect --verify`` takes an
 executable's integrity digest and its plain SHA-256 from one read of it (executable_digests)."""
 
+import errno
 import hashlib
 import os
 import random
@@ -90,6 +91,33 @@ def test_past_the_end_of_a_file_is_no_hole(tmp_path: Path) -> None:
         os.close(fd)
 
 
+@pytest.mark.parametrize("error", [errno.EINVAL, errno.EOPNOTSUPP])
+def test_without_seek_data_a_range_is_read(
+    error: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file system whose SEEK_DATA fails with anything but ENXIO finds no hole: the range is
+    read, as the launcher's fsb_in_hole (integrity.c) reads it, and the digest is the same."""
+    with (tmp_path / "f").open("wb") as file:
+        file.truncate(3 * DIGEST_LEAF)
+        file.seek(DIGEST_LEAF + 5)
+        file.write(b"data")
+    content = (tmp_path / "f").read_bytes()
+    lseek = os.lseek
+
+    def no_seek_data(fd: int, position: int, how: int) -> int:
+        if how == os.SEEK_DATA:
+            raise OSError(error, os.strerror(error))
+        return lseek(fd, position, how)
+
+    monkeypatch.setattr(os, "lseek", no_seek_data)
+    fd = os.open(tmp_path / "f", os.O_RDONLY)
+    try:
+        assert not is_hole(fd, 2 * DIGEST_LEAF, DIGEST_LEAF)
+    finally:
+        os.close(fd)
+    assert _digest(tmp_path / "f") == tree_digest(content)
+
+
 @pytest.mark.parametrize("piece", [1, 4096, DIGEST_LEAF - 1, DIGEST_LEAF, 3 * DIGEST_LEAF])
 def test_content_hashed_in_pieces_of_any_size_has_its_tree_digest(piece: int) -> None:
     data = random.Random(piece).randbytes(3 * DIGEST_LEAF + 11)  # noqa: S311  # test data
@@ -150,6 +178,35 @@ def test_an_executables_holes_hash_as_zeros_in_both_digests(
 
     assert len(content) == size
     assert _both(tmp_path / "f") == _expected(content)
+
+
+def test_an_executables_holes_are_never_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D38: 0.21.0's plain SHA-256 for ``inspect --verify`` read a sparse executable's holes as
+    zeros, which took 1 TiB raw from 4.8 to 324 s. Only the leaves with data are read, and the
+    integrity digest's own bytes."""
+    path = tmp_path / "sparse"
+    size = 40 * DIGEST_LEAF + 7 + DIGEST_SIZE
+    with path.open("wb") as file:
+        file.truncate(size)
+        for leaf in (5, 30):
+            file.seek(leaf * DIGEST_LEAF + 3)
+            file.write(b"data")
+    read: list[tuple[int, int]] = []
+    real_read = payload_format._read
+
+    def counted(fd: int, start: int, length: int) -> bytes:
+        read.append((start, length))
+        return real_read(fd, start, length)
+
+    monkeypatch.setattr(payload_format, "_read", counted)
+
+    digests = _both(path)
+
+    assert sorted(read) == [(5 * DIGEST_LEAF, DIGEST_LEAF), (30 * DIGEST_LEAF, DIGEST_LEAF),
+                            (size - DIGEST_SIZE, DIGEST_SIZE)]  # fmt: skip
+    assert digests == _expected(path.read_bytes())
 
 
 def test_an_executable_shorter_than_asked_is_an_error(tmp_path: Path) -> None:

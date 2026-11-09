@@ -7,6 +7,7 @@ after a day; nothing else in the root is touched. And ``fsbpyr cache gc``."""
 import fcntl
 import inspect
 import os
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -16,6 +17,7 @@ import pytest
 from fsbpyr import cli
 from fsbpyr.boot._fsbpyr_rt import gc
 from fsbpyr.runtime import collect, hold, pbs, registry, sysroot
+from fsbpyr.vcs import release_asset, release_stub_asset
 
 NOW = time.time()
 DAY = 86400
@@ -120,6 +122,36 @@ def test_what_a_killed_fetch_or_build_left_goes_after_a_day(root: Path) -> None:
         "pbs/.extract-new",
         f"runtimes/.{OTHER}.staging",
     ]
+
+
+def _temporary(root: Path, prefix: str, *, days: float) -> str:
+    """A temporary as mkstemp names it, beside the file it is to become."""
+    handle, name = tempfile.mkstemp(dir=root / collect.DOWNLOADS, prefix=prefix)
+    os.close(handle)
+    os.utime(name, (NOW - days * DAY,) * 2)
+    return Path(name).name
+
+
+def test_what_a_killed_stub_or_variant_download_left_goes_after_a_day(root: Path) -> None:
+    """stubs.py and dispatch.py unpack a download into a temporary beside the file they keep,
+    which a process killed meanwhile (SIGKILL, the OOM killer) leaves. The stubs and variants
+    kept stay, however old and short of space."""
+    stub = release_stub_asset("3.14", "x86_64-linux-gnu", "2.28")
+    variant = f"{release_asset('3.13', 'aarch64-linux-gnu')}-v1.2.0"
+    kept = [f"{stub}-{OTHER}", variant]
+    for name in kept:
+        _download(root, name, days=30)
+    old = [
+        _temporary(root, f".{stub}.", days=2),  # stubs._download
+        _temporary(root, f".{stub}-{OTHER}.", days=2),  # stubs._keep
+        _temporary(root, f".{variant}.", days=2),  # dispatch._fetch
+    ]
+    new = _temporary(root, f".{variant}.", days=0.1)
+
+    report = collect.collect_tool(root, now=NOW, pressure=True)
+
+    assert sorted(report.removed) == sorted(f"downloads/{name}" for name in old)
+    assert _left(root) == sorted(f"downloads/{name}" for name in (*kept, new))
 
 
 def test_a_directory_of_the_users_is_left_alone(tmp_path: Path) -> None:

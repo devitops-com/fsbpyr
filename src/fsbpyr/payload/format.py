@@ -29,6 +29,8 @@ XZ_PIECE = 4 << 20  # libraries larger than this are xz in pieces of this much c
 ZSTD_PIECE = 8 << 20  # content larger than this is zstd in pieces of this much content (D39)
 MAX_MODE = 0o777
 MAX_BLOB_SIZE = 1 << 62  # far inside off_t; no limit of ours below what OSes hold (D38)
+MAX_STARTUP_CODE = 16 << 20  # main.c's: startup code is decompressed into memory at every start
+MAX_STARTUP_MODULES = 4096  # main.c's: the frozen-module table it builds at every start
 MAX_STRTAB_SIZE = 0xFFFFFFFF
 
 TRAILER_MAGIC = b"FSBPYR\x00T"
@@ -194,12 +196,13 @@ _PASS_LEAVES = 4096  # leaves hashed per pass: their digests are all the memory 
 def is_hole(fd: int, start: int, length: int) -> bool:
     """Whether [start, start + length) of the file open as ``fd`` lies inside a hole (SEEK_DATA,
     which moves the descriptor's offset). Past the file's end there is no hole: OSError, the file
-    is shorter than it was."""
+    is shorter than it was. A SEEK_DATA that fails otherwise (a file system without it) finds no
+    hole: the range is read, as the launcher's fsb_in_hole reads it."""
     try:
         return os.lseek(fd, start, os.SEEK_DATA) >= start + length
     except OSError as exc:
         if exc.errno != errno.ENXIO:  # ENXIO: no data after ``start``
-            raise
+            return False
     if os.fstat(fd).st_size < start + length:
         raise OSError(errno.EIO, "file shorter than it was (changed while read)")
     return True  # a hole up to the end

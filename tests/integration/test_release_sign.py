@@ -365,6 +365,32 @@ def test_a_passphrase_of_someone_else_stops_it(ready: World, tmp_path: Path) -> 
     assert ready.github.writes() == []
 
 
+def test_a_file_put_in_place_of_the_passphrase_after_the_checks_is_never_run(
+    ready: World, tmp_path: Path
+) -> None:
+    """Whoever may write a directory on the way can swap the file between the checks and its
+    use: what is checked is what is used, one open file."""
+    planted, ran = tmp_path / "planted", tmp_path / "ran"
+    planted.write_text(f"#!/bin/sh\ntouch {ran}\n{PRINTS_IT}\n")
+    planted.chmod(0o700)
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    swap = f"[ ! -e {planted} ] || mv {planted} {ready.passphrase}"  # once, after a check
+    (shim / "stat").write_text(f"""#!/bin/sh
+{shutil.which("stat")} "$@"; status=$?
+case "$*" in *{ready.passphrase}*|*/proc/self/fd/*) {swap} ;; esac
+exit $status
+""")  # fmt: skip
+    (shim / "stat").chmod(0o755)
+    ready.env["PATH"] = f"{shim}:{ready.env['PATH']}"
+
+    done = ready.sign()
+
+    assert done.returncode == 0, done.stderr
+    assert not planted.exists()  # it was put in place
+    assert not ran.exists()
+
+
 def test_a_passphrase_inside_the_checkout_stops_it(ready: World) -> None:
     inside = ready.tree / "secret"
     inside.write_text(PASSPHRASE)

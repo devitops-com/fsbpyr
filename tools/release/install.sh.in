@@ -211,11 +211,12 @@ check_attestation() { # file
 }
 
 # Downloads the executable into $STAGE (in the install directory, so that the rename is atomic
-# and no mount option of /tmp matters) and checks it three ways before it is installed.
+# and no mount option of /tmp matters) and checks it three ways before it is installed. mktemp
+# makes $STAGE, so no link planted under a name known in advance is written through.
 fetch_executable() {
     asset="$ASSET"
     WORK_DIR="$(mktemp -d)" || err "cannot make a temporary directory"
-    STAGE="$INSTALL_DIR/.fsbpyr.$$.tmp"
+    STAGE="$(mktemp "$INSTALL_DIR/.fsbpyr.XXXXXX")" || err "cannot create a file in $INSTALL_DIR"
     if have xz && [ -n "$(asset_field "$asset.xz" 2)" ]; then
         download "$BASE_URL/$asset.xz" "$WORK_DIR/download"
         check_sha256 "$WORK_DIR/download" "$asset.xz"
@@ -265,13 +266,17 @@ install_extras() {
     put_extra "$share/fish/vendor_completions.d/fsbpyr.fish" completion fish
 }
 
+# Into a file of mktemp's (mode 600), given the mode a redirection gives: 666 less the umask.
 put_extra() { # file, then the arguments of fsbpyr that print it
     file="$1"
     shift
+    new=
     mkdir -p "$(dirname "$file")" \
-        && "$INSTALL_DIR/fsbpyr" "$@" > "$file.$$.tmp" 2> /dev/null \
-        && mv -f "$file.$$.tmp" "$file" \
-        || { rm -f "$file.$$.tmp"; warn "could not write $file"; return 0; }
+        && new="$(mktemp "$file.XXXXXX")" \
+        && "$INSTALL_DIR/fsbpyr" "$@" > "$new" 2> /dev/null \
+        && chmod +rw "$new" \
+        && mv -f "$new" "$file" \
+        || { [ -z "$new" ] || rm -f "$new"; warn "could not write $file"; return 0; }
     say_verbose "  $file"
 }
 
@@ -295,6 +300,17 @@ add_line() { # file, line
     if [ -s "$1" ] && [ -n "$(tail -c 1 "$1")" ]; then echo >> "$1"; fi
     printf '%s\n' "$2" >> "$1" || return 1
     say_verbose "added to $1"
+}
+
+# Whether an env script there already puts the directory on PATH, as ours and uv's do (both
+# have this line): a file of that name that does not is someone else's, and sourcing it from the
+# shell files would run it in every new shell.
+env_script() { # name, the line that puts the directory on PATH
+    [ ! -e "$INSTALL_DIR/$1" ] && return 0
+    grep -qF -- "$2" "$INSTALL_DIR/$1" 2>/dev/null && return 0
+    say "$INSTALL_DIR/$1 is not an env script that puts $INSTALL_DIR on PATH:" \
+        "your shell files are left alone"
+    return 1
 }
 
 write_env_files() {
@@ -331,8 +347,10 @@ modify_path() {
 "*) err "cannot write shell files for $INSTALL_DIR, which has a quote, \$, backtick or backslash in it; install elsewhere or use --no-modify-path" ;;
     esac
     [ -n "${HOME:-}" ] || err "HOME is not set; use --no-modify-path"
-    write_env_files || err "cannot write the env scripts in $INSTALL_DIR"
     expr="$(dir_expression)"
+    env_script env "export PATH=\"$expr:\$PATH\"" || return 1
+    env_script env.fish "set -x PATH \"$expr\" \$PATH" || return 1
+    write_env_files || err "cannot write the env scripts in $INSTALL_DIR"
     line=". \"$expr/env\""
     add_line "$HOME/.profile" "$line"
     [ ! -f "$HOME/.bashrc" ] || add_line "$HOME/.bashrc" "$line"
@@ -358,7 +376,10 @@ add_to_path() {
         say_verbose "added $INSTALL_DIR to \$GITHUB_PATH"
         return 0
     fi
-    modify_path
+    if ! modify_path; then
+        say "$INSTALL_DIR is not on your PATH"
+        return 0
+    fi
     say ""
     say "To add $INSTALL_DIR to your PATH, either restart your shell or run:"
     say ""

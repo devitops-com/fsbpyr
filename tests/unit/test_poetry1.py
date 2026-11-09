@@ -30,6 +30,38 @@ def test_a_poetry_constraint_becomes_a_pep_440_specifier(constraint: str, specif
     assert _dependencies(pkg=constraint) == [f"pkg{SpecifierSet(specifier)}"]
 
 
+@pytest.mark.parametrize(
+    ("constraint", "specifier"),
+    [("^1.2.0a1", ">=1.2.0a1,<2"), ("~1.2.0.post1", ">=1.2.0.post1,<1.3"),
+     ("^1.2.0.dev3", ">=1.2.0.dev3,<2"), ("~0.3rc2", ">=0.3rc2,<0.4"), ("^1!1.2", ">=1!1.2,<1!2")],
+)  # fmt: skip
+def test_a_caret_or_tilde_takes_any_pep_440_version(constraint: str, specifier: str) -> None:
+    """As poetry-core reads them: the bounds come from the release numbers."""
+    assert _dependencies(pkg=constraint) == [f"pkg{SpecifierSet(specifier)}"]
+
+
+@pytest.mark.parametrize(
+    ("constraint", "specifier"),
+    [("^0.0.0.5", ">=0.0.0.5,<0.0.1"), ("^0.0.0.0", ">=0.0.0.0,<0.0.1"),
+     ("^0.0.0.0.5", ">=0.0.0.0.5,<0.0.1"), ("^0.1.2.3", ">=0.1.2.3,<0.2"),
+     ("^1.2.3.4", ">=1.2.3.4,<2"), ("^0.0.0.5a1", ">=0.0.0.5a1,<0.0.1")],
+)  # fmt: skip
+def test_a_caret_raises_one_of_the_first_three_numbers(constraint: str, specifier: str) -> None:
+    """As poetry-core does (Version.next_breaking; 1.9.1 and 2.5.0 give these bounds, written
+    with as many numbers as the version has: <0.0.1.0 is 0.0.1)."""
+    assert _dependencies(pkg=constraint) == [f"pkg{SpecifierSet(specifier)}"]
+
+
+@pytest.mark.parametrize(
+    ("constraint", "specifier"),
+    [(">=1.2 <2.0", ">=1.2,<2.0"), (">= 1.2 < 2.0", ">=1.2,<2.0"),
+     (">=1.2, <2.0,", ">=1.2,<2.0"), ("^1.2 !=1.5", ">=1.2,<2,!=1.5")],
+)  # fmt: skip
+def test_and_constraints_split_on_a_comma_or_a_space(constraint: str, specifier: str) -> None:
+    """As poetry-core splits them, not between an operator and its version."""
+    assert _dependencies(pkg=constraint) == [f"pkg{SpecifierSet(specifier)}"]
+
+
 def test_alternatives_are_refused() -> None:
     with pytest.raises(ProjectError, match="alternatives"):
         _dependencies(pkg="^1 || ^3")
@@ -47,6 +79,17 @@ def test_the_table_holds_name_version_python_dependencies_extras_and_scripts() -
         "dependencies": ["click>=8", "win; sys_platform == 'win32'"],
         "optional-dependencies": {"fancy": ["extra-lib<3,>=2"]}, "scripts": {"app": "app:main"},
     }  # fmt: skip
+
+
+def test_every_alternative_of_an_optional_dependency_belongs_to_its_extras() -> None:
+    data = _data(
+        '[tool.poetry.dependencies]\nfoo = [\n'
+        '    {version = "^1.0", markers = "sys_platform == \'linux\'", optional = true},\n'
+        '    {version = "^2.0", markers = "sys_platform == \'darwin\'", optional = true},\n]\n'
+        '[tool.poetry.extras]\nx = ["foo"]\n')
+
+    assert project_table(data)["optional-dependencies"] == {"x": [
+        "foo<2,>=1.0; sys_platform == 'linux'", "foo<3,>=2.0; sys_platform == 'darwin'"]}
 
 
 def test_a_git_dependency_is_refused() -> None:

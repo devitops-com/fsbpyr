@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import ssl
+import stat
 import subprocess
 import threading
 from collections.abc import Iterator
@@ -634,6 +635,49 @@ def test_the_man_page_and_completions_go_where_make_install_puts_them(
         assert (prefix / path).read_text() == f"# completion for {shell_name}\n"
 
 
+def test_a_link_planted_under_the_installers_process_id_is_not_followed(
+    shell: list[str],
+    release: Release,
+    host: Host,
+    tmp_path: Path,
+) -> None:
+    """The installer writes only into files it made: a link that someone who can write the
+    install directory plants under a name of the installer's process id, as `.$$.tmp` names
+    were, is left alone. `exec` keeps the process id, so the links have the installer's. What it
+    writes has the modes it had before: the man page's from the umask, the executable 755."""
+    script = release.make()
+    victim = tmp_path / "victim"
+    victim.write_text("untouched\n")
+    man = host.home / ".local/share/man/man1"
+    man.mkdir(parents=True)
+    host.install_dir.mkdir(parents=True)
+    ln = shutil.which("ln")
+    assert ln is not None, "missing tool: ln"
+    plant = (
+        f'umask 027 && {ln} -s "$VICTIM" "$FSBPYR_INSTALL_DIR/.fsbpyr.$$.tmp" && '
+        f'{ln} -s "$VICTIM" "$MAN/fsbpyr.1.$$.tmp" && exec "$@"'
+    )
+
+    result = subprocess.run(
+        [*shell, "-c", plant, "plant", *shell, str(script), "--no-modify-path"],
+        env={**host.env, "VICTIM": str(victim), "MAN": str(man)},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=SCRIPT_TIMEOUT_S,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert victim.read_text() == "untouched\n"
+    assert not installed(host).is_symlink()
+    assert installed(host).read_bytes() == (release.assets / f"fsbpyr-{DEFAULT}-{GNU}").read_bytes()
+    assert stat.S_IMODE(installed(host).stat().st_mode) == 0o755
+    assert not (man / "fsbpyr.1").is_symlink()
+    assert (man / "fsbpyr.1").read_text() == ".TH FSBPYR 1\n"
+    assert stat.S_IMODE((man / "fsbpyr.1").stat().st_mode) == 0o640  # 0666 less umask 027
+
+
 def test_no_man_page_outside_a_bin_directory(
     shell: list[str],
     release: Release,
@@ -713,16 +757,57 @@ def test_a_directory_outside_home_is_written_as_it_is(
     assert (host.home / ".profile").read_text() == f'. "{tmp_path}/apps/env"\n'
 
 
-def test_an_existing_env_is_reused(shell: list[str], release: Release, host: Host) -> None:
+# What uv's installer (cargo-dist's) writes for ~/.local/bin.
+UV_ENV = """#!/bin/sh
+# add binaries to PATH if they aren't added yet
+# affix colons on either side of $PATH to simplify matching
+case ":${PATH}:" in
+    *:"$HOME/.local/bin":*)
+        ;;
+    *)
+        # Prepending path in case a system-installed binary needs to be overridden
+        export PATH="$HOME/.local/bin:$PATH"
+        ;;
+esac
+"""
+UV_ENV_FISH = """if not contains "$HOME/.local/bin" $PATH
+    # Prepending path in case a system-installed binary needs to be overridden
+    set -x PATH "$HOME/.local/bin" $PATH
+end
+"""
+
+
+def test_uvs_env_scripts_are_reused(shell: list[str], release: Release, host: Host) -> None:
     script = release.make()
     host.install_dir.mkdir(parents=True)
-    (host.install_dir / "env").write_text("# uv's\n")
+    (host.install_dir / "env").write_text(UV_ENV)
+    (host.install_dir / "env.fish").write_text(UV_ENV_FISH)
 
     result = install(shell, script, host)
 
     assert result.returncode == 0, result.stderr
-    assert (host.install_dir / "env").read_text() == "# uv's\n"
+    assert (host.install_dir / "env").read_text() == UV_ENV
+    assert (host.install_dir / "env.fish").read_text() == UV_ENV_FISH
     assert (host.home / ".profile").read_text() == '. "$HOME/.local/bin/env"\n'
+
+
+@pytest.mark.parametrize("name", ["env", "env.fish"])
+def test_a_file_of_that_name_that_is_no_env_script_is_never_sourced(
+    shell: list[str], release: Release, host: Host, name: str
+) -> None:
+    """A program or script of someone's own named env: every new shell would run it."""
+    script = release.make()
+    host.install_dir.mkdir(parents=True)
+    (host.install_dir / name).write_text("#!/bin/sh\necho hello\n")
+
+    result = install(shell, script, host)
+
+    assert result.returncode == 0, result.stderr
+    assert (host.install_dir / name).read_text() == "#!/bin/sh\necho hello\n"
+    assert not (host.home / ".profile").exists()
+    assert f"{host.install_dir}/{name} is not an env script" in result.stdout
+    assert f"{host.install_dir} is not on your PATH" in result.stdout
+    assert (host.install_dir / "fsbpyr").exists()
 
 
 def test_a_directory_on_path_is_left_alone(shell: list[str], release: Release, host: Host) -> None:

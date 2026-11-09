@@ -10,6 +10,150 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Fixed
+- **The installer writes only into files it made.** It staged the executable, the man page and
+  the completions under names known in advance (`.fsbpyr.<process id>.tmp`), so a link planted
+  under such a name by someone who could write the directory was written through. `mktemp` makes
+  them now; the files keep the modes they had.
+- **The installer sources only an env script that puts its directory on `PATH`.** A file named
+  `env` or `env.fish` already in the install directory, whatever it was, was sourced from
+  `~/.profile` and the other shell files, so every new shell ran it. One that puts the directory
+  on `PATH`, as uv's does, is still used; any other is left alone, and so are the shell files,
+  and the installer says that the directory is not on your `PATH`.
+- **The builder and `inspect` read a file whose file system has no `SEEK_DATA`.** Any error of
+  `SEEK_DATA` but "no data after this offset" stopped them; now that range is read, as the
+  launcher always read it.
+- **The threat model describes the signed downloads.** `docs/security.md` still said that an EL8
+  stub download is checked against unsigned sums and that self update checks only the new file's
+  own digest; both check sums signed by keys fsbpyr pins.
+- **Running out of memory is no longer reported as a corrupt executable.** If a piece of a large
+  file decoded on a helper thread, an xz library, a block member or a zstd stream could not get
+  memory, the app got `PayloadError` (`corrupt executable payload`) or the extraction failed as
+  corrupt. A start that ran out of memory before its first module was read said `corrupt startup
+  module`. These cases now raise `MemoryError` and say `out of memory`. A corrupt blob read in an
+  app that locked its memory could raise `OSError`; it now raises `PayloadError`.
+- **Large files are decoded and hashed on several threads on hosts of more than 1024 CPUs too.**
+  The kernel there refuses the CPU mask the launcher asked with, and the launcher then used one
+  thread. It asks again with a larger mask.
+- **A package that is extracted at run time is walked once a process.** An
+  `importlib.util.find_spec("torch")` before `import torch` walked and checked torch's files twice.
+- **The cache's way check refuses a symlink target it may have read only in part.** It read at most
+  4095 bytes of a symlink's target, so a longer one, which a FUSE or NFS server can give, was cut
+  short and a different path was checked. A target that fills the 4096-byte buffer is now refused
+  (`File name too long`). One of 4095 bytes, the longest `symlink()` makes, is still followed.
+- **A build that only rebuilds native wheels against the sysroot makes the cache root private too.**
+  It fetched the sysroot into the cache root without checking the root's owner or its way, or
+  forcing it to 0700, which every other way into the cache does (D20); with a fresh cache under
+  umask 002 the root came out 0775. A refused root is now the same error as on the other paths.
+- **A crash note no longer names an error the app hid with `raise ... from None`.** The notes for a
+  file read inside the executable (`--fs-package`) and, on Python 3.15, for a module not in the
+  executable followed the exception chain past `from None`, which the traceback does not show. They
+  then advised a rebuild for an optional module or file the app had chosen to do without.
+- **The build's hint for several commands no longer offers a form that starts the wrong command.**
+  When a command has the executable's name, `exe COMMAND` starts that command with COMMAND as its
+  argument. The build now says to start it as the executable and the others through their links.
+- **`fsbpyr self update` leaves no temporary man page or completion behind.** A failed write (a full
+  disk, a quota), a failing new executable or Ctrl-C while the man page and completions were written
+  or renamed into place left dotfiles such as `share/man/man1/.fsbpyr.1.XXXXXXXX` under the
+  prefix.
+- **The cache collector removes the temporary a killed stub or variant download left.** A build
+  killed while it unpacked a glibc 2.28 stub or another Python's fsbpyr (SIGKILL, the OOM killer, a
+  hangup) left a temporary of up to 256 MiB in `downloads/`, and nothing removed it. It now goes
+  once it is a day old, as partial downloads do. The stubs and variants that are kept are still left
+  alone.
+- **Startup modules that the launcher would refuse are now refused when they are written and
+  read.** The writer and `inspect` accepted startup code that was in pieces, empty or over 16 MiB,
+  and more than 4096 startup modules. The launcher refuses both at every start (exit 70). No build
+  makes them today.
+- **A marker that cannot be evaluated is an error naming the entry.** Some markers parse but cannot
+  be evaluated: `platform_machine ~= "x86_64"`, `python_version ~= "3"`, `"x" in extras`. One of
+  these in a Poetry, PDM or Pipenv lock, a venv, or the Requires-Dist of an installed dependency or
+  tool ended the build with a traceback and an internal error, with any packaging from 25 on. The
+  build now names the entry and the marker.
+- **An unsupported host is an error, not an internal error.** A released fsbpyr run under a 32-bit
+  personality (`setarch i686`) printed a traceback when it built for another Python or read the
+  glibc of the built libraries. It now says `fsbpyr: error: unsupported host linux/i686`.
+- **A read next to `__file__` in the `else` of a main guard is reported.** The build skipped the
+  whole `if __name__ == "__main__":` statement, its `else` and `elif` included, and the body of `if
+  __name__ != "__main__":`, though an imported module runs them. It now skips only what never runs
+  on import. A guard written `if '__main__' == __name__:`, which finds the entry as the usual
+  order does, is skipped too; the build warned about the reads in its body.
+- **Poetry 1 constraints take pre-releases, epochs and space-separated parts.** An unpackaged Poetry
+  1 project with `^1.2.0a1`, `~1.2.0.post1` or `>=1.2 <2.0` was refused. These now read as
+  poetry-core reads them. A local label (`^1.2+local`) is still refused. A caret on a version of
+  more than three numbers raised the first that is not 0, wherever it was: `^0.0.0.5` was
+  `<0.0.0.6`. It now raises the major, minor or patch number, as poetry-core does (`<0.0.1`).
+- **An optional Poetry 1 dependency keeps all its alternatives.** For an optional dependency written
+  as a list of tables, one per platform for example, the extras kept only the last table. An app
+  built with `--extra` could then lack that dependency on the other platforms.
+- **A Pipfile.lock entry for another platform asks for no extras.** The extras it asked for still
+  applied, so a Linux build installed and packaged what only a Windows entry needed.
+- **A passphrase file is run only when it is a program.** `make release` and `make release-sign` ran
+  any `FSBPYR_RELEASE_PASSPHRASE_FILE` that had an x bit. Every file on exFAT or NTFS has one, so a
+  plain passphrase file ran as a shell script, and its first word showed on the terminal and in the
+  release report. Now only a file that starts with `#!` or is an ELF file, or one you may run but
+  not read, is run, and what it writes on its standard error is dropped.
+- **The passphrase file that is checked is the one that is used.** `make release` and `make
+  release-sign` checked the owner and mode of `FSBPYR_RELEASE_PASSPHRASE_FILE`, then ran or read
+  it by its name, so a file put in its place meanwhile, through a directory on the way that
+  someone else could write, ran next to the release key. The checks and the use are now of one
+  open file. A program you may run but not read cannot be opened: every directory on its way must
+  be yours or root's, and writable by nobody else unless it is sticky.
+- **`make release-sign` ignores an exported `KEY`.** Only a `KEY` given on make's command line
+  counts, as the Makefile says and as for `make release`.
+- **`green-run.sh` says that a push to main starts the run a release needs.** When main had no
+  `full-suite.yml` run, it said to start the workflow by hand, and such a run never counts.
+- **The threat model says which cache directories are forced to 0700.** `docs/security.md` said
+  every cache directory is. The build tool forces its cache root (and `runtimes/`); below it
+  `sysroots/` is 0700, `pbs/` gets the umask's mode, `downloads/` whichever mode the first to make
+  it gives, and none of them is checked afterwards. The launcher forces the directories below an app
+  cache's root, not the root itself.
+- **The signing concept describes the release script and typed passphrases as they are.**
+  `docs/signing.md` still said the script does not yet check a key file's form or run openssl with
+  `OPENSSL_CONF=/dev/null`, and that a typed passphrase is encoded with `os.fsencode`. The script
+  does both, and a typed passphrase is the bytes read from the terminal.
+- **The plan and the full suite say what is rebuilt before a release.** The full suite compares
+  untagged executables and their SBOMs with an independent rebuild. The tagged bytes, the `.xz`
+  files, the licence notices, `install.sh` and `SHA256SUMS` are not rebuilt, although
+  `docs/IMPLEMENTATION_PLAN.md` said every asset was and `full-suite.yml` said its build is exactly
+  the release's.
+- **Smaller documentation corrections.** The contributing guide lists all of `make test-ci`'s
+  end-to-end files, `test_signing` and `test_selfupdate` included, and the LLVM tools the launcher
+  coverage test needs. `docs/performance.md` lists the `reads` and `hole_bytes` trace counters and
+  points to the wiki for current figures. The build modules page says that `fetch_checked` limits
+  what it unpacks only when given a limit. The plan's status names 0.31.0 and signed releases.
+  Its D20 row says which cache directories are forced to 0700, and its notes on the collector
+  name the temporaries of a stub or variant download and say that kept stubs and variants stay;
+  its design notes on the tool cache say that downloads have no `.lock` and that only the Python
+  distributions' archives and the sysroots' packages among them are collected.
+
+### Changed
+- **The installer can be checked before it runs.** The installing page shows how, with fsbpyr or
+  with system tools, from the release's signed `SHA256SUMS`.
+- The building page says to build only projects you trust, since their build code runs with your
+  rights. The attestation example installs the pinned uv, checked by its SHA-256, checks the fsbpyr
+  it downloads against that release's tag, and checks the app it attests against the ref it was
+  built from (`--source-ref`).
+- **A refused cache directory has an exception of its own.** For a cache directory that belongs to
+  another user or that other users may write to, the launcher now raises `_fsbpyr.CacheRefused`, a
+  subclass of `CacheError`, with the same messages. The boot code ends the start (exit 70) on that
+  type, no longer on the message's first words.
+- **A finding of clang's static analyzer fails the full suite.** `make check-c` was informational in
+  `full-suite.yml`. The launcher has no findings, and clang is pinned.
+- **The key readers are fuzzed longer before a release, and their finds are kept.** `sig_fuzz.c`
+  runs for a quarter of `FSBPYR_FUZZ_SECONDS`, 30 s at least (150 s in a 600 s run). It keeps what
+  it finds in a directory beside `FSBPYR_FUZZ_CORPUS`, which `full-suite.yml` caches separately.
+- **The launcher coverage report has one row per source.** Every session's copy of the launcher
+  sources counts as the file in `src/fsbpyr/launcher` it was copied from, and the tests' own sources
+  are left out. The per-line data is uploaded as `launcher-coverage.lcov`.
+- The `_fsbpyr` type stub declares `stats()`'s `hole_bytes` and the four signing functions, and mypy
+  now checks the signing code against them. The launcher's developer page describes `sig.c` and
+  `sig.h`.
+- The EL8 tests (`make test-el8-stub`, the full suite's `el8-tests` job) also run the launcher's
+  tests of symlink targets on the cache root's way, of blob reads out of memory and of the
+  threads of parallel work (`test_way_targets.py`, `test_read_failures.py`, `test_cores.py`) with
+  the glibc 2.28 stub.
+
 ## [0.31.0] - 2026-11-04
 
 ### Changed

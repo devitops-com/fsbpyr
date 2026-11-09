@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 from packaging.markers import InvalidMarker, Marker
 from packaging.utils import canonicalize_name
 
+from .closure import marker_holds
 from .foreign import (
     GIT,
     LOCAL,
@@ -141,12 +142,13 @@ def entries(data: Mapping[str, Any]) -> list[Entry]:
 
 
 def _applies(entry: Entry, environment: Mapping[str, str], extras: frozenset[str]) -> bool:
-    """Whether the entry's marker holds for the target, with the extras that entries ask of
-    their dependencies counting as active: Pipenv marks what an extra needs ``extra == 'x'``."""
+    """Whether the entry's marker holds for the target, with the extras that the entries which
+    apply ask of their dependencies counting as active: Pipenv marks what an extra needs
+    ``extra == 'x'``."""
     if entry.marker is None:
         return True
-    marker = _marker(entry.marker, entry)
-    return any(marker.evaluate({**environment, "extra": extra}) for extra in ("", *extras))
+    return marker_holds(_marker(entry.marker, entry), environment, ("", *extras),
+                        ForeignLockError, f"{LOCK}: {entry.label}")  # fmt: skip
 
 
 def _own_directory(entry: Entry, directory: Path) -> bool:
@@ -158,9 +160,14 @@ def export(directory: Path, *, environment: Mapping[str, str]) -> Export:
     """The requirements file of the Pipfile.lock in ``directory``, for ``environment`` (the
     target's markers)."""
     found = entries(read(directory))
-    extras = frozenset(canonicalize_name(x) for entry in found for x in entry.extras)
-    chosen = [entry for entry in found if _applies(entry, environment, extras)
-              and not _own_directory(entry, directory)]  # fmt: skip
+    extras: frozenset[str] = frozenset()
+    while True:  # the extras of the entries that apply, until they bring in no other entry
+        applying = [entry for entry in found if _applies(entry, environment, extras)]
+        asked = frozenset(canonicalize_name(x) for entry in applying for x in entry.extras)
+        if asked == extras:
+            break
+        extras = asked
+    chosen = [entry for entry in applying if not _own_directory(entry, directory)]
     lines = [_line(entry, directory, LOCK) for entry in _one_per_name(chosen, LOCK)]
     header = f"# {LOCK} as fsbpyr reads it: the default section, markers evaluated for the target\n"
 

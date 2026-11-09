@@ -249,12 +249,118 @@ def test_no_passphrase_stops_it_before_the_tag(tree: Tree) -> None:
     assert tree.parts() == []
 
 
-def test_the_key_check_gets_the_passphrase_of_the_file(tree: Tree) -> None:
+def _passphrase_seen(tree: Tree) -> Path:
+    """Where the key check writes the passphrase it got."""
     script = tree.tree / "tools" / "release" / "release-signing.sh"
     script.write_text('#!/bin/sh\necho "$FSBPYR_SIGNING_PASSPHRASE" > "$LOG.passphrase"\n')
+    return tree.log.with_name("log.passphrase")
+
+
+def test_the_key_check_gets_the_passphrase_of_the_file(tree: Tree) -> None:
+    seen = _passphrase_seen(tree)
 
     assert tree.run().returncode == 0
-    assert tree.log.with_name("log.passphrase").read_text() == "the secret passphrase\n"
+    assert seen.read_text() == "the secret passphrase\n"
+
+
+def test_a_passphrase_file_with_x_bits_is_read_not_run(tree: Tree) -> None:
+    """On exFAT or NTFS, or a vfat mounted by hand, every file has x bits: run, the passphrase
+    would be a shell's command line, and its words would go to the terminal and the report."""
+    seen = _passphrase_seen(tree)
+    tree.passphrase.chmod(0o700)
+
+    done = tree.run()
+
+    assert done.returncode == 0, tree.printed(done)
+    assert seen.read_text() == "the secret passphrase\n"
+    assert "the secret passphrase" not in json.dumps(tree.report())
+
+
+def test_a_passphrase_file_with_x_bits_that_others_can_read_is_refused(tree: Tree) -> None:
+    tree.passphrase.chmod(0o755)
+
+    done = tree.run()
+
+    assert done.returncode == 1 and "others can read" in tree.printed(done)
+    assert tree.parts() == []
+
+
+def test_an_elf_program_is_run_for_the_passphrase(tree: Tree) -> None:
+    """A program starts with "#!" or is an ELF file."""
+    seen = _passphrase_seen(tree)
+    source = '#include <stdio.h>\nint main(void) { puts("the secret passphrase"); }\n'
+    subprocess.run([requires.tool("cc"), "-x", "c", "-o", tree.passphrase, "-"], input=source,
+                   text=True, check=True)  # fmt: skip
+    tree.passphrase.chmod(0o700)
+
+    assert tree.run().returncode == 0
+    assert seen.read_text() == "the secret passphrase\n"
+
+
+def test_a_program_the_admin_may_run_but_not_read_is_run(tree: Tree) -> None:
+    """Such as a helper of root's of mode 0711: what it starts with cannot be read, and a file
+    that cannot be read cannot hold the passphrase."""
+    seen = _passphrase_seen(tree)
+    source = '#include <stdio.h>\nint main(void) { puts("the secret passphrase"); }\n'
+    subprocess.run([requires.tool("cc"), "-x", "c", "-o", tree.passphrase, "-"], input=source,
+                   text=True, check=True)  # fmt: skip
+    tree.passphrase.chmod(0o111)
+
+    done = tree.run()
+
+    assert done.returncode == 0, tree.printed(done)
+    assert seen.read_text() == "the secret passphrase\n"
+
+
+@pytest.mark.parametrize(("mode", "refused"), [
+    (0o777, True), (0o757, True), (0o1777, False), (0o755, False), (0o700, False),
+])  # fmt: skip
+def test_a_program_run_by_its_name_needs_a_way_only_the_admin_can_change(
+    tmp_path: Path, mode: int, refused: bool
+) -> None:
+    """A program that cannot be read cannot be opened, so it runs by its name (safe_way): a
+    directory on the way that someone else may write would let them put another program there.
+    A sticky one (/tmp) lets nobody else rename what is the admin's. The directories above this
+    one are root's, 0755, as `stat` says (in a user namespace the real ones are nobody's)."""
+    way = tmp_path / "way"
+    way.mkdir()
+    way.chmod(mode)
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    (shim / "stat").write_text(f'#!/bin/sh\ncase "$*" in *" {way}") exec {shutil.which("stat")} '
+                               '"$@" ;; esac\necho "0 0 755"\n')  # fmt: skip
+    (shim / "stat").chmod(0o755)
+    script = 'die() { echo "$*" >&2; exit 1; }; source "$1"; safe_way "$2" "$2"'
+    passphrase_sh = ROOT / "tools" / "release" / "passphrase.sh"
+    command: list[str | Path] = [requires.tool("bash"), "-c", script, "_", passphrase_sh,
+                                  f"{way}/helper"]
+
+    done = subprocess.run(command, capture_output=True, text=True, check=False,
+                          env={**os.environ, "PATH": f"{shim}:{os.environ['PATH']}"})  # fmt: skip
+
+    assert (done.returncode, done.stderr) == (
+        (1, f"others can write {way}, on the way to {way}/helper\n") if refused else (0, ""))
+
+
+@pytest.mark.parametrize("status", [0, 3])
+def test_what_a_passphrase_program_prints_on_its_errors_is_in_no_report(
+    tree: Tree, status: int
+) -> None:
+    """Its standard error is dropped: what a step prints goes to the report."""
+    tree.passphrase.write_text('#!/bin/sh\necho "the secret passphrase"\n'
+                               f'echo "the secret passphrase" >&2\nexit {status}\n')  # fmt: skip
+    tree.passphrase.chmod(0o700)
+
+    done = tree.run()
+
+    assert "the secret passphrase" not in tree.printed(done)
+    assert "the secret passphrase" not in json.dumps(tree.report())
+    if status:
+        assert done.returncode == 1
+        assert f"the passphrase program {tree.passphrase} failed (exit 3)" in tree.printed(done)
+        assert tree.parts() == []
+    else:
+        assert done.returncode == 0, tree.printed(done)
 
 
 def test_on_a_terminal_it_asks_nothing(tree: Tree) -> None:

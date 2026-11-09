@@ -27,6 +27,10 @@ class CacheError(ImportError):
     """Mirror of _fsbpyr.CacheError."""
 
 
+class CacheRefused(CacheError):
+    """Mirror of _fsbpyr.CacheRefused."""
+
+
 CHANGED, DONE, WRITTEN = 1, 2, 4  # outcome bits of a file
 CHECK_BATCH, SMALL_FILE, BATCH_BUFFER, HELD_FILES = 1024, 64 << 10, 16 << 20, 64
 WRITE_PIECE = 1 << 20
@@ -228,7 +232,7 @@ class _Sync:
         try:
             info = os.fstat(fd)
             if info.st_uid != self.uid:
-                raise CacheError(f"refusing cache directory {path}: owned by another user")
+                raise CacheRefused(f"refusing cache directory {path}: owned by another user")
             if private and stat.S_IMODE(info.st_mode) & 0o077:
                 os.fchmod(fd, 0o700)
         except BaseException:
@@ -252,7 +256,7 @@ class _Sync:
         if (problem := way_problem(os.fsdecode(self.root))) is not None:
             if problem.error:
                 raise OSError(problem.error, os.strerror(problem.error), problem.where)
-            raise CacheError(problem.text())
+            raise CacheRefused(problem.text())
 
     def _make_root(self) -> None:
         """mkdir -p: parents 0755 as far as the umask leaves it, the root itself 0700."""
