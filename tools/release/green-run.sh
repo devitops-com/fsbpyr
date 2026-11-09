@@ -13,8 +13,9 @@
 # the newest earlier commit of main that has one stands for it when nothing but documentation
 # (*.md files, docs/, wiki/) changed since (CONTRIBUTING.md, "Documentation-only changes"); its
 # run's URL is printed. Needs the history (git).
-# Exit 1: no run for that commit, a failed one, or one that fails while watched. The reason
-# goes to stderr, the URL to stdout. Needs gh, authenticated (GH_TOKEN in CI).
+# Exit 1: no run for that commit, a failed one, one that fails while watched, or one with a job
+# that did not succeed (skipped, or failed under continue-on-error). The reason goes to stderr,
+# the URL to stdout. Needs gh, authenticated (GH_TOKEN in CI).
 set -euo pipefail
 
 [ $# -eq 2 ] || { echo "usage: green-run.sh WORKFLOW COMMIT" >&2; exit 2; }
@@ -88,4 +89,14 @@ case "$state" in
         bash "$(dirname "${BASH_SOURCE[0]}")/follow-run.sh" "$id" >&2 \
             || { echo "ERROR: $workflow's run for $BRANCH at $short failed: $url" >&2; exit 1; } ;;
 esac
+# Every job must have succeeded too: one skipped, or failed under continue-on-error, did not test
+# what it tests, however the run concluded (owner, 2026-11-08).
+others="$(gh run view "$id" --json jobs \
+    --jq '.jobs[] | select(.conclusion != "success") | "\(.name): \(.conclusion)"')" \
+    || { echo "ERROR: cannot read the jobs of $workflow's run $id: $url" >&2; exit 1; }
+if [ -n "$others" ]; then
+    echo "ERROR: $workflow's run for $BRANCH has jobs that did not succeed: $url" >&2
+    sed 's/^/       /' <<<"$others" >&2
+    exit 1
+fi
 echo "$url"

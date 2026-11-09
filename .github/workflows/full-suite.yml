@@ -625,12 +625,12 @@ jobs:
               -o "$RUNNER_TEMP/apps/$name"
           done
 
-      # A command that exits non-zero, or whose output lacks the text after `=>`, fails the job.
-      # Exit 3: a pinned kernel or root file system is gone from its mirror; a warning, so a mirror
-      # cannot block a release, until the pin is renewed (CONTRIBUTING.md).
+      # A command that exits non-zero, or whose output lacks the text after `=>`, fails the job,
+      # and so does a pinned kernel or root file system that cannot be fetched: a smoke test that
+      # did not run has not passed (owner, 2026-11-08). A release waits for the mirror, or for a
+      # new pin (CONTRIBUTING.md).
       - name: Boot the 64K kernel and run the apps
         run: |
-          status=0
           uv run --locked python tools/vm-smoke.py --kernel 64k \
             --app dist/fsbpyr --app "$RUNNER_TEMP/apps/hello" --app "$RUNNER_TEMP/apps/native" \
             --run 'fsbpyr --version' \
@@ -638,12 +638,7 @@ jobs:
             --run "hello 'x y' => hello ['x y']" \
             --run 'FSBPYR_SELFTEST=1 hello => selftest ok' \
             --run 'native => orjson {"a":[1,2]}' \
-            --run 'FSBPYR_SELFTEST=natives native => all natives load (2 extensions)' || status=$?
-          if [ "$status" -eq 3 ]; then
-            echo "::warning::vm-smoke: a pinned input is unavailable; re-pin tools/vm-pins.toml"
-            exit 0
-          fi
-          exit "$status"
+            --run 'FSBPYR_SELFTEST=natives native => all natives load (2 extensions)'
 
   # ------------------------------------------------------------------------- EL8 (glibc 2.28)
   # The stubs that el8.yml links from a release's tag and publishes in the companion release
@@ -1147,20 +1142,12 @@ jobs:
           done
 
       # As the vm-smoke job, with the EL8 kernel and userland only, and without fsbpyr itself (it
-      # needs glibc 2.34, which EL8 lacks). Exit 3: a pinned kernel or root file system is gone
-      # from its mirror; a warning, as in the vm-smoke job, so a mirror cannot block a release,
-      # until the pin is renewed (CONTRIBUTING.md).
+      # needs glibc 2.34, which EL8 lacks); a pinned input that cannot be fetched fails it too.
       - name: Boot the 64K-page kernel with the EL8 userland and run the apps
         run: |
-          status=0
           uv run --locked python tools/vm-smoke.py --kernel 64k --userland el8 \
             --app "$RUNNER_TEMP/apps/hello" --app "$RUNNER_TEMP/apps/native" \
             --run "hello 'x y' => hello ['x y']" \
             --run 'FSBPYR_SELFTEST=1 hello => selftest ok' \
             --run 'native => orjson {"a":[1,2]}' \
-            --run 'FSBPYR_SELFTEST=natives native => all natives load' || status=$?
-          if [ "$status" -eq 3 ]; then
-            echo "::warning::el8 vm-smoke: a pinned input is unavailable; re-pin tools/vm-pins.toml"
-            exit 0
-          fi
-          exit "$status"
+            --run 'FSBPYR_SELFTEST=natives native => all natives load'

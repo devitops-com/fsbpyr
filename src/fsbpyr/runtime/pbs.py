@@ -213,6 +213,7 @@ def sha256_of(path: Path) -> str:
 # connection), never after an HTTP error: each attempt starts over, after these pauses.
 DOWNLOAD_ATTEMPTS = 4
 _RETRY_PAUSES_S = (2.0, 5.0, 10.0)
+_BUSY = frozenset({429, 500, 502, 503, 504})  # a server's answers that the next try may not get
 
 
 def download(url: str, sha256: str, target: Path) -> None:
@@ -225,7 +226,8 @@ def download(url: str, sha256: str, target: Path) -> None:
             partial = _download_once(url, target.parent)
             break
         except OSError as exc:  # URLError, TimeoutError and ConnectionError are OSErrors
-            if attempt == DOWNLOAD_ATTEMPTS or isinstance(exc, urllib.error.HTTPError):
+            refused = isinstance(exc, urllib.error.HTTPError) and exc.code not in _BUSY
+            if attempt == DOWNLOAD_ATTEMPTS or refused:  # a 404 stays a 404
                 raise
             pause = _RETRY_PAUSES_S[attempt - 1]
             print(f"fsbpyr: {url}: {exc}; retrying in {pause:.0f} s", file=sys.stderr)
