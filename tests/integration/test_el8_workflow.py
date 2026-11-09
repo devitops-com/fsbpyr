@@ -93,7 +93,9 @@ def test_the_release_knows_nothing_of_el8_and_its_gate_tests_the_stubs() -> None
                              "el8-portability", "el8-corpus", "el8-vm-smoke"}  # fmt: skip
     for name, text in EL8_JOBS.items():
         assert "continue-on-error" not in text, name
-        assert not re.search(r"^    if:", text.split("    steps:", 1)[0], re.MULTILINE), name
+        head = text.split("    steps:", 1)[0]  # no condition but the skip on an opened pull request
+        head = head.replace("    if: ${{ github.event_name != 'pull_request' }}\n", "", 1)
+        assert not re.search(r"^    if:", head, re.MULTILINE), name
 
 
 def test_a_tag_is_done_once() -> None:

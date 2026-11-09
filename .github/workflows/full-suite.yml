@@ -19,15 +19,20 @@ name: Full suite
 #     the stub-dependent tests in the EL8 test mode, the portability matrix with apps built
 #     `--glibc 2.28` (rockylinux:8 and almalinux:8 too), a native-heavy corpus subset and the
 #     64 KiB-page VM with the EL8 userland.
-# It runs on every push to main, which is a merge, that changes more than documentation (*.md
-# files and docs/): tools/release/release-assets.sh tags only a main commit whose run passed, or one
-# that changes only documentation since such a commit (green-run.sh), and the publish job of
-# release.yml checks that again. A merge never carries a CI skip instruction in its message:
-# GitHub applies it to a tag pushed on that commit too, and release.yml would not run. Also
-# weekly, with a longer fuzzing run (below), and on request; no nightly run: main changes by
-# merges only, so one would test the same commit night after night (owner, 2026-10-21). Pull
-# requests start nothing: a branch is tested locally before its pull request. The fuzz corpora
-# are kept in actions/cache (release.yml stays cache-free).
+# It runs on every pull request in main's merge queue (merge_group), on the commit the queue makes
+# of it and the pull requests ahead of it, which is the commit that main then becomes: every pull
+# request gets the whole suite before it is merged, documentation-only ones too (owner,
+# 2026-11-08). Its last job, "full suite passed", is the queue's required check: it passes only
+# when every other job succeeded. A push to main runs nothing more, as the queue tested that very
+# commit. tools/release/release-assets.sh tags only a main commit whose run passed, or one that
+# changes only documentation since such a commit (green-run.sh: an older commit, tested by a push
+# run before the queue), and the publish job of release.yml checks that again. A merge never
+# carries a CI skip instruction in its message: GitHub applies it to a tag pushed on that commit
+# too, and release.yml would not run. Also weekly, with a longer fuzzing run (below), and on
+# request; no nightly run: main changes by merges only, so one would test the same commit night
+# after night (owner, 2026-10-21). The fuzz corpora are kept in actions/cache (release.yml stays
+# cache-free): every run starts from them, and the runs on main (weekly, on request) save what
+# they add; a queue run's cache would belong to its temporary branch, where nothing reads it.
 # One fsbpyr per Python version and per target (Phase 9): every job but the EL8 ones (below) runs
 # once per (target, Python) entry, the development environment on that Python and that variant's
 # executable (dist/fsbpyr for the default version, the one .python-version pins; dist/fsbpyr-3.X
@@ -37,18 +42,23 @@ name: Full suite
 # adding a target one to those `target` lists and the `include` entries that name its runner.
 
 on:
-  push:
+  merge_group:
+    types: [checks_requested]
+  # The ruleset lets a pull request join the queue only once its required check passed, so on a
+  # pull request every job but the last is skipped and "full suite passed" reports at once; the
+  # suite itself runs in the queue. Nothing is checked out or run there.
+  pull_request:
     branches: [main]
-    paths-ignore: ["**.md", "docs/**", "wiki/**"]  # the documentation green-run.sh lets a release stand on
   schedule:
     # Weekly. Keep the string equal to WEEKLY in "Choose the fuzzing time".
     - cron: "43 3 * * 0"
   workflow_dispatch:
 
-# A push to main replaces its predecessor's run; a scheduled or manual run is never cancelled.
+# Never cancelled here: the merge queue cancels the run of a group it drops itself, and each
+# group has a ref of its own.
 concurrency:
   group: full-suite-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -57,11 +67,13 @@ jobs:
   # The release build and its checks: what release.yml builds from the tag, built and checked
   # here first.
   build:
+    if: ${{ github.event_name != 'pull_request' }}
     uses: ./.github/workflows/build.yml
     with:
       checks: true
 
   suite:
+    if: ${{ github.event_name != 'pull_request' }}
     name: suite (${{ matrix.target }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -190,7 +202,7 @@ jobs:
       # What earlier runs' fuzzing found interesting: the run starts from it and adds to it.
       - name: Restore the fuzz corpus
         id: corpus
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /home/tester/fuzz-corpus
           key: fuzz-corpus-${{ matrix.target }}-${{ matrix.python }}-${{ github.run_id }}
@@ -200,7 +212,7 @@ jobs:
       # whose name ends in -sig, in a cache of its own. Not inside the payload corpus: libFuzzer
       # reads a corpus with its subdirectories.
       - name: Restore the fuzz corpus of the readers of keys
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /home/tester/fuzz-corpus-sig
           key: fuzz-corpus-sig-${{ matrix.target }}-${{ matrix.python }}-${{ github.run_id }}
@@ -317,6 +329,22 @@ jobs:
               --ignore=tests/e2e/test_corpus.py --durations=30 \
               --junitxml=full.xml --cov --cov-report=xml
 
+      # What this run's fuzzing added, for the next runs: only from a run on main (weekly, on
+      # request), as the merge queue's temporary branches keep caches nothing else reads.
+      - name: Save the fuzz corpus
+        if: ${{ github.event_name != 'merge_group' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /home/tester/fuzz-corpus
+          key: fuzz-corpus-${{ matrix.target }}-${{ matrix.python }}-${{ github.run_id }}
+
+      - name: Save the fuzz corpus of the readers of keys
+        if: ${{ github.event_name != 'merge_group' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /home/tester/fuzz-corpus-sig
+          key: fuzz-corpus-sig-${{ matrix.target }}-${{ matrix.python }}-${{ github.run_id }}
+
       # What the run took: the container's memory high-water mark (cgroup v2; page cache
       # included, so it reaches the limit when the disk is busy, which by itself kills nothing),
       # its memory events (oom_kill: processes the limit killed) and its disks: the free space
@@ -389,6 +417,7 @@ jobs:
   # test-corpus` builds the runtime (and fetches clang/lld 23) itself. The runner's file system
   # is at /runner-host, as in the suite job.
   corpus:
+    if: ${{ github.event_name != 'pull_request' }}
     name: corpus (${{ matrix.target }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -494,6 +523,7 @@ jobs:
   # (D4: no compiler); its conclusion is part of the run's, which the release gate
   # (tools/release/green-run.sh) checks.
   portability:
+    if: ${{ github.event_name != 'pull_request' }}
     name: portability (${{ matrix.target }}, Python ${{ matrix.python }})
     needs: suite
     runs-on: ${{ matrix.runner }}
@@ -584,6 +614,7 @@ jobs:
   # natives. Its conclusion is part of the run's, which the release gate
   # (tools/release/green-run.sh) checks.
   vm-smoke:
+    if: ${{ github.event_name != 'pull_request' }}
     name: vm-smoke (aarch64-linux-gnu)
     needs: suite
     runs-on: ubuntu-24.04-arm
@@ -651,6 +682,7 @@ jobs:
 
   # The default Python, the one .python-version names, for the EL8 jobs but el8-stub.
   el8-python:
+    if: ${{ github.event_name != 'pull_request' }}
     name: el8 python
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -678,6 +710,7 @@ jobs:
   # (the image by digest, uv from tools/release/uv.version, clang/lld 23 from
   # tools/release/llvm23); no cache is shared between the two links.
   el8-stub:
+    if: ${{ github.event_name != 'pull_request' }}
     name: el8 stub (${{ matrix.target }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -785,6 +818,7 @@ jobs:
   # tag is the one `make release` pushes, and builds are reproducible, so this is the release
   # asset. Debian trixie by digest, the pinned uv, `make bootstrap` and `make build`, no cache.
   el8-build:
+    if: ${{ github.event_name != 'pull_request' }}
     name: el8 build (${{ matrix.target }}, Python ${{ matrix.python }})
     needs: el8-python
     runs-on: ${{ matrix.runner }}
@@ -866,6 +900,7 @@ jobs:
   # Nothing skips: the Makefile leaves out the tests that need podman (-m "not podman"), which this
   # container lacks.
   el8-tests:
+    if: ${{ github.event_name != 'pull_request' }}
     name: el8 tests (${{ matrix.target }}, Python ${{ matrix.python }})
     needs: el8-python
     runs-on: ${{ matrix.runner }}
@@ -936,6 +971,7 @@ jobs:
   # get, runtime id check included. The images are the portability job's 12 and rockylinux:8
   # and almalinux:8.
   el8-portability:
+    if: ${{ github.event_name != 'pull_request' }}
     name: el8 portability (${{ matrix.target }}, Python ${{ matrix.python }})
     needs: [el8-python, el8-stub, el8-build]
     runs-on: ${{ matrix.runner }}
@@ -1022,6 +1058,7 @@ jobs:
   # Python and both machines (tests/support/locks.py reads the locks). The container and its
   # limits are the corpus job's.
   el8-corpus:
+    if: ${{ github.event_name != 'pull_request' }}
     name: el8 corpus (${{ matrix.target }}, Python ${{ matrix.python }})
     needs: el8-python
     runs-on: ${{ matrix.runner }}
@@ -1094,6 +1131,7 @@ jobs:
   # vm-smoke job runs it. The apps are two fixtures (a pure-Python one and one with natives) that
   # el8-build's aarch64 fsbpyr builds with el8-stub's aarch64 stub beside it.
   el8-vm-smoke:
+    if: ${{ github.event_name != 'pull_request' }}
     name: el8 vm-smoke (aarch64-linux-gnu)
     needs: [el8-python, el8-stub, el8-build]
     runs-on: ubuntu-24.04-arm
@@ -1151,3 +1189,27 @@ jobs:
             --run 'FSBPYR_SELFTEST=1 hello => selftest ok' \
             --run 'native => orjson {"a":[1,2]}' \
             --run 'FSBPYR_SELFTEST=natives native => all natives load'
+
+  # The merge queue's required check (owner, 2026-11-08: every pull request gets the whole suite
+  # before it is merged): it passes only when every job above succeeded, none failed, cancelled or
+  # skipped, so the ruleset names one check whatever the matrices hold. tests/integration/
+  # test_release.py checks that it needs every other job.
+  passed:
+    name: full suite passed
+    needs: [build, suite, corpus, portability, vm-smoke, el8-python, el8-stub, el8-build, el8-tests,
+            el8-portability, el8-corpus, el8-vm-smoke]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            echo "a pull request: the merge queue runs the suite on the commit main then becomes"
+            exit 0
+          fi
+          jq -r 'to_entries[] | "\(.value.result)\t\(.key)"' <<<"$NEEDS"
+          jq -e 'all(.[]; .result == "success")' <<<"$NEEDS" > /dev/null

@@ -1353,6 +1353,9 @@ waits.
    - The six versions without a tag, 0.15.2-0.18.0: (i) a CHANGELOG note only, or (ii)
      annotated tags at their release commits (d489698, 7c11a1c, 80a1f1b, 86b2645, 299355e,
      21ac25d; none contains release.yml, so nothing would be published).
+   - **Superseded (owner, 2026-11-08):** main (a) no longer stands, as every change reaches
+     main through a pull request since 2026-10-21: (b), with every pull request going through a
+     merge queue whose required check is the full suite's `full suite passed` job.
    - **Decided (owner, 2026-10-19): all settings, main (a), burned versions, and (i).** The
      settings were switched on the same day: immutable releases, the `release tags` ruleset
      (`refs/tags/v*`: updates and deletion blocked), the `main` ruleset (deletion and force
