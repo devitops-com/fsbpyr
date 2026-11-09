@@ -595,6 +595,20 @@ outside the release gate.
 4. **The files.** The attested sums vouch for the rest. Every file of the draft must be listed
    there with the digest it has, every listed file must be there (for a companion, which publishes
    each stub's `.xz` only, the stubs themselves are not), and no signature may be on the draft yet.
+   **The bytes this commit makes** (owner, 2026-11-08, finding R-01). The attestation says which
+   commit's workflow made the files, not that they are what that commit makes, so before any
+   signing: every `.xz` must unpack to the file the sums list under its name (xz-utils is not
+   pinned where the release is built); `install.sh` must be what `make-install.sh` makes of the
+   draft's files here, with this checkout's own fsbpyr reading the executables
+   (`FSBPYR_RELEASE_INSPECTOR`, an fsbpyr that runs here, if set; never one of the draft's); and
+   the default Python's executables and every EL8 stub must be the bytes the full suite built
+   from the same commit, its `el8-build` (tagged in the job, as the release is) and `el8-stub`
+   artifacts of the green push run. The other Pythons' executables have no tagged build in the
+   full suite to compare with. A file that is not burns the version: the tag cannot be taken
+   back, so the release and its companion (only the companion, once the release is published)
+   are recorded in `FSBPYR_RELEASE_STATE`'s `burned` and never signed, and the fix is released
+   as the next patch version. No green run, or an artifact gone (they expire after 90 days),
+   stops it without burning anything.
 5. **You.** It checks both drafts first, then prints the releases, the commit, the number of files
    and the digests of the sums. It asks nothing (owner, 2026-11-02): KEY or
    `FSBPYR_RELEASE_KEY_FILE` names K, and `FSBPYR_RELEASE_PASSPHRASE_FILE` a file that holds its

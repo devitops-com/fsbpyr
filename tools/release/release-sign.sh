@@ -20,6 +20,15 @@
 # The draft is read again before the signature is uploaded and before it is published: whoever
 # holds the account has as long as signing takes.
 #
+# The attested files are then checked as this commit makes them (owner, 2026-11-08, finding R-01):
+# each .xz unpacks to the file its sums list, install.sh is what make-install.sh makes of the draft
+# here, with this checkout's own fsbpyr reading the executables (FSBPYR_RELEASE_INSPECTOR, an
+# fsbpyr that runs here, if set), and the default Python's executables and every EL8 stub are the
+# bytes the full suite built from the same commit (its el8-build and el8-stub artifacts). A file
+# that is not burns the version: the tag cannot be taken back, so nothing of it is ever signed,
+# and the fix is released as the next patch version. The burned releases are kept in
+# FSBPYR_RELEASE_STATE (default $XDG_STATE_HOME/fsbpyr-release), in `burned`.
+#
 # The audit runs first, and again after publishing, when the record has the new release. Exit
 # status: 0 done, 1 refused, 2 usage.
 set -Eeuo pipefail
@@ -69,7 +78,13 @@ one_commit() {
 }
 
 # --- 2. One commit -----------------------------------------------------------
-for tool in gh git jq sha256sum; do
+BURNED=${FSBPYR_RELEASE_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/fsbpyr-release}/burned
+for release in "$TAG" "$EL8_TAG"; do
+    reason=$(awk -v r="$release" '$1 == r { $1 = ""; print substr($0, 2); exit }' "$BURNED" 2>/dev/null) || true
+    [ -z "$reason" ] || die "$release is burned ($reason): nothing of it is ever signed; release the next patch version"
+done
+INSPECTOR=${FSBPYR_RELEASE_INSPECTOR:-}
+for tool in gh git jq sha256sum xz "${INSPECTOR:-uv}"; do
     command -v "$tool" >/dev/null || die "$tool is not installed"
 done
 gh auth status >/dev/null 2>&1 || die "gh is not authenticated (run: gh auth login)"
@@ -137,6 +152,99 @@ check_attestation() { # file, workflow, release
     done <<<"$uris"
 }
 
+# --- The bytes this commit makes ------------------------------------------------
+# A release whose attested files are not what this commit makes, and every release of its version
+# not yet published, are burned: recorded, and never signed (see the top).
+burn() { # release, what differs
+    local release=$1 reason=$2 burned=("$1") each
+    [ "$release" != "$EL8_TAG" ] || [ "$main_state" != draft ] || burned+=("$TAG")
+    [ "$release" != "$TAG" ] || [ "$el8_state" = published ] || burned+=("$EL8_TAG")
+    mkdir -p "${BURNED%/*}"
+    for each in "${burned[@]}"; do printf '%s %s\n' "$each" "$reason"; done >>"$BURNED"
+    die "$reason: ${burned[*]} burned. Nothing was signed or published, and nothing of it ever will be; fix the cause and release the next patch version"
+}
+
+# The SHA-256 a sums file lists for a name; empty if none.
+listed_digest() { # sums file, name
+    awk -v name="$2" '$2 == name || $2 == "*" name { print $1; exit }' "$1"
+}
+
+# Every .xz unpacks to the file the sums list under its name without .xz.
+check_xz() { # directory, sums, release
+    local file name want got
+    for file in "$1"/*.xz; do
+        [ -e "$file" ] || continue
+        name=${file##*/} && name=${name%.xz}
+        want=$(listed_digest "$1/$2" "$name")
+        [ -n "$want" ] || burn "$3" "$3's $2 lists ${name}.xz but not $name, which it unpacks to"
+        got=$(xz --decompress --stdout --memlimit-decompress=512MiB -- "$file" | sha256sum | cut -d' ' -f1) \
+            || burn "$3" "$3's ${name}.xz does not unpack"
+        [ "$got" = "$want" ] || burn "$3" "$3's ${name}.xz unpacks to other bytes than its $2 lists for $name"
+    done
+}
+
+# install.sh is what make-install.sh makes of the draft's files here, with an fsbpyr of this
+# commit's own reading the executables (not one of the draft's).
+check_installer() { # directory, release
+    local inspector=$INSPECTOR
+    if [ -z "$inspector" ]; then
+        inspector=$WORK/inspector
+        printf '#!/bin/sh\nexec uv run --locked --quiet --project %q fsbpyr "$@"\n' "$ROOT" >"$inspector"
+        chmod +x "$inspector"
+    fi
+    bash tools/release/make-install.sh "$VERSION" "$1" "$WORK/install.sh" "$inspector" >/dev/null \
+        || die "make-install.sh could not make $2's install.sh here: nothing was signed"
+    cmp -s "$WORK/install.sh" "$1/install.sh" \
+        || burn "$2" "$2's install.sh is not what make-install.sh makes of its files here"
+}
+
+# SUITE_FILE: a file of an artifact of the full suite's green push run of this commit, which built
+# the release's bytes from it too; downloaded once. Dies, burning nothing, when there is none.
+suite_file() { # artifact, file
+    local dir=$WORK/suite/$1
+    if [ -z "${SUITE_RUN:-}" ]; then
+        # Not --status success: GitHub then lists no run of a commit (tried on v0.31.0's).
+        SUITE_RUN=$(gh run list --repo "$REPOSITORY" --workflow full-suite.yml --branch "$BRANCH" \
+            --event push --commit "$COMMIT" --limit 20 --json databaseId,conclusion \
+            --jq '[.[] | select(.conclusion == "success")][0].databaseId // empty') \
+            || die "cannot list full-suite.yml's runs: nothing was signed"
+        [ -n "$SUITE_RUN" ] || die "full-suite.yml has no green run of $COMMIT to compare the drafts with: nothing was signed"
+    fi
+    if [ ! -d "$dir" ]; then
+        gh run download "$SUITE_RUN" --repo "$REPOSITORY" --name "$1" --dir "$dir" >/dev/null 2>&1 \
+            || die "the full suite's run $SUITE_RUN has no artifact $1 to compare with: nothing was signed"
+    fi
+    [ -f "$dir/$2" ] || die "the full suite's artifact $1 has no $2: nothing was signed"
+    SUITE_FILE=$dir/$2
+}
+
+# The default Python's executables are the full suite's el8-build ones, built from the tag too.
+check_suite_executables() { # directory, sums, release
+    local python file name compared=0
+    python=$(cut -d. -f1,2 .python-version)
+    for file in "$1/fsbpyr-$python-"*; do
+        name=${file##*/}
+        [[ "$name" =~ ^fsbpyr-${python//./\\.}-([a-z0-9_]+-[a-z]+-[a-z]+)$ ]] || continue
+        suite_file "el8-fsbpyr-$python-${BASH_REMATCH[1]}" "$name"
+        [ "$(listed_digest "$1/$2" "$name")" = "$(sha256sum "$SUITE_FILE" | cut -d' ' -f1)" ] \
+            || burn "$3" "$3's $name is not the full suite's build of the same commit (run $SUITE_RUN)"
+        compared=$((compared + 1))
+    done
+    [ "$compared" -gt 0 ] || die "$3 has no fsbpyr-$python-<target> to compare with the full suite: nothing was signed"
+}
+
+# Every stub the companion's sums list is the full suite's el8-stub one.
+check_suite_stubs() { # directory, sums, release
+    local digest name
+    while read -r digest name; do
+        name=${name#\*}
+        [[ "$name" =~ ^fsbpyr-stub-(3\.[0-9]+)-([a-z0-9_]+-[a-z]+-[a-z]+)-glibc2\.28$ ]] || continue
+        suite_file "el8-stub-${BASH_REMATCH[1]}-${BASH_REMATCH[2]}" "$name"
+        [ "$digest" = "$(sha256sum "$SUITE_FILE" | cut -d' ' -f1)" ] \
+            || burn "$3" "$3's $name is not the full suite's stub of the same commit (run $SUITE_RUN)"
+    done <"$1/$2"
+}
+
 # The files of a release's one draft on GitHub now, as `name sha256:digest`, sorted.
 draft_files() { # release, or the draft's id on stdout with `id` as second argument
     local listed
@@ -172,6 +280,13 @@ check_release() { # release, sums file, workflow
     [ ! -e "$dir/$sums.sig" ] || die "the draft $release already has a signature. If a run of this command stopped after uploading it, remove it (gh release delete-asset $release $sums.sig); if not, someone else put it there"
     check_attestation "$dir/$sums" "$workflow" "$release"
     check_files "$dir" "$sums" "$release"
+    check_xz "$dir" "$sums" "$release"
+    if [ "$release" = "$TAG" ]; then
+        check_installer "$dir" "$release"
+        check_suite_executables "$dir" "$sums" "$release"
+    else
+        check_suite_stubs "$dir" "$sums" "$release"
+    fi
 }
 
 summary_of() { # release, sums file

@@ -110,6 +110,19 @@ elif command == "release upload":
     if not state["releases"][tag]["draft"]:
         fail("HTTP 422: Cannot upload assets to an immutable release.")
     shutil.copy2(file, root / "assets" / tag / file.name)
+elif command == "run list":  # full-suite.yml's green push runs of a commit, as release-sign.sh asks
+    assert "--status" not in sys.argv  # GitHub lists no run of a commit with --status success
+    run = state["suite_runs"].get(option("--commit"))
+    answer([{{"databaseId": int(run) + 1, "conclusion": "failure"}},
+            {{"databaseId": int(run), "conclusion": "success"}}] if run else [])
+elif command == "run download":
+    source = root / "artifacts" / sys.argv[3] / option("--name")
+    if not source.is_dir():
+        fail(f"no artifact {{option('--name')}} in run {{sys.argv[3]}}")
+    directory = pathlib.Path(option("--dir"))
+    directory.mkdir(parents=True, exist_ok=True)
+    for path in source.iterdir():
+        shutil.copy2(path, directory / path.name)
 elif command == "attestation verify":
     digest = hashlib.sha256(pathlib.Path(sys.argv[3]).read_bytes()).hexdigest()
     made = state["attestations"].get(digest)
@@ -173,7 +186,8 @@ class FakeGitHub:
         (root / "assets").mkdir(parents=True)
         (root / "bin").mkdir()
         self.state: dict[str, Any] = {"latest": None, "releases": {}, "attestations": {},
-                                      "settings": settings(), "broken": [], "runs": {}}  # fmt: skip
+                                      "settings": settings(), "broken": [], "runs": {},
+                                      "suite_runs": {}}  # fmt: skip
         self.save()
         self._program("gh", FAKE_GH.format(python=sys.executable))
         self._program("curl", FAKE_CURL)
@@ -216,6 +230,16 @@ class FakeGitHub:
                                    {"name": "draft", "conclusion": "success", "runner_group_id": 0}]
         self.state["attestations"][digest] = {"workflow": workflow, "ref": ref, "commit": commit,
                                               "self_hosted": self_hosted, "run": run}  # fmt: skip
+        self.save()
+
+    def artifact(self, commit: str, name: str, files: dict[str, bytes]) -> None:
+        """An artifact of full-suite.yml's green push run of ``commit``."""
+        self.load()
+        run = self.state["suite_runs"].setdefault(commit, str(5000 + len(self.state["suite_runs"])))
+        directory = self.root / "artifacts" / run / name
+        directory.mkdir(parents=True, exist_ok=True)
+        for file, content in files.items():
+            (directory / file).write_bytes(content)
         self.save()
 
     def calls(self) -> list[str]:

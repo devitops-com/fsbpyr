@@ -70,12 +70,13 @@ $ git checkout main && git pull --ff-only hub main    # after looking at what yo
 $ make release
 ```
 
-Two variables, set once:
+Two variables, set once, and a third if you want it:
 
 | Variable | What it names |
 |---|---|
 | `FSBPYR_RELEASE_KEY_FILE` | The release key's file; `KEY=PATH` overrides it. |
 | `FSBPYR_RELEASE_PASSPHRASE_FILE` | The absolute path of a file holding its passphrase, or of a program that prints it. |
+| `FSBPYR_RELEASE_INSPECTOR` | An fsbpyr that runs here, which reads the draft's executables when `make release-sign` makes `install.sh` again; by default your checkout's, through `uv run`. |
 
 A program, an executable file that starts with `#!` or is an ELF file, or one you may run but
 not read, is run with nothing on its standard input, and what it writes on its standard error is
@@ -116,8 +117,13 @@ $ jq -r '.steps[] | select(.result != "success") | .title, .output[]' latest.jso
 `make release-sign` refuses unless your HEAD, GitHub's main and tag and the sums file's
 attestation name one commit, every job of the attested run ran on GitHub's machines, the tree is
 clean, the key is outside the checkout and the audit passes; the attested sums then vouch for
-the draft's files. It checks the signature against the pins of this tag and the previous
-release and rereads the draft and the `.sig` before publishing
+the draft's files. Those must then be the bytes your commit makes: each `.xz` unpacks to its
+listed file, `install.sh` is what `make-install.sh` makes of them here (your checkout's fsbpyr
+reads the executables, or `FSBPYR_RELEASE_INSPECTOR`), and the default Python's executables and
+the EL8 stubs are the full suite's builds of the same commit. A file that is not burns the
+version: it is recorded in `burned` under `FSBPYR_RELEASE_STATE` and never signed, and the fix
+goes out as the next patch version. It checks the signature against the pins of this tag and the
+previous release and rereads the draft and the `.sig` before publishing
 ([§5.3](../docs/signing.md#53-release-pipeline)). What you tag, K signs.
 
 - **K**, the release key, is an encrypted file on a medium plugged in to sign; **R**, the recovery

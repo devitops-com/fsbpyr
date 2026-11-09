@@ -128,6 +128,13 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   distributions' archives and the sysroots' packages among them are collected.
 
 ### Changed
+- **`make release-sign` checks that the release's files are the bytes its commit makes.** The
+  attestation said which commit's workflow made them; now, before anything is signed, every
+  `.xz` must unpack to its listed file, `install.sh` must be what `make-install.sh` makes of the
+  draft here with your checkout's own fsbpyr reading the executables
+  (`FSBPYR_RELEASE_INSPECTOR` overrides it), and the default Python's executables and every EL8
+  stub must be the full suite's builds of the same commit. A file that is not burns the version:
+  it is recorded under `FSBPYR_RELEASE_STATE` and never signed (owner, 2026-11-08).
 - **The 64 KiB-page smoke test counts only when it ran.** A pinned kernel or root file system
   that could not be fetched made `tools/vm-smoke.py` exit 3, which both VM jobs reported as a
   warning and a green job, so a release could pass without the test. Such a download now fails
