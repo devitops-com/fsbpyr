@@ -10,22 +10,75 @@
  * nice value, its I/O priority class, whether it shares its starter's session ($PROBE_SESSION),
  * its working directory, $FSBPYR_CACHE_DIR, and whether a signing variable is in its environment
  * as the kernel shows it. Built with -Wl,--wrap=statvfs: with $PROBE_FREE
- * set, the file system has that many percent free.
+ * set, the file system has that many percent free. And with --wrap=getpwuid_r,--wrap=opendir,
+ * --wrap=syscall: $PROBE_PASSWD_HOME is the home the user's passwd entry names ("-": the user has
+ * none); before the collection runs (FSBPYR_GC unset; its report reads /proc), $PROBE_NO_CLOSE_RANGE
+ * makes close_range fail as on a kernel before 5.9 (ENOSYS), and $PROBE_NO_PROC /proc/self/fd
+ * unreadable, as without /proc.
  */
 #include "due.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pwd.h>
+#include <stdarg.h>
 #include <sys/resource.h>
 #include <sys/statvfs.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
 int __real_statvfs(const char *path, struct statvfs *fs);
+int __real_getpwuid_r(uid_t uid, struct passwd *entry, char *buffer, size_t size,
+                      struct passwd **found);
+DIR *__real_opendir(const char *name);
+long __real_syscall(long number, ...);
+
+int __wrap_getpwuid_r(uid_t uid, struct passwd *entry, char *buffer, size_t size,
+                      struct passwd **found) {
+    const char *home = getenv("PROBE_PASSWD_HOME");
+    int status = __real_getpwuid_r(uid, entry, buffer, size, found);
+    if (home != NULL && strcmp(home, "-") == 0) {
+        *found = NULL;
+        return 0;
+    }
+    if (home != NULL && status == 0 && *found != NULL) entry->pw_dir = (char *)home;
+    return status;
+}
+
+/* Only the launcher's, before it runs the collection: not the report's. Set and not empty. */
+static int failing(const char *variable) {
+    const char *set = getenv(variable);
+    return set != NULL && set[0] != '\0' && getenv("FSBPYR_GC") == NULL;
+}
+
+DIR *__wrap_opendir(const char *name) {
+    if (failing("PROBE_NO_PROC") && strncmp(name, "/proc/", 6) == 0) {
+        errno = ENOENT;
+        return NULL;
+    }
+    return __real_opendir(name);
+}
+
+/* syscall's arguments as glibc's own syscall reads them: six longs, whatever was passed. */
+long __wrap_syscall(long number, ...) {
+    va_list args;
+    long arg[6];
+    va_start(args, number);
+    for (int i = 0; i < 6; i++) arg[i] = va_arg(args, long);
+    va_end(args);
+#ifdef SYS_close_range
+    if (number == SYS_close_range && failing("PROBE_NO_CLOSE_RANGE")) {
+        errno = ENOSYS;
+        return -1;
+    }
+#endif
+    return __real_syscall(number, arg[0], arg[1], arg[2], arg[3], arg[4], arg[5]);
+}
 
 int __wrap_statvfs(const char *path, struct statvfs *fs) {
     int status = __real_statvfs(path, fs);

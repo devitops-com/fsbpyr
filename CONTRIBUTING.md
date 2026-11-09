@@ -153,10 +153,13 @@ The tiers, from fastest to most complete:
   `src/fsbpyr/launcher` or `tests/fuzz` changed since the last tag and on the weekly run, else
   for 30 s, and the readers of keys for a quarter of that, 30 s at least; what each finds
   (`FSBPYR_FUZZ_CORPUS`, and the `-sig` directory beside it) is kept in the Actions cache, saved
-  by the runs on main (a queue run's cache would belong to its temporary branch). The launcher programs the tests build
-  are instrumented for llvm-cov (`FSBPYR_LLVM_COV_DIR`), and the run's summary shows the
-  report, one row per launcher source, and the job's reports artifact holds its per-line data
-  (`launcher-coverage.lcov`); it is informational. A run took 37 to 40 minutes in October 2026, while each suite
+  by the runs on main (a queue run's cache would belong to its temporary branch). The launcher
+  programs the tests build, and the sanitized runtime's stub, are instrumented for llvm-cov
+  (`FSBPYR_LLVM_COV_DIR`), so that every file of the launcher's C code counts, `main.c` and
+  `module.c` too; the run's summary shows the report, one row per launcher source, the job's
+  reports artifact holds its per-line data (`launcher-coverage.lcov`), and
+  `tools/launcher-coverage.py` fails the job below 90% of the lines of fsbpyr's C code, or a file
+  of it below 85% (owner, 2026-11-08). A run took 37 to 40 minutes in October 2026, while each suite
   job ran its tests in one process; the job's limit is 60 minutes. Runners of one label differ
   in disk (most have 85 GB free, some 12 GB): the suite and corpus jobs first remove software of
   the runner image they never use and stop at once unless 20 GiB beyond a tenth of the disk are

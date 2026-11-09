@@ -373,15 +373,17 @@ jobs:
           as-tester $UV_ENV $UV_RUN coverage report \
             --include='src/fsbpyr/payload/*,src/fsbpyr/elf.py' --fail-under=90
 
-      # Informational: the launcher sources that the probes and the fuzz harness exercised, one
-      # row each (each session compiles a copy, named by the sources' place in the repository:
-      # tests/e2e/conftest.py), the tests' own sources (tests/probes, tests/fuzz) left out. The
-      # lines and branches run, per file, go to launcher-coverage.lcov, uploaded beside the
-      # report. llvm-profdata and llvm-cov are LLVM 23's (/home/tester/llvm23, first on PATH), as
-      # is the clang that instrumented them.
+      # The launcher's line coverage, gated (owner, 2026-11-08): what the probes, the fuzz
+      # harnesses and the sanitized stub ran, the stub instrumented too when FSBPYR_LLVM_COV_DIR is
+      # set (runtime/stub.py), so main.c and module.c count. One row per launcher source (each
+      # session compiles a copy, named by the sources' place in the repository:
+      # tests/e2e/conftest.py); the tests' own sources, CPython's headers and the vendored zstd are
+      # left out. tools/launcher-coverage.py fails the step below 90% of the lines of fsbpyr's C
+      # code, or a file of it below 85%. The lines and branches run, per file, go to
+      # launcher-coverage.lcov, uploaded beside the report. llvm-profdata and llvm-cov are LLVM
+      # 23's (/home/tester/llvm23, first on PATH), as is the clang that instrumented them.
       - name: Launcher coverage (llvm-cov)
         if: ${{ !cancelled() }}
-        continue-on-error: true
         run: |
           as-tester bash -c '
             set -eu
@@ -390,12 +392,17 @@ jobs:
             set -- bin/*
             first="$1"; shift
             objects=(); for b in "$@"; do objects+=(-object "$b"); done
+            ignored="-ignore-filename-regex=/tests/(probes|fuzz)/|/fsbpyr/python/|/vendor/"
             llvm-cov export -format=lcov "$first" "${objects[@]}" -instr-profile=all.profdata \
-              "-ignore-filename-regex=/tests/(probes|fuzz)/" > /home/tester/launcher-coverage.lcov
+              "$ignored" > /home/tester/launcher-coverage.lcov
+            llvm-cov export -summary-only "$first" "${objects[@]}" -instr-profile=all.profdata \
+              "$ignored" > /home/tester/launcher-coverage.json
             llvm-cov report "$first" "${objects[@]}" -instr-profile=all.profdata \
-              "-ignore-filename-regex=/tests/(probes|fuzz)/"' | tee /home/tester/launcher-coverage.txt
-          { echo '### Launcher coverage (llvm-cov, informational)'; echo '```'
+              "$ignored"' | tee /home/tester/launcher-coverage.txt
+          { echo '### Launcher coverage (llvm-cov)'; echo '```'
             cat /home/tester/launcher-coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          as-tester $UV_ENV $UV_RUN python tools/launcher-coverage.py \
+            /home/tester/launcher-coverage.json
 
       # Also when a test failed, as long as the suite ran. For the portability job.
       - name: Upload the reports

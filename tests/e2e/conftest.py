@@ -84,7 +84,12 @@ def _session_runtime(glibc: str, *, sanitize: bool) -> registry.Runtime:
 def runtime(request: pytest.FixtureRequest) -> registry.Runtime:
     """The release runtime, or its ASan/UBSan variant; in the EL8 test mode the glibc 2.28 one."""
     sanitize = getattr(request, "param", "release") == "sanitized"
-    return _session_runtime(baseline.BASELINE, sanitize=sanitize)
+    found = _session_runtime(baseline.BASELINE, sanitize=sanitize)
+    if sanitize and os.environ.get(COVERAGE_VARIABLE):  # its stub is instrumented (stub.py)
+        kept = Path(os.environ[COVERAGE_VARIABLE]) / f"stub-{found.runtime_id}"
+        if not kept.exists():  # the report's object: the code apps of it run
+            kept.write_bytes(found.stub)
+    return found
 
 
 @pytest.fixture(scope="session")

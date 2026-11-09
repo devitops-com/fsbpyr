@@ -24,7 +24,8 @@ DAY, HOUR = 86400, 3600
 @pytest.fixture(scope="module")
 def probe(launcher_build: LauncherBuild, tmp_path_factory: pytest.TempPathFactory) -> Path:
     out = tmp_path_factory.mktemp("probe") / "due"
-    flags = ("-Wl,--wrap=statvfs", "-fsanitize=undefined", "-fno-sanitize-recover=undefined")
+    flags = ("-Wl,--wrap=statvfs,--wrap=getpwuid_r,--wrap=opendir,--wrap=syscall",
+             "-fsanitize=undefined", "-fno-sanitize-recover=undefined")  # fmt: skip
     return launcher_build.compile(out, [PROBE, "due.c", "way.c"], *flags)
 
 
@@ -203,6 +204,60 @@ def test_the_root_is_where_the_boot_code_finds_it(
 
     assert _claimed(root)
     assert [report["root"] for report in _reports(tmp_path / "report")] == [str(root)]
+
+
+@pytest.mark.parametrize("home", ["relative", ""])
+def test_without_an_absolute_home_the_passwd_entrys_is_taken(
+    probe: Path, tmp_path: Path, home: str
+) -> None:
+    """HOME empty or relative: the passwd entry's home, as native.cache_directory takes it."""
+    root = _cache(tmp_path / "passwd-home" / ".cache" / "x", stamp=2 * DAY)
+
+    _start(probe, tmp_path / "report", HOME=home, PROBE_PASSWD_HOME=str(tmp_path / "passwd-home"))
+
+    assert _claimed(root)
+    assert [report["root"] for report in _reports(tmp_path / "report")] == [str(root)]
+
+
+@pytest.mark.parametrize("entry", ["-", "relative"], ids=["no entry", "a relative home"])
+def test_without_a_home_to_tell_nothing_starts(probe: Path, tmp_path: Path, entry: str) -> None:
+    root = _cache(tmp_path / "relative" / ".cache" / "x", stamp=2 * DAY)  # what "relative" names
+
+    _start(probe, tmp_path / "report", cwd=tmp_path, HOME="", PROBE_PASSWD_HOME=entry)
+
+    assert not _claimed(root)
+    assert _reports(tmp_path / "report", within=1) == []
+
+
+def test_a_relative_cache_dir_in_a_removed_directory_starts_nothing(
+    probe: Path, tmp_path: Path
+) -> None:
+    """No working directory to make FSBPYR_CACHE_DIR absolute from: no root can be told."""
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    clean = {k: v for k, v in os.environ.items() if not k.startswith(("FSBPYR_", "PROBE_"))}
+    env = {**clean, "PROBE_OUT": str(tmp_path / "report"), "FSBPYR_CACHE_DIR": "rel"}
+
+    subprocess.run(["/bin/sh", "-c", 'cd "$1" && rmdir "$1" && exec "$2" x', "_", gone, probe],
+                   env=env, capture_output=True, check=True, timeout=10)  # fmt: skip
+
+    assert _reports(tmp_path / "report", within=1) == []
+
+
+@pytest.mark.parametrize("no_proc", ["", "1"], ids=["no close_range", "no close_range nor /proc"])
+def test_descriptors_are_closed_without_close_range_too(
+    probe: Path, tmp_path: Path, no_proc: str
+) -> None:
+    """A kernel before 5.9 has no close_range: /proc/self/fd is read, and without /proc every
+    descriptor up to the limit is closed."""
+    root = _cache(tmp_path / "cache", stamp=2 * DAY)
+    out = tmp_path / "report"
+
+    kept = _start(probe, out, FSBPYR_CACHE_DIR=str(root), PROBE_NO_CLOSE_RANGE="1",
+                  PROBE_NO_PROC=no_proc)  # fmt: skip
+
+    (report,) = _reports(out)
+    assert report["fds"] == "0 1 2" and kept.stdout.strip() not in report["fds"].split()
 
 
 def test_an_app_name_the_boot_code_refuses_starts_nothing(probe: Path, tmp_path: Path) -> None:
