@@ -10,6 +10,12 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
 
 ## [Unreleased]
 
+### Added
+- **`make perf OLD=PATH`** measures this tree's fsbpyr (or `NEW=PATH`) against the previous
+  release's: the start of two apps and their peak RSS, the integrity check, a build and `inspect
+  --verify`, interleaved round by round, as a table for `docs/performance.md`, which every release
+  now records (owner, 2026-11-08). It gates nothing. The first table, 0.31.0 against 0.30.0, is in.
+
 ### Fixed
 - **The installer writes only into files it made.** It staged the executable, the man page and
   the completions under names known in advance (`.fsbpyr.<process id>.tmp`), so a link planted

@@ -1,8 +1,11 @@
 # Startup timings
 
 Where the time of a start goes, release by release, so that a regression can be traced to
-the part that grew. Add a row whenever a release changes the launcher, the payload format or
-the boot code, and keep the old rows. The current figures, measured with 0.30.0 (very large
+the part that grew. Every release is measured against the previous one before `make
+release-prep`, start, build and inspect alike (owner, 2026-11-08): `make perf OLD=<the previous
+release's fsbpyr>` gives the table for [Release to release](#release-to-release). Add a row to the
+other tables whenever a release changes the launcher, the payload format or the boot code, and
+keep the old rows. The current figures, measured with 0.30.0 (very large
 files also with 0.31.0), are on [Performance](https://github.com/devitops-com/fsbpyr/wiki/Dev-Performance)
 in the wiki.
 
@@ -21,6 +24,39 @@ in the wiki.
   0.24.0 and later) or, in the Python 3.15 row, `python3.15 -I -S -c pass` (uv-managed 3.15.1).
 - "Cache check" is the difference to a build of the same app whose cache check compares sizes
   only (a temporary measurement build, never released).
+
+## Release to release
+
+`make perf OLD=PATH [NEW=PATH]` ([`tools/perf.py`](../tools/perf.py); `NEW` is `dist/fsbpyr`
+unless given) builds the fixtures `hello` (no dependencies) and `native` (orjson, markupsafe)
+with each fsbpyr, then runs each pair interleaved, round by round after 5 warm-up runs: 201
+starts of each app and of bare CPython (`python -I -S -c pass`, the day's machine), 201 traced
+starts for the integrity check, 5 runs under GNU time for the peak RSS (`wait4` never reports
+less than the spawning Python's own), and 5 builds of `hello` and 5 `inspect --verify` of each
+fsbpyr by itself. Each app has a cache of its own, already filled; the builds use the user's
+caches. It reports, and gates nothing (D37). Machine as above.
+
+### 0.31.0 against 0.30.0 (2026-11-08)
+
+The released `fsbpyr-3.14-x86_64-linux-gnu` of each, two runs of 201 rounds:
+
+| Measure | 0.30.0 | 0.31.0 | Change |
+|---|---|---|---|
+| start of `hello`, p50 | 7.62, 7.77 ms | 7.78, 7.91 ms | +2.0, +1.9 % |
+| start of `hello`, p90 | 7.84, 7.99 ms | 7.88, 8.04 ms | +0.5, +0.5 % |
+| start of `native`, p50 | 25.31, 25.46 ms | 25.37, 25.54 ms | +0.2, +0.3 % |
+| start of `native`, p90 | 25.52, 25.64 ms | 25.56, 25.75 ms | +0.2, +0.4 % |
+| integrity check of `hello`, p50 | 1.65, 1.65 ms | 1.63, 1.64 ms | -0.8, -0.2 % |
+| peak RSS of `hello` | 14,920, 14,856 KiB | 14,900, 15,012 KiB | -0.1, +1.1 % |
+| peak RSS of `native` | 23,148, 23,004 KiB | 23,008, 23,196 KiB | -0.6, +0.8 % |
+| build of `hello`, p50 | 491.22, 493.44 ms | 495.26, 491.60 ms | +0.8, -0.4 % |
+| `inspect --verify` of itself, p50 | 139.63, 137.52 ms | 136.14, 134.17 ms | -2.5, -2.4 % |
+| size of fsbpyr | 29,540,196 bytes | 29,545,684 bytes | +0.0 % |
+| size of `hello`, of `native` | 27,901,220, 28,047,660 bytes | the same | = |
+| bare CPython, p50 (the same for both) | 5.54, 5.64 ms | 5.54, 5.64 ms | = |
+
+`hello` starts 0.14 to 0.16 ms later with 0.31.0 in both runs, `native` within noise, and
+`inspect --verify` is 2.4 to 2.5 % faster; neither was traced further (D37).
 
 ## Starting a no-op app
 

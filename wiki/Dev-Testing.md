@@ -616,7 +616,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,736 in 149 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,747 in 150 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -630,16 +630,16 @@ run with the release launcher only, those two portability tests also on the two 
 
 | Layer | Files | Tests |
 |---|---|---|
-| `tests/unit` (top level) | 26 | 919 |
+| `tests/unit` (top level) | 27 | 930 |
 | `tests/unit/boot` | 23 | 362 |
 | `tests/unit/builder` | 19 | 789 |
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 261 |
 | `tests/integration` | 17 | 854 |
 | `tests/e2e` | 44 | 1,110 |
-| All | 149 | 4,736 |
+| All | 150 | 4,747 |
 
-### tests/unit (top level): 26 files, 919 tests
+### tests/unit (top level): 27 files, 930 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -655,6 +655,7 @@ run with the release launcher only, those two portability tests also on the two 
 | [`test_elf_mutation.py`](../tests/unit/test_elf_mutation.py) | 1 | Hypothesis (1,000 examples): mutated ELF bytes are read by `fsbpyr.elf` or raise `ElfError`, nothing else. |
 | [`test_inspect.py`](../tests/unit/test_inspect.py) | 54 | `fsbpyr inspect` on `FAKE_RUNTIME` executables: text and JSON, columns, `--verify`, licences, files, lock and settings lines, older formats, damaged records, a glibc 2.28 app's `baseline` and `glibc_baseline`, file text that cannot drive the terminal. |
 | [`test_no_skips.py`](../tests/unit/test_no_skips.py) | 2 | The `ast` scan of [A skip fails the run](#a-skip-fails-the-run), and that it finds each use. |
+| [`test_perf_tool.py`](../tests/unit/test_perf_tool.py) | 11 | `tools/perf.py` (`make perf`) without measuring: its percentages, percentiles and table, the trace line, the order of interleaved runs, GNU time's peak RSS, a failing run and a missing fsbpyr. |
 | [`test_poetry1.py`](../tests/unit/test_poetry1.py) | 32 | `fsbpyr.poetry1`: a Poetry 1 `pyproject.toml` without `[project]` read as one: constraints as PEP 440, `\|\|` and git dependencies refused, optional dependencies as extras, markers, which projects are unpackaged. |
 | [`test_portability_images.py`](../tests/unit/test_portability_images.py) | 4 | `tests/support/images.py`: all twelve images on x86-64, in order; those with an arm64 variant on aarch64. |
 | [`test_pyversion.py`](../tests/unit/test_pyversion.py) | 57 | The version rule (`fsbpyr.pyversion`): the Python that `requires-python`, a `.python-version` pin and `--python` give, and the errors. Marked `version_rule`. |
