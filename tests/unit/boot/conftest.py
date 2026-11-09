@@ -1,9 +1,13 @@
-"""Shared fixture: the boot module run in-process against the pure-Python _fsbpyr stand-in.
+"""Shared fixtures: the boot module run in-process against the pure-Python _fsbpyr stand-in,
+and a sys that boot.run() may rewire.
 
 Each test module provides an ``executable`` fixture (the app the stand-in serves).
 """
 
+import builtins
+import importlib.machinery
 import importlib.util
+import linecache
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -45,3 +49,23 @@ def boot(executable: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> I
     for name in [n for n in sys.modules if n == "_fsbpyr_rt" or n.startswith("_fsbpyr_rt.")]:
         del sys.modules[name]
     standin.close()
+
+
+@pytest.fixture
+def isolated_sys(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Let boot.run() rewire the import system; everything is restored afterwards."""
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(sys, "path_hooks", list(sys.path_hooks))
+    monkeypatch.setattr(sys, "meta_path", list(sys.meta_path))
+    monkeypatch.setattr(sys, "path_importer_cache", {})
+    monkeypatch.setattr(sys, "excepthook", sys.__excepthook__)
+    frozen = importlib.machinery.FrozenImporter
+    monkeypatch.setattr(frozen, "get_source", frozen.get_source)  # run() extends it
+    monkeypatch.setattr(linecache, "updatecache", linecache.updatecache)  # and wraps this
+    monkeypatch.setattr(linecache, "cache", dict(linecache.cache))
+    for name in ("exit", "quit", "help"):
+        monkeypatch.setattr(builtins, name, getattr(builtins, name))  # run() defines them
+    before = set(sys.modules)
+    yield
+    for name in set(sys.modules) - before:
+        del sys.modules[name]

@@ -15,6 +15,7 @@ from .conftest import BOOT_DIR
 
 EXE = "/opt/app/bin/tool"
 PREFIX = EXE + "/"
+SITE = "/home/u/.cache/tool/runtime/0123456789abcdef0123456789abcdef/site/"  # fs-packages' files
 ON = json.dumps({"interpreter_reexec": True})
 OFF = json.dumps({"interpreter_reexec": False})
 UNSET = json.dumps({"interpreter_reexec": None})
@@ -355,3 +356,85 @@ def test_a_file_of_the_host_next_to_the_executable_is_the_apps_own_argument_and_
     assert command == ("script", "/srv/bin/other.py", [])
     assert foreign is False and ours is False
     assert asked == ["_fsbpyr_scripts.other"]  # once, after the parent check
+
+
+
+# --- a file of an fs-package, below the native cache's site (#118) ------------------------------
+
+
+def _origins(reexec: ModuleType, monkeypatch: pytest.MonkeyPatch, shown: dict[str, str]) -> None:
+    """``find_spec`` of the modules ``shown`` names, with the files they say they live at."""
+    monkeypatch.setattr(
+        reexec.importlib.util, "find_spec",
+        lambda name: types.SimpleNamespace(origin=shown[name]) if name in shown else None,
+    )  # fmt: skip
+
+
+def test_a_script_below_the_site_is_recognized_only_with_the_site(reexec: ModuleType) -> None:
+    argv = [EXE, "-u", f"{SITE}torch/_inductor/compile_worker/__main__.py", "--workers=2"]
+
+    assert reexec.child_command(argv, PREFIX, None, SITE) == (
+        "script", f"{SITE}torch/_inductor/compile_worker/__main__.py", ["--workers=2"])
+    assert reexec.child_command(argv, PREFIX) is None
+    assert reexec.child_command([EXE, f"{SITE}torch/data.json"], PREFIX, None, SITE) is None
+
+
+def test_a_script_below_the_site_is_the_module_whose_file_it_is(
+    reexec: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = f"{SITE}torch/_inductor/compile_worker/__main__.py"
+    _origins(reexec, monkeypatch, {"torch._inductor.compile_worker.__main__": worker,
+                                   "pkg.moved": "/elsewhere/pkg/moved.py"})  # fmt: skip
+
+    assert reexec._script_module(worker, PREFIX, None, SITE) == "torch._inductor.compile_worker"
+    assert reexec._script_module(f"{SITE}pkg/moved.py", PREFIX, None, SITE) is None
+    assert reexec._script_module(worker, PREFIX) is None
+
+
+def test_the_site_is_tested_before_an_overlay_that_holds_it(
+    reexec: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An app of scripts in $HOME, its cache in ~/.cache: the executable's directory holds the
+    site, and the overlay would take the path for a script of the scripts root."""
+    _origins(reexec, monkeypatch, {"pkg.mod": f"{SITE}pkg/mod.py"})
+
+    assert reexec._script_module(f"{SITE}pkg/mod.py", PREFIX, "/home/u/", SITE) == "pkg.mod"
+
+
+def test_without_the_setting_a_script_below_the_site_is_refused_naming_it_below_the_site(
+    reexec: ModuleType, child: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as refused:
+        reexec.run_child([EXE, f"{SITE}torch/_inductor/compile_worker/__main__.py"], UNSET,
+                         PREFIX, (), "/home/u/", site=SITE)  # fmt: skip
+
+    assert refused.value.code == 70
+    assert capsys.readouterr().err.startswith(
+        "fsbpyr: refusing to run `torch/_inductor/compile_worker/__main__.py` as Python")
+
+
+def test_a_path_below_the_site_that_is_no_module_is_refused_or_runs_the_app(
+    reexec: ModuleType, child: ModuleType
+) -> None:
+    """As one below the executable: refused without the setting, the app with it."""
+    argv = [EXE, f"{SITE}nowhere/tool.py"]
+
+    with pytest.raises(SystemExit):
+        reexec.run_child(argv, UNSET, PREFIX, site=SITE)
+    assert reexec.run_child(argv, ON, PREFIX, site=SITE) is False
+
+
+def test_a_script_below_the_site_runs_from_the_payload_as_main(
+    reexec: ModuleType, child: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    site = f"{tmp_path}/site/"
+    package = tmp_path / "site" / "fs_tool"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "worker.py").write_text("import sys\nseen = (__name__, sys.argv[:])\n")
+    monkeypatch.syspath_prepend(str(tmp_path / "site"))
+    monkeypatch.setattr(sys, "path", list(sys.path))  # the child's insert is undone
+    monkeypatch.setattr(sys, "argv", [EXE, str(package / "worker.py"), "a"])
+
+    assert reexec.run_child(sys.argv, ON, PREFIX, site=site) is True
+    assert child.seen == ("__main__", [str(package / "worker.py"), "a"])

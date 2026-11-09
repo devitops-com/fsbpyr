@@ -1,5 +1,7 @@
 """Helper interpreters: ``<exe> [flags] -m MODULE ...``, ``-c CODE ...`` and ``<exe> [flags]
-<exe>/pkg/script.py ...`` (plan D23, D44).
+<exe>/pkg/script.py ...`` (plan D23, D44); the script may also be named by the path in the native
+cache's site that a module of an fs-package says it lives at (``<cache>/runtime/<generation>/
+site/torch/_inductor/compile_worker/__main__.py``), and runs from the payload too.
 
 Tools start helper interpreters through ``sys.executable``; in a single-file app that is the
 app. Only a child whose parent process runs this very executable (the D22 check) counts as one:
@@ -33,21 +35,22 @@ type Command = tuple[str, str, list[str]]
 
 
 def child_command(
-    argv: list[str], prefix: str | None = None, overlay: str | None = None
-) -> Command | None:
+    argv: list[str], prefix: str | None = None, overlay: str | None = None,
+    site: str | None = None,
+) -> Command | None:  # fmt: skip
     """The module, code or (with ``prefix``, the executable's path and "/") script of the
     payload that ``argv`` asks for after interpreter flags, or None. ``overlay`` (the
-    executable's directory and "/", for apps of scripts) also names the scripts, by its form
-    alone: ``run_child`` asks whether a script of the payload is that file, once the app has
-    started this process (it imports the script's packages to tell)."""
+    executable's directory and "/", for apps of scripts) and ``site`` (the native cache's site
+    directory and "/", where an fs-package's modules say they live) also name the scripts, by
+    their form alone: ``run_child`` asks whether a script of the payload is that file, once the
+    app has started this process (it imports the script's packages to tell)."""
     i = after_flags(argv)
     if i is None:
         return None
     if argv[i] in ("-m", "-c"):
         return (argv[i], argv[i + 1], argv[i + 2 :]) if i + 1 < len(argv) else None
-    if prefix is not None and argv[i].startswith(prefix) and argv[i].endswith(".py"):
-        return _SCRIPT, argv[i], argv[i + 1 :]
-    if overlay is not None and argv[i].startswith(overlay) and argv[i].endswith(".py"):
+    roots = tuple(root for root in (prefix, site, overlay) if root is not None)
+    if roots and argv[i].startswith(roots) and argv[i].endswith(".py"):
         return _SCRIPT, argv[i], argv[i + 1 :]
     return None
 
@@ -70,18 +73,18 @@ def asks_for_python(command: Command) -> bool:
                 and isinstance(alone.value, (ast.Name, ast.Attribute, ast.Constant)))  # fmt: skip
 
 
-def _shown(command: Command, prefix: str) -> str:
+def _shown(command: Command, prefix: str, site: str | None = None) -> str:
     option, target, _ = command
     if option == _SCRIPT:
-        return target.removeprefix(prefix)
+        return target.removeprefix(prefix).removeprefix(site or prefix)
     if option == "-c":
         return f"-c {target[:60]!r}{'...' if len(target) > 60 else ''}"
     return f"-m {target}"
 
 
-def refusal(command: Command, prefix: str) -> str:
+def refusal(command: Command, prefix: str, site: str | None = None) -> str:
     return (
-        f"fsbpyr: refusing to run `{_shown(command, prefix)}` as Python: the app started "
+        f"fsbpyr: refusing to run `{_shown(command, prefix, site)}` as Python: the app started "
         "itself as a helper interpreter (sys.executable is the app), and running the app in "
         "its place would start it again and again; rebuild with --interpreter-reexec to run "
         "such children as Python, or with --no-interpreter-reexec if the app's own options "
@@ -89,12 +92,19 @@ def refusal(command: Command, prefix: str) -> str:
     )
 
 
-def _script_module(path: str, prefix: str, overlay: str | None = None) -> str | None:
+def _script_module(
+    path: str, prefix: str, overlay: str | None = None, site: str | None = None
+) -> str | None:  # fmt: skip
     """The module whose file in the payload ``path`` is (a package's ``__main__`` runs as the
     package), or None. A module of the scripts root says it lives next to the executable, below
-    ``overlay``: that path names it too, as does its path inside the executable."""
+    ``overlay``: that path names it too, as does its path inside the executable. A module of an
+    fs-package says it lives below ``site``, which is tested before ``overlay``: the executable's
+    directory may hold the cache (``$HOME``, with the default ``~/.cache``)."""
+    base = prefix  # what ``below`` is relative to, in the path the module says it lives at
     if path.startswith(prefix):
         below = path.removeprefix(prefix)
+    elif site is not None and path.startswith(site):
+        below, base = path.removeprefix(site), site
     elif overlay is not None and path.startswith(overlay):
         below = f"{SCRIPTS_ROOT}/{path.removeprefix(overlay)}"
     else:
@@ -108,25 +118,26 @@ def _script_module(path: str, prefix: str, overlay: str | None = None) -> str | 
     except (ImportError, ValueError):  # a parent package missing, or none of the payload's
         return None
     rest = below.removeprefix(f"{SCRIPTS_ROOT}/") if below.startswith(f"{SCRIPTS_ROOT}/") else None
-    shown = f"{overlay}{rest}" if overlay is not None and rest is not None else prefix + below
+    shown = f"{overlay}{rest}" if overlay is not None and rest is not None else base + below
     if spec is None or spec.origin != shown:
         return None
     return name.removesuffix(".__main__") if parts[-1] == "__main__" else name
 
 
 def _own_command(
-    command: Command, prefix: str, targets: Collection[str], overlay: str | None
-) -> bool:
+    command: Command, prefix: str, targets: Collection[str], overlay: str | None,
+    site: str | None = None,
+) -> bool:  # fmt: skip
     """Whether ``command`` is a script of the payload that is the target of one of the app's own
     commands (a module run as ``__main__``, ``_fsbpyr_scripts.tools.x``)."""
     option, path, _ = command
-    return option == _SCRIPT and _script_module(path, prefix, overlay) in targets
+    return option == _SCRIPT and _script_module(path, prefix, overlay, site) in targets
 
 
-def _run(command: Command, prefix: str, overlay: str | None) -> bool:
+def _run(command: Command, prefix: str, overlay: str | None, site: str | None = None) -> bool:
     option, target, arguments = command
     if option == _SCRIPT:
-        name = _script_module(target, prefix, overlay)
+        name = _script_module(target, prefix, overlay, site)
         if name is None:
             return False
         sys.argv[:] = [target, *arguments]  # runpy sets sys.argv[0] to the module's file
@@ -141,30 +152,34 @@ def _run(command: Command, prefix: str, overlay: str | None) -> bool:
     return True
 
 
-def run_child(
+def run_child(  # noqa: PLR0913  the payload's three places a script is named by, keyword-only
     argv: list[str],
     build_info: str,
     prefix: str,
     targets: Collection[str] = (),
     overlay: str | None = None,
+    *,
+    site: str | None = None,
 ) -> bool:
     """Run what ``argv`` asks for if the build allows it and the app started this process;
     exits 70 if the build did not choose and it asks for Python, unless it is a script that is
     the target of one of the app's own commands (``targets``); False if the app runs as usual.
-    ``overlay`` is the executable's directory and "/" in an app of scripts (``child_command``)."""
-    command = child_command(argv, prefix, overlay)
+    ``overlay`` is the executable's directory and "/" in an app of scripts, ``site`` the native
+    cache's site directory and "/" when an argument is below it (``child_command``)."""
+    command = child_command(argv, prefix, overlay, site)
     if command is None:
         return False
     setting = json.loads(build_info).get("interpreter_reexec")
     if setting is False or not _parent_runs_this_executable():
         return False
     option, path, _ = command
-    named_by_overlay = option == _SCRIPT and not path.startswith(prefix)
-    if named_by_overlay and _script_module(path, prefix, overlay) is None:
+    in_payload = (prefix, site) if site is not None else prefix
+    named_by_overlay = option == _SCRIPT and not path.startswith(in_payload)
+    if named_by_overlay and _script_module(path, prefix, overlay, site) is None:
         return False  # a file of the host, the app's own argument
-    if setting is True or _own_command(command, prefix, targets, overlay):
-        return _run(command, prefix, overlay)
+    if setting is True or _own_command(command, prefix, targets, overlay, site):
+        return _run(command, prefix, overlay, site)
     if not asks_for_python(command):
         return False
-    sys.stderr.write(refusal(command, prefix))
+    sys.stderr.write(refusal(command, prefix, site))
     raise SystemExit(REFUSED)

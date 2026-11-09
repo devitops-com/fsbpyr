@@ -7,12 +7,10 @@ import importlib.resources
 import importlib.util
 import io
 import json
-import linecache
 import os
 import posix
 import sys
 import types
-from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
@@ -299,26 +297,6 @@ def test_distribution_enumeration_respects_context(boot: ModuleType) -> None:
 
 
 # --- run(), entry points, tracebacks -------------------------------------------------------
-
-
-@pytest.fixture
-def isolated_sys(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Let boot.run() rewire the import system; everything is restored afterwards."""
-    monkeypatch.setattr(sys, "path", list(sys.path))
-    monkeypatch.setattr(sys, "path_hooks", list(sys.path_hooks))
-    monkeypatch.setattr(sys, "meta_path", list(sys.meta_path))
-    monkeypatch.setattr(sys, "path_importer_cache", {})
-    monkeypatch.setattr(sys, "excepthook", sys.__excepthook__)
-    frozen = importlib.machinery.FrozenImporter
-    monkeypatch.setattr(frozen, "get_source", frozen.get_source)  # run() extends it
-    monkeypatch.setattr(linecache, "updatecache", linecache.updatecache)  # and wraps this
-    monkeypatch.setattr(linecache, "cache", dict(linecache.cache))
-    for name in ("exit", "quit", "help"):
-        monkeypatch.setattr(builtins, name, getattr(builtins, name))  # run() defines them
-    before = set(sys.modules)
-    yield
-    for name in set(sys.modules) - before:
-        del sys.modules[name]
 
 
 @pytest.mark.usefixtures("isolated_sys")

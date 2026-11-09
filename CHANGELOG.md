@@ -40,6 +40,15 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   stale-lock error is given only for a name the lock does not have, and a package whose marker
   does not hold for the target (colorama for Windows) is left out. A build without `--extra` is
   as before.
+- **A script of an fs-package started through `sys.executable` is a helper interpreter.** An
+  fs-package's modules say they live in the native cache
+  (`<cache>/runtime/<generation>/site/...`), and torch's compile workers start as
+  `[sys.executable, <that __file__>, ...]`. Such a child was neither refused (D44) nor, with
+  `--interpreter-reexec`, run as Python (D23): it ran the app's entry point with the path as its
+  argument (#118). It is now a script of the payload like a `.py` file below the executable:
+  refused with exit 70 without the setting, naming the path below the cache's site; run from the
+  payload as `__main__` with `--interpreter-reexec`; the app with `--no-interpreter-reexec`. The
+  usual start costs one more scan of `sys.argv`.
 - **In a user namespace, a way to the cache root that leaves a sticky directory is no longer
   refused.** Once the way had passed a directory others may add to (`/tmp`), the launcher and the
   collector (`way.c`, `gc.way_problem`) took everything after it as below it, so where `/` shows

@@ -288,8 +288,9 @@ A child that multiprocessing, joblib or Jupyter starts as an interpreter starts 
   preloads the parent's command (`_parent_target`, from `/proc/<ppid>/cmdline`).
 - **Helper interpreters** ([`_fsbpyr_rt/reexec.py`](../src/fsbpyr/boot/_fsbpyr_rt/reexec.py)):
   `-m MODULE`, `-c CODE` or a `.py` file below the executable; in an app of scripts also a `.py`
-  path beside it, but only where a payload module says it lives (`_script_module`), so a host file
-  is never run. Only a child that passes the same parent check counts: a shell, a script or a sudo
+  path beside it, and for an fs-package one below the native cache's site, but only where a
+  payload module says it lives (`_script_module`), so a host file is never run: the script's code
+  comes from the payload, never from the file extracted there. Only a child that passes the same parent check counts: a shell, a script or a sudo
   rule gets the app, so a sudo rule for the app never hands out an interpreter. With
   `interpreter-reexec = true` the child runs the module, code or script (a script from the
   payload); with `false` it gets the app; unset, a child that `asks_for_python` exits 70 with the
