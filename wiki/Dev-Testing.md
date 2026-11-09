@@ -174,9 +174,9 @@ The tests set `FSBPYR_CACHE_DIR` (a private cache for almost every executable th
 `PROBE_FAIL_LIBCTX`, `PROBE_FAIL_MALLOC`, `PROBE_FDS`, `PROBE_FREE`, `PROBE_LENGTH`, `PROBE_LINK`,
 `PROBE_LINK_ERRNO`, `PROBE_LONGER`, `PROBE_NO_CLOSE_RANGE`, `PROBE_NO_CONTEXT`, `PROBE_NO_LINK`,
 `PROBE_NO_MEMORY`, `PROBE_NO_PROC`, `PROBE_NO_SPACE`, `PROBE_OLD_GLIBC`, `PROBE_OUT`,
-`PROBE_OVERFLOWUID`, `PROBE_OWNED`, `PROBE_OWNER`, `PROBE_PASSWD_HOME`, `PROBE_RELEASE`,
-`PROBE_SESSION`, `PROBE_UID_MAP`, `PROBE_VERIFY_RESULT`),
-described in each probe's header comment.
+`PROBE_OVERFLOWUID`, `PROBE_OWNED`, `PROBE_OWNED_MODE`, `PROBE_OWNER`, `PROBE_PASSWD_HOME`,
+`PROBE_RELEASE`, `PROBE_SESSION`, `PROBE_UID_MAP`, `PROBE_VERIFY_RESULT`), described in each
+probe's header comment.
 
 `make` variables ([`Makefile`](../Makefile)): `JOBS` (pytest-xdist processes, default 8),
 `TESTTMP` (where each run's temporary directory goes, default `~/tmp`, since `/tmp` is often a
@@ -623,7 +623,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,822 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,835 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -638,13 +638,13 @@ run with the release launcher only, those two portability tests also on the two 
 | Layer | Files | Tests |
 |---|---|---|
 | `tests/unit` (top level) | 29 | 942 |
-| `tests/unit/boot` | 23 | 362 |
+| `tests/unit/boot` | 23 | 369 |
 | `tests/unit/builder` | 19 | 789 |
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 261 |
 | `tests/integration` | 17 | 860 |
-| `tests/e2e` | 45 | 1,167 |
-| All | 153 | 4,822 |
+| `tests/e2e` | 45 | 1,173 |
+| All | 153 | 4,835 |
 
 ### tests/unit (top level): 29 files, 942 tests
 
@@ -680,7 +680,7 @@ run with the release launcher only, those two portability tests also on the two 
 | [`test_vm_smoke.py`](../tests/unit/test_vm_smoke.py) | 29 | `tools/vm-smoke.py` without a VM ([The page-size smoke test](#the-page-size-smoke-test)): the pins file, the cpio writer and initramfs, the RPM reader, failing or mismatching downloads, console parsing and checks, the QEMU and kernel command lines, `/init`'s log level, a QEMU that exits at once. |
 | [`test_wiki.py`](../tests/unit/test_wiki.py) | 54 | The wiki's pages and `tools/wiki/`: every link of `wiki/*.md` has its target, the published form of a page, the import graphs the build draws, how publishing treats the wikis' history, and the messages, refusal and pinned keys that [User-Security](User-Security.md) shows against the code. The PDFs need pandoc and LuaLaTeX and are not built here (`make wiki-build`). |
 
-### tests/unit/boot: 23 files, 362 tests
+### tests/unit/boot: 23 files, 369 tests
 
 Most build an app with `FAKE_RUNTIME` and run the boot code in-process through the `boot`
 fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fixups.py`,
@@ -711,7 +711,7 @@ fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fix
 | [`test_service.py`](../tests/unit/boot/test_service.py) | 19 | `_fsbpyr_rt.service`: `JOURNAL_STREAM` matched to a stream made line-buffered; the SIGTERM handler exiting 143, in process 1 only, over the default disposition only, gone after fork. |
 | [`test_syspath_subdirs.py`](../tests/unit/boot/test_syspath_subdirs.py) | 4 | `sys.path` entries below the executable (`<exe>/pkg/_vendor`): modules there import by their short names. |
 | [`test_warning_frames.py`](../tests/unit/boot/test_warning_frames.py) | 3 | Import-time warnings with `stacklevel >= 2` name the importing module and show the payload file's source line. |
-| [`test_way.py`](../tests/unit/boot/test_way.py) | 20 | A cache root's way from `/` (`gc.way_problem`): owners and write permissions, sticky directories, symlinks, `..`, user namespaces, mapped uids; the tool's cache and the collector refuse an untrusted way. |
+| [`test_way.py`](../tests/unit/boot/test_way.py) | 27 | A cache root's way from `/` (`gc.way_problem`): owners and write permissions, sticky directories, symlinks, `..`, user namespaces, mapped uids, a walk that leaves a sticky directory (a symlink's absolute target, `..` back to it or above); the tool's cache and the collector refuse an untrusted way. |
 
 ### tests/unit/builder: 19 files, 789 tests
 
@@ -795,7 +795,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
 | [`test_worker_venvs.py`](../tests/integration/test_worker_venvs.py) | 10 | [`worker_venvs.py`](../tests/support/worker_venvs.py) on real pytest runs with three workers: each in an environment of its own, subprocesses included, removed after the run, and a worker in anything else stopping the run. |
 
-### tests/e2e: 45 files, 1,167 tests
+### tests/e2e: 45 files, 1,173 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -842,7 +842,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_stub_hardening.py`](../tests/e2e/test_stub_hardening.py) | 6 | The stub read with `readelf` and `objdump`: position independent, glibc libraries only, bound at load time, RELRO, non-executable stack, stack protector. |
 | [`test_tool_binary.py`](../tests/e2e/test_tool_binary.py) | 17 | A Python-less directory with a requirements file as one executable of the tools' console scripts (real pyflakes, pycodestyle and flake8, local distributions): links printing what the tools print under uv, no script payload, licences, freezes, `pylock.toml`, `--requirements`, `--entry`, gui scripts, meta-packages, the errors, a venv never read. |
 | [`test_unbuffered.py`](../tests/e2e/test_unbuffered.py) | 8 | `PYTHONUNBUFFERED` set and non-empty: a line printed to a pipe arrives at once and survives SIGTERM; `JOURNAL_STREAM` naming the stdout pipe makes it line-buffered; otherwise block-buffered. |
-| [`test_way.py`](../tests/e2e/test_way.py) | 37 | The cache root's way case by case through `probes/way.c`: the overflow uid outside the user namespace (faked `/proc` files, for `/`) and not below a sticky directory, 40 symlinks and the 41st, empty and failed link reads, the buffers at their bounds, `.` and `..`, names of `NAME_MAX` bytes and longer, relative roots, a removed working directory, failed allocations, descriptor 0. What `make mutate FILE=way.c` found untested. |
+| [`test_way.py`](../tests/e2e/test_way.py) | 43 | The cache root's way case by case through `probes/way.c`: the overflow uid outside the user namespace (faked `/proc` files, for `/` or the first directory below it) and not below a sticky directory, nor once a walk has left it (a symlink's absolute target, `..` back to it or above), 40 symlinks and the 41st, empty and failed link reads, the buffers at their bounds, `.` and `..`, names of `NAME_MAX` bytes and longer, relative roots, a removed working directory, failed allocations, descriptor 0. What `make mutate FILE=way.c` found untested. |
 | [`test_way_targets.py`](../tests/e2e/test_way_targets.py) | 2 | The cache root's way through `probes/way.c` (`readlinkat` wrapped) on symlink targets no local file system makes: one of `PATH_MAX` bytes, which may have been cut short, refused; one a byte shorter followed to its end. |
 
 ## Support modules

@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,7 +22,8 @@ struct walk {
     char *target;   /* a symlink's, PATH_MAX bytes */
     int fd;         /* the directory the walk is in (O_PATH) */
     unsigned links; /* symlinks followed */
-    bool shared;    /* past a directory others may add to (sticky): only root's or ours below */
+    size_t shared;  /* the length of ``walked`` at the first directory on the way others may add
+                     * to (sticky), SIZE_MAX if none: only root's or ours count below it */
     uid_t uid;
     gid_t gid;
     char *where; /* the caller's: the path at fault */
@@ -57,17 +59,19 @@ static bool outside_owner(uid_t uid) {
 /* Whether ``uid`` may own a directory or symlink on the way: root, we, or (above any directory
  * others may add to) an owner outside our user namespace. */
 static bool our_owner(const struct walk *w, uid_t uid) {
-    return uid == 0 || uid == w->uid || (!w->shared && outside_owner(uid));
+    return uid == 0 || uid == w->uid || (w->shared == SIZE_MAX && outside_owner(uid));
 }
 
 /* The directory the walk is in (at ``walked``) checked: see way.h. */
 static enum fsb_way trusted(struct walk *w) {
     struct stat st;
+    if (strlen(w->walked) <= w->shared) w->shared = SIZE_MAX; /* at it again or above: "/", ".." */
     if (fstat(w->fd, &st) != 0) return fail(w, FSB_WAY_SYSTEM, errno, w->walked);
     if (!our_owner(w, st.st_uid)) return fail(w, FSB_WAY_FOREIGN, 0, w->walked);
     bool others = (st.st_mode & S_IWOTH) || ((st.st_mode & S_IWGRP) && st.st_gid != w->gid);
     if (others && !(st.st_mode & S_ISVTX)) return fail(w, FSB_WAY_EXPOSED, 0, w->walked);
-    w->shared |= others; /* sticky: others may add entries, so only root's or ours count */
+    if (others && w->shared == SIZE_MAX) /* sticky: others may add entries: only root's or ours */
+        w->shared = strlen(w->walked);
     return FSB_WAY_TRUSTED;
 }
 
@@ -176,8 +180,8 @@ enum fsb_way fsb_way_check(const char *root, char *where, size_t size, int *erro
     char *pending = malloc(2 * PATH_MAX + 2), *walked = malloc(PATH_MAX + NAME_MAX + 2),
          *target = malloc(PATH_MAX);
     struct walk w = {.pending = pending, .capacity = 2 * PATH_MAX + 2, .walked = walked,
-                     .target = target, .fd = -1, .uid = geteuid(), .gid = getegid(),
-                     .where = where, .size = size, .error = error};
+                     .target = target, .fd = -1, .shared = SIZE_MAX, .uid = geteuid(),
+                     .gid = getegid(), .where = where, .size = size, .error = error};
     enum fsb_way way = FSB_WAY_MEMORY;
     if (pending != NULL && walked != NULL && target != NULL) {
         size_t cwd = 0;

@@ -109,6 +109,48 @@ def test_an_outside_owner_does_not_count_below_a_sticky_directory(
     assert _walk(probe, sticky / "sub", faked=env) == f"FOREIGN 0 {sticky}/sub"
 
 
+def test_an_outside_owner_counts_above_any_sticky_directory_not_at_slash_only(
+    probe: Path, base: Path
+) -> None:
+    """The base's first directory below "/" (/tmp or /home, say) shown as nobody's, not sticky."""
+    env = {**_outside(base, f"{OVERFLOW}\n", "0 1000 1\n"), "PROBE_OWNED": f"/{base.parts[1]}",
+           "PROBE_OWNED_MODE": "755"}  # fmt: skip
+
+    assert _walk(probe, base, faked=env) == "TRUSTED 0 -"
+
+
+@pytest.mark.parametrize(("way", "owned", "mode", "trusted"), [
+    ("s/link", "/", None, True),  # the link's absolute target: from "/" again
+    ("s/sub/..", "/", None, True),  # on up to "/"
+    ("/..", "/", "1777", True),  # "/" itself the sticky one: back at it, as at the start
+    ("s/sub/../inside", "s/inside", None, False),  # a ".." that stays below it
+    ("s/link/../s/inside", "s/inside", None, False),  # the target's way below it again
+], ids=["absolute target", "dot dot above", "dot dot to it", "dot dot below",
+        "below again"])  # fmt: skip
+def test_a_walk_that_leaves_a_sticky_directory_is_no_longer_below_it(
+    probe: Path, base: Path, way: str, owned: str, mode: str | None, trusted: bool
+) -> None:
+    """In a rootless namespace "/" is nobody's: neither a symlink's absolute target below /tmp nor
+    a ".." above it is refused there, nor /tmp itself when a ".." comes back to it; a directory of
+    nobody's below it still is."""
+    sticky = base / "s"
+    sticky.mkdir()
+    sticky.chmod(0o1777)
+    for directory in (sticky / "sub", sticky / "inside", base / "target"):
+        directory.mkdir()
+    (sticky / "link").symlink_to(base / "target")
+    root = way if way.startswith("/") else f"{base}/{way}"
+    if way == "s/sub/..":  # on up to "/": a ".." for each part of the base
+        root += "/.." * len(base.parts)
+    env = {**_outside(base, f"{OVERFLOW}\n", "0 1000 1\n"),
+           "PROBE_OWNED": "/" if owned == "/" else str(base / owned)}  # fmt: skip
+    if mode is not None:
+        env["PROBE_OWNED_MODE"] = mode
+
+    assert _walk(probe, root, faked=env) == ("TRUSTED 0 -" if trusted else
+                                             f"FOREIGN 0 {base / owned}")  # fmt: skip
+
+
 # --- symlinks ----------------------------------------------------------------------------------
 
 

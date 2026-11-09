@@ -245,13 +245,15 @@ def way_problem(path: str) -> Problem | None:
 
 class _Way:
     """One walk (way.c's struct walk): ``parts`` left, ``walked`` the real path so far,
-    ``shared`` once past a directory others may add to (only root's or ours count below)."""
+    ``shared`` the length of ``walked`` at the first directory on the way others may add to, None
+    if none (only root's or ours count below it)."""
 
     def __init__(self, path: str) -> None:
         self.path = path  # as given, for a name too long (as way.c)
         absolute = path if path.startswith("/") else f"{os.getcwd()}/{path}"
         self.parts = collections.deque(absolute.split("/"))
-        self.walked, self.links, self.shared = "", 0, False
+        self.walked, self.links = "", 0
+        self.shared: int | None = None
 
     def walk(self) -> Problem | None:
         problem = self.trusted("", os.lstat("/"))
@@ -299,19 +301,22 @@ class _Way:
 
     def trusted(self, where: str, info: os.stat_result) -> Problem | None:
         """way.c's trusted(): owned by root or us, writable by no other user unless sticky."""
+        if self.shared is not None and len(where) <= self.shared:  # at it again or above: "/", ".."
+            self.shared = None
         if not self.our_owner(info.st_uid):
             return Problem(where or "/", reason=FOREIGN)
         group = info.st_mode & stat.S_IWGRP and info.st_gid != os.getegid()
         others = bool(info.st_mode & stat.S_IWOTH or group)
         if others and not info.st_mode & stat.S_ISVTX:
             return Problem(where or "/", reason=EXPOSED)
-        self.shared |= others
+        if others and self.shared is None:
+            self.shared = len(where)
         return None
 
     def our_owner(self, uid: int) -> bool:
         """way.c's our_owner(): root, us, or (above any directory others may add to) an owner
         outside our user namespace."""
-        return uid in (0, os.geteuid()) or (not self.shared and _outside_owner(uid))
+        return uid in (0, os.geteuid()) or (self.shared is None and _outside_owner(uid))
 
 
 def _outside_owner(uid: int) -> bool:

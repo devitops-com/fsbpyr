@@ -7,10 +7,11 @@
  * root's or ours, are followed one at a time, their targets' ways checked as well; ".." goes up
  * from where the walk is, as the kernel resolves it. Below a directory others may add entries
  * to (sticky, as /tmp), only root's and ours count: an owner outside the namespace could be
- * anyone there. The walk ends at the root, or at the first part that does not exist yet: the
- * caller makes the rest, or finds it made, and checks again (a ".." after a missing part is
- * refused, as the kernel would: it could lead out of what was checked). _fsbpyr_rt/gc.py's
- * way_problem is the same rule in Python.
+ * anyone there; a walk that leaves it (a symlink's absolute target, from "/" again, or a ".."
+ * above it) is no longer below it. The walk ends at the root, or at the first part that does
+ * not exist yet: the caller makes the rest, or finds it made, and checks again (a ".." after a
+ * missing part is refused, as the kernel would: it could lead out of what was checked).
+ * _fsbpyr_rt/gc.py's way_problem is the same rule in Python.
  */
 #ifndef FSBPYR_WAY_H
 #define FSBPYR_WAY_H
