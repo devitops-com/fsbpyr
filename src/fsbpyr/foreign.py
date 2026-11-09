@@ -142,7 +142,8 @@ def _poetry_source(package: Mapping[str, Any]) -> tuple[str, str, str, str]:
 
 
 def _poetry_marker(package: Mapping[str, Any]) -> str | None:
-    """The marker of a package: one string, or (lock-version 2.1) one per group."""
+    """The marker of a package: one string, or (lock-version 2.1, Poetry 2.3 and later, when the
+    groups' markers differ) one per group, of which the main group's."""
     marker = package.get("markers")
     return marker.get("main") if isinstance(marker, dict) else marker
 
@@ -234,23 +235,25 @@ def _poetry_selection(
     entries: list[Entry], data: Mapping[str, Any], directory: Path,
     environment: Mapping[str, str], extras: Iterable[str],
 ) -> list[Entry]:  # fmt: skip
+    extras = tuple(extras)
     wanted = _lock_extras(data, extras)
     by_name = _by_name(entries)
     roots: list[tuple[Entry, tuple[str, ...]]] = []
     if any(entry.groups for entry in entries):
         roots += [(entry, ()) for entry in entries
                   if "main" in entry.groups and not entry.optional
-                  and _applies(entry, environment)]  # fmt: skip
+                  and _applies(entry, environment, extras)]  # fmt: skip
         named: list[tuple[str, tuple[str, ...]]] = [(name, ()) for name in wanted]
     else:
         named = _poetry_roots(_pyproject(directory), environment) + [(n, ()) for n in wanted]
     for name, root_extras in named:
-        found = [entry for entry in by_name.get(name, ()) if _applies(entry, environment)]
-        if not found:
+        listed = by_name.get(name, ())
+        if not listed:
             raise ForeignLockError(f"poetry.lock does not list {name}, which the project "
                                    "depends on; is the lock stale?")
-        roots += [(entry, root_extras) for entry in found]
-    return _closure(by_name, roots, environment)
+        roots += [(entry, root_extras) for entry in listed  # one not for the target is left out
+                  if _applies(entry, environment, extras)]  # fmt: skip
+    return _closure(by_name, roots, environment, extras)
 
 
 def _poetry_hash(data: Mapping[str, Any]) -> str:
@@ -361,10 +364,13 @@ def _marker(text: str, entry: Entry) -> Marker:
         raise ForeignLockError(f"{entry.label}: invalid marker {text!r}: {exc}") from exc
 
 
-def _applies(entry: Entry, environment: Mapping[str, str]) -> bool:
-    """Whether the package's own marker holds for the target."""
-    return entry.marker is None or marker_holds(_marker(entry.marker, entry), environment, ("",),
-                                                ForeignLockError, entry.label)  # fmt: skip
+def _applies(entry: Entry, environment: Mapping[str, str], extras: tuple[str, ...] = ()) -> bool:
+    """Whether the package's own marker holds for the target and the project's extras asked for
+    (Poetry 2 marks what only an extra needs ``extra == "NAME"``; any one of them will do, as
+    Poetry joins them with ``or``)."""
+    return entry.marker is None or marker_holds(_marker(entry.marker, entry), environment,
+                                                extras or ("",), ForeignLockError,
+                                                entry.label)  # fmt: skip
 
 
 def _satisfies(entry: Entry, edge: Edge) -> bool:
@@ -388,10 +394,11 @@ def _edge_active(
 
 def _closure(
     by_name: Mapping[str, list[Entry]], roots: list[tuple[Entry, tuple[str, ...]]],
-    environment: Mapping[str, str],
+    environment: Mapping[str, str], project_extras: tuple[str, ...] = (),
 ) -> list[Entry]:  # fmt: skip
-    """The roots and what they need for the target, through the dependencies the lock records
-    (an optional one only when an extra that lists it is active)."""
+    """The roots and what they need for the target and the project's extras asked for, through
+    the dependencies the lock records (an optional one only when an extra of the package that
+    lists it is active)."""
     active: dict[Entry, set[str]] = {}
     pending = [(entry, frozenset(extras)) for entry, extras in roots]
     while pending:
@@ -404,7 +411,8 @@ def _closure(
             if not _edge_active(entry, edge, on, environment):
                 continue
             pending += [(found, frozenset(edge.extras)) for found in by_name.get(edge.name, ())
-                        if _applies(found, environment) and _satisfies(found, edge)]  # fmt: skip
+                        if _applies(found, environment, project_extras)
+                        and _satisfies(found, edge)]  # fmt: skip
     return list(active)
 
 

@@ -1,0 +1,17 @@
+[project]
+name = "foreign-poetry-extras"
+version = "0.1.0"
+description = "fsbpyr test fixture: a lock written by Poetry with extras"
+requires-python = ">=3.12"
+dependencies = ["click>=8.1"]
+
+[project.optional-dependencies]
+fancy = ["rich>=13", "packaging>=24"]
+plain = ["packaging>=24", "colorama>=0.4.6; sys_platform == 'win32'", "click>=8.1"]
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.group.dev.dependencies]
+iniconfig = ">=2"
+pygments = ">=2.13"

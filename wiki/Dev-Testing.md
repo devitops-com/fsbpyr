@@ -624,7 +624,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,835 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,840 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -640,12 +640,12 @@ run with the release launcher only, those two portability tests also on the two 
 |---|---|---|
 | `tests/unit` (top level) | 29 | 942 |
 | `tests/unit/boot` | 23 | 369 |
-| `tests/unit/builder` | 19 | 789 |
+| `tests/unit/builder` | 19 | 794 |
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 261 |
 | `tests/integration` | 17 | 860 |
 | `tests/e2e` | 45 | 1,173 |
-| All | 153 | 4,835 |
+| All | 153 | 4,840 |
 
 ### tests/unit (top level): 29 files, 942 tests
 
@@ -714,7 +714,7 @@ fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fix
 | [`test_warning_frames.py`](../tests/unit/boot/test_warning_frames.py) | 3 | Import-time warnings with `stacklevel >= 2` name the importing module and show the payload file's source line. |
 | [`test_way.py`](../tests/unit/boot/test_way.py) | 27 | A cache root's way from `/` (`gc.way_problem`): owners and write permissions, sticky directories, symlinks, `..`, user namespaces, mapped uids, a walk that leaves a sticky directory (a symlink's absolute target, `..` back to it or above); the tool's cache and the collector refuse an untrusted way. |
 
-### tests/unit/builder: 19 files, 789 tests
+### tests/unit/builder: 19 files, 794 tests
 
 The build pipeline in-process, on trees made in `tmp_path`: fake site-packages, synthetic ELF
 objects from `tests/support/elf.py`, local distributions, the `foreign` fixture's hand-written
@@ -727,7 +727,7 @@ locks, fake `uv` scripts and the uv command lines a plan records.
 | [`test_compiler.py`](../tests/unit/builder/test_compiler.py) | 10 | `fsbpyr.compiler`: worker processes compile what the build's process would, in order; small builds compile in-process; compile warnings come back with their line; main-guard reads scanned in the scripts root's commands only. |
 | [`test_early_checks.py`](../tests/unit/builder/test_early_checks.py) | 12 | Failures before uv stages anything: a script name that is no command, a static project without entry, a directory as output, an unknown extra. |
 | [`test_entry.py`](../tests/unit/builder/test_entry.py) | 11 | `fsbpyr.entry`: an `if __name__ == "__main__":` guard in a module's body only, and the entry candidates of an installed project and a source tree. |
-| [`test_foreign.py`](../tests/unit/builder/test_foreign.py) | 68 | `fsbpyr.foreign` on the `foreign` fixtures: `poetry.lock` (Poetry 2, 1.5 to 1.8, lock-version 1.0) and `pdm.lock` as a build's lock: the main group, markers, every hash demanded, extras, path, VCS and URL entries, other indexes refused, the stale-lock check, the lock's record and rank, option injection refused. |
+| [`test_foreign.py`](../tests/unit/builder/test_foreign.py) | 73 | `fsbpyr.foreign` on the `foreign` fixtures: `poetry.lock` (Poetry 2, 1.5 to 1.8, lock-version 1.0) and `pdm.lock` as a build's lock: the main group, markers, every hash demanded, extras (also as Poetry 2.5.1 marks them, on Linux and Windows), path, VCS and URL entries, other indexes refused, the stale-lock check, the lock's record and rank, option injection refused. |
 | [`test_legacy.py`](../tests/unit/builder/test_legacy.py) | 11 | `fsbpyr.legacy`: which `scripts=` files of the project's wheel are Python, their stored modules and clashes, warnings for dropped scripts. |
 | [`test_loose.py`](../tests/unit/builder/test_loose.py) | 58 | Projects without a build system (`fsbpyr.loose`, `fsbpyr.importcheck`): what makes one, which files are packaged (git decides in a work tree), fsbpyr's own wheel (a valid `RECORD`, the same bytes twice), the commands found, and the static import check (file and line, removed stdlib modules, the freeze hint, `--strict`). |
 | [`test_loose_directory.py`](../tests/unit/builder/test_loose_directory.py) | 93 | Directories of loose scripts: discovery and what it refuses, the directory's name, shebangs, packaged files and links, mangled names and clashes, commands, merged PEP 723 blocks, the deploy recipe, `sys.path` changes from `__file__`. Discovery runs no user code. |
@@ -920,7 +920,7 @@ libFuzzer compares with `-rss_limit_mb`.
 | `compat` | The compatibility matrix: click, typer, rich, httpx, requests, certifi, pydantic, jinja2, pyyaml, numpy, cryptography, orjson, tzdata, sqlalchemy, setuptools and more. | `test_compat.py`, `test_portability.py`, `tests/unit/builder/test_manifest.py` |
 | `datafiles` | Packages that read data files next to their modules: botocore, pytz, babel, matplotlib. | `test_compat.py` |
 | `escapes` | A module whose normal string has an invalid escape sequence: a compile warning of the project's own file. | `test_build.py` |
-| `foreign` | Hand-written locks of other tools, as its README explains: `poetry2`, `poetry1`, `poetry1-unpackaged`, `poetry-legacy`, `pdm` and `pipenv` (a directory of scripts with a `Pipfile` and its lock). Each depends on click and rich, on colorama for Windows only, on packaging in the extra `fancy` and on iniconfig in a dev group. | `tests/unit/builder/test_foreign.py`, `tests/unit/builder/test_pipenv.py`, `test_build.py`, `test_scripts.py`, `test_pipfile_lock.py` |
+| `foreign` | Locks of other tools, as its README explains: hand-written `poetry2`, `poetry1`, `poetry1-unpackaged`, `poetry-legacy`, `pdm` and `pipenv` (a directory of scripts with a `Pipfile` and its lock), each depending on click and rich, on colorama for Windows only, on packaging in the extra `fancy` and on iniconfig in a dev group; and `poetry2-extras`, which Poetry 2.5.1 wrote, with the extras `fancy` and `plain`. | `tests/unit/builder/test_foreign.py`, `tests/unit/builder/test_pipenv.py`, `test_build.py`, `test_scripts.py`, `test_pipfile_lock.py` |
 | `heavy` | A light CLI with heavy native dependencies: numpy, orjson, cryptography, pydantic, onnxruntime. | `test_natives.py`, `test_portability.py` |
 | `mp` | Multiprocessing start methods re-executing the binary; also a payload script started through `sys.executable` (`mp/scripts/`), `sys.argv[0]`, the restart idiom and a missing module. | `test_compat.py` |
 | `multi` | Two console scripts, `multi-alpha` and `multi-beta`, built as one multi-command executable. | `test_multicall.py`, `test_el8_use_cases.py` |

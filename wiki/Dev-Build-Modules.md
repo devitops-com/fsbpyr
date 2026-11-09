@@ -841,9 +841,11 @@ Rules it enforces:
   markers) and 2.1 (a per-group marker is the `main` group's). The roots are the `main` packages
   that are not optional and whose marker holds, or without groups `[tool.poetry.dependencies]`
   (whose `python` constraint must be a PEP 440 specifier) and `[project.dependencies]`, plus what
-  the lock's `[extras]` lists for the extras asked for (one it lacks is an error). The recorded
-  dependencies are followed under the target's markers, an optional one only for an active
-  extra.
+  the lock's `[extras]` lists for the extras asked for (one it lacks is an error). A package's
+  own marker is evaluated for the target and those extras: Poetry 2 marks what only an extra
+  needs `extra == "NAME"`. "does not list" (a stale lock) is said only of a name the lock lacks;
+  an entry whose marker does not hold is left out. The recorded dependencies are followed under
+  the target's markers, an optional one only for an active extra of the package that lists it.
 - PDM: the `default` group and the groups named like the extras asked for; a lock without groups
   per package must hold the default group alone (else: lock with `--strategy inherit_metadata`,
   or pass `--requirements`). An entry for a package with extras adds nothing; locks 4.0 to 4.2

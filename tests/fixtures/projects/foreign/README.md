@@ -6,13 +6,14 @@ project depends on click and rich (with markdown-it-py, mdurl and pygments), on 
 Windows only (a marker), on packaging in the extra `fancy`, and on iniconfig in a dev group.
 Every hash is the SHA-256 of the file on PyPI (2026-10-25).
 
-I could not run Poetry or PDM here, so the locks are written by hand following the formats of
-real files, and the `content-hash` / `content_hash` of each is computed by the formula in
-`foreign.py`:
+The locks are written by hand following the formats of real files, and the `content-hash` /
+`content_hash` of each is computed by the formula in `foreign.py`, except `poetry2-extras/`,
+which Poetry wrote. Poetry runs with `uvx --from poetry==X poetry lock`; PDM was not run.
 
 | Directory | Lock | Follows |
 |-----------|------|---------|
-| `poetry2/` | `poetry.lock`, lock-version 2.1, `groups` and `markers` per package, `[project]` with `[tool.poetry] package-mode = false` | locks written by Poetry 2.0.0 and 2.0.1 in the atomic-agents repository (`atomic-examples/*/poetry.lock`) |
+| `poetry2/` | `poetry.lock`, lock-version 2.1, `groups` and `markers` per package (packaging's `extra == "fancy"`, as Poetry 2 marks what only an extra needs), `[project]` with `[tool.poetry] package-mode = false` | locks written by Poetry 2.0.0 and 2.0.1 in the atomic-agents repository (`atomic-examples/*/poetry.lock`) |
+| `poetry2-extras/` | `poetry.lock` as Poetry 2.5.1 wrote it (`uvx --from poetry==2.5.1 poetry lock`): click in `main`; the extras `fancy` (rich, packaging) and `plain` (packaging, colorama for Windows only, click); iniconfig and pygments in a dev group, pygments also behind rich (`markers = {main = ...}`) | its own `pyproject.toml` |
 | `poetry1-unpackaged/` | `poetry.lock` of `poetry1/`, lock-version 2.0; `[tool.poetry] package-mode = false`, no `[project]`, no `[build-system]`, `main.py` | the same lock; the pyproject follows Poetry 1 projects that are not packages |
 | `poetry1/` | `poetry.lock`, lock-version 2.0 (Poetry 1.5 to 1.8): no group, no marker, `[tool.poetry]` only, packaged with poetry-core | the lock written by Poetry 1.8.5 in atomic-agents (`atomic-forge/tools/tavily_search/poetry.lock`) |
 | `poetry-legacy/` | `poetry.lock`, lock-version 1.0: `category`, hashes in `[metadata.files]` | the lock in the myia repository (`myia_utils/poetry.lock`) |

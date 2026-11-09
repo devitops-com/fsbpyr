@@ -32,6 +32,14 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   now records (owner, 2026-11-08). It gates nothing. The first table, 0.31.0 against 0.30.0, is in.
 
 ### Fixed
+- **`fsbpyr build --extra NAME` works with the `poetry.lock` Poetry 2 writes.** Poetry 2 marks
+  each package that only an extra needs `extra == "NAME"`, and fsbpyr evaluated those markers
+  with no extra active, so every package of the extra seemed missing and the build stopped with
+  "poetry.lock does not list packaging, which the project depends on; is the lock stale?" (#120).
+  The markers are now evaluated for the target and the extras asked for, as Poetry does; the
+  stale-lock error is given only for a name the lock does not have, and a package whose marker
+  does not hold for the target (colorama for Windows) is left out. A build without `--extra` is
+  as before.
 - **In a user namespace, a way to the cache root that leaves a sticky directory is no longer
   refused.** Once the way had passed a directory others may add to (`/tmp`), the launcher and the
   collector (`way.c`, `gc.way_problem`) took everything after it as below it, so where `/` shows
