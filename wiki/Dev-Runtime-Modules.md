@@ -651,7 +651,10 @@ fsbpyr gives (runtime ids, PBS names, sysroot identities, and in `downloads/` th
 `.deb` and `.rpm` packages and partial downloads), and `STAGING` and `UNPACKING` those of what a
 killed process leaves (staging directories; the `mkstemp` temporaries `stubs.py` and `dispatch.py`
 unpack a download into); nothing else is ever removed, since a directory of the user's that holds
-only names like fsbpyr's may be marked.
+only names like fsbpyr's may be marked. `VARIANT` and `STUB` name the fsbpyr variants and glibc
+2.28 stubs kept in `downloads/`, of which only the last two releases' stay, whatever their age
+(owner, 2026-11-08): the variants of the two newest releases there and of the running fsbpyr
+(`own_release`), and per stub the running fsbpyr's (its runtime id) and the newest other one.
 
 Public functions:
 

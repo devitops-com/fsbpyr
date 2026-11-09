@@ -128,6 +128,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   distributions' archives and the sysroots' packages among them are collected.
 
 ### Changed
+- **The cache keeps the variants and EL8 stubs of the last two releases only.** Every release's
+  fsbpyr for another Python (about 30 MB) and glibc 2.28 stubs stayed in `downloads/` for good.
+  Now only the last two releases' stay, whatever their age: the variants of the two newest
+  releases there and of the fsbpyr that runs, and per stub the running fsbpyr's and the newest
+  other one (owner, 2026-11-08).
 - **`make release-sign` checks that the release's files are the bytes its commit makes.** The
   attestation said which commit's workflow made them; now, before anything is signed, every
   `.xz` must unpack to its listed file, `install.sh` must be what `make-install.sh` makes of the

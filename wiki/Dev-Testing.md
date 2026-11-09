@@ -616,7 +616,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,732 in 149 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,736 in 149 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -634,10 +634,10 @@ run with the release launcher only, those two portability tests also on the two 
 | `tests/unit/boot` | 23 | 362 |
 | `tests/unit/builder` | 19 | 789 |
 | `tests/unit/payload` | 11 | 441 |
-| `tests/unit/runtime` | 9 | 257 |
+| `tests/unit/runtime` | 9 | 261 |
 | `tests/integration` | 17 | 854 |
 | `tests/e2e` | 44 | 1,110 |
-| All | 149 | 4,732 |
+| All | 149 | 4,736 |
 
 ### tests/unit (top level): 26 files, 919 tests
 
@@ -749,11 +749,11 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_xz.py`](../tests/unit/payload/test_xz.py) | 25 | xz natives: standard streams, raw when incompressible, pieces, streams and pieces that do not match their records refused. |
 | [`test_zstd_pieces.py`](../tests/unit/payload/test_zstd_pieces.py) | 16 | zstd in pieces: a frame per piece, the same bytes on any thread count, round trips across boundaries, refusals. |
 
-### tests/unit/runtime: 9 files, 257 tests
+### tests/unit/runtime: 9 files, 261 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
-| [`test_collect.py`](../tests/unit/runtime/test_collect.py) | 21 | The tool's cache collector (`fsbpyr.runtime.collect`) and `fsbpyr cache gc`: what stays, what goes and when, the marker, a user's directory left alone. |
+| [`test_collect.py`](../tests/unit/runtime/test_collect.py) | 25 | The tool's cache collector (`fsbpyr.runtime.collect`) and `fsbpyr cache gc`: what stays, what goes and when (the variants and stubs of the last two releases only), the marker, a user's directory left alone. |
 | [`test_fetch_and_build.py`](../tests/unit/runtime/test_fetch_and_build.py) | 46 | `fsbpyr.runtime.pbs` and the registry's build, on in-memory archives and a patched `urlopen`: verification, retries (of the network and of a busy server, never of a 404), path traversal refused, pins, runtime ids, a runtime per glibc baseline, `fsbpyr runtime build --glibc`, zstd's version from `libzstd.a`, a failing worker's output. |
 | [`test_notices.py`](../tests/unit/runtime/test_notices.py) | 15 | Licence notices of the libraries a runtime links, from a made-up PBS distribution; zstd's text for every Python. |
 | [`test_registry.py`](../tests/unit/runtime/test_registry.py) | 44 | `fsbpyr.runtime.registry`: payload to spec and back, saving and loading runtimes, app assembly, generation and resources ids, private directories, the embedded runtime, used for its own baseline only, a clear error without a home, the error naming `fsbpyr runtime build --python 3.14 --glibc 2.28`. |
