@@ -140,20 +140,19 @@ The tiers, from fastest to most complete:
   runners for public repositories), each test file in one of them, with the kept downloads
   (`FSBPYR_TEST_DOWNLOADS`), so that the runtimes are built once before the workers start, as
   in `make test`; the corpus, in a job of its own; the
-  portability tests; and the page-size smoke test (below). It runs on every pull request in
-  main's merge queue, whatever it changes, on the commit main then becomes (owner, 2026-11-08:
-  every pull request gets the whole suite before it is merged; the queue's required check is
-  its last job, `full suite passed`, which passes only when every other job did), weekly and on
-  request, once per target (x86-64 on `ubuntu-24.04`, aarch64 on `ubuntu-24.04-arm`) and
-  Python, with every tool and setting the tests need present (nothing skips). A push to main
-  runs nothing more: the queue tested that very commit. `make release` and the draft job require
-  a green run, aarch64 jobs included, for the commit a release is made from, in which every job
-  succeeded (`tools/release/green-run.sh`: none skipped, none failed under
-  `continue-on-error`). The fuzzer runs for 600 s (`FSBPYR_FUZZ_SECONDS`) when
-  `src/fsbpyr/launcher` or `tests/fuzz` changed since the last tag and on the weekly run, else
-  for 30 s, and the readers of keys for a quarter of that, 30 s at least; what each finds
-  (`FSBPYR_FUZZ_CORPUS`, and the `-sig` directory beside it) is kept in the Actions cache, saved
-  by the runs on main (a queue run's cache would belong to its temporary branch). The launcher
+  portability tests; and the page-size smoke test (below). It runs only on request (owner,
+  2026-11-13): when a release is prepared, on the main commit it is to be made from (`gh
+  workflow run full-suite.yml --ref main`), and whenever else it is wanted. Nothing starts it
+  by itself: not a pull request, not a merge into main (which requires no check), not a
+  schedule. Every run is the whole suite, once per target (x86-64 on `ubuntu-24.04`, aarch64 on
+  `ubuntu-24.04-arm`) and Python, with every tool and setting the tests need present (nothing
+  skips), and `make release` and the draft job require a green run on main, aarch64 jobs
+  included, for the commit a release is made from, in which every job succeeded
+  (`tools/release/green-run.sh`: none skipped, none failed under `continue-on-error`). The
+  fuzzer runs for 600 s (`FSBPYR_FUZZ_SECONDS`) when `src/fsbpyr/launcher` or `tests/fuzz`
+  changed since the last tag, else for 30 s, and the readers of keys for a quarter of that,
+  30 s at least; what each finds (`FSBPYR_FUZZ_CORPUS`, and the `-sig`
+  directory beside it) is kept in the Actions cache. The launcher
   programs the tests build, and the sanitized runtime's stub, are instrumented for llvm-cov
   (`FSBPYR_LLVM_COV_DIR`), so that every file of the launcher's C code counts, `main.c` and
   `module.c` too; the run's summary shows the report, one row per launcher source, the job's
@@ -226,7 +225,7 @@ The tiers, from fastest to most complete:
   of a test is `--glibc 2.28` and `tests/e2e/test_el8.py` runs besides, with both runtimes) and
   the portability matrix with apps built for glibc 2.28, on the 12 images and `rockylinux:8` and
   `almalinux:8` (`make test-el8-portability`, podman; EL8 images are in no other run).
-  The `el8-*` jobs of `.github/workflows/full-suite.yml` run them on every push to main, per
+  The `el8-*` jobs of `.github/workflows/full-suite.yml` run them in every run of it, per
   target, on the default Python only (every Python's stub is still linked and checked, below),
   with a native-heavy corpus subset (`FSBPYR_CORPUS_APPS`, the mode's `pandas-csv`, `lxml`,
   `pillow` and `scipy`) and, on aarch64, the 64 KiB-page VM smoke test with the EL8 userland
@@ -326,32 +325,30 @@ host): `/proc` shows the emulator, so
 
 ## Before merging
 
-Every pull request goes through main's merge queue, which runs the whole full suite on the commit
-main then becomes; nothing is merged past it (owner, 2026-11-08). The ruleset lets a pull request
-join the queue once its required check, `full suite passed`, has passed on it, which it does at
-once there: on a pull request as it is opened every other job is skipped and nothing of its
-branch runs. The queue's run takes 40 to 50 minutes, so test locally first: `make check`, `make test`, and `make test-container`, which runs
-the suite as the CI container runs it (as the user `tester`, on Debian trixie), where a change to
-the tests' setup, a workflow or the container shows its failures before the queue does. A merge
-batch, several pull requests that go in together, is tested as the tree they make together.
+Merging into main requires no check, and neither a pull request nor its merge starts the full
+suite (owner, 2026-11-13): a pull request gets CodeQL only, and the full suite runs when a
+release is prepared or when asked for. So test locally first: `make check`, `make test`, and
+`make test-container`, which runs the suite as the CI container runs it (as the user `tester`,
+on Debian trixie), where a change to the tests' setup, a workflow or the container shows its
+failures before the full suite does. A merge batch, several pull requests that go in together,
+is tested as the tree they make together.
 
 ## Documentation-only changes
 
-A pull request that changes only documentation (`*.md` files, `docs/` and `wiki/`) goes through
-the merge queue and its full suite too. (Before the queue, such a merge started no run: those
-commits stand on the run of the newest commit before them, below.) Never put a CI skip
-instruction (`[skip ci]` and the like) in a merge commit's message: GitHub applies it to a tag
-pushed on that commit too, so release.yml would not run, and `make release` refuses such a
-commit. Before merging, run the tests that read
+A change to documentation only (`*.md` files, `docs/` and `wiki/`) needs no full suite of its
+own. Never put a CI skip instruction (`[skip ci]` and the like) in a merge commit's message:
+GitHub applies it to a tag pushed on that commit too, so release.yml would not run, and `make
+release` refuses such a commit. Before merging, run the tests that read
 documentation: `uv run pytest tests/unit/test_cli_docs.py tests/unit/test_wiki.py`
 (the README's quickstart and `docs/compatibility.md`'s tables against the code, that the
 commands under [Verifying a release](#verifying-a-release) name no version, and that every link
 of the wiki's pages has its target), and `uv run pytest
 tests/e2e/test_build.py -k quickstart` when the README's quickstart changed. A release made
-from a documentation-only commit merged before the queue stands on the run of the newest commit
-before it that full-suite.yml ran for: `tools/release/green-run.sh`, which `make release` and
-the draft job use, accepts it only when nothing but documentation changed since, and names that
-run.
+from such a commit stands on the run of the newest commit of main before it that full-suite.yml
+passed: `tools/release/green-run.sh`, which `make release` and the draft job use, accepts it
+only when nothing but documentation changed since, and names that run. After a change to code,
+tests, configuration (`pyproject.toml`, `uv.lock`, the workflows, the Makefile) or the release
+tools, a release needs a run of its own commit.
 
 ## The wiki
 

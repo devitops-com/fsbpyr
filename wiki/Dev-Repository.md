@@ -92,6 +92,11 @@ read. A program you may run but not read cannot be opened, so it runs by its nam
 directory on its way must be yours or root's, and writable by nobody else (a group of yours alone
 counts as yours) unless it is sticky, as `/tmp` is.
 
+The full suite runs only when it is asked for (owner, 2026-11-13): a merge into main starts
+nothing. Once the release commit (`make release-prep`) is merged, start it on main with `gh
+workflow run full-suite.yml --ref main`. `make release` follows a run still in progress, and
+refuses a commit that no run on main passed.
+
 `make release` checks that the key opens with the passphrase and is pinned by this tree, runs the
 audit, tags and pushes, waits for both workflows, signs and publishes both releases (neither
 before both are signed), and runs `make release-check`, `make wiki-publish` and `make mirror`. It

@@ -5,8 +5,9 @@
 #     bash tools/release/release-assets.sh [X.Y.Z]        (make release-assets [VERSION=X.Y.Z])
 #
 # HEAD is the release commit that `make release-prep` (prepare.sh) made at the end of a branch,
-# merged into main by its pull request. That push to main ran full-suite.yml, which built and
-# checked exactly this commit, the release build included. Nothing is built or tested here,
+# merged into main by its pull request. full-suite.yml, started on main for it (`gh workflow run
+# full-suite.yml --ref main`; it runs only on request), built and checked exactly this commit,
+# the release build included. Nothing is built or tested here,
 # and no release is created here: the pushed tag triggers .github/workflows/release.yml, which
 # builds the executables from the tag (build.yml, without its checks), attests them (GitHub
 # artifact attestations can only be made inside GitHub Actions) and leaves a draft of the GitHub
@@ -19,7 +20,7 @@
 # skip-worktree entries included), local == hub/main, neither the tag nor the GitHub release
 # exists yet, the CHANGELOG has the version's section and an empty [Unreleased] one (a change
 # merged after the release commit would ship without being in the notes), a successful
-# full-suite.yml run for HEAD's push to main (a run in progress is waited for), and an audit that
+# full-suite.yml run on main for HEAD (a run in progress is waited for), and an audit that
 # finds GitHub as this machine recorded it (audit.sh).
 #
 # FSBPYR_RELEASE_WATCH_WAIT: how many seconds to wait for the tag's workflow run
@@ -120,14 +121,13 @@ REMOTE_HEAD="$(git rev-parse FETCH_HEAD)"
 SKIP_INSTRUCTION='\[(skip ci|ci skip|no ci|skip actions|actions skip)\]|^skip-checks: ?true'
 if git log -1 --format=%B HEAD | grep -qiE "$SKIP_INSTRUCTION"; then
     echo "ERROR: HEAD's commit message has a CI skip instruction: GitHub would start no" \
-         "release.yml run for $TAG on it. Merge without it; full-suite.yml leaves out" \
-         "documentation-only pushes by itself" >&2
+         "release.yml run for $TAG on it. Merge without it" >&2
     exit 1
 fi
 
-# full-suite.yml runs on every push to $BRANCH that changes more than documentation, the
-# release build and its checks included: tag only a commit whose run passed, or one with only
-# documentation changed since such a commit (green-run.sh). A run in progress is waited for.
+# full-suite.yml, started on $BRANCH when a release is prepared, the release build and its checks
+# included: tag only a commit whose run passed, or one with only documentation changed since
+# such a commit (green-run.sh). A run in progress is waited for.
 bash tools/release/green-run.sh "$SUITE_WORKFLOW" "$LOCAL_HEAD" >/dev/null
 
 # Before a version is burned on a repository that may have been tampered with.

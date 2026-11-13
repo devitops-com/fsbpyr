@@ -147,8 +147,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   be yours or root's, and writable by nobody else unless it is sticky.
 - **`make release-sign` ignores an exported `KEY`.** Only a `KEY` given on make's command line
   counts, as the Makefile says and as for `make release`.
-- **`green-run.sh` says that a push to main starts the run a release needs.** When main had no
-  `full-suite.yml` run, it said to start the workflow by hand, and such a run never counts.
+- **`green-run.sh` says how to start the run a release needs.** When main had no `full-suite.yml`
+  run, it said to start the workflow by hand, though no such run counted. It now names the command,
+  `gh workflow run full-suite.yml --ref main`, and that run counts (below).
 - **The threat model says which cache directories are forced to 0700.** `docs/security.md` said
   every cache directory is. The build tool forces its cache root (and `runtimes/`); below it
   `sysroots/` is 0700, `pbs/` gets the umask's mode, `downloads/` whichever mode the first to make
@@ -174,6 +175,14 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   distributions' archives and the sysroots' packages among them are collected.
 
 ### Changed
+- **The full suite runs only when it is asked for.** `full-suite.yml` no longer runs on a push to
+  main or weekly: you start it on main when a release is prepared (`gh workflow run
+  full-suite.yml --ref main`), or whenever else you want it. Merging into main requires no check,
+  and a pull request gets CodeQL only (owner, 2026-11-13). Every run is the whole suite: no job or
+  step depends on what started it. `green-run.sh` takes a run started on main for the release
+  commit, or a push run from before; the fuzzer runs 600 s when the launcher or the fuzz harness
+  changed since the last tag, else 30 s. `CONTRIBUTING.md` asks for `make test-container` before
+  merging.
 - **The launcher's line coverage is gated: 90% of fsbpyr's C code, and no file below 85%.** The
   full suite's report was informational and saw only what the probes and fuzz harnesses built;
   with `FSBPYR_LLVM_COV_DIR` set, the sanitized test launcher is now instrumented too, so
@@ -183,15 +192,6 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   its profile before it executes the collection, so what it ran counts; tests now cover the
   passwd home, a removed working directory, the fallbacks without `close_range` or `/proc`, and
   the `hypot` wrapper.
-- **Every pull request gets the full suite before it is merged, in main's merge queue.**
-  `full-suite.yml` runs on `merge_group`, on the commit main then becomes, documentation-only
-  pull requests included, and no longer on pushes to main, which the queue already tested. Its
-  last job, `full suite passed`, is the queue's required check and passes only when every other
-  job did; on a pull request as it is opened it reports at once, with every other job skipped.
-  The fuzz corpora are saved by the runs on main only. `green-run.sh` takes the queue's run of a
-  commit, or a push run from before the queue, and never one started by hand (owner, 2026-11-08,
-  which supersedes "main (a)" of 2026-10-19). `CONTRIBUTING.md` asks for `make test-container`
-  before merging.
 - **The cache keeps the variants and EL8 stubs of the last two releases only.** Every release's
   fsbpyr for another Python (about 30 MB) and glibc 2.28 stubs stayed in `downloads/` for good.
   Now only the last two releases' stay, whatever their age: the variants of the two newest

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import datetime
 import hashlib
-import json
 import os
 import platform
 import re
@@ -73,12 +72,11 @@ RUN_URL = "https://github.com/devitops-com/fsbpyr/actions/runs"
 DONE = "completed/success"
 REPO_URL = "https://github.com/devitops-com/fsbpyr"
 
-# A gh that is authenticated, logs every call and knows no release. `run list --workflow
-# full-suite.yml` answers $FAKE_GH_FULL_RUN (HEAD's run, as "ID STATUS/CONCLUSION URL"),
-# $FAKE_GH_TESTED_RUN for the commit $FAKE_GH_TESTED_SHA and, without --commit, that commit as
-# the recent runs' commits; nothing when it is empty; with $FAKE_GH_RUNS (GitHub's JSON list of
-# runs) it applies the caller's --jq to that instead. `run list --branch main` of another
-# workflow answers nothing; any other `run list` answers
+# A gh that is authenticated, logs every call and knows no release. `run list --branch main`
+# answers $FAKE_GH_FULL_RUN for full-suite.yml (HEAD's run on main, as "ID STATUS/CONCLUSION
+# URL"), $FAKE_GH_TESTED_RUN for the commit $FAKE_GH_TESTED_SHA and, without --commit, that
+# commit as the recent runs' commits; nothing for another workflow or when it is empty; any
+# other `run list` answers
 # $FAKE_GH_RUN_ID from its (FAKE_GH_RUN_AFTER + 1)th call on. `run view` of the full suite's
 # run (4000 too) shows it completed with FAKE_GH_CHECK_CONCLUSION, any other run with
 # FAKE_GH_TAG_CONCLUSION (both "success" by default), as follow-run.sh's --jq prints it;
@@ -99,12 +97,7 @@ case "$1 $2" in
     esac ;;
   "run list")
     case "$*" in
-      *"--workflow full-suite.yml"*)
-        if [ -n "${FAKE_GH_RUNS:-}" ]; then  # GitHub's runs of the commit, through the real --jq
-          while [ "$1" != --jq ]; do shift; done
-          printf '%s' "$FAKE_GH_RUNS" | jq -r "$2"
-          exit
-        fi
+      *"--branch main "*"--workflow full-suite.yml"*|*"--workflow full-suite.yml"*"--branch main "*)
         case "$*" in
           *"--commit ${FAKE_GH_TESTED_SHA:-none} "*) echo "$FAKE_GH_TESTED_RUN" ;;
           *"--commit "*) echo "$FAKE_GH_FULL_RUN" ;;
@@ -271,8 +264,7 @@ def tag_run_calls(tmp_path: Path, prefix: str = "run ") -> list[str]:
     return [
         c
         for c in gh_calls(tmp_path)
-        if c.startswith(prefix) and "--workflow full-suite.yml" not in c
-        and not c.startswith(checks)
+        if c.startswith(prefix) and "--branch main " not in c and not c.startswith(checks)
     ]
 
 
@@ -421,18 +413,17 @@ def test_release_refuses_when_main_is_not_in_sync_with_origin(
 
 
 def check_calls(tmp_path: Path, workflow: str) -> list[str]:
-    """The gate's lookups of ``workflow``'s runs of main's commits (not of the tag's run)."""
     return [c for c in gh_calls(tmp_path)
             if c.startswith("run list") and f"--workflow {workflow}" in c
-            and "--branch " not in c]  # fmt: skip
+            and "--branch main " in c]  # fmt: skip
 
 
 def test_release_refuses_a_head_without_a_full_suite_run_on_main(
     tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    """full-suite.yml runs on every pull request in the merge queue, the release build and its
-    checks included; only a commit it passed is tagged. release.yml does not run on main:
-    nothing asks for it."""
+    """full-suite.yml runs on request, on main for a release, the release build and its checks
+    included; only a commit it passed is tagged. release.yml does not run on main: nothing asks
+    for it."""
     repo = make_release_repo(tmp_path, release_env)
     head = git(repo, "rev-parse", "HEAD", env=release_env)
 
@@ -440,13 +431,16 @@ def test_release_refuses_a_head_without_a_full_suite_run_on_main(
 
     assert result.returncode == 1
     assert f"main at {head[:7]} has no full-suite.yml run" in result.stderr
-    # it counts the queue's runs (and older pushes'): one started by hand never would
-    assert "a merge through main's merge queue starts it" in result.stderr
-    assert "workflow_dispatch" not in result.stderr
+    # nothing starts it by itself any more (owner, 2026-11-13): it says how to ask for it
+    assert "gh workflow run full-suite.yml --ref main" in result.stderr
     assert_nothing_tagged_or_pushed(repo, tmp_path, release_env)
     check, recent = check_calls(tmp_path, "full-suite.yml")  # HEAD's run, then an ancestor's
-    assert f"--commit {head} " in check and "event,headBranch" in check
-    assert "--commit" not in recent and "headSha,event,headBranch" in recent
+    for option in ("--branch main", f"--commit {head}"):
+        assert option in check
+    for call in (check, recent):  # a run on main asked for, or a push's from before
+        assert '.event == "workflow_dispatch" or .event == "push"' in call
+        assert "--event" not in call
+    assert "--commit" not in recent
     assert not check_calls(tmp_path, "release.yml")
 
 
@@ -467,8 +461,8 @@ def _documented(repo: Path, env: dict[str, str], *changed: str) -> tuple[str, st
 def test_a_commit_that_changes_only_documentation_is_released_on_its_tested_ancestors_run(
     tmp_path: Path, release_env: dict[str, str]
 ) -> None:
-    """full-suite.yml leaves a documentation-only push out (CONTRIBUTING.md): no run of its own;
-    the run of the newest commit before it that has one stands for it."""
+    """A documentation-only commit needs no run of its own (CONTRIBUTING.md): the run of the
+    newest commit before it that has one stands for it."""
     repo = make_release_repo(tmp_path, release_env)
     tested, head = _documented(repo, release_env, "README.md", "docs/guide.md", "docs/a/b.txt",
                                "wiki/diagrams/flow.dot")
@@ -535,40 +529,6 @@ def test_a_message_that_only_mentions_skipping_is_released(
     result = run_release(repo, release_env)
 
     assert result.returncode == 0, result.stderr
-
-
-def test_every_pull_request_gets_the_full_suite_in_the_merge_queue() -> None:
-    """Owner, 2026-11-08: the whole suite before every merge, documentation-only ones too, on the
-    commit main then becomes; a push runs nothing more. green-run.sh still lets an older
-    documentation-only commit, merged when pushes left them out, stand on its ancestor's run."""
-    full_suite = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
-    on = full_suite.split("\non:\n", 1)[1].split("\n\n", 1)[0]
-
-    assert "  merge_group:\n    types: [checks_requested]" in on
-    assert "push:" not in on and "paths" not in on
-    assert "*.md|docs/*|wiki/*) ;;" in GREEN_RUN_SH.read_text(encoding="utf-8")
-
-
-@pytest.mark.parametrize(("event", "branch", "released"), [
-    ("merge_group", "gh-readonly-queue/main/pr-117-27fb66b", True),
-    ("push", "main", True),  # before the queue
-    ("workflow_dispatch", "main", False),
-    ("push", "a-branch", False),
-])  # fmt: skip
-def test_the_run_a_release_stands_on_is_the_queues_or_a_push_to_mains(
-    event: str, branch: str, released: bool, tmp_path: Path, release_env: dict[str, str]
-) -> None:
-    """Through gh's own --jq: the merge queue's run of the very commit, or one of a push to main
-    from before the queue; never one started by hand, which may run anything on any branch."""
-    repo = make_release_repo(tmp_path, release_env)
-    runs = [{"databaseId": 4000, "status": "completed", "conclusion": "success", "event": event,
-             "headBranch": branch, "url": f"{RUN_URL}/4000"}]  # fmt: skip
-
-    result = run_release(repo, release_env | {"FAKE_GH_RUNS": json.dumps(runs)})
-
-    assert (result.returncode == 0) is released, result.stderr
-    if not released:
-        assert "has no full-suite.yml run" in result.stderr
 
 
 def test_a_documentation_commit_is_not_released_on_a_failed_ancestors_run(
@@ -1309,10 +1269,10 @@ def test_the_image_is_pinned_by_digest_in_the_workflow_and_the_containerfile() -
 
 def test_a_release_is_one_run_and_a_pull_request_starts_none() -> None:
     """release.yml runs for a pushed tag only and pushes nothing; release-assets.sh pushes the tag
-    and its EL8 companion's tag alone, on the main commit the full suite tested. full-suite.yml
-    runs for the merge queue (each pull request on its way into main), weekly and on request.
-    A pull request as it is opened, which anyone can make, starts only full-suite.yml's required
-    check, at once: every other job is skipped, so nothing of its branch runs."""
+    and
+    its EL8 companion's tag alone, on the main commit the full suite tested. full-suite.yml
+    runs on request only (owner, 2026-11-13): not for a pull request, which anyone can open and
+    whose branch is tested locally first, nor for a merge into main, nor on a schedule."""
     triggers = {}
     for name in ("release.yml", "full-suite.yml"):
         workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
@@ -1320,17 +1280,8 @@ def test_a_release_is_one_run_and_a_pull_request_starts_none() -> None:
         triggers[name] = [line for line in block.splitlines() if not line.lstrip().startswith("#")]
 
     assert triggers["release.yml"] == ["  push:", '    tags: ["v*"]']
-    assert triggers["full-suite.yml"][:2] == ["  merge_group:", "    types: [checks_requested]"]
-    assert not [line for line in triggers["release.yml"] if "pull_request" in line]
-    assert "  pull_request:" in triggers["full-suite.yml"]
-    assert "    branches: [main]" in triggers["full-suite.yml"]
-    jobs = workflow_jobs("full-suite.yml")
-    for name, text in jobs.items():
-        skipped = "    if: ${{ github.event_name != 'pull_request' }}\n" in text
-        assert skipped is (name != "passed"), name
-    passed = jobs["passed"]
-    assert "actions/checkout" not in passed and "uses:" not in passed
-    assert passed.index('if [ "$EVENT" = pull_request ]') < passed.index("jq -e")
+    assert triggers["full-suite.yml"] == ["  workflow_dispatch:"]
+    assert not [line for lines in triggers.values() for line in lines if "pull_request" in line]
     release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     assert "refs/heads/main" not in release and "git push" not in release
     script = RELEASE_SH.read_text(encoding="utf-8")
@@ -1349,13 +1300,13 @@ def test_the_draft_job_checks_the_tagged_commits_full_suite_run_and_names_it() -
     assert "Full suite: %s" in publish
 
 
-def test_the_full_suite_runs_in_the_merge_queue_and_weekly_once_per_python_version() -> None:
+def test_the_full_suite_runs_on_request_once_per_python_version() -> None:
     workflow = (ROOT / ".github/workflows/full-suite.yml").read_text(encoding="utf-8")
-    [weekly] = re.findall(r'^\s+- cron: "(.+)"$', workflow, re.MULTILINE)  # no nightly run
 
-    assert "merge_group:\n    types: [checks_requested]" in workflow
     assert "workflow_dispatch:" in workflow
-    assert f'WEEKLY="{weekly}"' in workflow  # the fuzzing time reads the weekly schedule
+    assert not re.search(r"^\s+(push|pull_request|merge_group|schedule):", workflow, re.MULTILINE)
+    # a run that passes ran everything: no job or step depends on what started it
+    assert "github.event" not in workflow
     # the suite, the corpus, the portability matrix and el8-stub; the other EL8 jobs with a
     # matrix run every target on the default Python only (test_el8_workflow.py)
     assert len(re.findall(r'python: \["3.12", "3.13", "3.14", "3.15"\]', workflow)) == 4
@@ -1891,32 +1842,6 @@ def workflow_jobs(name: str) -> dict[str, str]:
                            workflow.partition("\njobs:\n")[2], re.M | re.S))  # fmt: skip
 
 
-def test_the_queues_required_check_needs_every_job_and_passes_only_when_all_did() -> None:
-    """The ruleset names one check, "full suite passed": a job added to the suite without it
-    would not hold a merge back."""
-    jobs = workflow_jobs("full-suite.yml")
-    passed = jobs["passed"]
-    needs = re.search(r"needs: \[([^\]]*)\]", passed, re.S)
-    assert needs is not None
-
-    assert sorted(n.strip() for n in needs[1].split(",")) == sorted(set(jobs) - {"passed"})
-    assert "name: full suite passed" in passed and "if: ${{ always() }}" in passed
-    assert 'jq -e \'all(.[]; .result == "success")\'' in passed
-
-
-def test_the_fuzz_corpora_are_saved_only_by_runs_on_main() -> None:
-    """A merge queue run's cache would belong to its temporary branch, where nothing reads it."""
-    suite = workflow_jobs("full-suite.yml")["suite"]
-    saves = suite.split("      - name: Save the fuzz corpus")[1:]
-
-    assert "uses: actions/cache@" not in suite
-    assert suite.count("uses: actions/cache/restore@") == 2 and len(saves) == 2
-    for save in saves:
-        step = save.split("      - name:")[0]
-        assert "if: ${{ github.event_name != 'merge_group' }}" in step
-        assert "uses: actions/cache/save@" in step
-
-
 @pytest.mark.parametrize(("name", "job"), MATRIX_JOBS)
 def test_each_job_runs_every_target_and_python_on_a_runner_of_the_targets_architecture(
     name: str, job: str
@@ -1956,20 +1881,15 @@ def test_a_run_needs_every_job_to_pass_for_the_commit_to_be_released() -> None:
     assert "completed/success) ;;" in gate and "--jobs" not in gate
 
 
-PR_SKIP = "    if: ${{ github.event_name != 'pull_request' }}\n"  # a pull request as it is opened
-
-
 def test_every_trigger_of_the_full_suite_runs_every_target_and_python() -> None:
-    """The merge queue's run is the run before a release, so no job is conditional on the event
-    but for its skip on a pull request as it is opened: queue, scheduled and manual runs are the
-    same matrix."""
+    """A run asked for on main is the run before a release, so no job is conditional on the
+    event: every run is the same matrix."""
     jobs = workflow_jobs("full-suite.yml")
 
     for job in ("suite", "portability"):
-        head = jobs[job].split("    steps:", 1)[0]
-        assert head.count(PR_SKIP) == 1 and "github.event_name" not in head.replace(PR_SKIP, "")
+        assert "github.event_name" not in jobs[job].split("    steps:", 1)[0]
         assert "matrix.target" in jobs[job]
-        assert "\n    if:" not in jobs[job].replace(PR_SKIP, "")
+    assert "\n    if:" not in jobs["suite"] + jobs["portability"]
 
 
 def test_the_artifacts_of_a_matrix_entry_carry_its_target() -> None:
