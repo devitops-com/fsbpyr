@@ -36,8 +36,8 @@ from the source's syntax tree; "(lazy)" marks an import inside a function.
 ## What `fsbpyr build` does, step by step
 
 [`cli.py`](../src/fsbpyr/cli.py) decides the kind of input and the Python. For the Python
-this fsbpyr runs on, [`build.build`](../src/fsbpyr/build.py#L683)
-calls [`build._build`](../src/fsbpyr/build.py#L744),
+this fsbpyr runs on, [`build.build`](../src/fsbpyr/build.py#L662)
+calls [`build._build`](../src/fsbpyr/build.py#L723),
 which writes a new executable beside the output; `build` then smoke-tests it, puts it in place
 and links its commands. A `--glibc 2.28` build changes steps 8, 10, 12, 16 and 17
 ([below](#building-for-glibc-228)). In the diagrams, blue is build-time code, green files on
@@ -95,14 +95,14 @@ A step marked with some of the letters runs, or takes that branch, only for thos
 **Checks** (`build._build`)
 
 4. `_build` loads the project again, and
-   [`check_before_staging`](../src/fsbpyr/build.py#L440)
+   [`check_before_staging`](../src/fsbpyr/build.py#L419)
    refuses what `pyproject.toml` and the options already decide: a console script whose name is
    no command name when there are several, a `[project]` with no console script, no possible
    legacy script and no `__main__.py` or guarded module in its tree, an output path that is a
    directory, a version-control line in a requirements file uv reads with `--require-hashes`, and
    an undeclared extra. Scripts and extras are checked here only when `[project]` lists them
    statically, otherwise after staging.
-5. For B to E, [`load_package`](../src/fsbpyr/build.py#L460)
+5. For B to E, [`load_package`](../src/fsbpyr/build.py#L439)
    reads the files into a `loose.Package` ([`Package.load`](../src/fsbpyr/loose.py#L92) for B,
    C and D, warning about each file left out;
    [`Package.tool_binary`](../src/fsbpyr/loose.py#L143) for E). A package with no command fails
@@ -111,23 +111,22 @@ A step marked with some of the letters runs, or takes that branch, only for thos
 6. [`staging.find_uv`](../src/fsbpyr/staging.py#L82)
    requires uv on `PATH` before anything slow (D26), and `uv_version` gets its version for
    build_info.
-7. [`python_warnings`](../src/fsbpyr/build.py#L727)
+7. [`python_warnings`](../src/fsbpyr/build.py#L706)
    gives the version rule's warnings (a `.python-version` pin it ignores, say).
 8. [`runtime.registry.select_runtime`](../src/fsbpyr/runtime/registry.py#L312)
    returns the runtime: the one embedded in the running fsbpyr when its Python and glibc baseline
    match, else the one `fsbpyr runtime build` cached. `Project.check_python` then tests
-   `requires-python` against the runtime's full version, and `uv_mismatch` warns when uv is not
-   the one that built this fsbpyr.
+   `requires-python` against the runtime's full version.
 9. [`Project.lock_source`](../src/fsbpyr/project.py#L212)
    chooses what the dependencies come from. For C and D with no lock source and no PEP 723
-   dependency, [`infer_dependencies`](../src/fsbpyr/build.py#L553)
+   dependency, [`infer_dependencies`](../src/fsbpyr/build.py#L532)
    follows the commands' imports ([`importcheck.check_command`](../src/fsbpyr/importcheck.py#L198));
    when the runtime lacks some and a venv is found
    ([`venvdeps.find_venv`](../src/fsbpyr/venvdeps.py#L59)),
    [`venvdeps.infer`](../src/fsbpyr/venvdeps.py#L182)
    pins the distributions that provide them; the lock source is then `inferred`, and a warning
    names the venv (`--strict` fails here).
-   [`lock_warnings`](../src/fsbpyr/build.py#L361)
+   [`lock_warnings`](../src/fsbpyr/build.py#L340)
    warns about an unlocked build, unpinned requirement lines, and a stale Poetry, PDM or Pipenv
    lock.
 
@@ -146,10 +145,10 @@ A step marked with some of the letters runs, or takes that branch, only for thos
     reads the staged site's `*.dist-info`, and
     [`check_no_editable`](../src/fsbpyr/closure.py#L107)
     refuses editable installs.
-12. [`built_here_above`](../src/fsbpyr/build.py#L201)
+12. [`built_here_above`](../src/fsbpyr/build.py#L200)
     finds distributions uv built from sdists on this host whose native files need a newer glibc
     than the baseline, and
-    [`rebuild_on_baseline`](../src/fsbpyr/build.py#L217)
+    [`rebuild_on_baseline`](../src/fsbpyr/build.py#L216)
     builds them again against the sysroot of the baseline's pin (`runtime.pins.sysroot_for`,
     `runtime.sysroot.fetch_sysroot` and `build_flags`, then `staging.rebuild_wheel` and
     `staging.rebuild`): Debian 12's packages (glibc 2.36) for 2.34, Rocky Linux 8.10's RPMs for
@@ -158,12 +157,12 @@ A step marked with some of the letters runs, or takes that branch, only for thos
     and checks the extras step 4 could not.
     [`legacy.attach`](../src/fsbpyr/legacy.py#L39)
     makes the wheel's `#!python` legacy scripts commands (A only). For E,
-    [`tool_binary`](../src/fsbpyr/build.py#L614)
+    [`tool_binary`](../src/fsbpyr/build.py#L593)
     has [`tools.tool_scripts`](../src/fsbpyr/tools.py#L319)
     choose the tools and their scripts, and `tools.with_commands` makes them the project's own.
 14. [`SiteIndex.walk`](../src/fsbpyr/closure.py#L126)
     follows `Requires-Dist` under the runtime's markers. For B, C and D,
-    [`check_script_imports`](../src/fsbpyr/build.py#L583)
+    [`check_script_imports`](../src/fsbpyr/build.py#L562)
     skips, with a warning naming `file:line`, a command that imports what neither the project,
     the staged site nor the runtime holds; `--strict` fails on that, as does a build with no
     command left.
@@ -180,20 +179,20 @@ A step marked with some of the letters runs, or takes that branch, only for thos
     libraries ([`classify`](#classify)).
 16. The warnings are gathered: the walk's, the classifier's, `best_compression_unused` and
     `helper_interpreter_hints`.
-    [`glibc_report`](../src/fsbpyr/build.py#L155)
+    [`glibc_report`](../src/fsbpyr/build.py#L154)
     computes the oldest glibc the app runs on, and
     [`system.system_report`](../src/fsbpyr/system.py#L122)
     the system libraries the target must provide; both warn about needs above the baseline.
 17. An `assemble.App` collects the content and the app's build_info:
-    [`_provenance`](../src/fsbpyr/build.py#L264)
+    [`_provenance`](../src/fsbpyr/build.py#L263)
     gives `schema`, `lock`, `dists` and `settings` (through `manifest`), and `build` adds
     `project`, `fsbpyr_version`, `uv`, `glibc`, `glibc_baseline` (2.28 only), `system`,
     `zstd_level`, `native_compression`, `interpreter_reexec`, `git` (`vcs.git_state`) and, for
     fsbpyr itself only, `release_asset`.
-18. [`_check_entry_module`](../src/fsbpyr/build.py#L105)
+18. [`_check_entry_module`](../src/fsbpyr/build.py#L104)
     refuses an entry module that is neither in the app nor in the runtime, and a package entry
     without a `__main__` module; for a table it checks every target. With `--strict`,
-    [`check_strict`](../src/fsbpyr/build.py#L412)
+    [`check_strict`](../src/fsbpyr/build.py#L391)
     raises `StrictError` for any warning that counts. Nothing has been written yet.
 
 **Writing**
@@ -204,10 +203,10 @@ A step marked with some of the letters runs, or takes that branch, only for thos
     streams the executable into a new `.<name>.XXXX.tmp` beside the output. When `_build`
     returns, the spill is closed and the staging directory removed.
 20. Unless `--no-smoke`,
-    [`smoke_test`](../src/fsbpyr/build.py#L638)
+    [`smoke_test`](../src/fsbpyr/build.py#L617)
     runs the new file with `FSBPYR_SELFTEST=1`, which checks every command's target; with
     `--smoke-args`,
-    [`smoke_run`](../src/fsbpyr/build.py#L661)
+    [`smoke_run`](../src/fsbpyr/build.py#L640)
     also runs it as the app with those arguments.
 21. [`payload.writer.commit`](../src/fsbpyr/payload/writer.py#L633)
     renames the new file over the output, once `build` has removed an `<output>.sig`, and syncs
@@ -400,8 +399,6 @@ the Python fsbpyr runs on, which is the app's.
 | `built_here_above(dists, baseline)` | Distributions built from sdists on this host (every wheel tag `linux_*`) with a native file that needs more than `baseline`. |
 | `rebuild_on_baseline(plan, project_dir, wheel, names, baseline, *, offline, log, verbose)` | Step 12, the project's own wheel too when among `names`; returns warnings when it cannot. |
 | `settings_record(config)` | build_info's `settings`. |
-| `builder_uv()` | The uv version in the running fsbpyr's build_info; None from source. |
-| `uv_mismatch(*, builder, current)` | An `Uncounted` warning when uv is not the one that built this fsbpyr: another uv can give other bytes from identical sources. |
 | `best_compression_unused(*, best_compression, files)` | A warning when `--best-compression` has no native file to compress. |
 | `helper_interpreter_hints(modules, reexec)` | An `Uncounted` note naming packaged libraries known to start helper interpreters (`HELPER_INTERPRETERS`), unless `interpreter-reexec` is true. |
 | `unpinned_warning(unpinned)` | A warning naming up to three requirements not pinned by `==`, a commit SHA or a hash. |

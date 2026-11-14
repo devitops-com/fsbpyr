@@ -445,8 +445,8 @@ release.
 
 **(a) The executable rebuilds itself** from the tag, with the uv that built it. uv builds the
 project's wheel, stamping its own version into the wheel's metadata, and installs every
-distribution, so another uv can give other bytes from identical sources; an fsbpyr executable
-that builds with another uv warns. The executable records its uv (`uv` in `fsbpyr inspect`,
+distribution, so another uv can give other bytes from identical sources. The executable
+records its uv (`uv` in `fsbpyr inspect`,
 `.uv` in `--json`), the one that the tag's `tools/release/uv.version` names. If yours differs,
 `sh src/tools/release/install-uv.sh DIR` installs that uv into `DIR`, checked against its
 SHA-256: put `DIR` first on `PATH` and run the rest again. uv also needs the asset's Python
