@@ -22,7 +22,7 @@ from fsbpyr.targets import TARGETS, host_target
 from fsbpyr.vcs import release_asset
 
 from ..support.releases import FakeReleases
-from ..support.signing import release_signature, use_openssl
+from ..support.signing import release_signature, use_sig_c
 from .boot.conftest import FAKE_RUNTIME
 
 pytestmark = pytest.mark.version_rule
@@ -44,8 +44,8 @@ class Ran:
 
 @pytest.fixture
 def releases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeReleases]:
+    use_sig_c(monkeypatch)  # before the server: a module that cannot be built leaks nothing
     fake = FakeReleases(release_signature)
-    use_openssl(monkeypatch)
     monkeypatch.setenv(dispatch.DOWNLOADS_VARIABLE, fake.base)
     monkeypatch.setenv("FSBPYR_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr(dispatch, "own_version", lambda: "1.2.0-abcdef12")

@@ -30,7 +30,7 @@ from ..support.signing import (
     release_signature,
     signature_by,
     statement,
-    use_openssl,
+    use_sig_c,
 )
 from .boot.conftest import FAKE_RUNTIME
 
@@ -44,9 +44,9 @@ CHECKED = ["/api", "/files/SHA256SUMS", "/files/SHA256SUMS.sig"]  # before any a
 
 @pytest.fixture
 def github(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeGitHub]:
+    use_sig_c(monkeypatch)  # before the server: a module that cannot be built leaks nothing
     fake = FakeGitHub(release_signature)
     fake.assets[f"{OWN}.xz"] = b""
-    use_openssl(monkeypatch)
     monkeypatch.setenv(selfupdate.API_VARIABLE, f"{fake.base}/api")
     yield fake
     fake.close()
@@ -702,7 +702,7 @@ def test_a_body_cut_short_is_an_update_error(
 
 
 def test_unpacking_stops_at_its_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    use_openssl(monkeypatch)
+    use_sig_c(monkeypatch)
     server = FakeReleases()
     server.files["/big.xz"] = lzma.compress(b"\0" * 1_000_000)
     digest = hashlib.sha256(server.files["/big.xz"]).hexdigest()
@@ -880,7 +880,7 @@ def test_a_build_info_without_a_release_is_refused() -> None:
 def test_three_pinned_keys_pass_a_release_of_a_key_change(
     github: FakeGitHub, installed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    use_openssl(monkeypatch, *map(pub_of, (RELEASE_KEY, "new-release-key", "recovery-key")))
+    use_sig_c(monkeypatch, *map(pub_of, (RELEASE_KEY, "new-release-key", "recovery-key")))
     binary = _release_binary(tmp_path)
     github.assets[f"{OWN}.xz"] = lzma.compress(binary)
     github.signer = lambda sums: release_signature(sums, "new-release-key")

@@ -16,7 +16,7 @@ fsbpyr's test suite is in [`tests/`](../tests). The modules it tests have their 
 | [`tests/unit/runtime`](../tests/unit/runtime) | The runtime build: PBS fetch, registry, sysroots, toolchain and link plan, stdlib selection, licence notices, a release's glibc 2.28 stub, the tool's cache collector. |
 | [`tests/integration`](../tests/integration) | Real tools or data but no built executable: the real stdlib, a C compiler, the PBS distribution, the installer under three shells, git repositories, release scripts and the EL8 workflow against a fake `gh`. |
 | [`tests/e2e`](../tests/e2e) | Real executables built from a real runtime and run as subprocesses; C probes and the fuzzer; the corpus and the portability matrix. |
-| [`tests/probes`](../tests/probes) | Small C programs linked with launcher sources, each driving one part of the launcher for one end-to-end test. |
+| [`tests/probes`](../tests/probes) | Small C programs linked with launcher sources, each driving one part of the launcher for one end-to-end test; `sig_module.c`, `sig.c`'s functions as a Python module for the tests from source. |
 | [`tests/fuzz`](../tests/fuzz) | `payload_fuzz.c` and `sig_fuzz.c`, the libFuzzer harnesses for the launcher's payload parsing and its readers of `.pub` and `.key` files (`sig.c`). |
 | [`tests/corpus`](../tests/corpus) | The real-world corpus: one small application per risk class, compared with its venv. |
 | [`tests/fixtures/projects`](../tests/fixtures/projects) | Projects the tests build ([Fixture projects](#fixture-projects)). |
@@ -37,7 +37,13 @@ executable build one with `build_executable` and `FAKE_RUNTIME`, a runtime recor
 (`b"\x7fELF-fake"`): a valid payload the Python reader reads, behind a stub that cannot run. The
 boot code runs against [`StandIn`](../tests/support/standin.py), a pure-Python `_fsbpyr` over the
 payload reader, whose cache sync, [`tests/support/cache.py`](../tests/support/cache.py), mirrors
-`launcher/cache.c` step by step. Payload tests use `make_spec` from
+`launcher/cache.c` step by step. The tests that sign or check signatures (signing, self update,
+dispatch, the EL8 stubs) run on `sig.c` itself: `sig_c` in
+[`tests/support/signing.py`](../tests/support/signing.py) builds
+[`probes/sig_module.c`](../tests/probes/sig_module.c) with `sig.c`, `integrity.c` and
+`parallel.c` into a Python module once per process and loads it in `_fsbpyr`'s place, so they
+need clang 23 and the pinned CPython distribution (from `FSBPYR_TEST_DOWNLOADS`, else
+downloaded), as `launcher_build` does. Payload tests use `make_spec` from
 [`tests/unit/payload/conftest.py`](../tests/unit/payload/conftest.py), a small spec with every
 table and reference type.
 
@@ -237,7 +243,7 @@ An environment condition is a function of `requires.py` that the test calls:
 | `foreign_directory` | a searchable directory of a user who is neither root nor the tester is under `/var/lib`, `/etc`, `/var/spool` or `/home` | `e2e/test_cache_root.py` |
 | `root_directory_in_tmp` | a directory in `/tmp` is root's | `e2e/test_cache_root.py`, `unit/boot/test_way.py` |
 | `uv_python` | uv has that Python installed (the tests never let it download one) | `e2e/test_dispatch.py` |
-| `openssl_with_ml_dsa` | the `openssl` command signs with ML-DSA-65 | `support/signing.py`, for every key or signature it makes |
+| `openssl_with_ml_dsa` | the `openssl` command signs with ML-DSA-65 | `support/signing.py`, for every key or signature the release script or `openssl pkeyutl` makes |
 | `openssl_headers` | OpenSSL's headers are installed | `e2e/test_signatures.py` |
 | `glibc_host` | the host's libc is glibc | `unit/builder/test_natives.py` |
 | `enough_free_disk` | 10% of the file system is free, else a collection is due hourly | `e2e/test_gc.py` |
@@ -624,7 +630,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,872 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,874 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -638,16 +644,16 @@ run with the release launcher only, those two portability tests also on the two 
 
 | Layer | Files | Tests |
 |---|---|---|
-| `tests/unit` (top level) | 29 | 942 |
+| `tests/unit` (top level) | 29 | 944 |
 | `tests/unit/boot` | 23 | 387 |
 | `tests/unit/builder` | 19 | 800 |
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 261 |
 | `tests/integration` | 17 | 858 |
 | `tests/e2e` | 45 | 1,183 |
-| All | 153 | 4,872 |
+| All | 153 | 4,874 |
 
-### tests/unit (top level): 29 files, 942 tests
+### tests/unit (top level): 29 files, 944 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -671,7 +677,7 @@ run with the release launcher only, those two portability tests also on the two 
 | [`test_pyversion.py`](../tests/unit/test_pyversion.py) | 57 | The version rule (`fsbpyr.pyversion`): the Python that `requires-python`, a `.python-version` pin and `--python` give, and the errors. Marked `version_rule`. |
 | [`test_requires.py`](../tests/unit/test_requires.py) | 16 | `tests/support/requires.py` and `tests/conftest.py`'s hooks, with pytester, as [A skip fails the run](#a-skip-fails-the-run) lists. |
 | [`test_sbom.py`](../tests/unit/test_sbom.py) | 18 | The CycloneDX SBOM generator `tools/release/sbom.py`: identical bytes for identical input, CPEs and purls, the executable's hash, incomplete or unverified input refused. |
-| [`test_signing.py`](../tests/unit/test_signing.py) | 212 | `fsbpyr.signing` from source with real keys, the openssl command in place of `sig.c`: the statement, names from a user and from a file, forged build info, the trust store, sums files, each command's output and exit status. |
+| [`test_signing.py`](../tests/unit/test_signing.py) | 214 | `fsbpyr.signing` from source with real keys, on `sig.c`'s functions in a module of their own: the statement, names from a user and from a file, forged build info, the trust store, sums files, each command's output and exit status, a `.key` with text before its first block refused; `signatures.py`'s battery on that module. |
 | [`test_selfupdate.py`](../tests/unit/test_selfupdate.py) | 97 | `fsbpyr self update` against `FakeGitHub`: in-place update keeping the mode, variants, symlinks; bad, oversized or too-new-glibc downloads never installed; unwritable directories; man page and completions rewritten; placed glibc 2.28 stubs left alone, named only when the new companion release does not list them; a cut download an update error, not a traceback. |
 | [`test_targets.py`](../tests/unit/test_targets.py) | 48 | The target table (`fsbpyr.targets`) and host detection: each target's and Python's pins and sysroot, the EL8 sysroot (Rocky Linux 8.10's `glibc`, `glibc-devel`, `glibc-headers`, `kernel-headers`, `libgcc` and `gcc` RPMs), other baselines refused, runtime ids per baseline, the manylinux platform, each target's loader, filter and machine. |
 | [`test_test_modes.py`](../tests/unit/test_test_modes.py) | 6 | `FSBPYR_CORPUS_APPS` and the [EL8 test mode](#the-el8-test-mode): builds for the run's baseline unless a `--glibc` says otherwise, `baseline.as_tuple`, the EL8 images. `make test-el8-stub` runs it in the mode. |
@@ -867,8 +873,8 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`no-wheels.txt`](../tests/support/no-wheels.txt) | Packages without a wheel, one Python's X.Y and its packages per line. |
 | [`probe.py`](../tests/support/probe.py) | Runs inside the demo executable: exercises `importlib.resources`, `pkgutil`, `importlib.util`, `importlib.metadata`, `inspect` and `linecache`, and prints the results as JSON. |
 | [`readme.py`](../tests/support/readme.py) | `quickstart()`: the README quickstart's shell lines. |
-| [`signatures.py`](../tests/support/signatures.py) | `run(fsb)`: `_fsbpyr`'s signature functions, called inside the demo app on both launchers, and what they must give. |
-| [`signing.py`](../tests/support/signing.py) | `script`, `new_key`, `sign`: the release script's keys and signatures, made per session so none is committed; `OpenSSL`, `named_key` and `use_openssl`: `_fsbpyr`'s four functions for tests from source, done by the openssl command on real keys through `fsbpyr.signing`'s two seams; `on_a_terminal`: a command on a pty. |
+| [`signatures.py`](../tests/support/signatures.py) | `run(fsb)`: `_fsbpyr`'s signature functions, called inside the demo app on both launchers and on `sig_c`'s module in `unit/test_signing.py`, and what they must give. |
+| [`signing.py`](../tests/support/signing.py) | `script`, `new_key`, `sign`: the release script's keys and signatures, made while the tests run so none is committed; `sig_c`, `named_key`, `signature_by` and `use_sig_c`: `sig.c`'s four functions for tests from source, built from `probes/sig_module.c` into a module once per process (never with llvm-cov's instrumentation), with keys and signatures that they make, through `fsbpyr.signing`'s two seams; `on_a_terminal`: a command on a pty. |
 | [`releases.py`](../tests/support/releases.py) | Servers on 127.0.0.1 that log the requests: `FakeReleases`, the release downloads (`/vX.Y.Z/ASSET`, `/el8-vX.Y.Z/ASSET` for the glibc 2.28 stubs and their sums), and `FakeGitHub`, a release document at `/api` with its assets below `/files`, for `self update`; given a signer, each serves signed sums. |
 | [`fakegithub.py`](../tests/support/fakegithub.py) | `FakeGitHub` for `release-sign.sh` and `audit.sh`: a fake `gh` and `curl` over files and a bare repository as the remote `hub`, able to do all an account can; only its `attest` makes an attestation, and only its `artifact` an artifact of the full suite's run of a commit. |
 | [`requires.py`](../tests/support/requires.py) | What the tests need from the machine: `TOOLS`, `tool()`, the `requires_tools` mark `tools()`, the environment conditions and `unmet()`; as a module, `make test-prereqs` ([When the machine lacks something](#when-the-machine-lacks-something)). |
@@ -883,9 +889,10 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 ## Probes and the fuzzer
 
 Each probe is a C program that `LauncherBuild.compile` links with the launcher sources it needs,
-but `probes/no_context.c`, which `build_stub` links into a whole stub. Small build-time values
-make cases reachable with small inputs, and `-Wl,--wrap=` replaces a system call the test
-controls. Each probe's header comment lists its commands and switches.
+but `probes/no_context.c`, which `build_stub` links into a whole stub, and `probes/sig_module.c`,
+a Python module that `sig_c` in `support/signing.py` builds and loads into the test process.
+Small build-time values make cases reachable with small inputs, and `-Wl,--wrap=` replaces a
+system call the test controls. Each probe's header comment lists its commands and switches.
 
 | Program | Launcher sources | Build flags | Test |
 |---|---|---|---|
@@ -897,6 +904,7 @@ controls. Each probe's header comment lists its commands and switches.
 | [`probes/reads.c`](../tests/probes/reads.c) | `payload.c`, `integrity.c`, `parallel.c` | `--wrap=ZSTD_createDCtx,--wrap=ZSTD_decompress,--wrap=ZSTD_decompressStream,--wrap=lzma_stream_buffer_decode,--wrap=madvise`, ASan, UBSan | `test_read_failures.py` |
 | [`probes/restore.c`](../tests/probes/restore.c) | `cache.c`, `way.c`, `payload.c`, `integrity.c`, `parallel.c` | `--wrap=renameat,--wrap=linkat,--wrap=pthread_create,--wrap=pwrite`, ASan, UBSan | `test_restore.py` |
 | [`probes/sig.c`](../tests/probes/sig.c) | `sig.c`, `integrity.c`, `parallel.c` | `-DFSB_SIG_NO_PYTHON`, `--wrap=EVP_DigestVerify,--wrap=BIO_ctrl,--wrap=OSSL_LIB_CTX_new`, ASan, UBSan, LeakSanitizer | `test_signatures.py` |
+| [`probes/sig_module.c`](../tests/probes/sig_module.c) | `sig.c`, `integrity.c`, `parallel.c` | `-fPIC -shared -fvisibility=hidden`, the distribution's `libcrypto.a` with `--exclude-libs,ALL`: the module `fsbpyr_sig` | `unit/test_signing.py`, `unit/test_selfupdate.py`, `unit/test_dispatch.py`, `unit/runtime/test_stubs.py`, `e2e/test_el8.py` |
 | [`probes/slots.c`](../tests/probes/slots.c) | `slots.c` | `--wrap=geteuid`, UBSan | `test_slots.py` |
 | [`probes/streams.c`](../tests/probes/streams.c) | `payload.c`, `integrity.c`, `parallel.c` | `-DFSB_STREAM_WINDOW` of 2 MiB, ASan, UBSan | `test_stream_windows.py` |
 | [`probes/way.c`](../tests/probes/way.c) | `way.c` | `--wrap=readlinkat,--wrap=fopen,--wrap=fstat,--wrap=fstatat,--wrap=malloc`, ASan, UBSan | `test_way_targets.py`, `test_way.py` |

@@ -20,7 +20,7 @@ from fsbpyr.targets import host_target
 from fsbpyr.vcs import release_stub_asset, release_stub_sums, release_stub_tag
 
 from ...support.releases import FakeReleases
-from ...support.signing import release_signature, use_openssl
+from ...support.signing import release_signature, use_sig_c
 from .test_registry import _runtime
 
 BASELINE = "2.28"
@@ -45,8 +45,8 @@ def sums_line(data: bytes, name: str = ASSET) -> bytes:
 
 @pytest.fixture
 def releases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeReleases]:
+    use_sig_c(monkeypatch)  # before the server: a module that cannot be built leaks nothing
     fake = FakeReleases(release_signature)
-    use_openssl(monkeypatch)
     monkeypatch.setenv(dispatch.DOWNLOADS_VARIABLE, fake.base)
     monkeypatch.setattr(stubs, "own_version", lambda: "1.2.0-abcdef12")
     monkeypatch.setattr(stubs, "own_paths", lambda: [tmp_path / "bin" / "fsbpyr"])

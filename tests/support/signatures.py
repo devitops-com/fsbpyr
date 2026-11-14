@@ -1,6 +1,7 @@
 """``_fsbpyr``'s signature functions, called as signing.py calls them, inside a built app: on both
 launchers, the sanitized one included. The vectors are inline: the app carries no fixtures. Their
-key was made once by release-signing.sh, and is gone."""
+key was made once by release-signing.sh, and is gone. tests/unit/test_signing.py runs the same
+calls on sig.c's functions in the test process (tests/support/signing.py's ``sig_c``)."""
 
 import base64
 import hashlib
