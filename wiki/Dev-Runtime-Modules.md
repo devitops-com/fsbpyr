@@ -197,7 +197,7 @@ release, which `make release-sign` signs and publishes. The rest of a 2.28 build
 
 The pinned inputs of every runtime. `PINS` lists one PBS archive per Python version and target:
 CPython 3.12.16, 3.13.18, 3.14.10 and 3.15.2 for `x86_64-unknown-linux-gnu` and
-`aarch64-unknown-linux-gnu`, release 20261026, flavour `pgo+lto-full`, each with its SHA-256 (a
+`aarch64-unknown-linux-gnu`, release 20261110, flavour `pgo+lto-full`, each with its SHA-256 (a
 test compares triples and flavours with `targets.py`). Two tables name the sysroot packages per
 target, each with its SHA-256; `BASELINES` lists their baselines, newest first,
 `DEFAULT_BASELINE` (`"2.34"`) and `"2.28"`:

@@ -209,34 +209,34 @@ def test_pin_lookup() -> None:
     ("triple", "python", "version", "sha256"),
     [
         ("x86_64", "3.12", "3.12.16",
-         "789924432efcaaf05fec4bd3e4d8798733326c2ac0540eda33e84913c37a231e"),
+         "a1b98760371cfd145a1533ea75c89437cdaf538e84c5e84c469eda9065a251af"),
         ("x86_64", "3.13", "3.13.18",
-         "f003449a05408c2e4b184f2a7abd1ea277081ff1a9100289075243ab5ed81207"),
+         "dec4f6d23031233beddfe91b99751977ef96e90642109836b1f9ad80b0019a68"),
         ("x86_64", "3.14", "3.14.10",
-         "4a2823d5deacb631e21b3c8387a1ec9be57e1b0ed37b7770e2e71cfe7b94eb94"),
+         "4730c0dc79e7eecbe54a323d587fdeaab621094fe09b5827167d69045115fcbc"),
         ("x86_64", "3.15", "3.15.2",
-         "3488eafeae3c25a44895df9fd52a9be1f2fa11a45cb0580279e03c2bce5339b4"),
+         "a61124f187ea3b379d6b78806ac06edd43db524eef411925eca05fb9357589d5"),
         ("aarch64", "3.12", "3.12.16",
-         "983593f8a9de59f8e25972b41851161a8ad139bb25b01766fbfa69979a15521d"),
+         "d035e9c629feb9f9f4458b54da1aa1332b1c786e0d09e3394c05cea0b92adde8"),
         ("aarch64", "3.13", "3.13.18",
-         "069e9ae72f35f8ac743e1dad224417b07a3728971bc8333fe08b78e4c24bee12"),
+         "160b0ca941266cd8f0e0dda7fd355ce1089df50d15853ea8cd99f4599067db39"),
         ("aarch64", "3.14", "3.14.10",
-         "2c2b62b6e02a1717b408c30d49a8bf293b280b2b4a22bb948f9b85ecc1f5ce54"),
+         "7e6b0d554a93c15186993ee0254c54a590a1dcc8aaf0564f3ada3d76a1d331da"),
         ("aarch64", "3.15", "3.15.2",
-         "b3fc351d2271f6c0b3c6d2b423043771dfcb5267053512b8aebba195dad110e9"),
+         "56246cc19968bbfc32a92a2c7887fa2fd4ba1917976dccb2d0ee3e43468b1b3d"),
     ],
 )  # fmt: skip
-def test_every_version_is_pinned_to_release_20261026(
+def test_every_version_is_pinned_to_release_20261110(
     triple: str, python: str, version: str, sha256: str
 ) -> None:
     pin = pin_for(python, f"{triple}-unknown-linux-gnu")
 
     assert (pin.version, pin.release, pin.flavor, pin.sha256) == (
-        version, "20261026", "pgo+lto-full", sha256,
+        version, "20261110", "pgo+lto-full", sha256,
     )  # fmt: skip
     assert pin.url == (
-        "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/"
-        f"cpython-{version}%2B20261026-{triple}-unknown-linux-gnu-pgo%2Blto-full.tar.zst"
+        "https://github.com/astral-sh/python-build-standalone/releases/download/20261110/"
+        f"cpython-{version}%2B20261110-{triple}-unknown-linux-gnu-pgo%2Blto-full.tar.zst"
     )
 
 

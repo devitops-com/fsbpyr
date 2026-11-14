@@ -1833,6 +1833,10 @@ compare jobs or the short asset names, later entries below and D42 apply.
     its own literal `LINK_FLAGS` (stub.py). So the aarch64 stub links with the flag of its own
     (`AARCH64_LINK_FLAGS`, hashed into the runtime id; owner decision 2026-10-27): Cortex-A53
     cores (Raspberry Pi 3 and Zero 2, many boards) are aarch64 hosts.
+  - 2026-11-14 (unreleased): the pins move to PBS 20261110 (the same CPython 3.12.16, 3.13.18,
+    3.14.10, 3.15.2) on both targets (upstream-watch's issue #139); the four x86-64 archives are
+    still `llvm-bitcode:23.1.3` (PYTHON.json; the aarch64 ones were not read here). It brings
+    zlib 1.4 and expat 2.10.0; SQLite stays 3.53.1. The release toolchain moves to uv 0.13.8.
 
   **Steps** (a target is done when, on its own runner, the full suite passes with that
   target's skip list, the three-stage bootstrap is byte-identical and an independent rebuild

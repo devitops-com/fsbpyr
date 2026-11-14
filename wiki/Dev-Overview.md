@@ -52,7 +52,7 @@ in a venv**.
 - **Targets:** Linux x86-64 and aarch64 with glibc 2.34 or newer, or glibc 2.28 (EL8) for an
   app built with `--glibc 2.28`. Each fsbpyr builds for its own platform; no cross builds.
   musl, macOS and aarch64 kernels with 16K pages are not supported.
-- **Python:** CPython 3.12.16, 3.13.18, 3.14.10 and 3.15.2 (python-build-standalone 20261026),
+- **Python:** CPython 3.12.16, 3.13.18, 3.14.10 and 3.15.2 (python-build-standalone 20261110),
   one fsbpyr executable per version; 3.14 is the default. Free-threaded CPython is refused.
 - **Apps:** anything uv can install that has an entry point, and the inputs
   [below](#by-how-the-code-is-kept). Some packages need [settings](User-Settings.md). A file
