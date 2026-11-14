@@ -1,7 +1,7 @@
 """docs/signing.md from source: the statement, the names, the trust store, how a file is looked up
-and what each command says and exits with, with real keys and signatures, on the openssl command
-in place of sig.c (tests/support/signing.py). tests/e2e/test_signatures.py tests the C, and
-tests/e2e/test_signing.py the commands on it.
+and what each command says and exits with, with real keys and signatures, on sig.c's functions
+in a module of their own (tests/support/signing.py). tests/e2e/test_signatures.py tests the C,
+and tests/e2e/test_signing.py the commands on it.
 
 The tests that matter most here are the ones where a file lies: a forged executable can name
 anything in its build info, and its D31 digest passes, since the forger writes it."""
@@ -20,15 +20,16 @@ from fsbpyr import signing
 from fsbpyr.assemble import App, build_executable
 from fsbpyr.cli import main
 
+from ..support import signatures
 from ..support import signing as support
 from ..support.signing import (
     PUB_SIZE,
     SIGNATURE_SIZE,
-    OpenSSL,
     named_key,
     pub_of,
+    sig_c,
     signature_by,
-    use_openssl,
+    use_sig_c,
 )
 from .boot.conftest import FAKE_RUNTIME
 
@@ -37,8 +38,8 @@ EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 
 
 @pytest.fixture(autouse=True)
-def on_openssl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    use_openssl(monkeypatch)
+def on_sig_c(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    use_sig_c(monkeypatch)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.delenv(signing.KEY_VARIABLE, raising=False)
     monkeypatch.delenv(signing.PASSPHRASE_VARIABLE, raising=False)
@@ -353,7 +354,7 @@ def test_any_pinned_key_passes_for_fsbpyr(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pins = "k", "r", "new-k"
-    use_openssl(monkeypatch, *map(pub_of, pins))
+    use_sig_c(monkeypatch, *map(pub_of, pins))
     file = tmp_path / "file"
     file.write_bytes(b"content")
 
@@ -851,13 +852,13 @@ def test_a_sig_appearing_while_signing_is_not_replaced(
     file = tmp_path / "file"
     file.write_bytes(b"content")
     sig = tmp_path / "file.sig"
-    original = OpenSSL._sign
+    original = sig_c()._sign
 
     def and_a_sig_appears(*args: bytes) -> tuple[bytes, bytes]:
         sig.write_bytes(b"theirs")
         return original(*args)
 
-    monkeypatch.setattr(OpenSSL, "_sign", staticmethod(and_a_sig_appears))
+    monkeypatch.setattr(sig_c(), "_sign", and_a_sig_appears)
 
     with pytest.raises(signing.SigningError, match="exists; nothing replaced"):
         signing.sign(file, project="myapp", key=key)
@@ -876,6 +877,22 @@ def test_a_wrong_passphrase_writes_nothing(
                            capsys=capsys)  # fmt: skip
 
     assert code == 2 and f"cannot open {key}: wrong passphrase?" in err
+    assert not (tmp_path / "file.sig").exists()
+
+
+def test_a_key_file_with_text_before_its_first_block_writes_nothing(
+    tmp_path: Path, key: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A reader takes nothing before the first block (§2.3), and sig.c refuses this file; the
+    openssl command these tests ran on before signed with it."""
+    key.write_bytes(b"hello\n" + key.read_bytes())
+    file = tmp_path / "file"
+    file.write_bytes(b"content")
+
+    code, _, err = command("sign", "--project", "myapp", "--signing-key", str(key), str(file),
+                           capsys=capsys)  # fmt: skip
+
+    assert code == 2 and f"cannot open {key}: not a key file" in err
     assert not (tmp_path / "file.sig").exists()
 
 
@@ -925,13 +942,13 @@ def test_a_pub_appearing_while_keys_are_made_leaves_no_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(signing.PASSPHRASE_VARIABLE, PASSPHRASE.decode())
-    original = OpenSSL._key_new
+    original = sig_c()._key_new
 
     def and_a_pub_appears(passphrase: bytes) -> tuple[bytes, bytes]:
         (tmp_path / "myapp.pub").write_bytes(b"theirs")
         return original(passphrase)
 
-    monkeypatch.setattr(OpenSSL, "_key_new", staticmethod(and_a_pub_appears))
+    monkeypatch.setattr(sig_c(), "_key_new", and_a_pub_appears)
 
     with pytest.raises(signing.SigningError, match="exists; nothing replaced"):
         signing.key_new(tmp_path / "myapp")
@@ -977,6 +994,12 @@ def test_no_terminal_and_no_variable_is_a_setup_error(monkeypatch: pytest.Monkey
 
 
 # --- from source --------------------------------------------------------------------------------
+
+
+def test_from_source_sig_cs_functions_answer_as_in_an_app() -> None:
+    """The battery that tests/e2e/test_signatures.py runs in a built app on both launchers, here on
+    the module these tests check signatures with."""
+    assert signatures.run(sig_c()) == signatures.EXPECTED
 
 
 @pytest.mark.parametrize("arguments", [

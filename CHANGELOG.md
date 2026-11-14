@@ -218,6 +218,19 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   Containerfile name uv 0.13.8 with the SHA-256 of its release tarball for x86-64 and aarch64, as
   uv publishes them and GitHub records them. The debian:trixie image pin is still the one the
   registry serves.
+- **The tests from source check signatures with `sig.c`, not with the openssl command.** The unit
+  tests of signing, self update, dispatch and the EL8 stubs, and one test of
+  `tests/e2e/test_el8.py`, ran `_fsbpyr`'s four functions on a stand-in in
+  `tests/support/signing.py` that called the openssl command and `hashlib`: no line of `sig.c`
+  ran in them, and the stand-in signed with key files that `sig.c` refuses (#121). They now run
+  on `sig.c` itself: `tests/probes/sig_module.c` gives its functions a module of their own, which
+  `sig_c` builds once per test process from `sig.c`, `integrity.c` and `parallel.c` with the
+  pinned distribution's headers and `libcrypto.a`, and loads in `_fsbpyr`'s place. Their keys
+  and signatures come from it too, as `fsbpyr key new` and `fsbpyr sign` make them, so nothing
+  under `tests/unit` runs the openssl command, and these tests need clang 23 and the pinned
+  distribution. Two tests are new: `sign` from source refuses a key file with text before its
+  first block, and `tests/support/signatures.py`'s battery gives on the module what it gives in
+  an app. The module is not built with llvm-cov's instrumentation (owner, 2026-11-14).
 - **The full suite runs only when it is asked for.** `full-suite.yml` no longer runs on a push to
   main or weekly: you start it on main when a release is prepared (`gh workflow run
   full-suite.yml --ref main`), or whenever else you want it. Merging into main requires no check,

@@ -1063,15 +1063,25 @@ change of K and a recovery; and the full suite settled aarch64 hardware.
 
 **Python, from source** (§12 step 2):
 - Real keys from source [P25]. Tests that run from source replace signing.py's two functions with
-  monkeypatch: the 74 unit tests that take a fake release server (tests/unit/test_selfupdate.py,
-  test_dispatch.py, runtime/test_stubs.py), the commands' tests, tests/e2e/test_el8.py:281-302.
-  tests/support/signing.py does `_fsbpyr`'s crypto with the openssl command, on keys of
-  release-signing.sh made per process: `_sha256` is hashlib's; `_verify` runs `pkeyutl -verify` on
-  both halves, and refuses a `.pub` as sig.c does; `_key_new` and `_sign` are real; the pins are
-  those keys' `.pub` bytes. No test uses a fake key or signature (owner, 2026-10-31: a fake key
-  shows nothing). It is not `sys.modules["_fsbpyr"]`, as at test_selfupdate.py:91: vcs.py:113 and
-  build.py:288 would take it for a built fsbpyr, and `own_version` and `builder_uv` raise
-  AttributeError (measured).
+  monkeypatch: the unit tests that take a fake release server (tests/unit/test_selfupdate.py,
+  test_dispatch.py, runtime/test_stubs.py), the commands' tests, tests/e2e/test_el8.py:294-326.
+  They run on sig.c itself (owner, 2026-11-01: the tests are to run fsbpyr's own code that calls
+  OpenSSL, and the openssl command is not that code). tests/probes/sig_module.c gives sig.c's
+  method table a module of its own, `fsbpyr_sig`; `sig_c` in tests/support/signing.py builds it
+  once per process, with sig.c, integrity.c, parallel.c and the pinned distribution's headers
+  and libcrypto.a, and loads it into the test process. The keys come from its `_key_new`, as
+  `fsbpyr key new` makes them (owner, 2026-11-14: no K or R from release-signing.sh here), the
+  signatures from its `_sign`, and the pins are those keys' `.pub` bytes; the script's keys
+  meet the C in tests/e2e/test_signatures.py and tests/e2e/test_signing.py. No test uses a fake
+  key or signature (owner, 2026-10-31: a fake key shows nothing). The module is built without
+  llvm-cov's instrumentation (owner, 2026-11-14). Its name is not `_fsbpyr`, and it is not
+  `sys.modules["_fsbpyr"]`: vcs.py:113 and selfupdate.py:111 import `_fsbpyr` to tell a built
+  fsbpyr (selfupdate.py:139 then reads its `info()`), and with such a fake `own_version` raised
+  AttributeError (measured; so did `builder_uv`, which #116 removed).
+- tests/support/signatures.py's battery, which the demo app runs on both launchers, on that
+  module in the test process: the same answers.
+- `sign` from source refuses a `.key` with text before its first block: `cannot open KEY: not a
+  key file`. The openssl command, in sig.c's place, signed with it.
 - The statement against literals, for `fsbpyr` and an app. For the empty file and `myapp`:
   `fsbpyr-signature 1\nsubject myapp\nsha256 e3b0c442…b855\n`, 105 bytes with the whole digest.
 - Build info naming `../../../Downloads/x`, `/tmp/x`, `a/b`, `myapp` with a trailing newline, a
@@ -1289,11 +1299,12 @@ Found outside signing, for the owner:
    and the seam through which it reaches the four functions and the pins [P25]; the `key`,
    `sign` and `verify` commands; signing in `build`, with the signing variables removed from the
    environment at start and handed only to a dispatched variant [P3]; dispatch from source
-   never fetching a variant (§4). Their tests (§11.3): from source, on the openssl command, the
-   statement test and a dispatched build; with a built fsbpyr, tests/e2e/test_signing.py, the
-   build's processes, the prompt and `fips=yes`; and the session fixture.
+   never fetching a variant (§4). Their tests (§11.3): from source, on sig.c's functions in a
+   module of their own, the statement test and a dispatched build; with a built fsbpyr,
+   tests/e2e/test_signing.py, the build's processes, the prompt and `fips=yes`; and the session
+   fixture.
 3. **Download paths.** `self update`, dispatch and the EL8 stubs download the `.xz` and check it
-   before unpacking. Their tests (§11.3) come in the same change: unit tests on the openssl command;
+   before unpacking. Their tests (§11.3) come in the same change: unit tests on sig.c's functions;
    FakeGitHub moved to tests/support/releases.py; the tagged copy and its build moved from
    test_el8.py to tests/e2e/conftest.py, with the test keys; tests/e2e/test_selfupdate.py (new);
    test_dispatch.py as a subprocess; test_el8.py's real-release tests with signed sums.
@@ -1422,11 +1433,13 @@ as written on 2026-10-30. P19 and what P18 and P21 say of K in CI went with the 
 - **P24 `--signing-key` has no `[tool.fsbpyr]` key** (§3, §7). Instead: a `signing-key` key
   (input the project controls, a path of one machine); a per-user config file, a new layer.
 - **P25 Test seams**: the tagged copy in tests/e2e/conftest.py; test keys made per session, none
-  committed; the openssl command through signing.py, not `sys.modules`; the session fixture; dispatch
-  from source never fetching; the download paths tested in a built fsbpyr, dispatch as a
-  subprocess to a real variant built on the other Python (§4, §11.3). Instead: committed test
-  keys; fake keys and signatures, as this work first had (owner, 2026-10-31); a `sys.modules` fake
-  (it breaks `own_version` and `builder_uv`, measured); dispatch from source refusing with
+  committed; sig.c's functions, in a module of their own, through signing.py, not `sys.modules`;
+  the session fixture; dispatch from source never fetching; the download paths tested in a built
+  fsbpyr, dispatch as a subprocess to a real variant built on the other Python (§4, §11.3).
+  Instead: committed test keys; fake keys and signatures, as this work first had (owner,
+  2026-10-31); the openssl command in place of sig.c, which P25 first had (owner, 2026-11-01: the
+  tests are to run fsbpyr's own code that calls OpenSSL); a `sys.modules` fake (it broke
+  `own_version` and `builder_uv`, measured); dispatch from source refusing with
   "signing needs a built fsbpyr";
   a crafted variant with a forged build info; a job between `sign` and `publish` that runs the
   built fsbpyr's `verify` on the release's files; `make release-check` alone.
@@ -1472,8 +1485,10 @@ from the text above, or adds to it:
 - **Download URLs are http or https**, with limits on the release document, whose text reaches the
   terminal through `shown`.
 - **No fake keys** (owner, 2026-10-31): the tests from source first ran on a fake `_fsbpyr` that
-  answered yes or no, and CodeQL flagged it. They now use real keys and real signatures, with the
-  openssl command doing what the launcher's C does in an executable.
+  answered yes or no, and CodeQL flagged it. Then the openssl command did, on real keys, what the
+  launcher's C does in an executable; that is not fsbpyr's code (owner, 2026-11-01). They now run
+  on sig.c's own functions, built into a module of their own (tests/probes/sig_module.c), with
+  keys and signatures that those functions make.
 - **`verify` and `sign` follow links alike**: `sign` writes beside the file a link leads to, where
   `verify` looks.
 - **A dispatched build is tested as a subprocess**, the fsbpyr that dispatches built from the same

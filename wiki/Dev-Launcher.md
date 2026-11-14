@@ -613,7 +613,10 @@ raises `ValueError`: `not a key file`, `wrong passphrase?`, `it holds other keys
 then ML-DSA-65` or `the signature could not be made`, and `not a public key file` from `_verify`.
 No key material is kept after a call; the new `.key`'s buffer is cleared (`OPENSSL_cleanse`)
 before it is freed. Built with `-DFSB_SIG_NO_PYTHON`, as `tests/probes/sig.c` and
-`tests/fuzz/sig_fuzz.c` build it, the file has no Python part.
+`tests/fuzz/sig_fuzz.c` build it, the file has no Python part. The tests from source build it
+with that part: `tests/probes/sig_module.c` adds `fsb_sig_methods` to a module of its own,
+`fsbpyr_sig`, which `sig_c` in `tests/support/signing.py` loads into the test process in
+`_fsbpyr`'s place.
 
 ### glibc.c
 
