@@ -206,6 +206,18 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   distributions' archives and the sysroots' packages among them are collected.
 
 ### Changed
+- **The runtime is python-build-standalone 20261110's: the same CPython 3.12.16, 3.13.18, 3.14.10
+  and 3.15.2**, on x86-64 and aarch64; the x86-64 archives are still LLVM 23.1.3 bitcode (their
+  PYTHON.json; the aarch64 ones were not read). It brings zlib 1.4 (was 1.3.2),
+  which fixes CVE-2026-85091 and the other memory errors of its release notes, and expat 2.10.0
+  (was 2.9.0); OpenSSL 3.5.9, libmpdec 4.0.0 and SQLite 3.53.1 are unchanged (read from each
+  x86-64 interpreter). SQLite 3.53.1 still has CVE-2026-11822 and CVE-2026-11824 (FTS5, fixed in
+  3.53.2). An executable gets the new runtime when it is rebuilt with this fsbpyr. Every runtime
+  id changes, so cached runtimes are built again, and this release's EL8 stubs are new ones. (#139)
+- **The release is built with uv 0.13.8 (was 0.13.7).** `tools/release/uv.version` and the
+  Containerfile name uv 0.13.8 with the SHA-256 of its release tarball for x86-64 and aarch64, as
+  uv publishes them and GitHub records them. The debian:trixie image pin is still the one the
+  registry serves.
 - **The full suite runs only when it is asked for.** `full-suite.yml` no longer runs on a push to
   main or weekly: you start it on main when a release is prepared (`gh workflow run
   full-suite.yml --ref main`), or whenever else you want it. Merging into main requires no check,
