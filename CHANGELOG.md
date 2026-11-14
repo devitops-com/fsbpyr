@@ -32,6 +32,20 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   now records (owner, 2026-11-08). It gates nothing. The first table, 0.31.0 against 0.30.0, is in.
 
 ### Fixed
+- **A `JOURNAL_STREAM` that names neither stdout nor stderr costs a start no imports.** A parent
+  whose output is the journal hands the variable on to processes whose output is not: GNOME
+  Shell to the apps it starts, a service to children whose output it reads from pipes. With it
+  set, the boot code imported `_fsbpyr_rt.service` and 12 standard-library modules (`signal`,
+  `enum`, `typing` among them) before the app ran, only to find that no stream was the journal.
+  It now compares stdout's and stderr's device and inode with the value first (two `fstat`
+  calls) and imports the module only on a match or as process 1; what a match does is
+  unchanged. `tests/e2e/test_imports.py`'s check of the boot's imports failed in any environment
+  that had the variable; it now runs the app without it and, in a new test, with one that names
+  another file.
+- **`tests/integration/test_worker_venvs.py` passes under `PYTHONDONTWRITEBYTECODE` and
+  `PYTHONPYCACHEPREFIX`.** Its pytest runs inherited them, so the `.pyc` that one worker's first
+  import writes, which the test looks for, was not written or went elsewhere. The runs now leave
+  both out (owner, 2026-11-14).
 - **`fsbpyr build --extra NAME` works with the `poetry.lock` Poetry 2 writes.** Poetry 2 marks
   each package that only an extra needs `extra == "NAME"`, and fsbpyr evaluated those markers
   with no extra active, so every package of the extra seemed missing and the build stopped with
