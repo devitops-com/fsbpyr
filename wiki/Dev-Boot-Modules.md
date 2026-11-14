@@ -70,7 +70,7 @@ reference" value.
 6. Sets `sys.argv[0]` and undoes the restart idiom ([below](#sysargv0-and-the-restart-idiom)).
 7. Parses an entry point that holds a newline as a table of commands (`commands.parse`); a single
    command costs this one test.
-8. With `JOURNAL_STREAM` set, or as process 1, applies the
+8. With `JOURNAL_STREAM` naming the file of stdout or stderr, or as process 1, applies the
    [service policies](#services-and-containers) (`service.start`), also for the helper
    interpreter of step 9.
 9. Runs a multiprocessing or helper-interpreter child that the command line asks for and the
@@ -300,7 +300,10 @@ parent and children never run different versions of the file. Users' view:
   worker in a long C call still dies of the signal.
 
 The boot module looks up `JOURNAL_STREAM` and the process id at every start and imports
-`_fsbpyr_rt.service` only when one of them applies.
+`_fsbpyr_rt.service` only when one of them applies. A parent whose output is the journal hands
+the variable on to processes whose output is not (GNOME Shell's apps, a service's children on
+pipes), so with it set the boot module first compares stdout's and stderr's device and inode
+(`posix.fstat`) with it: a value of another file, or one that does not parse, imports nothing.
 
 ## Modules
 
