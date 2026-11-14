@@ -2,7 +2,7 @@
 # `make bootstrap` uses it on hosts other than Debian trixie (tools/bootstrap.sh). The checkout
 # is mounted at /src and dist/fsbpyr lands in it; a volume keeps uv's cache, its Pythons,
 # fsbpyr's runtime and the clang/lld 23 bootstrap.sh fetches between runs.
-FROM docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1 AS build
+FROM docker.io/library/debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 AS build
 
 # Everything but uv, Python and clang/lld 23 from Debian's own packages. The runtime links with
 # LLVM's clang/lld 23, which bootstrap.sh fetches with curl and unpacks with zstd
@@ -16,9 +16,9 @@ RUN apt-get update \
 # the SHA-256 that astral-sh/uv publishes for it. It installs the Python pinned in
 # .python-version.
 ARG TARGETARCH
-ARG UV_VERSION=0.13.6
-ARG UV_SHA256_AMD64=f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645
-ARG UV_SHA256_ARM64=229e194255c7958d86d56e8790d969a6f74736592133f0dfd0076f754c642c1d
+ARG UV_VERSION=0.13.7
+ARG UV_SHA256_AMD64=c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83
+ARG UV_SHA256_ARM64=71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc
 RUN case "$TARGETARCH" in \
         amd64) name=uv-x86_64-unknown-linux-gnu; sha256=$UV_SHA256_AMD64 ;; \
         arm64) name=uv-aarch64-unknown-linux-gnu; sha256=$UV_SHA256_ARM64 ;; \
