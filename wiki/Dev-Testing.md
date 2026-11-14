@@ -624,7 +624,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,876 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,877 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -644,8 +644,8 @@ run with the release launcher only, those two portability tests also on the two 
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 261 |
 | `tests/integration` | 17 | 858 |
-| `tests/e2e` | 45 | 1,182 |
-| All | 153 | 4,876 |
+| `tests/e2e` | 45 | 1,183 |
+| All | 153 | 4,877 |
 
 ### tests/unit (top level): 29 files, 942 tests
 
@@ -796,7 +796,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
 | [`test_worker_venvs.py`](../tests/integration/test_worker_venvs.py) | 10 | [`worker_venvs.py`](../tests/support/worker_venvs.py) on real pytest runs with three workers: each in an environment of its own, subprocesses included, removed after the run, and a worker in anything else stopping the run. The runs leave out `PYTHONDONTWRITEBYTECODE` and `PYTHONPYCACHEPREFIX`, so the `.pyc` a first import writes is where the test looks, whatever the suite runs under. |
 
-### tests/e2e: 45 files, 1,182 tests
+### tests/e2e: 45 files, 1,183 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -825,7 +825,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_interrupted_build.py`](../tests/e2e/test_interrupted_build.py) | 2 | A `fsbpyr build` process killed with SIGTERM, or out of room under a file-size limit, leaves the output as it was and no temporary file. |
 | [`test_large.py`](../tests/e2e/test_large.py) | 3 | A package with a 5 GiB sparse file builds (compressed and raw), runs, streams, extracts and verifies in bounded memory, each process reading less than 1 GiB (`rchar`): no hole is read. |
 | [`test_launcher_build.py`](../tests/e2e/test_launcher_build.py) | 16 | No launcher source has a variable-length array or a frame over the limit, and the check catches both; the sanitized launcher carries ASan and UBSan; the launcher links reproducibly. |
-| [`test_launcher_coverage.py`](../tests/e2e/test_launcher_coverage.py) | 1 | The launcher coverage report of `full-suite.yml`: a probe built with `FSBPYR_LLVM_COV_DIR` from two copies of the launcher sources, run, and read by LLVM's `llvm-cov` with the workflow's `-ignore-filename-regex`: one file, under `src/fsbpyr/launcher`, and none of the tests. |
+| [`test_launcher_coverage.py`](../tests/e2e/test_launcher_coverage.py) | 2 | The launcher coverage report of `full-suite.yml`: the sanitized runtime's stub kept in the directory `FSBPYR_LLVM_COV_DIR` names, which need not exist yet; a probe built with `FSBPYR_LLVM_COV_DIR` from two copies of the launcher sources, run, and read by LLVM's `llvm-cov` with the workflow's `-ignore-filename-regex`: one file, under `src/fsbpyr/launcher`, and none of the tests. |
 | [`test_loose_directory.py`](../tests/e2e/test_loose_directory.py) | 37 | Directories of loose scripts as one executable with a link per command, each printing what `python3 <script>` prints: names, shadowing, links from elsewhere, the `pylib` hack, siblings through `sys.executable`, undeclared imports, `--strict`, no user code run by the build, PEP 723 blocks, the venv rung, multiprocessing, one command becoming several and back. |
 | [`test_multicall.py`](../tests/e2e/test_multicall.py) | 22 | The `multi` fixture's two console scripts as one executable: links, the summary and `inspect`, starts by path, name or first argument, the list and exit 2, a renamed copy, a file in the way, `-m` and `-c`, helper interpreters, multiprocessing, a hard link keeping the old build. |
 | [`test_natives.py`](../tests/e2e/test_natives.py) | 16 | The `heavy` fixture (numpy, orjson, cryptography, pydantic, onnxruntime) against the venv: licences, `FSBPYR_SELFTEST=natives`, the first run's extraction, xz natives, concurrent first runs, a damaged extension repaired, the native generation reused. Deselected without an onnxruntime wheel. |
