@@ -156,9 +156,9 @@ list cannot drift from the code. It says nothing about packages that are not in 
 ## Tested on real applications
 
 Besides the fixtures, a corpus of small applications is built and run in the corpus job of
-`full-suite.yml`: on every pull request in main's merge queue, weekly and on request, for each
-Python (3.12 to 3.15) and each target (x86-64 and aarch64); `make test-corpus` runs it locally.
-A release itself runs no tests: it publishes a commit whose run passed. Each app is a project in
+`full-suite.yml`, which runs on request (before every release), for each Python (3.12 to 3.15)
+and each target (x86-64 and aarch64); `make test-corpus` runs it locally. A release itself runs
+no tests: it publishes a commit whose run passed. Each app is a project in
 `tests/corpus/<name>` with its own `uv.lock`; the test runs its commands in a venv and in the
 built executable, each run with an empty home directory of its own, and compares exit code,
 stdout and stderr ([tests/corpus/README.md](../tests/corpus/README.md)). An app is not run on a
