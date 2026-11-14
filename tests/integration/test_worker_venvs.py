@@ -44,9 +44,15 @@ def test_report(worker_id):
 """
 
 
+# What decides whether and where Python writes a .pyc: the run writes them beside the modules, as
+# the suite's workers would without these, whatever the environment the suite runs in sets.
+PYC_VARIABLES = ("PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX")
+
+
 def _pytest(directory: Path, *args: str) -> subprocess.CompletedProcess[str]:
     (directory / "test_probe.py").write_text(PROBE)
-    env = {name: value for name, value in os.environ.items() if not name.startswith("PYTEST_")}
+    env = {name: value for name, value in os.environ.items()
+           if not name.startswith("PYTEST_") and name not in PYC_VARIABLES}  # fmt: skip
     env |= {"REPORTS": str(directory), "PYTHONPATH": str(directory)}  # the run's own PYTEST_ go
     return subprocess.run(
         [sys.executable, "-m", "pytest", "-n", str(len(WORKERS)), "--dist", "each",
@@ -58,7 +64,10 @@ def _pytest(directory: Path, *args: str) -> subprocess.CompletedProcess[str]:
 @pytest.fixture(scope="module")
 def reports(tmp_path_factory: pytest.TempPathFactory) -> dict[str, dict[str, Any]]:
     directory = tmp_path_factory.mktemp("workers")
-    done = _pytest(directory)
+    with pytest.MonkeyPatch.context() as patch:  # set, so that the run shows they stay out of it
+        patch.setenv("PYTHONDONTWRITEBYTECODE", "1")
+        patch.setenv("PYTHONPYCACHEPREFIX", str(directory / "pycache"))
+        done = _pytest(directory)
     assert done.returncode == 0, done.stdout + done.stderr
     return {worker: json.loads((directory / worker).read_text()) for worker in WORKERS}
 

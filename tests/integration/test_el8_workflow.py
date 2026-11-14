@@ -1,6 +1,7 @@
 """The shape of .github/workflows/el8.yml, which links the EL8 stubs of a release from its tag and
 publishes them in a companion release outside the release gate, and of full-suite.yml's EL8 jobs,
-which check and test those stubs on every push to main and gate the release (owner, 2026-11-03).
+which check and test those stubs in every run of the full suite and gate the release (owner,
+2026-11-03).
 GitHub runs them, not these tests: they pin what can be read from the files (triggers, the gate,
 pins, permissions, asset names, and that no job of el8.yml checks out or runs anything but the
 commit that started the run), and run the shell of some steps against fakes."""
@@ -93,9 +94,7 @@ def test_the_release_knows_nothing_of_el8_and_its_gate_tests_the_stubs() -> None
                              "el8-portability", "el8-corpus", "el8-vm-smoke"}  # fmt: skip
     for name, text in EL8_JOBS.items():
         assert "continue-on-error" not in text, name
-        head = text.split("    steps:", 1)[0]  # no condition but the skip on an opened pull request
-        head = head.replace("    if: ${{ github.event_name != 'pull_request' }}\n", "", 1)
-        assert not re.search(r"^    if:", head, re.MULTILINE), name
+        assert not re.search(r"^    if:", text.split("    steps:", 1)[0], re.MULTILINE), name
 
 
 def test_a_tag_is_done_once() -> None:

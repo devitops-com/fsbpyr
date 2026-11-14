@@ -624,7 +624,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,869 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,871 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -639,13 +639,13 @@ run with the release launcher only, those two portability tests also on the two 
 | Layer | Files | Tests |
 |---|---|---|
 | `tests/unit` (top level) | 29 | 942 |
-| `tests/unit/boot` | 23 | 380 |
+| `tests/unit/boot` | 23 | 387 |
 | `tests/unit/builder` | 19 | 805 |
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 261 |
-| `tests/integration` | 17 | 860 |
-| `tests/e2e` | 45 | 1,180 |
-| All | 153 | 4,869 |
+| `tests/integration` | 17 | 853 |
+| `tests/e2e` | 45 | 1,182 |
+| All | 153 | 4,871 |
 
 ### tests/unit (top level): 29 files, 942 tests
 
@@ -681,7 +681,7 @@ run with the release launcher only, those two portability tests also on the two 
 | [`test_vm_smoke.py`](../tests/unit/test_vm_smoke.py) | 29 | `tools/vm-smoke.py` without a VM ([The page-size smoke test](#the-page-size-smoke-test)): the pins file, the cpio writer and initramfs, the RPM reader, failing or mismatching downloads, console parsing and checks, the QEMU and kernel command lines, `/init`'s log level, a QEMU that exits at once. |
 | [`test_wiki.py`](../tests/unit/test_wiki.py) | 54 | The wiki's pages and `tools/wiki/`: every link of `wiki/*.md` has its target, the published form of a page, the import graphs the build draws, how publishing treats the wikis' history, and the messages, refusal and pinned keys that [User-Security](User-Security.md) shows against the code. The PDFs need pandoc and LuaLaTeX and are not built here (`make wiki-build`). |
 
-### tests/unit/boot: 23 files, 380 tests
+### tests/unit/boot: 23 files, 387 tests
 
 Most build an app with `FAKE_RUNTIME` and run the boot code in-process through the `boot`
 fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fixups.py`,
@@ -690,7 +690,7 @@ fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fix
 
 | File | Tests | What it tests, and how |
 |---|---|---|
-| [`test_boot.py`](../tests/unit/boot/test_boot.py) | 47 | On `tests/support/apps.py`'s demo app: the path hook (never above the executable), specs and loader, namespace packages, `pkgutil`, `importlib.resources` (one resource name on 3.12), `importlib.metadata`, entry points, `boot.run()` (selftest, `exit`/`quit`/`help`, helper interpreters, multiprocessing children, the exit trace), argparse fixed in apps of scripts only, and the excepthook: no 3.15 site-initialization hint for a missing module, and a note naming the package `--fs-package` would take for an `OSError` inside the executable. |
+| [`test_boot.py`](../tests/unit/boot/test_boot.py) | 54 | On `tests/support/apps.py`'s demo app: the path hook (never above the executable), specs and loader, namespace packages, `pkgutil`, `importlib.resources` (one resource name on 3.12), `importlib.metadata`, entry points, `boot.run()` (selftest, `exit`/`quit`/`help`, helper interpreters, multiprocessing children, the exit trace), the service policies started only for a `JOURNAL_STREAM` that names stdout or stderr (a closed stdout is none) or as process 1, argparse fixed in apps of scripts only, and the excepthook: no 3.15 site-initialization hint for a missing module, and a note naming the package `--fs-package` would take for an `OSError` inside the executable. |
 | [`test_commands.py`](../tests/unit/boot/test_commands.py) | 32 | `_fsbpyr_rt.commands`: the `name=target` table, the command from `argv[0]` or else `argv[1]`, the list and exit 2 without one, the selftest importing every target, a link started with `-m`, a forkserver preloading the parent command's module. |
 | [`test_distutils.py`](../tests/unit/boot/test_distutils.py) | 2 | `import distutils` answers with setuptools' copy before setuptools is imported. |
 | [`test_execve_argv0.py`](../tests/unit/boot/test_execve_argv0.py) | 8 | `sys.argv[0]`: the path `execve` got (`execfn` in `_fsbpyr.info()`), made absolute without collapsing `..`; left alone without a path, after a renamed start or a re-exec, or without a working directory. |
@@ -774,7 +774,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_sysroot.py`](../tests/unit/runtime/test_sysroot.py) | 21 | The glibc sysroots: `ar` members, symlinks kept inside, escaping entries refused, verified HTTPS downloads, RPMs extracted as debs are, `lib` and `lib64` linked into `usr` for EL8 only. |
 | [`test_toolchain_and_link.py`](../tests/unit/runtime/test_toolchain_and_link.py) | 35 | `ar` listing, clang discovery and the stub's link: static PIE, hardening flags, the sanitized variant, aarch64's outlined atomics and Cortex-A53 erratum 843419 fix, mapped paths, the frame limit, `-DFSBPYR_RUNTIME_ID`, a failed link's output. |
 
-### tests/integration: 17 files, 860 tests
+### tests/integration: 17 files, 853 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -788,15 +788,15 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_mirror.py`](../tests/integration/test_mirror.py) | 28 | `make mirror` (`tools/release/mirror.sh`) on two bare repositories: GitLab follows only what this checkout and GitHub agree on, a disagreement stops it before any push, a branch goes only when main holds it. |
 | [`test_pbs_distribution.py`](../tests/integration/test_pbs_distribution.py) | 8 | What the runtime build relies on in the pinned PBS distribution: startup modules, the compile worker, the link plan, licence texts. It comes from `FSBPYR_TEST_DOWNLOADS` or is fetched (`downloads.pbs_distribution`). |
 | [`test_pbs_stdlib_versions.py`](../tests/integration/test_pbs_stdlib_versions.py) | 12 | The stdlib selection and startup modules for each pinned CPython version. |
-| [`test_release.py`](../tests/integration/test_release.py) | 172 | The release scripts against throwaway git repositories, a bare origin and a fake `gh`, the companion release and its tag included, the gate's refusal of a run with a job that did not succeed, and which runs it takes (the merge queue's, a push's from before it, never a manual one) and the queue's required check; also the workflow files, `tools/bootstrap.sh` and the Makefile's `VERSION`, `KEY` and `PYTHON`. Nothing reaches GitHub. |
+| [`test_release.py`](../tests/integration/test_release.py) | 165 | The release scripts against throwaway git repositories, a bare origin and a fake `gh`, the companion release and its tag included, the gate's refusal of a run with a job that did not succeed, and which runs it takes (one started on main, or a push's from before 2026-11-13); also the workflow files, `tools/bootstrap.sh` and the Makefile's `VERSION`, `KEY` and `PYTHON`. Nothing reaches GitHub. |
 | [`test_release_drafts.py`](../tests/integration/test_release_drafts.py) | 36 | No workflow can reach a release key, publish a release or read a variable, and `release.yml` and `el8.yml` stop at a draft; the draft job's file check runs for real against files and sums that the built code in `prepare` could choose. |
 | [`test_release_sign.py`](../tests/integration/test_release_sign.py) | 182 | `make release-sign` and `make release-audit` with the real scripts and keys and a bare `hub`, against [`FakeGitHub`](../tests/support/fakegithub.py), which can do all an account can but attest: moved commits and tags, foreign attestations, runners and builds, files swapped during signing, a second draft, a key in the checkout; files other than the bytes the commit makes (an `.xz`, `install.sh`, the full suite's builds), which burn the version; each audit finding; no failed lookup ever a pass. |
 | [`test_release_signing.py`](../tests/integration/test_release_signing.py) | 113 | [`tools/release/release-signing.sh`](../tools/release/release-signing.sh), `previous-release.sh` and `check-signature.sh`, with fake programs on `PATH` and passphrases typed on a pty: bad key files and `.pub`s, nothing replaced, burned tags, companions, the previous-release lookup, each pin rule of the sign job. |
 | [`test_runner_disk.py`](../tests/integration/test_runner_disk.py) | 20 | [`tools/runner-disk.sh`](../tools/runner-disk.sh), which makes room on a runner's disk for [`full-suite.yml`](../.github/workflows/full-suite.yml)'s suite and corpus jobs, with a fake `df`: only the listed paths removed, the free-space check at its boundary, bad arguments refused first; the two jobs, read as text, making room early and reporting free space. |
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
-| [`test_worker_venvs.py`](../tests/integration/test_worker_venvs.py) | 10 | [`worker_venvs.py`](../tests/support/worker_venvs.py) on real pytest runs with three workers: each in an environment of its own, subprocesses included, removed after the run, and a worker in anything else stopping the run. |
+| [`test_worker_venvs.py`](../tests/integration/test_worker_venvs.py) | 10 | [`worker_venvs.py`](../tests/support/worker_venvs.py) on real pytest runs with three workers: each in an environment of its own, subprocesses included, removed after the run, and a worker in anything else stopping the run. The runs leave out `PYTHONDONTWRITEBYTECODE` and `PYTHONPYCACHEPREFIX`, so the `.pyc` a first import writes is where the test looks, whatever the suite runs under. |
 
-### tests/e2e: 45 files, 1,180 tests
+### tests/e2e: 45 files, 1,182 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -820,7 +820,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_find_object.py`](../tests/e2e/test_find_object.py) | 2 | The stub's `_dl_find_object` wrapper (`launcher/glibc.c`) through `probes/find_object.c`: glibc's own where it has one, else the program headers giving the same object. |
 | [`test_fuzz.py`](../tests/e2e/test_fuzz.py) | 9 | The libFuzzer harnesses with ASan and UBSan: `tests/fuzz/payload_fuzz.c` on each edge case, then `FSBPYR_FUZZ_SECONDS` of exploring; `tests/fuzz/sig_fuzz.c` for a quarter of that, 30 seconds at least ([Probes and the fuzzer](#probes-and-the-fuzzer)); where each keeps what it finds, and that `full-suite.yml` caches both. |
 | [`test_gc.py`](../tests/e2e/test_gc.py) | 15 | Collection by the launcher: the held tree, `FSBPYR_GC=1` and `=0`, a background run a day after the last, a user's directory never collected, the passwd home when `HOME` is unusable. |
-| [`test_imports.py`](../tests/e2e/test_imports.py) | 16 | The demo app as a real executable (marked `sanitized`): the C module against the stand-in's contract, extracted files never synced (strace), boot imports limited to built-in, frozen and startup modules, resources, metadata, tracebacks, the working directory never shadowing payload sources. |
+| [`test_imports.py`](../tests/e2e/test_imports.py) | 18 | The demo app as a real executable (marked `sanitized`): the C module against the stand-in's contract, extracted files never synced (strace), boot imports limited to built-in, frozen and startup modules, without `JOURNAL_STREAM` and with one that names another file, resources, metadata, tracebacks, the working directory never shadowing payload sources. |
 | [`test_install_links.py`](../tests/e2e/test_install_links.py) | 9 | `FSBPYR_INSTALL_LINKS=DIR`: links with `name.py` aliases to the executable's real path, each running its command; the app not run, reruns idempotent, obstacles reported and kept, none from the collection child, a bad directory an error first; a single script's name and alias. |
 | [`test_interrupted_build.py`](../tests/e2e/test_interrupted_build.py) | 2 | A `fsbpyr build` process killed with SIGTERM, or out of room under a file-size limit, leaves the output as it was and no temporary file. |
 | [`test_large.py`](../tests/e2e/test_large.py) | 3 | A package with a 5 GiB sparse file builds (compressed and raw), runs, streams, extracts and verifies in bounded memory, each process reading less than 1 GiB (`rchar`): no hole is read. |

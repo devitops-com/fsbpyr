@@ -2,10 +2,10 @@ name: Build
 
 # The release build, one definition for its two callers, so that a release is built the way the
 # full suite built and checked it:
-#   - full-suite.yml, with checks, on every push to main: `make bootstrap` on Debian trixie, then
-#     the installed fsbpyr builds itself with `make build`, byte for byte bootstrap's stage 3; a
-#     smoke test; the .xz decompresses to the executable; and an independent rebuild
-#     (reproduce) that compare checks byte for byte, its SBOM too;
+#   - full-suite.yml, with checks, on request (before a release): `make bootstrap` on Debian
+#     trixie, then the installed fsbpyr builds itself with `make build`, byte for byte
+#     bootstrap's stage 3; a smoke test; the .xz decompresses to the executable; and an
+#     independent rebuild (reproduce) that compare checks byte for byte, its SBOM too;
 #   - release.yml, without, for a pushed version tag: the build alone, from the tag, which only
 #     adds the tag the executable records (vcs.git_state) to what the full suite built.
 # One fsbpyr per Python version and per target (Phase 9): build, reproduce and compare run once
@@ -47,7 +47,7 @@ jobs:
     # the multi-arch index's, so each runner pulls its own architecture. It installs no tools,
     # so the job does: a few packages from Debian's own repository, the pinned uv
     # (tools/release/uv.version) and the Python of .python-version.
-    container: docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
+    container: docker.io/library/debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
     timeout-minutes: 75
     env:
       TARGET: ${{ matrix.target }}
@@ -250,7 +250,7 @@ jobs:
     name: reproduce (${{ matrix.target }}, Python ${{ matrix.python }})
     if: inputs.checks
     runs-on: ${{ matrix.runner }}
-    container: docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
+    container: docker.io/library/debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
     timeout-minutes: 75
     strategy:
       fail-fast: false

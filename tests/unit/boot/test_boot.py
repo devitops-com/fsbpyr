@@ -432,6 +432,71 @@ def test_multiprocessing_children_run_instead_of_the_app(
     assert "selftest" not in capsys.readouterr().out  # the application did not run
 
 
+def _device_inode(descriptor: int) -> bytes:
+    status = os.fstat(descriptor)
+    return b"%d:%d" % (status.st_dev, status.st_ino)
+
+
+def _service_starts(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch, journal: bytes | None, pid: int
+) -> list[tuple[bytes | None, int]]:
+    """The calls of ``service.start`` that ``_service_policies`` makes with ``journal`` as
+    JOURNAL_STREAM's value and ``pid`` as the process id."""
+    service = importlib.import_module("_fsbpyr_rt.service")
+    calls: list[tuple[bytes | None, int]] = []
+    monkeypatch.setattr(service, "start", lambda *started: calls.append(started))
+    monkeypatch.delitem(posix.environ, b"JOURNAL_STREAM", raising=False)
+    if journal is not None:
+        monkeypatch.setitem(posix.environ, b"JOURNAL_STREAM", journal)
+    monkeypatch.setattr(posix, "getpid", lambda: pid)
+    boot._service_policies()
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("journal", "pid", "started"),
+    [
+        (None, 2, False),
+        ("another file", 2, False),  # inherited from a parent whose output is the journal
+        ("not a pair", 2, False),
+        ("stdout", 2, True),
+        ("stderr", 2, True),
+        (None, 1, True),
+    ],
+)
+def test_service_policies_start_only_for_a_stream_that_is_the_journal_or_as_process_1(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    journal: str | None, pid: int, started: bool,
+) -> None:  # fmt: skip
+    (other := tmp_path / "other").write_text("")
+    values = {
+        "another file": b"%d:%d" % (other.stat().st_dev, other.stat().st_ino),
+        "not a pair": b"journal",
+        "stdout": _device_inode(1),
+        "stderr": _device_inode(2),
+    }
+    value = None if journal is None else values[journal]
+
+    calls = _service_starts(boot, monkeypatch, value, pid)
+
+    assert calls == ([(value, pid)] if started else [])
+
+
+def test_a_closed_stdout_is_no_journal_and_stderr_still_is(
+    boot: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stderr, fstat = _device_inode(2), posix.fstat
+
+    def closed_stdout(descriptor: int) -> os.stat_result:
+        if descriptor == 1:
+            raise OSError(9, "Bad file descriptor")
+        return fstat(descriptor)
+
+    monkeypatch.setattr(posix, "fstat", closed_stdout)
+
+    assert _service_starts(boot, monkeypatch, stderr, 2) == [(stderr, 2)]
+
+
 @pytest.mark.usefixtures("isolated_sys")
 def test_trace_reports_payload_modules_by_dist_at_exit(
     boot: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

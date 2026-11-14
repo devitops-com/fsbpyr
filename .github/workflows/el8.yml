@@ -8,8 +8,8 @@ name: EL8
 # 2026-10-25): release.yml neither waits for it nor depends on it, and a release may have EL8
 # stubs or not. A release without them is complete; `--glibc 2.28` says so plainly.
 # Nothing is tested here, as nothing is in release.yml (owner, 2026-11-03): full-suite.yml's EL8
-# jobs link every stub twice and compare the links, check the stubs and test them, on every
-# push to main, and they gate the release. The plan job checks that the tag's commit passed
+# jobs link every stub twice and compare the links, check the stubs and test them, in every run
+# of it, and they gate the release. The plan job checks that the tag's commit passed
 # full-suite.yml (tools/release/green-run.sh, as release.yml's draft job checks it). A stub's
 # link takes nothing from the tag (its runtime id is a digest of the launcher sources, the Python
 # pin and the sysroot) and is reproducible, so the stubs linked here have the bytes of those that
@@ -118,7 +118,7 @@ jobs:
         include:
           - {target: "x86_64-linux-gnu", runner: "ubuntu-24.04"}
           - {target: "aarch64-linux-gnu", runner: "ubuntu-24.04-arm"}
-    container: docker.io/library/debian:trixie@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1
+    container: docker.io/library/debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
     timeout-minutes: 30
     env:
       TARGET: ${{ matrix.target }}

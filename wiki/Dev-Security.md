@@ -340,7 +340,8 @@ link.
 ### Service policies
 
 [`_fsbpyr_rt/service.py`](../src/fsbpyr/boot/_fsbpyr_rt/service.py) is imported only when
-`JOURNAL_STREAM` is set or the app is process 1 (`_service_policies` in `_fsbpyr_boot.py`).
+`JOURNAL_STREAM` names the file of stdout or stderr (`posix.fstat` on descriptors 1 and 2) or the
+app is process 1 (`_service_policies` in `_fsbpyr_boot.py`).
 `JOURNAL_STREAM` (`<device>:<inode>`, decimal) only line-buffers stdout or stderr when `fstat`
 shows it is that file and not unbuffered already; a malformed value or another file does nothing.
 As process 1, a handler raising `SystemExit(143)` is installed only while SIGTERM has its default
