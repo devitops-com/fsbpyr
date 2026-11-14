@@ -851,7 +851,8 @@ Rules it enforces:
   or pass `--requirements`). An entry for a package with extras adds nothing; locks 4.0 to 4.2
   keep the hashes in `[metadata.files]`.
 - A line is exact: `name==version` with every hash, a path (absolute; `${PROJECT_ROOT}` filled
-  in) as a regular `name @ file:...` that must exist, a VCS entry by its commit
+  in) as a regular `name @ file:...` that must exist, with `#sha256=` when it is a file the lock
+  has a hash for (a directory cannot carry one), a VCS entry by its commit
   (`name @ git+URL@commit`, with its subdirectory), a URL with `#sha256=` when the lock has it.
 - Refused, naming the entry: a package from another index (its credentials are not in the lock),
   a VCS entry without a commit, a missing path, a name, version or source with white space, a
@@ -886,8 +887,8 @@ Rules it enforces:
 
 - A registry entry must be pinned with `==` (not `===`); a `git` entry needs a commit `ref` (40 or
   64 hex digits); `hg`, `svn` and `bzr` are refused; a `path` entry installs as a regular package,
-  except the project itself (`pipenv install -e .`); a `file` entry keeps its hash when the lock
-  gives exactly one.
+  except the project itself (`pipenv install -e .`); a `file` entry, local or a URL, keeps its
+  hash, and one with two different hashes is refused (a direct reference takes one).
 - Extras that the entries the target installs ask of their dependencies count as active in
   markers (Pipenv marks what an extra needs `extra == 'x'`), until they bring in no other entry;
   an entry whose own marker is false asks for none. A marker that cannot be evaluated is
@@ -1032,7 +1033,7 @@ requirements files resolve as the user expects.
 | `script.lock` | `uv sync --script SCRIPT --active --locked` into the staging environment (`VIRTUAL_ENV`); then `uv pip install --no-deps` the wheel |
 | `pylock.toml` | `uv venv`, `uv pip install -r pylock.toml`, `uv pip install --no-deps` the wheel |
 | requirements file | as `pylock.toml`, with `--no-editable`, and `--require-hashes` under `--strict` or when the file has `--hash` options |
-| `poetry.lock`, `pdm.lock`, `Pipfile.lock` | as a requirements file, from `WORK/<lock>.requirements.txt` written by `foreign.export` or `pipenv.export`; `--require-hashes` when every line carries a hash |
+| `poetry.lock`, `pdm.lock`, `Pipfile.lock` | as a requirements file, from `WORK/<lock>.requirements.txt` written by `foreign.export` or `pipenv.export`; `--require-hashes` when every line carries a hash (the plan's `require_hashes`) |
 | unlocked, inferred | `uv venv`, then `uv pip install` the wheel with its extras, resolving the dependencies now (for inferred, the pins the wheel requires) |
 
 Every install command gets `--python-platform` with the target's uv platform for the baseline
@@ -1045,7 +1046,7 @@ would ship pip.
 |---|---|
 | `StagingError` | The staging install could not be planned, or failed. |
 | `StagingOptions` | The runtime's Python, extras, offline, requirements file, uv platform, strict, the `loose.Package`, and the target's markers for converted locks. |
-| `StagingPlan` | The site-packages path, the wheel build command (empty when fsbpyr writes the wheel), the install commands, the wheel directory, extra environment, the command that drops uv's cached builds, and the package. |
+| `StagingPlan` | The site-packages path, the wheel build command (empty when fsbpyr writes the wheel), the install commands, the wheel directory, extra environment, the command that drops uv's cached builds, the package, and whether the install of a requirements file demands hashes (`require_hashes`). |
 
 | Function | What it does |
 |---|---|
@@ -1421,7 +1422,7 @@ built on the build host from its sdist.
 | Function | What it does |
 |---|---|
 | `read_lock(source, text)` | The packages of a `uv.lock`, script lock, `pylock.toml`, `poetry.lock`, `pdm.lock` or `Pipfile.lock` by canonical name; empty for a requirements file or an unlocked build. |
-| `lock_record(directory, source, path)` | build_info's `lock` and the lock's packages. |
+| `lock_record(directory, source, path, *, require_hashes=False)` | build_info's `lock` and the lock's packages; `require_hashes` is the staging plan's. |
 | `inferred_lock(directory, inferred)` | build_info's `lock` for pins read from a venv. |
 | `installed_tags(dist)` | The wheel tags in an installed distribution's `WHEEL` file. |
 | `dist_record(dist, packages, *, project)` | One `dists` entry. |
@@ -1433,8 +1434,10 @@ Rules: the `source` values are on
 lock's local packages (uv's editable, directory and virtual ones, a `pylock.toml` directory, a
 Poetry directory, a PDM or Pipenv path); Poetry, PDM and Pipenv kinds map to `registry` (another
 index too), `git`, `url`, `path` or `local`, and a lock that lists only an sdist gives
-`built-from-sdist` except for git. `hashed` is true for `uv.lock` and a script lock,
-for a requirements file with a `--hash` option, and for the other locks when they list hashes.
+`built-from-sdist` except for git. `hashed` is true for `uv.lock` and a script lock, for a
+requirements file with a `--hash` option, for a Poetry, PDM or Pipenv lock when its install ran
+with `--require-hashes` (the plan's `require_hashes`, which `build` passes), and for
+`pylock.toml` when it lists hashes.
 `build` turns a `LockError` into a `BuildError`.
 
 - Imports: `closure`, `foreign`, `pipenv`, `project`, `venvdeps`.

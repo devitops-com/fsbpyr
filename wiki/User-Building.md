@@ -194,16 +194,20 @@ requirements file for uv (nothing is written into the project), and installs:
 - from `poetry.lock`, the main group; from `pdm.lock`, the default group; from `Pipfile.lock`,
   the `default` section, never `develop`;
 - with markers evaluated for the app's Python and platform, every hash the lock lists for a
-  package, and `--require-hashes` when every package has one;
+  package (a file or URL entry with the hash the lock gives it), and `--require-hashes` when
+  every line has one: a directory or VCS entry, or an entry without a hash, leaves it off, and
+  `fsbpyr inspect --json` then shows the lock's `hashed` as false;
 - `--extra NAME` adds a Poetry `[extras]` entry or a PDM group of that name (an extra the lock
   lacks is an error); a `Pipfile.lock` is complete, so `--extra` adds nothing to it. From a
   `poetry.lock`, the extra's packages are those Poetry marks with it (`extra == "NAME"`), with
   each marker evaluated for the target and the extras asked for.
 
-A path dependency installs as a regular package, a VCS entry keeps its commit and a URL entry its
-hash. The build refuses, naming the entry: a package from another package index in a Poetry
-lock (its credentials are not in the lock: pass a requirements file with `--requirements`), a
-VCS entry without a commit, a missing path, and a package locked at two versions that both apply.
+A path dependency installs as a regular package, a VCS entry keeps its commit, and a file or
+URL entry its hash. The build refuses, naming the entry: a package from another package index in
+a Poetry lock (its credentials are not in the lock: pass a requirements file with
+`--requirements`), a VCS entry without a commit, a missing path, a package locked at two versions
+that both apply, and a `Pipfile.lock` `file` entry with two different hashes (uv takes one for a
+file).
 A `Pipfile.lock` entry from another index installs from the indexes uv is configured with, the
 lock's hashes deciding whether uv found the same files; the build says so. A lock that is out of
 date, whose hash (Poetry's `content-hash`, PDM's `content_hash`, Pipenv's `_meta.hash`) does not

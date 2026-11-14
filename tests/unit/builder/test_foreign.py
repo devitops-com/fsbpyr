@@ -350,6 +350,45 @@ def test_a_poetry_file_dependency_installs_the_file(tmp_path: Path) -> None:
     assert exported.text.splitlines()[1:] == [f"wheel @ {uri}"]
 
 
+def test_a_poetry_file_dependency_keeps_its_hash(tmp_path: Path) -> None:
+    digest = "c" * 64
+    entry = ('[[package]]\nname = "wheel"\nversion = "0.1"\n'
+             f'files = [{{file = "w.whl", hash = "sha256:{digest}"}}]\n'
+             '[package.source]\ntype = "file"\nurl = "libs/w.whl"\n')  # fmt: skip
+    project = _with_entry(tmp_path, POETRY, entry, 'wheel = {path = "libs/w.whl"}\n')
+
+    exported = export(POETRY, project, environment=LINUX)
+
+    uri = (project / "libs" / "w.whl").as_uri()
+    assert exported.text.splitlines()[1:] == [f"wheel @ {uri}#sha256={digest}"]
+    assert exported.hashed
+
+
+@pytest.mark.parametrize("path", ["./libs/w.whl", "file:///${PROJECT_ROOT}/libs/w.whl"])
+def test_a_pdm_path_to_a_file_keeps_its_hash(tmp_path: Path, path: str) -> None:
+    digest = "c" * 64
+    entry = (f'[[package]]\nname = "wheel"\nversion = "0.1"\npath = "{path}"\n'
+             f'groups = ["default"]\nfiles = [{{file = "w.whl", hash = "sha256:{digest}"}}]\n')
+    project = _with_entry(tmp_path, PDM, entry)
+
+    exported = export(PDM, project, environment=LINUX)
+
+    uri = (project / "libs" / "w.whl").as_uri()
+    assert exported.text.splitlines()[1:] == [f"wheel @ {uri}#sha256={digest}"]
+    assert exported.hashed
+
+
+def test_a_directory_carries_no_hash_whatever_the_lock_lists(tmp_path: Path) -> None:
+    entry = ('[[package]]\nname = "local-lib"\nversion = "0.1.0"\npath = "./libs"\n'
+             f'groups = ["default"]\nfiles = [{{file = "libs", hash = "sha256:{"c" * 64}"}}]\n')
+    project = _with_entry(tmp_path, PDM, entry)
+
+    exported = export(PDM, project, environment=LINUX)
+
+    assert exported.text.splitlines()[1:] == [f"local-lib @ {(project / 'libs').as_uri()}"]
+    assert not exported.hashed  # uv cannot check a directory's hash
+
+
 def test_vcs_entries_keep_their_pinned_commit(tmp_path: Path) -> None:
     sha = "a" * 40
     poetry = ('[[package]]\nname = "tool"\nversion = "1.0"\nfiles = []\n[package.source]\n'
@@ -520,7 +559,7 @@ def test_other_changes_of_the_pyproject_leave_the_lock_current(tmp_path: Path) -
 def test_the_lock_record_and_its_packages(tmp_path: Path, name: str, source: LockSource) -> None:
     project = _copy(name, tmp_path)
 
-    record, packages = lock_record(project, source, project / source.value)
+    record, packages = lock_record(project, source, project / source.value, require_hashes=True)
 
     assert record["kind"] == source.value
     assert record["path"] == source.value

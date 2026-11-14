@@ -123,21 +123,28 @@ def read_lock(source: LockSource, text: str) -> dict[str, list[LockedPackage]]:
     return packages
 
 
-def _hashed(source: LockSource, text: str, packages: Mapping[str, list[LockedPackage]]) -> bool:
-    """Whether the lock pins artifact hashes: uv.lock always does; the others when they list
-    some."""
+def _hashed(
+    source: LockSource, text: str, packages: Mapping[str, list[LockedPackage]],
+    require_hashes: bool,
+) -> bool:  # fmt: skip
+    """Whether the lock pins artifact hashes: uv.lock always does; a Poetry, PDM or Pipenv lock
+    when the install of its converted file demanded a hash of every line (staging's
+    --require-hashes); the others when they list some."""
     if source in (LockSource.UV_LOCK, LockSource.SCRIPT_LOCK):
         return True
+    if source in (LockSource.POETRY_LOCK, LockSource.PDM_LOCK, LockSource.PIPFILE_LOCK):
+        return require_hashes
     if source is LockSource.REQUIREMENTS:
         return has_hash_option(text)
     return any(p.wheels or p.sdist or p.pinned for entries in packages.values() for p in entries)
 
 
 def lock_record(
-    directory: Path, source: LockSource, path: Path | None
+    directory: Path, source: LockSource, path: Path | None, *, require_hashes: bool = False
 ) -> tuple[dict[str, object], dict[str, list[LockedPackage]]]:
     """build_info's ``lock``, and the lock's packages. ``path`` is relative to ``directory``,
-    the project's."""
+    the project's; ``require_hashes`` is the staging plan's: whether uv demanded a hash of every
+    line it installed from a converted lock."""
     if path is None:
         return {"kind": source.value, "path": None, "sha256": None, "hashed": False}, {}
     try:
@@ -150,7 +157,7 @@ def lock_record(
         "kind": source.value,
         "path": Path(os.path.relpath(path, directory)).as_posix(),
         "sha256": hashlib.sha256(data).hexdigest(),
-        "hashed": _hashed(source, text, packages),
+        "hashed": _hashed(source, text, packages, require_hashes),
     }
     return record, packages
 

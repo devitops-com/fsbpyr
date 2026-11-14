@@ -46,6 +46,17 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   `PYTHONPYCACHEPREFIX`.** Its pytest runs inherited them, so the `.pyc` that one worker's first
   import writes, which the test looks for, was not written or went elsewhere. The runs now leave
   both out (owner, 2026-11-14).
+- **A file entry of a `Pipfile.lock`, `poetry.lock` or `pdm.lock` is installed by its hash, and
+  `build_info` says only what uv checked.** A dependency that is a local file (Pipenv's
+  `"file": "file:..."`, Poetry's `type = "file"`, a PDM `path` naming a file) lost the hash the
+  lock records for it: uv installed whatever file was at that path, and the one unhashed line
+  left `--require-hashes` off for every other line, while `fsbpyr inspect --json` still showed
+  the lock as `hashed` and the file with the lock's digest (#119). Its line now carries the hash
+  as `#sha256=`, which uv checks, so `--require-hashes` stays on when every line has a hash; a
+  directory, a VCS entry or an entry the lock gives no hash still leaves it off. A Pipenv `file`
+  entry with two different hashes, which used to lose both, is refused naming the entry: uv
+  takes one hash for a file. `build_info.lock.hashed` of these three locks now says whether the
+  install demanded a hash of every line, not whether the lock lists any.
 - **`fsbpyr build --extra NAME` works with the `poetry.lock` Poetry 2 writes.** Poetry 2 marks
   each package that only an extra needs `extra == "NAME"`, and fsbpyr evaluated those markers
   with no extra active, so every package of the extra seemed missing and the build stopped with

@@ -2,6 +2,7 @@
 
 import dataclasses
 import hashlib
+import json
 import shutil
 from pathlib import Path
 
@@ -230,6 +231,19 @@ def test_requirements_are_hashed_when_they_carry_hashes(
                                    tmp_path / "requirements.txt")  # fmt: skip
 
     assert (record["hashed"], packages) == (hashed, {})
+
+
+@pytest.mark.parametrize("required", [False, True])
+def test_hashed_says_whether_the_install_required_hashes(tmp_path: Path, required: bool) -> None:
+    lock = {"_meta": {}, "develop": {}, "default": {
+        "six": {"version": "==1.16.0", "hashes": [f"sha256:{H1}"]},  # the lock lists a hash
+        "lib": {"file": (tmp_path / "lib-1.0-py3-none-any.whl").as_uri()}}}  # but not here
+    (tmp_path / "Pipfile.lock").write_text(json.dumps(lock))
+
+    record, _ = lock_record(tmp_path, LockSource.PIPFILE_LOCK, tmp_path / "Pipfile.lock",
+                            require_hashes=required)  # fmt: skip
+
+    assert record["hashed"] is required  # what staging gave uv to check, as the plan says
 
 
 def test_an_unreadable_or_malformed_lock_is_an_error(tmp_path: Path) -> None:

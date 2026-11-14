@@ -271,6 +271,7 @@ def _provenance(  # noqa: PLR0913  what the records are made of, and where to lo
     project_dist: str,
     log: Callable[[str], None],
     inferred: Inferred | None = None,
+    require_hashes: bool = False,
 ) -> tuple[tuple[str, object], ...]:
     """build_info's schema, ``lock``, ``dists`` and ``settings``. Dists built here from their
     sdists are named in one line of the build's output: information, not a warning, so
@@ -278,7 +279,8 @@ def _provenance(  # noqa: PLR0913  what the records are made of, and where to lo
     try:
         lock, locked = (
             (inferred_lock(project.directory, inferred), {}) if inferred is not None else
-            lock_record(project.directory, source, project.lock_path(source, config.requirements))
+            lock_record(project.directory, source, project.lock_path(source, config.requirements),
+                        require_hashes=require_hashes)
         )  # fmt: skip
     except LockError as exc:
         raise BuildError(str(exc)) from exc
@@ -855,6 +857,7 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
                         project_dist=dist.name,
                         inferred=inferred,
                         log=log,
+                        require_hashes=plan.require_hashes,
                     ),
                     ("project", {"name": dist.name, "version": dist.version}),
                     ("fsbpyr_version", own_version()),  # with the commit (fsbpyr inspect)

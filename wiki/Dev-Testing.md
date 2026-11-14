@@ -624,7 +624,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,856 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,871 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -640,12 +640,12 @@ run with the release launcher only, those two portability tests also on the two 
 |---|---|---|
 | `tests/unit` (top level) | 29 | 942 |
 | `tests/unit/boot` | 23 | 387 |
-| `tests/unit/builder` | 19 | 794 |
+| `tests/unit/builder` | 19 | 805 |
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 261 |
 | `tests/integration` | 17 | 853 |
-| `tests/e2e` | 45 | 1,178 |
-| All | 153 | 4,856 |
+| `tests/e2e` | 45 | 1,182 |
+| All | 153 | 4,871 |
 
 ### tests/unit (top level): 29 files, 942 tests
 
@@ -714,7 +714,7 @@ fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fix
 | [`test_warning_frames.py`](../tests/unit/boot/test_warning_frames.py) | 3 | Import-time warnings with `stacklevel >= 2` name the importing module and show the payload file's source line. |
 | [`test_way.py`](../tests/unit/boot/test_way.py) | 27 | A cache root's way from `/` (`gc.way_problem`): owners and write permissions, sticky directories, symlinks, `..`, user namespaces, mapped uids, a walk that leaves a sticky directory (a symlink's absolute target, `..` back to it or above); the tool's cache and the collector refuse an untrusted way. |
 
-### tests/unit/builder: 19 files, 794 tests
+### tests/unit/builder: 19 files, 805 tests
 
 The build pipeline in-process, on trees made in `tmp_path`: fake site-packages, synthetic ELF
 objects from `tests/support/elf.py`, local distributions, the `foreign` fixture's hand-written
@@ -727,14 +727,14 @@ locks, fake `uv` scripts and the uv command lines a plan records.
 | [`test_compiler.py`](../tests/unit/builder/test_compiler.py) | 10 | `fsbpyr.compiler`: worker processes compile what the build's process would, in order; small builds compile in-process; compile warnings come back with their line; main-guard reads scanned in the scripts root's commands only. |
 | [`test_early_checks.py`](../tests/unit/builder/test_early_checks.py) | 12 | Failures before uv stages anything: a script name that is no command, a static project without entry, a directory as output, an unknown extra. |
 | [`test_entry.py`](../tests/unit/builder/test_entry.py) | 11 | `fsbpyr.entry`: an `if __name__ == "__main__":` guard in a module's body only, and the entry candidates of an installed project and a source tree. |
-| [`test_foreign.py`](../tests/unit/builder/test_foreign.py) | 73 | `fsbpyr.foreign` on the `foreign` fixtures: `poetry.lock` (Poetry 2, 1.5 to 1.8, lock-version 1.0) and `pdm.lock` as a build's lock: the main group, markers, every hash demanded, extras (also as Poetry 2.5.1 marks them, on Linux and Windows), path, VCS and URL entries, other indexes refused, the stale-lock check, the lock's record and rank, option injection refused. |
+| [`test_foreign.py`](../tests/unit/builder/test_foreign.py) | 77 | `fsbpyr.foreign` on the `foreign` fixtures: `poetry.lock` (Poetry 2, 1.5 to 1.8, lock-version 1.0) and `pdm.lock` as a build's lock: the main group, markers, every hash demanded, extras (also as Poetry 2.5.1 marks them, on Linux and Windows), path, VCS and URL entries (a path naming a file keeps its hash, a directory carries none), other indexes refused, the stale-lock check, the lock's record and rank, option injection refused. |
 | [`test_legacy.py`](../tests/unit/builder/test_legacy.py) | 11 | `fsbpyr.legacy`: which `scripts=` files of the project's wheel are Python, their stored modules and clashes, warnings for dropped scripts. |
 | [`test_loose.py`](../tests/unit/builder/test_loose.py) | 58 | Projects without a build system (`fsbpyr.loose`, `fsbpyr.importcheck`): what makes one, which files are packaged (git decides in a work tree), fsbpyr's own wheel (a valid `RECORD`, the same bytes twice), the commands found, and the static import check (file and line, removed stdlib modules, the freeze hint, `--strict`). |
 | [`test_loose_directory.py`](../tests/unit/builder/test_loose_directory.py) | 93 | Directories of loose scripts: discovery and what it refuses, the directory's name, shebangs, packaged files and links, mangled names and clashes, commands, merged PEP 723 blocks, the deploy recipe, `sys.path` changes from `__file__`. Discovery runs no user code. |
-| [`test_manifest.py`](../tests/unit/builder/test_manifest.py) | 19 | `fsbpyr.manifest`: the lock and each distribution recorded with its artifact's hash, sdist builds, local dists, workspaces, the same records from two directories, the `compat` fixture traced to its `uv.lock`. |
+| [`test_manifest.py`](../tests/unit/builder/test_manifest.py) | 21 | `fsbpyr.manifest`: the lock and each distribution recorded with its artifact's hash, a converted lock `hashed` as the staging plan required, sdist builds, local dists, workspaces, the same records from two directories, the `compat` fixture traced to its `uv.lock`. |
 | [`test_multicall.py`](../tests/unit/builder/test_multicall.py) | 34 | A multi-command executable's build side: the sorted `name=target` table, command names, relative links beside the output and what they may replace, an earlier output replaced rather than written through, VCS requirement lines in a hashed file failing early. |
 | [`test_natives.py`](../tests/unit/builder/test_natives.py) | 44 | `fsbpyr.natives` and `fsbpyr.elf` on synthetic ELF objects and two host binaries: dynamic sections, RPATH and RUNPATH as ld.so applies them, libraries by name, unresolved libraries, symbol versions, malformed input. |
-| [`test_pipenv.py`](../tests/unit/builder/test_pipenv.py) | 50 | `fsbpyr.pipenv` on `foreign/pipenv`: the `default` section, markers, hashes, unpinned versions refused, git, path and file entries, other indexes, the stale-lock check, `_meta.requires` (two tests marked `version_rule`), the lock's rank, a Python-less directory as a tool binary. |
+| [`test_pipenv.py`](../tests/unit/builder/test_pipenv.py) | 55 | `fsbpyr.pipenv` on `foreign/pipenv`: the `default` section, markers, hashes, unpinned versions refused, git, path and file entries (a local file keeps its hash and `--require-hashes`, two different hashes are refused), other indexes, the stale-lock check, `_meta.requires` (two tests marked `version_rule`), the lock's rank, a Python-less directory as a tool binary. |
 | [`test_project_and_staging.py`](../tests/unit/builder/test_project_and_staging.py) | 78 | `fsbpyr.project` (discovery, lock source priority, settings, `glibc` among them) and `fsbpyr.staging` (uv commands per lock source, wheels for the baseline's platform, workspaces, rebuilds, `SOURCE_DATE_EPOCH`, pinned requirement lines, the source tree left as found). |
 | [`test_scan.py`](../tests/unit/builder/test_scan.py) | 48 | `fsbpyr.scan` on snippets: reads relative to `__file__` (in a command's main guard when asked; not existence checks, nor a script starting a sibling through `sys.executable`, though a package doing so is), libraries opened by a literal name. |
 | [`test_single_script.py`](../tests/unit/builder/test_single_script.py) | 20 | One script as the project: `.py` or extensionless `uv run` scripts, the import closure, one PEP 723 block, the directory's other files ignored, a script lock locking the build, nothing written beside it. |
@@ -796,12 +796,12 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
 | [`test_worker_venvs.py`](../tests/integration/test_worker_venvs.py) | 10 | [`worker_venvs.py`](../tests/support/worker_venvs.py) on real pytest runs with three workers: each in an environment of its own, subprocesses included, removed after the run, and a worker in anything else stopping the run. The runs leave out `PYTHONDONTWRITEBYTECODE` and `PYTHONPYCACHEPREFIX`, so the `.pyc` a first import writes is where the test looks, whatever the suite runs under. |
 
-### tests/e2e: 45 files, 1,178 tests
+### tests/e2e: 45 files, 1,182 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
 | [`test_baseline.py`](../tests/e2e/test_baseline.py) | 4 | Each glibc baseline's stub and sysroot: the default stub needs no glibc symbol above 2.34, one linked against Rocky Linux 8.10's sysroot none above 2.28; `launcher/glibc.c` compiles against both header sets; each sysroot's `build_flags` build a C program. |
-| [`test_build.py`](../tests/e2e/test_build.py) | 55 | `fsbpyr build` on the fixtures: `hello` with `inspect --json --verify` and its SBOM, `clicky` from each lock source, the README quickstart, determinism and self-hosting, `cext` rebuilt against the sysroot, workspaces, dependency groups, editable requirements, the smoke test, `--strict`, `pylock.toml` hashes, Poetry 1, projects without scripts, legacy `scripts=`, compile warnings, a failed build cleaned up. |
+| [`test_build.py`](../tests/e2e/test_build.py) | 56 | `fsbpyr build` on the fixtures: `hello` with `inspect --json --verify` and its SBOM, `clicky` from each lock source, the README quickstart, determinism and self-hosting, `cext` rebuilt against the sysroot, workspaces, dependency groups, editable requirements, the smoke test, `--strict`, `pylock.toml` hashes and a Poetry file dependency's, Poetry 1, projects without scripts, legacy `scripts=`, compile warnings, a failed build cleaned up. |
 | [`test_cache_root.py`](../tests/e2e/test_cache_root.py) | 30 | The launcher's cache root checks (marked `sanitized`): roots below directories others may write to, symlinks and loops, `..`, relative roots, user namespaces, another user's symlink; a refused cache directory stopping an app at its extension's import with `fsbpyr: cannot start <executable>: refusing cache directory <path>: ...` and exit 70. |
 | [`test_compat.py`](../tests/e2e/test_compat.py) | 44 | The `compat` fixture's matrix against the venv, the `mp` fixture's start methods, helper interpreters (also with `mp` an fs-package) and the instance limit, forged multiprocessing children, scripts through `sys.executable`, `sys.argv[0]`, the restart idiom, the `datafiles` checks, the build information tracing every dist to the lock. |
 | [`test_cores.py`](../tests/e2e/test_cores.py) | 6 | How many threads the launcher's parallel work runs on, through `probes/cores.c` on a pretend kernel: the CPUs the process may use, at most 8, also past the 1024 CPUs a `cpu_set_t` holds. |
@@ -830,7 +830,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_multicall.py`](../tests/e2e/test_multicall.py) | 22 | The `multi` fixture's two console scripts as one executable: links, the summary and `inspect`, starts by path, name or first argument, the list and exit 2, a renamed copy, a file in the way, `-m` and `-c`, helper interpreters, multiprocessing, a hard link keeping the old build. |
 | [`test_natives.py`](../tests/e2e/test_natives.py) | 16 | The `heavy` fixture (numpy, orjson, cryptography, pydantic, onnxruntime) against the venv: licences, `FSBPYR_SELFTEST=natives`, the first run's extraction, xz natives, concurrent first runs, a damaged extension repaired, the native generation reused. Deselected without an onnxruntime wheel. |
 | [`test_pid1.py`](../tests/e2e/test_pid1.py) | 3 | An app as process 1 of a PID namespace (`unshare --user --map-root-user --pid --fork --mount-proc`, else `podman run` of `debian:13`): SIGTERM ends it with 143 unless it has its own handler; not as process 1 it dies of the signal. |
-| [`test_pipfile_lock.py`](../tests/e2e/test_pipfile_lock.py) | 5 | `foreign/pipenv`: builds from the lock's `default` section, a stale lock warns (an error with `--strict`), a changed hash fails, a Python-less directory builds the tool. |
+| [`test_pipfile_lock.py`](../tests/e2e/test_pipfile_lock.py) | 8 | `foreign/pipenv`: builds from the lock's `default` section, a stale lock warns (an error with `--strict`), a changed hash fails (a local `file` entry's too), a file entry with a hash or without one and the lock's `hashed`, a Python-less directory builds the tool. |
 | [`test_portability.py`](../tests/e2e/test_portability.py) | 35 | `hello`, `heavy`, `heavy-pip` and `compat` in each image with `podman run --network=none`, with `FSBPYR_SELFTEST=natives` and the reported libraries and glibc against `llvm-objdump`; `test_el8_apps_run_on_el8` (two items) runs glibc 2.28 builds of `hello` and a cryptography app (prebuilt `hello-el8` and `native-el8`, else built) on `rockylinux:8` and `almalinux:8`. Marked `podman`. |
 | [`test_read_failures.py`](../tests/e2e/test_read_failures.py) | 7 | The launcher's blob reads out of memory through `probes/reads.c` (`ZSTD_createDCtx`, `ZSTD_decompress`, `ZSTD_decompressStream`, `lzma_stream_buffer_decode` and `madvise` wrapped): every compressed codec's read or stream that the wrapped function serves fails with `ENOMEM` or `FSB_STREAM_MEMORY`, pieces on helper threads too, and corrupt data stays corrupt when dropping the payload's pages fails; a stub linked with `probes/no_context.c` starts out of memory with `out of memory`, not `corrupt startup module`. |
 | [`test_restore.py`](../tests/e2e/test_restore.py) | 13 | The cache sync's writers through `probes/restore.c` (`renameat`, `linkat`, `pthread_create`, `pwrite` wrapped): whole files, helper threads, unnamed files linked or renamed into place, the thread limit, the first failure in path order, a full disk under a leaf of a pooled file and of one in pieces; `fsb_cache_safe` (`restore --safe`) against the payload reader's rule on every path of up to four characters of `a`, `.`, `/`, a backslash and NUL. |
@@ -861,6 +861,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`edges.py`](../tests/support/edges.py) | The edge-case table: `edge_app` (every record kind and codec), `layout` (where each part of an intact executable is), `CASES` (one field corrupted each, the digest restamped so every check behind the integrity check is reached, with what the reader and the launcher do), `PATH_CASES`, `apply`, `refused`. |
 | [`elf.py`](../tests/support/elf.py) | `make_elf`: minimal ELF64 shared objects with chosen `DT_NEEDED`, RPATH, RUNPATH, SONAME, version needs, machine and type. |
 | [`images.py`](../tests/support/images.py) | The portability matrix's twelve images (glibc 2.34 to 2.44), `EL8_IMAGES` (`rockylinux:8` and `almalinux:8`, glibc 2.28, both with an arm64 variant), those without an arm64 variant, and `images_for(machine, glibc)`, which adds the EL8 images for glibc 2.28. |
+| [`localwheel.py`](../tests/support/localwheel.py) | `write()`: a minimal wheel of one module, the same bytes every time, and its SHA-256, for a lock that names a local file. |
 | [`locks.py`](../tests/support/locks.py) | What a `uv.lock` installs on Linux for one Python and machine (markers and extras evaluated), and which of those packages lack a wheel usable at `baseline.py`'s baseline: manylinux_2_34, or manylinux_2_28 in the EL8 test mode. |
 | [`markers.py`](../tests/support/markers.py) | `UNEVALUABLE`: markers that `packaging` parses but cannot evaluate, for the builder's tests of each place that evaluates one. |
 | [`no-wheels.txt`](../tests/support/no-wheels.txt) | Packages without a wheel, one Python's X.Y and its packages per line. |

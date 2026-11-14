@@ -77,6 +77,7 @@ class StagingPlan:
     env: dict[str, str] = field(default_factory=dict)
     forget: list[str] = field(default_factory=list)  # + names: drops uv's cached builds of them
     package: Package | None = None  # the loose project's files, as checked (empty ``build``)
+    require_hashes: bool = False  # the locked install of a requirements file demands hashes
 
 
 def find_uv() -> Path:
@@ -232,7 +233,8 @@ def _plan(
     editable = ["--no-editable"] if source is not LockSource.PYLOCK else []
     install = [venv, [*base, *hashes, *editable, "-r", str(lock)],
                [*base, "--no-deps", WHEEL]]
-    return StagingPlan(site, build, install, wheel_dir, env, [str(uv), "cache", "clean"])
+    return StagingPlan(site, build, install, wheel_dir, env, [str(uv), "cache", "clean"],
+                       require_hashes=bool(hashes))  # fmt: skip
 
 
 def _foreign_requirements(

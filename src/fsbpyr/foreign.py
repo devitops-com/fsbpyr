@@ -416,8 +416,8 @@ def _closure(
     return list(active)
 
 
-def _local_url(where: str, directory: Path, entry: Entry, lock: str) -> str:
-    """The file URL of a path dependency: a lock writes the path relative to the project."""
+def _local_path(where: str, directory: Path, entry: Entry, lock: str) -> Path:
+    """The path of a path dependency: a lock writes it relative to the project."""
     text = where.replace(_PROJECT_ROOT, str(directory))
     if text.startswith("file:"):  # `file:///${PROJECT_ROOT}/x` is file:////dir/x once filled in
         text = "/" + unquote(urlsplit(text).path).lstrip("/")
@@ -426,7 +426,7 @@ def _local_url(where: str, directory: Path, entry: Entry, lock: str) -> str:
     if not path.exists():
         raise ForeignLockError(f"{lock}: {entry.label} is the path {where}, which does not "
                                f"exist ({path})")  # fmt: skip
-    return path.as_uri()
+    return path
 
 
 def _hash_lines(digests: Iterable[str]) -> str:
@@ -436,7 +436,8 @@ def _hash_lines(digests: Iterable[str]) -> str:
 def _line(entry: Entry, directory: Path, lock: str) -> tuple[str, bool]:
     """The requirements line of an entry, and whether it carries a hash. A pin is exact: a
     registry entry by version and every hash the lock lists, VCS by its commit, a path as a
-    regular (not editable) install, as UC2 does."""
+    regular (not editable) install, as UC2 does, a file or URL with the hash the lock gives
+    it (uv checks a direct reference's ``#sha256=``)."""
     if not _NAME.fullmatch(entry.name) or any(re.search(r"\s", word) for word in (
             entry.name, entry.version, entry.where, entry.commit, entry.subdirectory)):
         raise ForeignLockError(f"{lock}: {entry.name!r} {entry.version!r} has a name, version or "
@@ -451,7 +452,11 @@ def _line(entry: Entry, directory: Path, lock: str) -> tuple[str, bool]:
         digests = [*entry.files.values(), *entry.digests]
         return f"{entry.name}=={entry.version}{_hash_lines(digests)}", bool(digests)
     if entry.kind in (LOCAL, PATH):
-        return f"{entry.name} @ {_local_url(entry.where, directory, entry, lock)}", False
+        path = _local_path(entry.where, directory, entry, lock)
+        # a directory carries no hash: uv cannot check one
+        digest = entry.files.get(_file_name(entry.where)) if path.is_file() else None
+        fragment = f"#sha256={digest}" if digest else ""
+        return f"{entry.name} @ {path.as_uri()}{fragment}", digest is not None
     if entry.kind == GIT:
         if not entry.commit:
             raise ForeignLockError(f"{lock}: {entry.label} comes from {entry.where}, but the "
