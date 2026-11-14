@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# green-run.sh — prints the URL of the successful run of a workflow for a commit of main (the
-# merge queue's run of it, or a push's from before the queue), or fails.
+# green-run.sh — prints the URL of the successful run of a workflow, started on request on main,
+# for a commit of main, or fails.
 #
 #     bash tools/release/green-run.sh WORKFLOW COMMIT
 #
@@ -9,9 +9,11 @@
 # suite) of the commit it is made from. release-assets.sh checks HEAD before it tags it; the draft
 # job checks the tagged commit. A run still in
 # progress is followed with follow-run.sh, as release-assets.sh follows the tag's run.
-# A commit that changes only documentation and was merged before the queue has no run
-# (full-suite.yml left such pushes out): the newest earlier commit of main that has one stands for
-# it when nothing but documentation
+# full-suite.yml runs only on request (owner, 2026-11-13): the run that counts is one started on
+# main (`gh workflow run full-suite.yml --ref main`) for that very commit. A run on another branch
+# tests that branch, and pushes to main start none any more (those from before still count).
+# A commit that changes only documentation needs no run of its own: the newest earlier commit of
+# main that has one stands for it when nothing but documentation
 # (*.md files, docs/, wiki/) changed since (CONTRIBUTING.md, "Documentation-only changes"); its
 # run's URL is printed. Needs the history (git).
 # Exit 1: no run for that commit, a failed one, one that fails while watched, or one with a job
@@ -24,15 +26,13 @@ workflow="$1" commit="$2"
 BRANCH="main"
 short="${commit:0:7}"
 
-# The runs that test a commit of main: the merge queue's (merge_group, on a branch of its own, of
-# the very commit main then becomes; owner, 2026-11-08) and, from before the queue, a push's to
-# main. Never a run started by hand, which may run anything on any branch.
-OF_MAIN='select(.event == "merge_group" or (.event == "push" and .headBranch == "main"))'
+# The runs on main: those asked for, and the pushes' from before 2026-11-13.
+OF_MAIN='select(.event == "workflow_dispatch" or .event == "push")'
 
-# The newest run of commit $1 that tests it as main's, as "ID STATUS/CONCLUSION URL".
+# The newest run on main of commit $1, as "ID STATUS/CONCLUSION URL".
 latest() {
-    gh run list --workflow "$workflow" --commit "$1" --limit 20 \
-        --json databaseId,status,conclusion,url,event,headBranch \
+    gh run list --workflow "$workflow" --branch "$BRANCH" --commit "$1" --limit 20 \
+        --json databaseId,status,conclusion,url,event \
         --jq "[.[] | $OF_MAIN][0] // empty"' | "\(.databaseId) \(.status)/\(.conclusion) \(.url)"' \
         || true
 }
@@ -40,8 +40,8 @@ latest() {
 # The newest commit of the recent runs that $commit descends from; none: status 1.
 tested_ancestor() {
     local shas sha
-    shas="$(gh run list --workflow "$workflow" --limit 50 --json headSha,event,headBranch \
-        --jq ".[] | $OF_MAIN | .headSha")" || return 1
+    shas="$(gh run list --workflow "$workflow" --branch "$BRANCH" --limit 50 \
+        --json headSha,event --jq ".[] | $OF_MAIN | .headSha")" || return 1
     for sha in $shas; do
         if git merge-base --is-ancestor "$sha" "$commit" 2>/dev/null; then
             echo "$sha"
@@ -80,8 +80,7 @@ if [ -z "${id:-}" ]; then
     cat >&2 <<MSG
 ERROR: $BRANCH at $short has no $workflow run: only a commit CI passed is released.
        Not started yet: wait a minute (gh run list --workflow $workflow), then run this again
-       Never started:   a merge through $BRANCH's merge queue starts it; a run started by hand
-                        does not count
+       Never started:   start it on $BRANCH: gh workflow run $workflow --ref $BRANCH
 MSG
     exit 1
 fi
@@ -90,7 +89,7 @@ case "$state" in
     completed/success) ;;
     completed/*)
         echo "ERROR: $workflow's run for $BRANCH at $short did not succeed ($state): $url" >&2
-        echo "       Fix $BRANCH and push; release once that push's runs are green" >&2
+        echo "       Fix $BRANCH, then run it again: gh workflow run $workflow --ref $BRANCH" >&2
         exit 1 ;;
     *)
         echo "==> $workflow is still running for $BRANCH at $short; following run $id" >&2

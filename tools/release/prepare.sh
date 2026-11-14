@@ -10,9 +10,10 @@
 # section becomes `## [X.Y.Z] - DATE`, under a fresh empty [Unreleased], and all of it is ONE
 # commit "chore: release vX.Y.Z" on the current branch. Nothing is pushed.
 #
-# The pull request merges the branch; that push to main runs full-suite.yml, which builds and
-# checks exactly this source, the release build included. `make release` (release-assets.sh) then
-# tags that commit, and the tag's release.yml run builds it again and publishes it.
+# The pull request merges the branch; then full-suite.yml, started on main (`gh workflow run
+# full-suite.yml --ref main`; it runs only on request), builds and checks exactly this source, the
+# release build included. `make release` (release-assets.sh) then tags that commit, and the tag's
+# release.yml run builds it again and publishes it.
 #
 # Guards (all must pass before anything changes): the three versions agree, X.Y.Z well-formed
 # and not lower, on a branch other than main, a clean working tree (untracked files and
