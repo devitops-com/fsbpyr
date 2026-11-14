@@ -624,7 +624,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,871 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,877 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -643,9 +643,9 @@ run with the release launcher only, those two portability tests also on the two 
 | `tests/unit/builder` | 19 | 805 |
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 261 |
-| `tests/integration` | 17 | 853 |
-| `tests/e2e` | 45 | 1,182 |
-| All | 153 | 4,871 |
+| `tests/integration` | 17 | 858 |
+| `tests/e2e` | 45 | 1,183 |
+| All | 153 | 4,877 |
 
 ### tests/unit (top level): 29 files, 942 tests
 
@@ -774,7 +774,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_sysroot.py`](../tests/unit/runtime/test_sysroot.py) | 21 | The glibc sysroots: `ar` members, symlinks kept inside, escaping entries refused, verified HTTPS downloads, RPMs extracted as debs are, `lib` and `lib64` linked into `usr` for EL8 only. |
 | [`test_toolchain_and_link.py`](../tests/unit/runtime/test_toolchain_and_link.py) | 35 | `ar` listing, clang discovery and the stub's link: static PIE, hardening flags, the sanitized variant, aarch64's outlined atomics and Cortex-A53 erratum 843419 fix, mapped paths, the frame limit, `-DFSBPYR_RUNTIME_ID`, a failed link's output. |
 
-### tests/integration: 17 files, 853 tests
+### tests/integration: 17 files, 858 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -790,13 +790,13 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_pbs_stdlib_versions.py`](../tests/integration/test_pbs_stdlib_versions.py) | 12 | The stdlib selection and startup modules for each pinned CPython version. |
 | [`test_release.py`](../tests/integration/test_release.py) | 165 | The release scripts against throwaway git repositories, a bare origin and a fake `gh`, the companion release and its tag included, the gate's refusal of a run with a job that did not succeed, and which runs it takes (one started on main, or a push's from before 2026-11-13); also the workflow files, `tools/bootstrap.sh` and the Makefile's `VERSION`, `KEY` and `PYTHON`. Nothing reaches GitHub. |
 | [`test_release_drafts.py`](../tests/integration/test_release_drafts.py) | 36 | No workflow can reach a release key, publish a release or read a variable, and `release.yml` and `el8.yml` stop at a draft; the draft job's file check runs for real against files and sums that the built code in `prepare` could choose. |
-| [`test_release_sign.py`](../tests/integration/test_release_sign.py) | 182 | `make release-sign` and `make release-audit` with the real scripts and keys and a bare `hub`, against [`FakeGitHub`](../tests/support/fakegithub.py), which can do all an account can but attest: moved commits and tags, foreign attestations, runners and builds, files swapped during signing, a second draft, a key in the checkout; files other than the bytes the commit makes (an `.xz`, `install.sh`, the full suite's builds), which burn the version; each audit finding; no failed lookup ever a pass. |
+| [`test_release_sign.py`](../tests/integration/test_release_sign.py) | 187 | `make release-sign` and `make release-audit` with the real scripts and keys and a bare `hub`, against [`FakeGitHub`](../tests/support/fakegithub.py), which can do all an account can but attest: moved commits and tags, foreign attestations, runners and builds, files swapped during signing, a second draft, a key in the checkout; files other than the bytes the commit makes (an `.xz`, `install.sh`, the full suite's builds), which burn the version; which full-suite run those builds come from (one on main started by hand, or a push's from before 2026-11-13); each audit finding; no failed lookup ever a pass. |
 | [`test_release_signing.py`](../tests/integration/test_release_signing.py) | 113 | [`tools/release/release-signing.sh`](../tools/release/release-signing.sh), `previous-release.sh` and `check-signature.sh`, with fake programs on `PATH` and passphrases typed on a pty: bad key files and `.pub`s, nothing replaced, burned tags, companions, the previous-release lookup, each pin rule of the sign job. |
 | [`test_runner_disk.py`](../tests/integration/test_runner_disk.py) | 20 | [`tools/runner-disk.sh`](../tools/runner-disk.sh), which makes room on a runner's disk for [`full-suite.yml`](../.github/workflows/full-suite.yml)'s suite and corpus jobs, with a fake `df`: only the listed paths removed, the free-space check at its boundary, bad arguments refused first; the two jobs, read as text, making room early and reporting free space. |
 | [`test_upstream_watch.py`](../tests/integration/test_upstream_watch.py) | 4 | `tools/upstream-watch.sh` against a fake `gh` serving python-build-standalone releases: up to date, a newer release opening or updating an issue, no release with the archive. |
 | [`test_worker_venvs.py`](../tests/integration/test_worker_venvs.py) | 10 | [`worker_venvs.py`](../tests/support/worker_venvs.py) on real pytest runs with three workers: each in an environment of its own, subprocesses included, removed after the run, and a worker in anything else stopping the run. The runs leave out `PYTHONDONTWRITEBYTECODE` and `PYTHONPYCACHEPREFIX`, so the `.pyc` a first import writes is where the test looks, whatever the suite runs under. |
 
-### tests/e2e: 45 files, 1,182 tests
+### tests/e2e: 45 files, 1,183 tests
 
 | File | Tests | What it tests, and how |
 |---|---|---|
@@ -825,7 +825,7 @@ Writer and reader on specs from `make_spec`; edge cases from `tests/support/edge
 | [`test_interrupted_build.py`](../tests/e2e/test_interrupted_build.py) | 2 | A `fsbpyr build` process killed with SIGTERM, or out of room under a file-size limit, leaves the output as it was and no temporary file. |
 | [`test_large.py`](../tests/e2e/test_large.py) | 3 | A package with a 5 GiB sparse file builds (compressed and raw), runs, streams, extracts and verifies in bounded memory, each process reading less than 1 GiB (`rchar`): no hole is read. |
 | [`test_launcher_build.py`](../tests/e2e/test_launcher_build.py) | 16 | No launcher source has a variable-length array or a frame over the limit, and the check catches both; the sanitized launcher carries ASan and UBSan; the launcher links reproducibly. |
-| [`test_launcher_coverage.py`](../tests/e2e/test_launcher_coverage.py) | 1 | The launcher coverage report of `full-suite.yml`: a probe built with `FSBPYR_LLVM_COV_DIR` from two copies of the launcher sources, run, and read by LLVM's `llvm-cov` with the workflow's `-ignore-filename-regex`: one file, under `src/fsbpyr/launcher`, and none of the tests. |
+| [`test_launcher_coverage.py`](../tests/e2e/test_launcher_coverage.py) | 2 | The launcher coverage report of `full-suite.yml`: the sanitized runtime's stub kept in the directory `FSBPYR_LLVM_COV_DIR` names, which need not exist yet; a probe built with `FSBPYR_LLVM_COV_DIR` from two copies of the launcher sources, run, and read by LLVM's `llvm-cov` with the workflow's `-ignore-filename-regex`: one file, under `src/fsbpyr/launcher`, and none of the tests. |
 | [`test_loose_directory.py`](../tests/e2e/test_loose_directory.py) | 37 | Directories of loose scripts as one executable with a link per command, each printing what `python3 <script>` prints: names, shadowing, links from elsewhere, the `pylib` hack, siblings through `sys.executable`, undeclared imports, `--strict`, no user code run by the build, PEP 723 blocks, the venv rung, multiprocessing, one command becoming several and back. |
 | [`test_multicall.py`](../tests/e2e/test_multicall.py) | 22 | The `multi` fixture's two console scripts as one executable: links, the summary and `inspect`, starts by path, name or first argument, the list and exit 2, a renamed copy, a file in the way, `-m` and `-c`, helper interpreters, multiprocessing, a hard link keeping the old build. |
 | [`test_natives.py`](../tests/e2e/test_natives.py) | 16 | The `heavy` fixture (numpy, orjson, cryptography, pydantic, onnxruntime) against the venv: licences, `FSBPYR_SELFTEST=natives`, the first run's extraction, xz natives, concurrent first runs, a damaged extension repaired, the native generation reused. Deselected without an onnxruntime wheel. |

@@ -954,6 +954,7 @@ def test_prepare_commits_the_release_commit_on_the_branch_without_pushing(
         "refs/heads/main initial"
     )
     assert gh_calls(tmp_path) == []
+    assert "gh workflow run full-suite.yml --ref main" in result.stdout  # a merge starts no run
     assert "make release" in result.stdout
 
 

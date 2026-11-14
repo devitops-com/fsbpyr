@@ -204,10 +204,11 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   main or weekly: you start it on main when a release is prepared (`gh workflow run
   full-suite.yml --ref main`), or whenever else you want it. Merging into main requires no check,
   and a pull request gets CodeQL only (owner, 2026-11-13). Every run is the whole suite: no job or
-  step depends on what started it. `green-run.sh` takes a run started on main for the release
-  commit, or a push run from before; the fuzzer runs 600 s when the launcher or the fuzz harness
-  changed since the last tag, else 30 s. `CONTRIBUTING.md` asks for `make test-container` before
-  merging.
+  step depends on what started it. `green-run.sh`, and `release-sign.sh` when it compares the
+  drafts with the full suite's builds, take a run started on main for the release commit, or a
+  push run from before; `make release-prep` says to start one after the merge. The fuzzer runs
+  600 s when the launcher or the fuzz harness changed since the last tag, else 30 s.
+  `CONTRIBUTING.md` asks for `make test-container` before merging.
 - **The release is built with uv 0.13.7 (was 0.13.6) on the current Debian trixie image**
   (`debian:trixie@sha256:9c6e3814…`). `tools/release/uv.version` and the Containerfile name uv
   0.13.7 with the SHA-256 of its release tarball for x86-64 and aarch64, as uv publishes them and

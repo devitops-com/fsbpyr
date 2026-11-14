@@ -145,5 +145,7 @@ git commit -m "chore: release $TAG" >/dev/null
 COMMITTED=1
 cat <<EOF
 ==> Committed "chore: release $TAG" on $CURRENT_BRANCH. Next: push $CURRENT_BRANCH and merge
-    its pull request; once full-suite.yml has passed for that push to $BRANCH, make release
+    its pull request; then start the full suite on $BRANCH,
+        gh workflow run full-suite.yml --ref $BRANCH
+    and make release, which waits for that run
 EOF

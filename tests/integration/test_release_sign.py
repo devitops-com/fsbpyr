@@ -769,6 +769,33 @@ def test_without_a_green_full_suite_run_it_stops_and_burns_nothing(ready: World)
     assert burned(ready) == []
 
 
+def suite_run_of(world: World, event: str) -> None:
+    """The full suite's green run of the release commit was started by ``event``."""
+    world.github.load()
+    world.github.state["suite_events"][world.github.state["suite_runs"][world.commit]] = event
+    world.github.save()
+
+
+@pytest.mark.parametrize("event", ["workflow_dispatch", "push"])
+def test_the_full_suite_run_on_main_is_one_started_by_hand_or_a_push_from_before(
+    ready: World, event: str
+) -> None:
+    """Since 2026-11-13 the full suite runs only when started: a push run is an older commit's."""
+    suite_run_of(ready, event)
+
+    done = ready.sign()
+
+    assert done.returncode == 0, done.stderr + done.stdout
+
+
+@pytest.mark.parametrize("event", ["pull_request", "merge_group", "schedule"])
+def test_a_full_suite_run_started_otherwise_is_not_compared_with(ready: World, event: str) -> None:
+    suite_run_of(ready, event)
+
+    refused(ready, ready.sign(), "full-suite.yml has no green run of")
+    assert burned(ready) == []
+
+
 def test_without_the_full_suites_artifact_it_stops_and_burns_nothing(ready: World) -> None:
     """Artifacts expire after 90 days: then nothing can be compared, and nothing is burned."""
     run = ready.github.state["suite_runs"][ready.commit]

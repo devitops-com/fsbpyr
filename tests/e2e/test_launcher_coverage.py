@@ -16,13 +16,31 @@ import pytest
 from fsbpyr.runtime import stub
 
 from ..support import requires
-from .conftest import LauncherBuild
+from .conftest import LauncherBuild, keep_stub
 
 pytestmark = pytest.mark.slow
 
 ROOT = Path(__file__).parents[2]
 PROBE = ROOT / "tests" / "probes" / "find_object.c"
 WORKFLOW = ROOT / ".github" / "workflows" / "full-suite.yml"
+
+
+def test_the_sanitized_stub_is_kept_where_nothing_was_kept_yet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """full-suite.yml names a directory that does not exist yet, and the `runtime` fixture can keep
+    the sanitized stub before any LauncherBuild.compile (whose own keeping the next test runs): in
+    the run of 2026-11-14 it did, on every job, and the write failed."""
+    named = tmp_path / "llvm-cov" / "bin"
+    runtime_id = "cp314-x86_64-unknown-linux-gnu-0123456789ab-sanitized"
+    monkeypatch.setenv("FSBPYR_LLVM_COV_DIR", os.fspath(named))
+
+    keep_stub(runtime_id, b"a stub")
+
+    assert (named / f"stub-{runtime_id}").read_bytes() == b"a stub"
+    monkeypatch.delenv("FSBPYR_LLVM_COV_DIR")
+    keep_stub("another", b"another stub")
+    assert sorted(path.name for path in named.iterdir()) == [f"stub-{runtime_id}"]
 
 
 def test_the_report_has_one_row_per_launcher_source_and_none_of_the_tests(

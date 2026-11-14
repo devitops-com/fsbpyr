@@ -110,11 +110,15 @@ elif command == "release upload":
     if not state["releases"][tag]["draft"]:
         fail("HTTP 422: Cannot upload assets to an immutable release.")
     shutil.copy2(file, root / "assets" / tag / file.name)
-elif command == "run list":  # full-suite.yml's green push runs of a commit, as release-sign.sh asks
+elif command == "run list":  # full-suite.yml's runs of a commit on main, as release-sign.sh asks
     assert "--status" not in sys.argv  # GitHub lists no run of a commit with --status success
     run = state["suite_runs"].get(option("--commit"))
-    answer([{{"databaseId": int(run) + 1, "conclusion": "failure"}},
-            {{"databaseId": int(run), "conclusion": "success"}}] if run else [])
+    runs = [{{"databaseId": int(run) + 1, "conclusion": "failure", "event": "workflow_dispatch"}},
+            {{"databaseId": int(run), "conclusion": "success",
+              "event": state["suite_events"].get(run, "workflow_dispatch")}}] if run else []
+    fields = option("--json").split(",")  # gh exports only the fields it is asked for
+    answer([{{name: r[name] for name in fields if name in r}}
+            for r in runs if option("--event") in (None, r["event"])])
 elif command == "run download":
     source = root / "artifacts" / sys.argv[3] / option("--name")
     if not source.is_dir():
@@ -187,7 +191,7 @@ class FakeGitHub:
         (root / "bin").mkdir()
         self.state: dict[str, Any] = {"latest": None, "releases": {}, "attestations": {},
                                       "settings": settings(), "broken": [], "runs": {},
-                                      "suite_runs": {}}  # fmt: skip
+                                      "suite_runs": {}, "suite_events": {}}  # fmt: skip
         self.save()
         self._program("gh", FAKE_GH.format(python=sys.executable))
         self._program("curl", FAKE_CURL)
@@ -233,7 +237,8 @@ class FakeGitHub:
         self.save()
 
     def artifact(self, commit: str, name: str, files: dict[str, bytes]) -> None:
-        """An artifact of full-suite.yml's green push run of ``commit``."""
+        """An artifact of full-suite.yml's green run on main of ``commit``, one started by hand
+        unless ``state["suite_events"]`` names another event for the run."""
         self.load()
         run = self.state["suite_runs"].setdefault(commit, str(5000 + len(self.state["suite_runs"])))
         directory = self.root / "artifacts" / run / name

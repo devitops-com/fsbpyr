@@ -85,11 +85,32 @@ def runtime(request: pytest.FixtureRequest) -> registry.Runtime:
     """The release runtime, or its ASan/UBSan variant; in the EL8 test mode the glibc 2.28 one."""
     sanitize = getattr(request, "param", "release") == "sanitized"
     found = _session_runtime(baseline.BASELINE, sanitize=sanitize)
-    if sanitize and os.environ.get(COVERAGE_VARIABLE):  # its stub is instrumented (stub.py)
-        kept = Path(os.environ[COVERAGE_VARIABLE]) / f"stub-{found.runtime_id}"
-        if not kept.exists():  # the report's object: the code apps of it run
-            kept.write_bytes(found.stub)
+    if sanitize:  # its stub is instrumented (stub.py)
+        keep_stub(found.runtime_id, found.stub)
     return found
+
+
+def keep_stub(runtime_id: str, stub: bytes) -> None:
+    """A sanitized runtime's stub, kept for the launcher coverage report when COVERAGE_VARIABLE
+    names a directory: the report's object for the code apps of it run. Once per runtime."""
+    kept = kept_for_coverage()
+    if kept is None:
+        return
+    program = kept / f"stub-{runtime_id}"
+    if not program.exists():
+        program.write_bytes(stub)
+
+
+def kept_for_coverage() -> Path | None:
+    """The directory COVERAGE_VARIABLE names, made if it is not there yet: whichever program is
+    kept first makes it, a LauncherBuild's or the sanitized runtime's stub. full-suite.yml names
+    one that does not exist, and in its run of 2026-11-14 the stub came first on every job."""
+    named = os.environ.get(COVERAGE_VARIABLE)
+    if not named:
+        return None
+    directory = Path(named)
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
 
 
 @pytest.fixture(scope="session")
@@ -188,9 +209,8 @@ class LauncherBuild:
                    *map(os.fspath, self.libs), "-lpthread", "-ldl"]  # fmt: skip
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         assert result.returncode == 0, result.stderr
-        if coverage:
-            kept = Path(coverage)
-            kept.mkdir(parents=True, exist_ok=True)
+        kept = kept_for_coverage()
+        if kept is not None:
             shutil.copy2(out, kept / f"{out.parent.name}-{out.name}")
         return out
 

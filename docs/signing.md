@@ -603,7 +603,8 @@ outside the release gate.
    (`FSBPYR_RELEASE_INSPECTOR`, an fsbpyr that runs here, if set; never one of the draft's); and
    the default Python's executables and every EL8 stub must be the bytes the full suite built
    from the same commit, its `el8-build` (tagged in the job, as the release is) and `el8-stub`
-   artifacts of the green push run. The other Pythons' executables have no tagged build in the
+   artifacts of the green run on main (one started by hand, or a push run from before
+   2026-11-13). The other Pythons' executables have no tagged build in the
    full suite to compare with. A file that is not burns the version: the tag cannot be taken
    back, so the release and its companion (only the companion, once the release is published)
    are recorded in `FSBPYR_RELEASE_STATE`'s `burned` and never signed, and the fix is released
@@ -1131,8 +1132,9 @@ change of K and a recovery; and the full suite settled aarch64 hardware.
     build updated itself to v1.3.0 in 0.3 s. Each `.xz` is packed once per session at preset 0
     (1.1 s for the 29.5 MB build, against 4.8 s at the default; measured).
   - Refusals in Python only (another `release_asset`, the size cap) are unit tests.
-  - full-suite.yml runs them on every merge, on x86-64 and aarch64 (:24-28), and release-assets.sh tags
-    only a commit whose run passed (full-suite.yml:15-17). Their limit: N updates to a build of
+  - full-suite.yml runs them before every release (on request since 2026-11-13), on x86-64 and
+    aarch64, and release-assets.sh tags only a commit whose run passed (both in full-suite.yml's
+    header comment). Their limit: N updates to a build of
     the same code; that N reads N+1's real files is first checked in N+1's `make release-check`.
 - The commands, tests/e2e/test_signing.py (new), against the script both ways: `key new`, the
   script's `sign`, `verify --project`; the script's `new-key`, `sign` and `build` with
