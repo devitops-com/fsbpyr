@@ -32,6 +32,20 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   now records (owner, 2026-11-08). It gates nothing. The first table, 0.31.0 against 0.30.0, is in.
 
 ### Fixed
+- **A `JOURNAL_STREAM` that names neither stdout nor stderr costs a start no imports.** A parent
+  whose output is the journal hands the variable on to processes whose output is not: GNOME
+  Shell to the apps it starts, a service to children whose output it reads from pipes. With it
+  set, the boot code imported `_fsbpyr_rt.service` and 12 standard-library modules (`signal`,
+  `enum`, `typing` among them) before the app ran, only to find that no stream was the journal.
+  It now compares stdout's and stderr's device and inode with the value first (two `fstat`
+  calls) and imports the module only on a match or as process 1; what a match does is
+  unchanged. `tests/e2e/test_imports.py`'s check of the boot's imports failed in any environment
+  that had the variable; it now runs the app without it and, in a new test, with one that names
+  another file.
+- **`tests/integration/test_worker_venvs.py` passes under `PYTHONDONTWRITEBYTECODE` and
+  `PYTHONPYCACHEPREFIX`.** Its pytest runs inherited them, so the `.pyc` that one worker's first
+  import writes, which the test looks for, was not written or went elsewhere. The runs now leave
+  both out (owner, 2026-11-14).
 - **`fsbpyr build --extra NAME` works with the `poetry.lock` Poetry 2 writes.** Poetry 2 marks
   each package that only an extra needs `extra == "NAME"`, and fsbpyr evaluated those markers
   with no extra active, so every package of the extra seemed missing and the build stopped with
@@ -147,8 +161,9 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   be yours or root's, and writable by nobody else unless it is sticky.
 - **`make release-sign` ignores an exported `KEY`.** Only a `KEY` given on make's command line
   counts, as the Makefile says and as for `make release`.
-- **`green-run.sh` says that a push to main starts the run a release needs.** When main had no
-  `full-suite.yml` run, it said to start the workflow by hand, and such a run never counts.
+- **`green-run.sh` says how to start the run a release needs.** When main had no `full-suite.yml`
+  run, it said to start the workflow by hand, though no such run counted. It now names the command,
+  `gh workflow run full-suite.yml --ref main`, and that run counts (below).
 - **The threat model says which cache directories are forced to 0700.** `docs/security.md` said
   every cache directory is. The build tool forces its cache root (and `runtimes/`); below it
   `sysroots/` is 0700, `pbs/` gets the umask's mode, `downloads/` whichever mode the first to make
@@ -174,6 +189,14 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   distributions' archives and the sysroots' packages among them are collected.
 
 ### Changed
+- **The full suite runs only when it is asked for.** `full-suite.yml` no longer runs on a push to
+  main or weekly: you start it on main when a release is prepared (`gh workflow run
+  full-suite.yml --ref main`), or whenever else you want it. Merging into main requires no check,
+  and a pull request gets CodeQL only (owner, 2026-11-13). Every run is the whole suite: no job or
+  step depends on what started it. `green-run.sh` takes a run started on main for the release
+  commit, or a push run from before; the fuzzer runs 600 s when the launcher or the fuzz harness
+  changed since the last tag, else 30 s. `CONTRIBUTING.md` asks for `make test-container` before
+  merging.
 - **The release is built with uv 0.13.7 (was 0.13.6) on the current Debian trixie image**
   (`debian:trixie@sha256:9c6e3814…`). `tools/release/uv.version` and the Containerfile name uv
   0.13.7 with the SHA-256 of its release tarball for x86-64 and aarch64, as uv publishes them and
@@ -188,15 +211,6 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   its profile before it executes the collection, so what it ran counts; tests now cover the
   passwd home, a removed working directory, the fallbacks without `close_range` or `/proc`, and
   the `hypot` wrapper.
-- **Every pull request gets the full suite before it is merged, in main's merge queue.**
-  `full-suite.yml` runs on `merge_group`, on the commit main then becomes, documentation-only
-  pull requests included, and no longer on pushes to main, which the queue already tested. Its
-  last job, `full suite passed`, is the queue's required check and passes only when every other
-  job did; on a pull request as it is opened it reports at once, with every other job skipped.
-  The fuzz corpora are saved by the runs on main only. `green-run.sh` takes the queue's run of a
-  commit, or a push run from before the queue, and never one started by hand (owner, 2026-11-08,
-  which supersedes "main (a)" of 2026-10-19). `CONTRIBUTING.md` asks for `make test-container`
-  before merging.
 - **The cache keeps the variants and EL8 stubs of the last two releases only.** Every release's
   fsbpyr for another Python (about 30 MB) and glibc 2.28 stubs stayed in `downloads/` for good.
   Now only the last two releases' stay, whatever their age: the variants of the two newest

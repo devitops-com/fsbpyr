@@ -1,6 +1,7 @@
 """Phase 3 exit criteria on a real executable: import system, resources, metadata, contract."""
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -25,12 +26,22 @@ def demo(runtime: Runtime, tmp_path_factory: pytest.TempPathFactory) -> Path:
     return out.resolve()
 
 
-@pytest.fixture(scope="module")
-def probe(demo: Path) -> dict[str, Any]:
-    result = subprocess.run([demo], capture_output=True, text=True, check=False, timeout=60)
+def _run_probe(demo: Path, journal: str | None = None) -> dict[str, Any]:
+    """The probe's results; ``journal`` is JOURNAL_STREAM's value, none without it, whatever
+    the tests run under (a desktop session hands it to the processes it starts)."""
+    env = {name: value for name, value in os.environ.items() if name != "JOURNAL_STREAM"}
+    if journal is not None:
+        env["JOURNAL_STREAM"] = journal
+    result = subprocess.run([demo], capture_output=True, text=True, check=False, timeout=60,
+                            env=env)  # fmt: skip
     assert result.returncode == 0, result.stderr
     parsed: dict[str, Any] = json.loads(result.stdout)
     return parsed
+
+
+@pytest.fixture(scope="module")
+def probe(demo: Path) -> dict[str, Any]:
+    return _run_probe(demo)
 
 
 def test_c_module_and_standin_honour_the_same_contract(demo: Path) -> None:
@@ -76,14 +87,27 @@ def test_extracted_files_are_never_synced_to_disk(demo: Path, tmp_path: Path) ->
     assert log.read_text() == ""
 
 
-def test_boot_imports_only_builtin_frozen_and_startup_modules(
-    demo: Path, probe: dict[str, Any]
-) -> None:
+def _not_allowed_at_boot(demo: Path, probe: dict[str, Any]) -> list[str]:
     with Executable.open(demo) as exe:
         startup = {m.name for m in exe.payload.startup_modules()}
     allowed = set(probe["builtin_or_frozen"]) | startup | {"__main__", "entry"}
+    return sorted(set(probe["boot_modules"]) - allowed)
 
-    assert sorted(set(probe["boot_modules"]) - allowed) == []
+
+def test_boot_imports_only_builtin_frozen_and_startup_modules(
+    demo: Path, probe: dict[str, Any]
+) -> None:
+    assert _not_allowed_at_boot(demo, probe) == []
+
+
+def test_a_journal_stream_naming_another_file_adds_no_boot_import(demo: Path) -> None:
+    """A parent whose output is the journal hands JOURNAL_STREAM on to processes whose output
+    is not (GNOME Shell's apps, a service's children on pipes): it names neither stream (D14)."""
+    status = demo.stat()
+
+    probe = _run_probe(demo, f"{status.st_dev}:{status.st_ino}")
+
+    assert _not_allowed_at_boot(demo, probe) == []
 
 
 def test_importlib_resources(probe: dict[str, Any]) -> None:

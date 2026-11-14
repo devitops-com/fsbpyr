@@ -841,10 +841,31 @@ def _interpreter_child(commands: "dict[str, str] | None" = None) -> bool:
     return handled
 
 
+def _is_stdout_or_stderr(journal: bytes) -> bool:
+    """Whether the JOURNAL_STREAM value ``journal`` names the file of stdout or stderr, read as
+    ``_fsbpyr_rt.service`` reads it. A parent whose output is the journal hands the variable on
+    to processes whose output is not (GNOME Shell's apps, a service's children on pipes)."""
+    device, colon, inode = journal.partition(b":")
+    if not colon or not device.isdigit() or not inode.isdigit():
+        return False
+    identity = (int(device), int(inode))
+    for descriptor in (1, 2):
+        try:
+            status = posix.fstat(descriptor)
+        except OSError:  # closed
+            continue
+        if (status.st_dev, status.st_ino) == identity:
+            return True
+    return False
+
+
 def _service_policies() -> None:
     """JOURNAL_STREAM and SIGTERM as process 1 (D14). The common start costs an environ lookup
-    and a pid check; the rest is imported only when either applies."""
+    and a pid check, and two fstat calls with JOURNAL_STREAM set; the rest is imported only when
+    stdout or stderr is the file it names, or the app is process 1."""
     journal = posix.environ.get(b"JOURNAL_STREAM")
+    if journal is not None and not _is_stdout_or_stderr(journal):
+        journal = None  # another file's: nothing to line-buffer
     pid = posix.getpid()
     if journal is not None or pid == 1:
         from _fsbpyr_rt.service import start  # type: ignore[import-not-found]  # noqa: PLC0415
