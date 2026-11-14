@@ -1,11 +1,9 @@
 """Smoke test and entry-point checks of the build orchestrator."""
 
-import json
 import os
 import re
 import sys
 import tempfile
-import types
 import zipfile
 from pathlib import Path
 
@@ -18,7 +16,6 @@ from fsbpyr.build import (
     baseline_record,
     best_compression_unused,
     build,
-    builder_uv,
     built_here_above,
     check_strict,
     glibc_report,
@@ -27,7 +24,6 @@ from fsbpyr.build import (
     rebuild_on_baseline,
     smoke_run,
     smoke_test,
-    uv_mismatch,
 )
 from fsbpyr.classify import Uncounted
 from fsbpyr.cli import main
@@ -459,28 +455,6 @@ def test_an_offline_build_rebuilds_nothing(tmp_path: Path, monkeypatch: pytest.M
     ]
 
 
-def test_a_uv_other_than_the_one_that_built_fsbpyr_is_a_warning() -> None:
-    [warning] = uv_mismatch(builder="0.13.1", current="0.14.0")
-
-    assert "uv 0.14.0" in warning and "uv 0.13.1" in warning and "identical" in warning
-
-
-@pytest.mark.parametrize("builder", ["0.13.1", None])  # None: from source, or an older build
-def test_the_same_uv_or_an_unknown_one_is_no_warning(builder: str | None) -> None:
-    assert uv_mismatch(builder=builder, current="0.13.1") == []
-
-
-def test_an_executable_knows_the_uv_it_was_built_with(monkeypatch: pytest.MonkeyPatch) -> None:
-    info = {"build_info": json.dumps({"uv": "0.13.1"})}
-    monkeypatch.setitem(sys.modules, "_fsbpyr", types.SimpleNamespace(info=lambda: info))
-
-    assert builder_uv() == "0.13.1"
-
-
-def test_fsbpyr_run_from_source_knows_no_builder_uv() -> None:
-    assert builder_uv() is None
-
-
 def _file(kind: FileKind) -> File:
     return File(f"pkg/{kind.name.lower()}", kind, Blob.zstd(b"x"))
 
@@ -525,19 +499,17 @@ def test_strict_refuses_an_unlocked_build_and_leaves_the_output_as_it_was(
     assert out.read_bytes()[:4] == b"\x7fELF"
 
 
-def test_strict_does_not_count_the_build_hosts_uv_or_git(
+def test_strict_does_not_count_the_build_hosts_git(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = _staged(tmp_path, monkeypatch, APP)
     _locked(project)
-    monkeypatch.setattr("fsbpyr.build.builder_uv", lambda: "0.12.0")  # staged uv is 0.13.1
     monkeypatch.setattr("fsbpyr.build.git_state",
                         lambda directory, warn: warn("git: boom; no commit recorded"))  # fmt: skip
 
     result = build(project, BuildConfig(entry="app.cli:main", output=tmp_path / "app",
                                         strict=True, smoke=False))  # fmt: skip
 
-    assert any(w.startswith("uv 0.13.1 is not uv 0.12.0") for w in result.warnings)
     assert any(w.startswith("git: boom") for w in result.warnings)
 
 

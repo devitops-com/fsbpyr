@@ -32,6 +32,12 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   now records (owner, 2026-11-08). It gates nothing. The first table, 0.31.0 against 0.30.0, is in.
 
 ### Fixed
+- **`fsbpyr build` no longer warns that uv is not the one that built fsbpyr.** Every build with
+  another uv than fsbpyr's own printed `uv X is not uv Y, which built this fsbpyr: the executable
+  can differ ...`, about nothing: that uv never reaches an app, and the same app built by two
+  fsbpyr that differ only in it is the same bytes. Users install uv themselves (D26), so with any
+  current uv every build warned. An executable still records the uv that ran its build (`uv` in
+  `fsbpyr inspect`). (#116)
 - **A `JOURNAL_STREAM` that names neither stdout nor stderr costs a start no imports.** A parent
   whose output is the journal hands the variable on to processes whose output is not: GNOME
   Shell to the apps it starts, a service to children whose output it reads from pipes. With it

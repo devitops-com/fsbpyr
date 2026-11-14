@@ -74,7 +74,9 @@ def test_the_app_does_not_run_and_a_second_run_changes_nothing(
 
     again = _run(tools, tmp_path, target)
 
-    assert "ok" not in first.stdout and "ok" not in again.stdout
+    # what the scripts print, as lines: a path in the output may hold "ok" (fsbpyr-test.okAJnJ)
+    printed = {*first.stdout.splitlines(), *again.stdout.splitlines()}
+    assert not printed & {"disk ok", "report ok"}
     assert again.returncode == 0 and again.stdout.count("present ") == 4
     assert {p.name: p.lstat().st_mtime_ns for p in target.iterdir()} == before
 

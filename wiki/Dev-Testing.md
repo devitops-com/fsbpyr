@@ -624,7 +624,7 @@ installed), and 3 when a pinned file can no longer be fetched (the pin needs ren
 ## Test files
 
 The counts are the test items pytest collects (`pytest --collect-only -q -p no:cacheprovider`,
-which runs no test): 4,877 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
+which runs no test): 4,872 in 153 files, on x86-64 under Python 3.14, with `FSBPYR_TEST_GLIBC`
 and `FSBPYR_CORPUS_APPS` unset; per-file counts come from the test ids. They include tests that
 fail on a host that lacks what they need. Some depend on the host and the Python
 ([Cases that do not apply](#cases-that-do-not-apply)):
@@ -640,12 +640,12 @@ run with the release launcher only, those two portability tests also on the two 
 |---|---|---|
 | `tests/unit` (top level) | 29 | 942 |
 | `tests/unit/boot` | 23 | 387 |
-| `tests/unit/builder` | 19 | 805 |
+| `tests/unit/builder` | 19 | 800 |
 | `tests/unit/payload` | 11 | 441 |
 | `tests/unit/runtime` | 9 | 261 |
 | `tests/integration` | 17 | 858 |
 | `tests/e2e` | 45 | 1,183 |
-| All | 153 | 4,877 |
+| All | 153 | 4,872 |
 
 ### tests/unit (top level): 29 files, 942 tests
 
@@ -714,7 +714,7 @@ fixture ([Configuration and conftests](#configuration-and-conftests)). `test_fix
 | [`test_warning_frames.py`](../tests/unit/boot/test_warning_frames.py) | 3 | Import-time warnings with `stacklevel >= 2` name the importing module and show the payload file's source line. |
 | [`test_way.py`](../tests/unit/boot/test_way.py) | 27 | A cache root's way from `/` (`gc.way_problem`): owners and write permissions, sticky directories, symlinks, `..`, user namespaces, mapped uids, a walk that leaves a sticky directory (a symlink's absolute target, `..` back to it or above); the tool's cache and the collector refuse an untrusted way. |
 
-### tests/unit/builder: 19 files, 805 tests
+### tests/unit/builder: 19 files, 800 tests
 
 The build pipeline in-process, on trees made in `tmp_path`: fake site-packages, synthetic ELF
 objects from `tests/support/elf.py`, local distributions, the `foreign` fixture's hand-written
@@ -722,7 +722,7 @@ locks, fake `uv` scripts and the uv command lines a plan records.
 
 | File | Tests | What it tests, and how |
 |---|---|---|
-| [`test_build.py`](../tests/unit/builder/test_build.py) | 55 | `fsbpyr.build`: the smoke test and its error output, the output replaced only after it passes, stub and natives' glibc requirement against the baseline (`glibc_baseline` for 2.28 only), the project's extension rebuilt against the sysroot, uv version warnings, `--strict`, `--offline`, and hints about unpinned requirements, sdists and helper interpreters. |
+| [`test_build.py`](../tests/unit/builder/test_build.py) | 50 | `fsbpyr.build`: the smoke test and its error output, the output replaced only after it passes, stub and natives' glibc requirement against the baseline (`glibc_baseline` for 2.28 only), the project's extension rebuilt against the sysroot, `--strict`, `--offline`, and hints about unpinned requirements, sdists and helper interpreters. |
 | [`test_closure_and_classify.py`](../tests/unit/builder/test_closure_and_classify.py) | 83 | `fsbpyr.closure` and `fsbpyr.classify` on fake site-packages: the installed-dist index, the dependency walk, entry points, every file's class (modules, namespaces, natives, `.pth` files, fs-packages, shadowed modules, compression, spill), and the warnings and hints, among them main-guard reads next to `__file__` in the `__main__` module only. |
 | [`test_compiler.py`](../tests/unit/builder/test_compiler.py) | 10 | `fsbpyr.compiler`: worker processes compile what the build's process would, in order; small builds compile in-process; compile warnings come back with their line; main-guard reads scanned in the scripts root's commands only. |
 | [`test_early_checks.py`](../tests/unit/builder/test_early_checks.py) | 12 | Failures before uv stages anything: a script name that is no command, a static project without entry, a directory as output, an unknown extra. |

@@ -124,12 +124,10 @@ What happened:
    system libraries the native code links that no wheel bundles. Here those are libstdc++,
    libgcc_s and zlib, which nearly every Linux system has.
 
-The uv on this build machine is the one that built the fsbpyr release (0.13.6 for 0.30.0). With
-another uv the build also warns, for example `fsbpyr: warning: uv 0.13.7 is not uv 0.13.6,
-which built this fsbpyr: the executable can differ from one built with uv 0.13.6, even from
-identical sources`: uv builds the project's wheel and installs every distribution, so another
-uv can give other bytes from the same sources. The warning does not stop the build, and
-`--strict` does not count it.
+The executable records the uv that ran its build (`uv` in `fsbpyr inspect`): uv builds the
+project's wheel and installs every distribution, so another uv can give other bytes from the
+same sources. Which uv built fsbpyr itself does not matter: it never reaches an app, and two
+fsbpyr that differ only in it build the same bytes.
 
 ## Which Python
 
@@ -417,9 +415,8 @@ by a commit (`name @ git+URL@<40 hex>`) or a `#sha256=` URL counts as pinned for
 a commit is no hash: `--strict`, or a requirements file that has `--hash=` lines, refuses such a
 VCS line before uv runs, naming the file and the line.
 
-Eight kinds of warning do not count. Three describe the build machine: a uv version different
-from the one that built fsbpyr, git errors, and a `Pipfile.lock` package that uv installs from
-its own configured indexes. Four are guesses about the app: that a dependency may start helper
+Seven kinds of warning do not count. Two describe the build machine: git errors, and a
+`Pipfile.lock` package that uv installs from its own configured indexes. Four are guesses about the app: that a dependency may start helper
 interpreters, that a package may read files next to its `__file__` (the `--hints` list), that a
 package's Python code names a library no extension module loads, and that a package ships an
 executable file. One is advice: a project with `requirements/*.txt` and no `requirements.txt` is

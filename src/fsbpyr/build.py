@@ -2,7 +2,6 @@
 
 import contextlib
 import dataclasses
-import json
 import os
 import shlex
 import subprocess
@@ -289,28 +288,6 @@ def _provenance(  # noqa: PLR0913  what the records are made of, and where to lo
         log("built on this host from sdists, not reproducible elsewhere: " + ", ".join(sdists))
     return (("schema", SCHEMA), ("lock", lock), ("dists", dists),
             ("settings", settings_record(config)))  # fmt: skip
-
-
-def builder_uv() -> str | None:
-    """The uv version the build of this fsbpyr executable recorded; None from source, or for
-    an executable built before uv versions were recorded."""
-    try:
-        import _fsbpyr  # noqa: PLC0415  # only in executables
-    except ImportError:
-        return None
-    version = json.loads(_fsbpyr.info()["build_info"]).get("uv")
-    return version if isinstance(version, str) else None
-
-
-def uv_mismatch(*, builder: str | None, current: str) -> list[str]:
-    """A warning when uv is not the one this fsbpyr was built with: uv builds the project's
-    wheel (its uv_build stamps uv's version into the wheel's metadata) and installs every
-    distribution, so another uv can give other bytes from identical sources."""
-    if builder is None or builder == current:
-        return []
-    return [Uncounted(f"uv {current} is not uv {builder}, which built this fsbpyr: the "
-                      f"executable can differ from one built with uv {builder}, even from "
-                      "identical sources")]  # fmt: skip
 
 
 def best_compression_unused(*, best_compression: bool, files: Iterable[File]) -> list[str]:
@@ -763,7 +740,6 @@ def _build(  # noqa: PLR0913, PLR0915  the build's state and the progress keywor
     warnings += python_warnings(project, config)
     runtime = select_runtime(TARGET_PYTHON, baseline=config.glibc, offline=config.offline)
     project.check_python(runtime.python_version)
-    warnings += uv_mismatch(builder=builder_uv(), current=uv_used)
     source = project.lock_source(config.requirements)
     inferred = None
     if (package is not None and project.bare and source is LockSource.UNLOCKED
