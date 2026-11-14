@@ -198,15 +198,18 @@ check_installer() { # directory, release
         || burn "$2" "$2's install.sh is not what make-install.sh makes of its files here"
 }
 
-# SUITE_FILE: a file of an artifact of the full suite's green push run of this commit, which built
-# the release's bytes from it too; downloaded once. Dies, burning nothing, when there is none.
+# SUITE_FILE: a file of an artifact of the full suite's green run on main of this commit, which
+# built the release's bytes from it too; downloaded once. Dies, burning nothing, when there is
+# none. The runs on main are those started by hand, and the pushes' from before 2026-11-13, as
+# green-run.sh takes them.
 suite_file() { # artifact, file
     local dir=$WORK/suite/$1
     if [ -z "${SUITE_RUN:-}" ]; then
         # Not --status success: GitHub then lists no run of a commit (tried on v0.31.0's).
         SUITE_RUN=$(gh run list --repo "$REPOSITORY" --workflow full-suite.yml --branch "$BRANCH" \
-            --event push --commit "$COMMIT" --limit 20 --json databaseId,conclusion \
-            --jq '[.[] | select(.conclusion == "success")][0].databaseId // empty') \
+            --commit "$COMMIT" --limit 20 --json databaseId,conclusion,event \
+            --jq '[.[] | select(.event == "workflow_dispatch" or .event == "push")
+                       | select(.conclusion == "success")][0].databaseId // empty') \
             || die "cannot list full-suite.yml's runs: nothing was signed"
         [ -n "$SUITE_RUN" ] || die "full-suite.yml has no green run of $COMMIT to compare the drafts with: nothing was signed"
     fi
