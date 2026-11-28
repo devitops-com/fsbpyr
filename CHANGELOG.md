@@ -214,6 +214,30 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   x86-64 interpreter). SQLite 3.53.1 still has CVE-2026-11822 and CVE-2026-11824 (FTS5, fixed in
   3.53.2). An executable gets the new runtime when it is rebuilt with this fsbpyr. Every runtime
   id changes, so cached runtimes are built again, and this release's EL8 stubs are new ones. (#139)
+- **The runtime is python-build-standalone 20261124's (was 20261110's): the same CPython 3.12.16,
+  3.13.18, 3.14.10 and 3.15.2**, on x86-64 and aarch64; the archives of both targets are still
+  LLVM 23.1.3 bitcode (their PYTHON.json, on x86-64 byte-identical to 20261110's; the 20261110
+  aarch64 archives were not read). It brings expat 2.11.0 (was 2.10.0), SQLite 3.54.1 (was
+  3.53.1), zstd 1.6.0 (was 1.5.7) and libffi 3.8.1 (was 3.8.0; the one version string in
+  `libffi.a`, not confirmed as libffi's); zlib 1.4, OpenSSL 3.5.9 and libmpdec 4.0.0 are unchanged
+  (read from each x86-64 interpreter, zstd from the 3.14 and 3.15 ones and from `libzstd.a` for
+  3.12 and 3.13; the aarch64 interpreters were not run, the version strings in their static
+  libraries are the same). The fixes that come with it, as upstream names them: in expat
+  CVE-2026-124317 (unknown-encoding handlers only) and CVE-2026-134703 (isolated UTF-16
+  surrogates), and CVE-2026-128241 of its xmlwf tool (its Changes); in SQLite 3.54.0
+  CVE-2026-119371 to CVE-2026-119379 and CVE-2026-119591 (sqlite.org's CVE list); in zstd
+  CVE-2026-124851 and further memory errors (its release notes); in libffi six security fixes,
+  named by GHSA id only. SQLite 3.54.1 is past 3.53.2, so CVE-2026-11822 and CVE-2026-11824 are no
+  longer open. An executable gets the new runtime when it is rebuilt with this fsbpyr. Every
+  runtime id changes, so cached runtimes are built again, and this release's EL8 stubs are new
+  ones. (#152)
+- **Every fsbpyr compresses with libzstd 1.6.0 (was 1.5.7)**, the zstd of the new runtime (D15): on
+  Python 3.12 and 3.13 `backports.zstd` is 1.8.1, which bundles 1.6.0 (1.8.0 bundled 1.5.7), and the
+  launcher's vendored `zstd.h` is zstd 1.6.0's, as its release tarball has it (the functions the
+  launcher calls are declared as in 1.5.7; `zstd_errors.h` and the licence are unchanged). The
+  CPython 3.14 and 3.15 that uv 0.13.10 installs are builds of the same PBS release, so the tests
+  run from source compress with 1.6.0 too; with an interpreter of an older build,
+  `tests/unit/test_compat.py` fails on the zstd version. (#152)
 - **The release is built with uv 0.13.8 (was 0.13.7).** `tools/release/uv.version` and the
   Containerfile name uv 0.13.8 with the SHA-256 of its release tarball for x86-64 and aarch64, as
   uv publishes them and GitHub records them. The debian:trixie image pin is still the one the

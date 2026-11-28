@@ -657,7 +657,7 @@ kind, module flag, file kind and file flag enums, and the structs `fsb_trailer` 
 
 ### vendor/zstd
 
-[`vendor/zstd/`][vendor] holds zstd's headers `zstd.h` and `zstd_errors.h` (version 1.5.7, by
+[`vendor/zstd/`][vendor] holds zstd's headers `zstd.h` and `zstd_errors.h` (version 1.6.0, by
 their `ZSTD_VERSION_*` macros), which only `payload.c` includes, and zstd's BSD `LICENSE`, which
 [`runtime/notices.py`][notices] (`collect`) puts into a runtime's licence notices when PBS ships
 no zstd text: PBS lists `LICENSE.zstd.txt` only for the `_zstd` module, which 3.12 and 3.13 lack.
