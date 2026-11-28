@@ -218,6 +218,14 @@ releases of 0.18.1 and 0.18.2 were withdrawn; their tags remain.
   Containerfile name uv 0.13.8 with the SHA-256 of its release tarball for x86-64 and aarch64, as
   uv publishes them and GitHub records them. The debian:trixie image pin is still the one the
   registry serves.
+- **The release is built with uv 0.13.10 (was 0.13.8) on the current Debian trixie image**
+  (`debian:trixie@sha256:3cda3ca4…`, Debian 13.8, was 13.7). `tools/release/uv.version` and the
+  Containerfile name uv 0.13.10 with the SHA-256 of its release tarball for x86-64 and aarch64, as
+  uv publishes them and GitHub records them. Of the image's packages only `base-files`
+  (13.8+deb13u7 to 13.8+deb13u8), `libc6` and `libc-bin` (2.41-12+deb13u4 to 2.41-12+deb13u5),
+  `libssl3t64` and `openssl-provider-legacy` (3.5.7-1~deb13u3 to 3.5.9-1~deb13u1) and `zlib1g`
+  (1:1.3.dfsg+really1.3.1-1+b1 to 1:1.3.dfsg+really1.3.1-1+deb13u1) differ from the last one, on
+  amd64 and arm64. (#151)
 - **The tests from source check signatures with `sig.c`, not with the openssl command.** The unit
   tests of signing, self update, dispatch and the EL8 stubs, and one test of
   `tests/e2e/test_el8.py`, ran `_fsbpyr`'s four functions on a stand-in in
