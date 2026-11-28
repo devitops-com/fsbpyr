@@ -1,11 +1,5 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-# Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
-
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
-
 ## 1. Think Before Coding
 
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
@@ -91,6 +85,31 @@ When the user asks "does X work?", the only honest answers are:
 - "No -- fails at [specific point], log/error attached"
 - "I don't know -- haven't tested"
 
----
+## 6. Agent Model Routing
 
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, fewer false-confidence claims that have to be retracted later, and clarifying questions come before implementation rather than after mistakes.
+**The main loop orchestrates. Agents do the work, each on the model that fits the kind of work, not its subject.**
+
+Set the model explicitly on every agent call (Agent tool `model`, Workflow `agent(prompt, {model})`):
+
+| Kind of work | Model |
+|---|---|
+| Working out a design; choosing between alternatives; finding the cause of a failure | fable |
+| Writing down a design that is already decided | opus |
+| Code, tests and build files, even when the change is small | opus |
+| Difficult or complex coding | fable -- rare; say why when choosing it |
+| Reports, and bringing documents in line with the repository | opus |
+| Fully specified mechanical edits to documents and data: renaming, renumbering, correcting counts | sonnet |
+| Analysis of existing code and documentation, including review and verification | sonnet |
+| Web research | haiku for a single page, sonnet when several sources must be reconciled |
+
+When a task fits two rows, the work decides, not the topic:
+- If the brief already contains the decisions, it is writing, not design.
+- If the agent must change source, tests or build files, it is coding, however small or mechanical.
+
+Reasoning effort (Agent tool `effort`): set `low` for fully specified mechanical edits. Otherwise leave it unset.
+
+The main loop does not code, except in very complex cases, which should happen rarely:
+- Source, tests and build files go to an opus agent, even when the change is small.
+- The main loop briefs agents, reads their results, and makes architecture decisions.
+
+An omitted model inherits the session model, and named agent types carry their own default model. Neither replaces the explicit choice.

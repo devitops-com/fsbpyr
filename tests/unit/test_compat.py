@@ -14,7 +14,7 @@ from fsbpyr.compat import process_cpu_count, zstd
 
 # the libzstd of 3.14's compression.zstd; backports.zstd must bundle the same, so every
 # Python version compresses alike and builds stay reproducible (D15)
-LIBZSTD_VERSION = (1, 5, 7)
+LIBZSTD_VERSION = (1, 6, 0)
 
 
 def test_every_module_of_the_package_imports(monkeypatch: pytest.MonkeyPatch) -> None:
